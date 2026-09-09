@@ -1023,6 +1023,23 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.import_words, &w) || Lang::spells(&lang.import_from_words, &w) {
                 return self.import_stmt();
             }
+            if Lang::spells(&lang.with_words, &w) { return self.unready_with(); }
+            if Lang::spells(&lang.del_words, &w) || Lang::spells(&lang.nonlocal_words, &w) {
+                let names = Lang::spells(&lang.nonlocal_words, &w);
+                self.take();
+                let start = self.mark();
+                loop {
+                    if names { self.want_name("in a nonlocal declaration")?; }
+                    else { self.expr(0)?; }
+                    let more = lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |m| self.at_symbol(m));
+                    if !more { break; }
+                    self.take();
+                }
+                self.piece().instrs.truncate(start);
+                let words = if names { &lang.nonlocal_unrun } else { &lang.del_unrun };
+                self.unready(words);
+                return Ok(());
+            }
             if Lang::spells(&lang.global_words, &w) {
                 return self.global_stmt();
             }
@@ -1196,7 +1213,35 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// `global a, b;`: the names mean the globals in this unit.
+    /// Words for a construct whose reading is ahead of its running.
+    fn unready(&mut self, words: &[String]) {
+        self.constant(Value::text(words.first().map_or("", String::as_str)));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("reading")), 1);
+    }
+
+    fn unready_with(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        self.unready(&lang.with_unready);
+        let group = lang.grouping.clone();
+        let grouped = group.as_ref().map_or(false, |g| self.at_symbol(&g.open));
+        if grouped { self.take(); }
+        loop {
+            self.expr(0)?;
+            if self.on_keyword(&lang.with_as) {
+                self.take();
+                self.expr(0)?;
+            }
+            let more = lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s));
+            if !more { break; }
+            self.take();
+            if grouped && self.at_symbol(&group.as_ref().unwrap().close) { break; }
+        }
+        if grouped { self.want_sign(&group.unwrap().close, "after context managers")?; }
+        self.body()?;
+        Ok(())
+    }
+
     fn global_stmt(&mut self) -> Res<()> {
         self.take();
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
@@ -4090,6 +4135,17 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if self.on_keyword(&lang.yield_words) {
+            self.take();
+            if self.on_keyword(&lang.yield_from) { self.take(); }
+            let closed = lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close));
+            if !self.on_sep() && !closed && !matches!(self.look().shape, Shape::Close | Shape::Finish) {
+                self.expr(0)?;
+            }
+            self.piece().instrs.truncate(from);
+            self.unready(&lang.yield_unrun);
+            return Ok(());
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -5049,6 +5105,7 @@ impl<'a> Compiler<'a> {
         loop {
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme) { break; }
             if !member && !scope {
                 break;
             }

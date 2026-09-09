@@ -1265,6 +1265,18 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.import.from") || self.key("ext.stmt.import") {
                 return self.import_bindings();
             }
+            if self.key("ext.stmt.with") { return self.with_reading(); }
+            if self.key("ext.stmt.nonlocal") || self.key("ext.stmt.del") {
+                let nonlocal = self.key("ext.stmt.nonlocal");
+                self.advance();
+                loop {
+                    if nonlocal { self.need_word("in a nonlocal declaration")?; }
+                    else { self.expr(0)?; }
+                    if !self.on_any("syntax.call.separator") { break; }
+                    self.advance();
+                }
+                return Ok(self.reading_refusal(if nonlocal { "ext.stmt.nonlocal.unrun" } else { "ext.stmt.del.unrun" }));
+            }
             if self.key("ext.stmt.global") {
                 return self.global_names();
             }
@@ -1312,6 +1324,28 @@ impl<'a> Builder<'a> {
     }
 
     /// Each wanted name receives nothing until modules have values.
+    fn reading_refusal(&self, label: &str) -> Form {
+        prim_call(Prim::Raise, vec![constant(Value::text(self.table.single(label).unwrap_or_default()))])
+    }
+
+    fn with_reading(&mut self) -> Res<Form> {
+        self.advance();
+        let brackets = self.on_any("syntax.group.open");
+        if brackets { self.advance(); }
+        loop {
+            self.expr(0)?;
+            if self.key("ext.stmt.with.as") { self.advance(); self.expr(0)?; }
+            if !self.on_any("syntax.call.separator") { break; }
+            self.advance();
+            if brackets && self.on_any("syntax.group.close") { break; }
+        }
+        if brackets {
+            self.need_sign(self.table.single("syntax.group.close").unwrap(), "after context managers")?;
+        }
+        self.body()?;
+        Ok(self.reading_refusal("ext.stmt.with.unready"))
+    }
+
     fn import_bindings(&mut self) -> Res<Form> {
         let taking_names = self.key("ext.stmt.import.from");
         self.advance();
@@ -3875,6 +3909,13 @@ impl<'a> Builder<'a> {
     fn monadic_piece(&mut self) -> Res<Form> {
         let table = self.table;
         let t = self.look().clone();
+        if self.key("ext.stmt.yield") {
+            self.advance();
+            if self.key("ext.stmt.yield.from") { self.advance(); }
+            if !self.on_stmt_end() && !self.on_any("syntax.group.close")
+                && !matches!(self.look().shape, Shape::Close | Shape::Finish) { self.expr(0)?; }
+            return Ok(self.reading_refusal("ext.stmt.yield.unrun"));
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if table.spells("ext.stmt.unpack", &t.lexeme) && matches!(t.shape, Shape::Sign | Shape::Bare) {
@@ -4624,6 +4665,7 @@ impl<'a> Builder<'a> {
         loop {
             let reaching = table.single("ext.op.member").map_or(false, |m| self.sign(m));
             let owning = table.single("ext.op.scope").map_or(false, |m| self.sign(m));
+            if reaching && table.flag("ext.op.member.pipes") && table.prims.contains_key(&self.glance(1).lexeme) { return Ok(node); }
             if !reaching && !owning {
                 return Ok(node);
             }

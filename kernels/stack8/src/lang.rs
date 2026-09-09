@@ -636,6 +636,17 @@ pub struct Lang {
     pub catch_invalid: Option<String>,
     pub catch_tuple_open: Option<String>,
     pub catch_tuple_close: Option<String>,
+    pub with_words: Vec<String>,
+    pub with_as: Vec<String>,
+    pub with_unready: Vec<String>,
+    pub del_words: Vec<String>,
+    pub del_unrun: Vec<String>,
+    pub nonlocal_words: Vec<String>,
+    pub nonlocal_unrun: Vec<String>,
+    pub yield_words: Vec<String>,
+    pub yield_from: Vec<String>,
+    pub yield_unrun: Vec<String>,
+    pub member_pipes: bool,
     pub class_unready: Option<String>,
     pub catch_group: Option<String>,
     pub catch_group_unsupported: Option<String>,
@@ -727,7 +738,7 @@ w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destruct
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
-w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.lexical.string.long | b ext.lexical.string.adjacent | b ext.lexical.escape.continued | w ext.stmt.class.unready | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.lexical.string.long | b ext.lexical.string.adjacent | b ext.lexical.escape.continued | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.stmt.del | w ext.stmt.del.unrun | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | b ext.op.member.pipes | w ext.stmt.class.unready | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
@@ -1630,6 +1641,17 @@ impl Lang {
             long_quotes: r.strings("ext.lexical.string.long")?,
             adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
             continued_strings: r.flag("ext.lexical.escape.continued")?,
+            with_words: r.strings("ext.stmt.with")?,
+            with_as: r.strings("ext.stmt.with.as")?,
+            with_unready: r.strings("ext.stmt.with.unready")?,
+            del_words: r.strings("ext.stmt.del")?,
+            del_unrun: r.strings("ext.stmt.del.unrun")?,
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            yield_from: r.strings("ext.stmt.yield.from")?,
+            yield_unrun: r.strings("ext.stmt.yield.unrun")?,
+            member_pipes: r.flag("ext.op.member.pipes")?,
             class_unready: r.head("ext.stmt.class.unready")?,
             catch_group: r.head("ext.stmt.catch.group")?,
             catch_group_unsupported: r.head("ext.stmt.catch.group.unsupported")?,
@@ -1664,7 +1686,7 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || (lang.new_words.is_empty() && lang.class_unready.is_none())) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
