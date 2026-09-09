@@ -56,6 +56,24 @@ def spelled(definition):
     return words
 
 
+# A test taken from the reference implementation was written to be run
+# from that implementation's own root, where a path written plainly from
+# there — `./tests/basic/` — names the directory the test itself sits in.
+# Ours sit one level further down, under `tests/php/`, so a run started
+# from this root would find nothing where such a test looks. The runs are
+# therefore made from a place where `tests/` names our own tree of them,
+# which gives back exactly the standing the tests were written against.
+def where_tests_stand():
+    made = Path(tempfile.mkdtemp(prefix="lumen-tests-"))
+    named = made / "tests"
+    if not named.exists():
+        named.symlink_to(ROOT / "tests" / "php")
+    return made
+
+
+RUN_FROM = where_tests_stand()
+
+
 def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     # php-src's run-tests.php writes the program next to the .phpt it came
     # from, so a test naming a file beside itself finds it. Where a test
@@ -74,7 +92,7 @@ def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     body = (request or {}).get("body", "")
     try:
         p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path] + list(given), input=body, capture_output=True,
-                           encoding=BYTEWISE, timeout=TIMEOUT, env=bytewise_env(setting))
+                           encoding=BYTEWISE, timeout=TIMEOUT, env=bytewise_env(setting), cwd=RUN_FROM)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
@@ -212,7 +230,7 @@ def run_phpt(path, kernel):
     # cannot run says nothing either way, and the test runs, since a test
     # that shows what is missing is worth more than one passed over.
     if "SKIPIF" in s:
-        code, out, err = run(kernel, ["--lang", "langs/php.json"], s["SKIPIF"], ".skip.php", beside=path)
+        code, out, err = run(kernel, ["--lang", str(ROOT / "langs" / "php.json")], s["SKIPIF"], ".skip.php", beside=path)
         if code == 0 and out.strip().lower().startswith("skip"):
             return "skipped", out.strip()[:80]
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
@@ -221,7 +239,7 @@ def run_phpt(path, kernel):
     # run-tests.php hands the words of an --ARGS-- section to the program
     # as its own arguments, so a test that reads them reads them here too.
     given = s.get("ARGS", "").split()
-    code, out, err = run(kernel, ["--lang", "langs/php.json"], s["FILE"], ".php", web_request(s), beside=path, given=given)
+    code, out, err = run(kernel, ["--lang", str(ROOT / "langs" / "php.json")], s["FILE"], ".php", web_request(s), beside=path, given=given)
     # php-src's own run-tests.php trims both ends before comparing, and
     # a complaint is written with a blank line before it, so the same
     # trim is what the reference expects.
@@ -231,7 +249,7 @@ def run_phpt(path, kernel):
     # whatever the test left beside itself. What it prints is nobody's
     # business and whether it worked changes nothing.
     if "CLEAN" in s:
-        run(kernel, ["--lang", "langs/php.json"], s["CLEAN"], ".clean.php", beside=path)
+        run(kernel, ["--lang", str(ROOT / "langs" / "php.json")], s["CLEAN"], ".clean.php", beside=path)
     # run-tests.php compares what was written and does not look at the
     # exit status at all, save where a test asks for one outright. PHP
     # itself leaves with 255 on a fatal error, so a test whose expected

@@ -17,20 +17,20 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 100, differs 2, error 2, skipped 10 | pass 100, differs 2, error 2, skipped 10 |
+| `php/basic` | 114 | pass 101, differs 1, error 2, skipped 10 | pass 101, differs 1, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 207, differs 1, error 0, skipped 5 | pass 207, differs 1, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 58, differs 0, error 0, skipped 6 | pass 58, differs 0, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 9, differs 0, error 0, skipped 0 | pass 9, differs 0, error 0, skipped 0 |
-| all | 422 | pass 392, differs 3, error 2, skipped 25 | pass 392, differs 3, error 2, skipped 25 |
+| all | 422 | pass 393, differs 2, error 2, skipped 25 | pass 393, differs 2, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
-| ran, printed something else | 3 |
+| ran, printed something else | 2 |
 | skip php-cgi not available | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Failed opening required '<root>/tests/php/basic/../../sapi/cli/tests/php_cli_server.inc' (include_path='.') in <file> | 1 |
@@ -205,7 +205,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/GHSA-9pqp-7h25-4f32.phpt` | skipped | skipped | skip php-cgi not available |
 | `php/basic/array_key_exists_null_deprecation.phpt` | pass | pass |  |
 | `php/basic/array_null_offset_deprecation.phpt` | pass | pass |  |
-| `php/basic/bug20539.phpt` | differs | differs | ran, printed something else |
+| `php/basic/bug20539.phpt` | pass | pass |  |
 | `php/basic/bug29971.phpt` | pass | pass |  |
 | `php/basic/bug31875.phpt` | pass | pass |  |
 | `php/basic/bug45986.phpt` | pass | pass |  |
