@@ -9,12 +9,30 @@ use crate::value::{Value, Wording};
 
 type Answer = Result<Value, String>;
 
+fn alike(a: &Value, b: &Value) -> bool {
+    match (a,b) { (Value::Real(x),Value::Real(y)) if Rc::ptr_eq(x,y) => true, _ => a.equals(b) }
+}
+
+fn shown(value: &Value, words: &Wording) -> String {
+    if let Value::Real(r) = value {
+        let mut number=crate::value::as_binary(&r.p,&r.q);
+        if number==0.0 && r.below {number = -0.0;}
+        if !number.is_finite() {return if number.is_nan(){"nan".into()}else if number.is_sign_negative(){"-inf".into()}else{"inf".into()};}
+        let scientific=format!("{number:e}");
+        let (mantissa,power)=scientific.split_once('e').unwrap();let power=power.parse::<i32>().unwrap();
+        if !(-4..16).contains(&power){return format!("{mantissa}e{}{:02}",if power<0{"-"}else{"+"},power.abs());}
+        let mut plain=number.to_string();if !plain.contains('.') {plain.push_str(".0");}return plain;
+    }
+    value.representation(words)
+}
+
 fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
     if depth > 100 { return true; }
     match value {
         Value::Native(held, _) => Rc::ptr_eq(held,cell) || reaches(&held.borrow(),cell,depth+1),
         Value::Array(row) | Value::Tuple(row) => row.iter().any(|v|reaches(v,cell,depth+1)),
         Value::Map(entries) => entries.iter().any(|(k,v)|reaches(k,cell,depth+1)||reaches(v,cell,depth+1)),
+        Value::View(view) => reaches(&view.0,cell,depth+1),
         _ => false,
     }
 }
@@ -176,7 +194,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(1,if op=="index" {3} else {1})?;
                     let lo=a.get(1).map(|v|integer(v,fault)).transpose()?.map_or(0,|n|bound(n,row.len()));
                     let hi=a.get(2).map(|v|integer(v,fault)).transpose()?.map_or(row.len(),|n|bound(n,row.len()));
-                    let hits:Vec<usize>=(lo..hi).filter(|i|row[*i].equals(&a[0])).collect();
+                    let hits:Vec<usize>=(lo..hi).filter(|i|alike(&row[*i],&a[0])).collect();
                     if op=="count" {return Ok(Value::Small(hits.len() as i64));}
                     let at=*hits.first().ok_or_else(||fault(if op=="remove" {"remove"} else {"list_index"}))?;
                     if op=="index" {return Ok(Value::Small(at as i64));} row.remove(at);
@@ -194,7 +212,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "get" | "setdefault" | "pop" => {
                     arity(1,2)?;
                     if matches!(a[0].contents(), Value::Array(_) | Value::Map(_)) {return Err(fault("arguments"));}
-                    let at=pairs.iter().position(|(k,_)| k.equals(&a[0]));
+                    let at=pairs.iter().position(|(k,_)| alike(k,&a[0]));
                     if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
                     let value=a.get(1).cloned().unwrap_or(Value::Null);
                     if op=="pop" && a.len()==1 {return Err(fault("key")+&a[0].representation(words));}
@@ -252,7 +270,10 @@ fn format_fields(template: &str, args: &[Value], names: &[(String,Value)], words
         let value=value.contents();
         let rendered=if spec=="x" {match &value {Value::Small(_) | Value::Huge(_)=>value.as_big()?.to_str_radix(16),_=>return Err(fault("arguments"))}}
             else if spec=="," {let raw=match &value {Value::Small(_) | Value::Huge(_)=>value.as_big()?.to_string(),_=>return Err(fault("spec"))};let (sign,digits)=raw.strip_prefix('-').map_or(("",raw.as_str()),|n|("-",n));let mut grouped=String::new();for (i,c) in digits.chars().enumerate(){if i>0 && (digits.len()-i)%3==0 {grouped.push(',');}grouped.push(c);}format!("{sign}{grouped}")}
-            else {let letters:Vec<char>=spec.chars().collect();let align=if letters.first().map_or(false,|c|matches!(c,'<'|'>'|'^')) {1}else if letters.get(1).map_or(false,|c|matches!(c,'<'|'>'|'^')){2}else{0};let valid=spec.is_empty() || align>0 && letters[align..].iter().collect::<String>().parse::<usize>().map_or(false,|n|n<=100000) || spec.strip_prefix('.').and_then(|s|s.strip_suffix('f')).and_then(|s|s.parse::<usize>().ok()).map_or(false,|n|n<=1000)&&matches!(value,Value::Small(_)|Value::Huge(_)|Value::Real(_));if !valid{return Err(fault("spec"));}value.string_field(words,spec,conversion)};
+            else {let letters:Vec<char>=spec.chars().collect();let align=if letters.first().map_or(false,|c|matches!(c,'<'|'>'|'^')) {1}else if letters.get(1).map_or(false,|c|matches!(c,'<'|'>'|'^')){2}else{0};let valid=spec.is_empty() || align>0 && letters[align..].iter().collect::<String>().parse::<usize>().map_or(false,|n|n<=100000) || spec.strip_prefix('.').and_then(|s|s.strip_suffix('f')).and_then(|s|s.parse::<usize>().ok()).map_or(false,|n|n<=1000)&&matches!(value,Value::Small(_)|Value::Huge(_)|Value::Real(_));if !valid{return Err(fault("spec"));}if spec.ends_with('f') && conversion.is_empty() {value.string_field(words,spec,conversion)} else {
+                let base=if let Value::Text(_) = value {value.string_field(words,"",conversion)} else {shown(&value,words)};
+                Value::text(&base).string_field(words,spec,"")
+            }};
         out.push_str(&rendered);
     }
     Ok(out)

@@ -216,7 +216,7 @@ impl Request<'_> {
                 self.takes(1,if self.operation=="index"{3}else{1})?;
                 let start=place(self.number(1,0)?,values.len());let stop=place(self.number(2,values.len() as i64)?,values.len());
                 let mut first=None;let mut count=0;
-                for (at,value) in values.iter().enumerate().take(stop).skip(start){if value.equals(&self.given[0]){count+=1;if first.is_none(){first=Some(at);}}}
+                for (at,value) in values.iter().enumerate().take(stop).skip(start){if same_item(value,&self.given[0]){count+=1;if first.is_none(){first=Some(at);}}}
                 if self.operation=="count"{return Ok(Value::Small(count));}
                 let at=first.ok_or_else(||self.fail(if self.operation=="remove"{"remove"}else{"list_index"}))?;
                 if self.operation=="index"{return Ok(Value::Small(at as i64));}values.remove(at);
@@ -237,7 +237,7 @@ impl Request<'_> {
             "get"|"setdefault"|"pop"=>{
                 self.takes(1,2)?;let key=&self.given[0];
                 if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
-                if let Some(index)=entries.iter().position(|e|e.0.equals(key)){
+                if let Some(index)=entries.iter().position(|e|same_item(&e.0,key)){
                     let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
                 }
                 if self.operation=="pop"&&self.given.len()==1{return Err(self.fail("key")+&key.repr(&self.names));}
@@ -293,7 +293,21 @@ impl Request<'_> {
             valid|=pattern[1..pattern.len()-1].parse::<usize>().map_or(false,|precision|precision<=1000);
         }
         if !valid{return Err(self.fail("spec"));}
-        Ok(value.in_field(self.names,pattern,conversion))
+        if pattern.ends_with('f') && conversion.is_empty(){return Ok(value.in_field(self.names,pattern,conversion));}
+        let text=match &value{
+            Value::Text(_)=>value.in_field(self.names,"",conversion),
+            Value::Frac(ratio)=>{
+                let mut binary=crate::data::nearest_binary(&ratio.above,&ratio.beneath);
+                if binary==0.0&&ratio.under{binary = -0.0;}
+                if binary.is_nan(){String::from("nan")}else if binary.is_infinite(){String::from(if binary<0.0{"-inf"}else{"inf"})}else{
+                    let expanded=format!("{:e}",binary);let cut=expanded.find('e').unwrap();let exponent=expanded[cut+1..].parse::<i32>().unwrap();
+                    if exponent>=16||exponent< -4{format!("{}e{}{:02}",&expanded[..cut],if exponent<0{"-"}else{"+"},exponent.abs())}
+                    else{let short=binary.to_string();if short.contains('.') {short}else{short+".0"}}
+                }
+            }
+            _=>value.repr(&self.names),
+        };
+        Ok(Value::text(&text).in_field(self.names,pattern,""))
     }
 }
 
@@ -304,9 +318,15 @@ fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)-
     }
     let parts=match value {
         Value::Vector(items)|Value::Row(items)=>items.to_vec(),
+        Value::Window(owner,_)=>vec![owner.as_ref().clone()],
         Value::Dict(entries)=>entries.iter().flat_map(|(key,value)|[key.clone(),value.clone()]).collect(),
         _=>return false,
     };
     for part in parts {if circular(&part,receiver,level+1){return true;}}
     false
+}
+
+fn same_item(left:&Value,right:&Value)->bool{
+    if let (Value::Frac(a),Value::Frac(b))=(left,right){if Rc::ptr_eq(a,b){return true;}}
+    left.equals(right)
 }
