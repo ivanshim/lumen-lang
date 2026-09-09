@@ -5640,7 +5640,7 @@ impl Engine<'_> {
                     self.carried = Some(f);
                     return Err(self.core_fault("core.unready", &p.ident));
                 }
-                self.drop_top().map_err(|f| { self.carried = Some(f); self.core_fault("core.unready", &p.ident) })
+                self.drop_top()
             }
             _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
         }
