@@ -2884,6 +2884,7 @@ impl<'a> Builder<'a> {
             }
         }
         let plain = compound.is_none();
+        let refused_slice = !plain && slice_target(&expr);
         // `b = &a`: b is tied to a's cell rather than given a copy.
         let tied_to_a_cell = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain;
         let mut shared_value: Option<Form> = None;
@@ -3310,6 +3311,9 @@ impl<'a> Builder<'a> {
             }
             _ => return Err(format!("Invalid assignment target before '{}'", assign.lexeme)),
         };
+        let made = if refused_slice {
+            sequence(vec![prim_call(Prim::SliceRefused, Vec::new()), made])
+        } else { made };
         let made = match before_bounds {
             Some(first) => sequence(vec![first, made]),
             None => made,
@@ -4300,6 +4304,30 @@ impl<'a> Builder<'a> {
         Ok(node)
     }
 
+    fn bracket_part(&mut self, close: &str, comma: Option<&str>) -> Res<Form> {
+        if self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
+            self.advance();
+            return Ok(prim_call(Prim::SliceRefused, Vec::new()));
+        }
+        let separators = self.table.strings("ext.op.index.slice").to_vec();
+        let mut parts = Vec::new();
+        let mut spanning = false;
+        loop {
+            let at_mark = separators.iter().any(|word| self.sign(word));
+            let at_end = self.sign(close) || comma.map_or(false, |word| self.sign(word));
+            parts.push(if at_mark || (spanning && at_end) { constant(Value::Nil) } else { self.expr(0)? });
+            if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) { break; }
+            spanning = true;
+            self.advance();
+        }
+        Ok(if spanning {
+            parts.resize_with(3, || constant(Value::Nil));
+            prim_call(Prim::SliceBounds, parts)
+        } else {
+            parts.pop().expect("the single place")
+        })
+    }
+
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
         node = self.members(node)?;
         let (Some(open), Some(close)) = (self.table.single("op.index.open"), self.table.single("op.index.close")) else { return Ok(node) };
@@ -4311,25 +4339,17 @@ impl<'a> Builder<'a> {
                 continue;
             }
             self.advance();
-            let separators = self.table.strings("ext.op.index.slice").to_vec();
-            let mut parts = Vec::new();
-            let mut spanning = false;
-            loop {
-                let at_mark = separators.iter().any(|word| self.sign(word));
-                let missing = at_mark || (spanning && self.sign(close));
-                parts.push(if missing { constant(Value::Nil) } else { self.expr(0)? });
-                if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) {
-                    break;
+            let separator = self.table.single("syntax.call.separator");
+            let mut keys = vec![self.bracket_part(close, separator)?];
+            let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));
+            if several {
+                while separator.map_or(false, |word| self.sign(word)) {
+                    self.advance();
+                    if self.sign(close) { break; }
+                    keys.push(self.bracket_part(close, separator)?);
                 }
-                spanning = true;
-                self.advance();
             }
-            let key = if spanning {
-                parts.resize_with(3, || constant(Value::Nil));
-                prim_call(Prim::SliceBounds, parts)
-            } else {
-                parts.pop().expect("the single place")
-            };
+            let key = if several { prim_call(Prim::SliceRefused, keys) } else { keys.pop().expect("one key") };
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
             // What a look comes to may itself be called.

@@ -752,7 +752,11 @@ only. The extension labels so far, all from PHP:
   over and between that count and the count wanted, where they differ.
   `ext.op.index.slice.detached` refuses a write through a slice along
   the way: the slice is a new array, and writing it back would change
-  the array it came from without warrant.
+  the array it came from without warrant. `ext.op.index.slice.ellipsis`
+  spells an ellipsis among the places in brackets. Several places
+  separated by the call separator, an ellipsis, and a compound slice
+  write are read whole but stop with `.unsupported`: their running
+  is still wanting.
 - `ext.op.index.text`: a switch; a piece of text is a row of places,
   each holding one letter. Such a place takes a letter as well as
   giving one: only the first letter of what is written there is put
@@ -1675,7 +1679,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.assign.compound` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
@@ -1702,8 +1706,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.slice.assign` | - | - | `can only assign an iterable` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.bounds` | - | - | `slice indices must be integers or None or have an __index__ method` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.detached` | - | - | `assignment through a slice is not supported` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.length` | - | - | `attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.unsupported` | - | - | `slice operation is not supported for this value` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.unsupported` | - | - | `this slice operation is not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.zero` | - | - | `slice step cannot be zero` | - | - | - | - | - | - | - |
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
