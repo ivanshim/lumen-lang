@@ -44,6 +44,10 @@ pub struct Lang {
     pub extensions: Vec<String>,
     pub banner: String,
 
+    pub line_continuations: Vec<String>,
+    pub bare_number_point: bool,
+    pub separator_after_prefix: bool,
+    pub whole_bits: bool,
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
@@ -643,6 +647,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
@@ -1200,6 +1205,10 @@ impl Lang {
             ident: name,
             extensions: r.strings("extensions")?,
             banner: prefix,
+            line_continuations: r.strings("ext.lexical.line_continuation")?,
+            bare_number_point: r.flag("ext.lexical.number.point.bare")?,
+            separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
+            whole_bits: r.flag("ext.op.bit.whole")?,
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
@@ -1609,7 +1618,7 @@ impl Lang {
         let mut lists: Vec<&Vec<String>> = vec![
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
+            &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.line_continuations,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);

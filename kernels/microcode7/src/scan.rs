@@ -94,6 +94,12 @@ fn drop_comments(source: &str, table: &Table) -> String {
             kept.extend(after[..stop].chars().filter(|c| *c == '\n'));
             ahead = &after[stop..];
         } else if lines.iter().any(|m| ahead.starts_with(m.as_str())) {
+            for ending in table.strings("ext.lexical.line_continuation") {
+                if kept.ends_with(ending.as_str()) {
+                    kept.push(' ');
+                    break;
+                }
+            }
             ahead = ahead.find('\n').map_or("", |p| &ahead[p..]);
         } else {
             kept.push(c);
@@ -572,6 +578,24 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
         }
         let c = src[pos];
+        let mut carried = false;
+        for mark in table.strings("ext.lexical.line_continuation") {
+            if written_at(&src, pos, mark) {
+                let mut end = pos + mark.chars().count();
+                if src.get(end) == Some(&'\r') {
+                    end += 1;
+                }
+                if src.get(end) == Some(&'\n') {
+                    pos = end + 1;
+                    row += 1;
+                    carried = true;
+                    break;
+                }
+            }
+        }
+        if carried {
+            continue;
+        }
         if c == '\n' {
             tokens.push(tok(Shape::LineEnd, "\n".into(), row));
             row += 1;
@@ -605,6 +629,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             while k < src.len() {
                 let d = src[k];
                 if d == '\\' && k + 1 < src.len() {
+                    if !is_raw && table.spells("ext.lexical.line_continuation", "\\") {
+                        let end = k + 1 + usize::from(src[k + 1] == '\r');
+                        if src.get(end) == Some(&'\n') {
+                            row += 1;
+                            k = end + 1;
+                            continue;
+                        }
+                    }
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }
@@ -629,7 +661,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point.bare")
+            && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit))
+        {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -637,7 +671,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             let at = |k: usize| src.get(k).copied();
             let opened = in_base
                 .iter()
-                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(k + 1).map_or(false, |x| x.is_digit(*radix)))
+                .find(|(d, l, radix)| {
+                    let first = k + 1 + usize::from(table.flag("ext.lexical.number.separator.after_prefix")
+                        && at(k + 1).map_or(false, |x| apart.contains(&x)));
+                    k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(first).map_or(false, |x| x.is_digit(*radix))
+                })
                 .copied();
             if let Some((_, _, radix)) = opened {
                 k += 1;
@@ -655,7 +693,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.bare") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -665,7 +703,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
                 if at(k).map_or(false, |c| powers.contains(&c)) && at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit()) {
                     k += 1 + sign_len;
-                    while k < src.len() && src[k].is_ascii_digit() {
+                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
                     }
                 }

@@ -32,7 +32,8 @@
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
   "lexical.number.hex_prefix": [
-    "0x"
+    "0x",
+    "0X"
   ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
@@ -45,7 +46,9 @@
     ":"
   ],
   "block.indent_size": 4,
-  "stmt.terminator": [],
+  "stmt.terminator": [
+    ";"
+  ],
   "syntax.notation": "infix",
   "syntax.group.open": [
     "("
@@ -114,6 +117,19 @@
       ">="
     ],
     [
+      "|"
+    ],
+    [
+      "^"
+    ],
+    [
+      "&"
+    ],
+    [
+      "<<",
+      ">>"
+    ],
+    [
       "+",
       "-"
     ],
@@ -124,7 +140,8 @@
       "%"
     ],
     [
-      "-"
+      "-",
+      "~"
     ],
     [
       "**"
@@ -313,7 +330,57 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
-  "ext.stmt.decorator": ["@"],
-  "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.lexical.line_continuation": [
+    "\\"
+  ],
+  "ext.lexical.number.binary_prefix": [
+    "0b",
+    "0B"
+  ],
+  "ext.lexical.number.exponent": [
+    "e",
+    "E"
+  ],
+  "ext.lexical.number.octal_prefix": [
+    "0o",
+    "0O"
+  ],
+  "ext.lexical.number.point.bare": true,
+  "ext.lexical.number.separator": [
+    "_"
+  ],
+  "ext.lexical.number.separator.after_prefix": true,
+  "ext.op.assign.compound": true,
+  "ext.op.bit.and": [
+    "&"
+  ],
+  "ext.op.bit.left": [
+    "<<"
+  ],
+  "ext.op.bit.not": [
+    "~"
+  ],
+  "ext.op.bit.or": [
+    "|"
+  ],
+  "ext.op.bit.right": [
+    ">>"
+  ],
+  "ext.op.bit.whole": true,
+  "ext.op.bit.xor": [
+    "^"
+  ],
+  "ext.stmt.decorator": [
+    "@"
+  ],
+  "ext.stmt.decorator.amiss": [
+    "A decorator must stand on its own line before a function definition"
+  ],
+  "ext.stmt.for.collection": true,
+  "ext.system.fault.operands": [
+    "unsupported operand type(s)"
+  ],
+  "ext.system.fault.shift": [
+    "negative shift count"
+  ]
 }
