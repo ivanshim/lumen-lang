@@ -1,0 +1,4 @@
+print(round(2.5), round(3.5), round(-2.5), round(2.675, 2), round(125, -1), round(135, -1))
+print(divmod(-7, 2), divmod(7, -2), pow(3, -1, 11), pow(2, 3, -5))
+print(hex(-15), oct(8), bin(-3), sum([True, 2], start=3))
+print(min([], default=9), max([], default=None), sorted([3, 1, 2], reverse=True))

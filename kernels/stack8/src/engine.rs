@@ -12,7 +12,7 @@ use num_traits::ToPrimitive;
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
+use crate::value::{CursorState, CursorSource, Class, Instance, Reach, Sort, Value, Wording};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -986,7 +986,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Tuple(_) | Value::Set(_) | Value::Cursor(_) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -1381,13 +1381,14 @@ impl<'a> Engine<'a> {
 
     /// Untie call arguments only at the call boundary. A literal's ties
     /// have already become a map by then and remain ordinary values.
-    fn call_items(&self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+    fn call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
         let mut items = Vec::new();
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
                     Value::Flag(false) => match &pair.1 {
+                        Value::Cursor(_) => items.extend(self.core_members(&pair.1)?.into_iter().map(|v| (None,v))),
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
@@ -1418,7 +1419,7 @@ impl<'a> Engine<'a> {
 
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
-    fn bind_call(&self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
+    fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
         let items = self.call_items(args)?;
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
@@ -2949,6 +2950,9 @@ impl<'a> Engine<'a> {
             }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
+                if matches!(pair[0], Value::Cursor(_)) {
+                    let more = self.core_more(&pair[0])?; self.data.push(Value::Flag(more)); return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None if matches!(&pair[0], Value::Counted(_)) => {
@@ -2974,6 +2978,7 @@ impl<'a> Engine<'a> {
                 };
                 let pair = self.drop_many(2)?;
                 match self.walk_asked(&pair[0], named)? {
+                    None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else { self.core_step(&pair[0])?.ok_or_else(|| self.core_fault("core.exhausted", ""))? },
                     Some(answer) => answer,
                     None => {
                         self.data.push(pair[0].clone());
@@ -3971,9 +3976,9 @@ impl<'a> Engine<'a> {
     // ---------- builtins ----------
 
     /// The collections this reader can walk without asking a protocol.
-    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+    fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Cursor(c) => { let mut held = c.borrow_mut(); let rest = held.0[held.1..].to_vec(); held.1 = held.0.len(); Ok(rest) }
+            Value::Cursor(_) => self.core_members(value),
             Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4642,6 +4647,10 @@ impl<'a> Engine<'a> {
             }
             Builtin::Any => {
                 arity(1)?;
+                if matches!(args[0], Value::Cursor(_)) {
+                    while let Some(value) = self.core_step(&args[0])? { if self.truth(&value) { return Ok(Value::Flag(true)); } }
+                    return Ok(Value::Flag(false));
+                }
                 Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
             }
             Builtin::Sum => {
@@ -5622,12 +5631,72 @@ impl Engine<'_> {
         self.lang.core_words.get(label).map_or_else(String::new, |words| Self::named_fault(words, piece))
     }
 
-    fn core_members(&self, v: &Value) -> Res<Vec<Value>> {
-        if let Value::Cursor(cursor) = v {
-            let mut c = cursor.borrow_mut();
-            let rest = c.0[c.1..].to_vec();
-            c.1 = c.0.len();
-            return Ok(rest);
+    fn core_cursor(source: CursorSource) -> Value {
+        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false })))
+    }
+
+    fn core_iterator(&mut self, source: &Value) -> Res<Value> {
+        if matches!(source, Value::Cursor(_)) { return Ok(source.clone()); }
+        Ok(Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0)))
+    }
+
+    fn core_step(&mut self, walk: &Value) -> Res<Option<Value>> {
+        let Value::Cursor(cell) = walk else { return Err(self.core_fault("core.unready", "next")); };
+        let mut source = {
+            let mut state = cell.borrow_mut();
+            if state.busy { return Err(self.core_fault("core.unready", "next")); }
+            if let Some(value) = state.pending.take() { return Ok(Some(value)); }
+            if state.finished { return Ok(None); }
+            state.busy = true;
+            state.source.clone()
+        };
+        let answer = (|| match &mut source {
+            CursorSource::Items(values, place) => {
+                let found = values.get(*place).cloned();
+                if found.is_some() { *place += 1; }
+                Ok(found)
+            }
+            CursorSource::Numbered(inner, count) => {
+                let Some(value) = self.core_step(inner)? else { return Ok(None); };
+                let numbered = Value::Tuple(Rc::new(vec![Value::of_big(count.clone()), value]));
+                *count += 1;
+                Ok(Some(numbered))
+            }
+            CursorSource::Combined(walks, work) => {
+                if walks.is_empty() { return Ok(None); }
+                let mut row = Vec::new();
+                for inner in walks { let Some(value) = self.core_step(inner)? else { return Ok(None); }; row.push(value); }
+                Ok(Some(if let Some(work) = work { self.core_apply(work, row)? } else { Value::Tuple(Rc::new(row)) }))
+            }
+            CursorSource::Selected(inner, test) => {
+                while let Some(value) = self.core_step(inner)? {
+                    let verdict = if matches!(test, Value::Null) { value.clone() } else { self.core_apply(test, vec![value.clone()])? };
+                    if self.truth(&verdict) { return Ok(Some(value)); }
+                }
+                Ok(None)
+            }
+        })();
+        let mut state = cell.borrow_mut();
+        state.source = source;
+        state.busy = false;
+        if matches!(answer, Ok(None)) { state.finished = true; }
+        answer
+    }
+
+    fn core_more(&mut self, walk: &Value) -> Res<bool> {
+        let Value::Cursor(cell) = walk else { return Ok(false); };
+        if cell.borrow().pending.is_some() { return Ok(true); }
+        let value = self.core_step(walk)?;
+        let more = value.is_some();
+        cell.borrow_mut().pending = value;
+        Ok(more)
+    }
+
+    fn core_members(&mut self, v: &Value) -> Res<Vec<Value>> {
+        if matches!(v, Value::Cursor(_)) {
+            let mut items = Vec::new();
+            while let Some(value) = self.core_step(v)? { items.push(value); }
+            return Ok(items);
         }
         self.comprehension_items(v).map_err(|_| self.core_fault("core.uniterable", &v.core_kind()))
     }
@@ -5765,50 +5834,42 @@ impl Engine<'_> {
                 arity(1, 2)?;
                 if args.len() == 2 { return Err(self.core_fault("core.unready", name)); }
                 if matches!(args[0], Value::Cursor(_)) { return Ok(args[0].clone()); }
-                Value::Cursor(Rc::new(RefCell::new((self.core_members(&args[0])?, 0))))
+                self.core_iterator(&args[0])?
             }
             Builtin::Next => {
                 arity(1, 2)?;
-                let Value::Cursor(c) = &args[0] else { return Err(self.core_fault("core.unready", name)); };
-                let mut held = c.borrow_mut();
-                if let Some(v) = held.0.get(held.1).cloned() { held.1 += 1; v }
-                else { args.get(1).cloned().ok_or_else(|| self.core_fault("core.exhausted", ""))? }
+                self.core_step(&args[0])?.or_else(|| args.get(1).cloned()).ok_or_else(|| self.core_fault("core.exhausted", ""))?
             }
             Builtin::Reversed => {
                 arity(1, 1)?;
                 if !matches!(args[0], Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_)) { return Err(self.core_fault("core.unready", name)); }
                 let mut items = self.core_members(&args[0])?; items.reverse();
-                Value::Cursor(Rc::new(RefCell::new((items, 0))))
+                Self::core_cursor(CursorSource::Items(items, 0))
             }
             Builtin::Enumerate => {
                 arity(1, 2)?;
-                let mut n = args.get(1).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(0));
-                let mut pairs = Vec::new();
-                for v in self.core_members(&args[0])? { pairs.push(Value::Tuple(Rc::new(vec![Value::of_big(n.clone()), v]))); n += 1; }
-                Value::Cursor(Rc::new(RefCell::new((pairs, 0))))
+                let n = args.get(1).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(0));
+                let walk = self.core_iterator(&args[0])?;
+                Self::core_cursor(CursorSource::Numbered(walk, n))
             }
             Builtin::Zip | Builtin::Map => {
                 arity(if b == Builtin::Map { 2 } else { 0 }, usize::MAX)?;
-                let sources = if b == Builtin::Map { &args[1..] } else { &args[..] };
-                let columns: Vec<_> = sources.iter().map(|v| self.core_members(v)).collect::<Res<_>>()?;
-                let count = columns.iter().map(Vec::len).min().unwrap_or(0);
-                let mut rows = Vec::new();
-                for at in 0..count {
-                    let row: Vec<_> = columns.iter().map(|column| column[at].clone()).collect();
-                    rows.push(if b == Builtin::Map { self.core_apply(&args[0], row)? } else { Value::Tuple(Rc::new(row)) });
-                }
-                Value::Cursor(Rc::new(RefCell::new((rows, 0))))
+                let offset = usize::from(b == Builtin::Map);
+                let mut walks = Vec::new();
+                for source in &args[offset..] { walks.push(self.core_iterator(source)?); }
+                Self::core_cursor(CursorSource::Combined(walks, if b == Builtin::Map { Some(args[0].clone()) } else { None }))
             }
             Builtin::Filter => {
                 arity(2, 2)?;
-                let mut kept = Vec::new();
-                for v in self.core_members(&args[1])? {
-                    let test = if matches!(args[0], Value::Null) { v.clone() } else { self.core_apply(&args[0], vec![v.clone()])? };
-                    if self.truth(&test) { kept.push(v); }
-                }
-                Value::Cursor(Rc::new(RefCell::new((kept, 0))))
+                let walk = self.core_iterator(&args[1])?;
+                Self::core_cursor(CursorSource::Selected(walk, args[0].clone()))
             }
-            Builtin::All => { arity(1, 1)?; Value::Flag(self.core_members(&args[0])?.iter().all(|v| self.truth(v))) }
+            Builtin::All => {
+                arity(1, 1)?;
+                let walk = self.core_iterator(&args[0])?;
+                while let Some(value) = self.core_step(&walk)? { if !self.truth(&value) { return Ok(Value::Flag(false)); } }
+                Value::Flag(true)
+            }
             Builtin::Minimum | Builtin::Maximum | Builtin::Sorted => {
                 arity(1, if b == Builtin::Sorted { 1 } else { usize::MAX })?;
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
@@ -5875,7 +5936,7 @@ impl Engine<'_> {
                 let x = number(&args[0]);
                 if let Value::Small(_) | Value::Huge(_) = x {
                     if digits >= 0 { return Ok(x); }
-                    let exp = u32::try_from(-digits).map_err(|_| self.core_fault("core.unready", name))?;
+                    let exp = digits.checked_neg().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| self.core_fault("core.unready", name))?;
                     if exp > 100000 { return Err(self.core_fault("core.unready", name)); }
                     let scale = BigInt::from(10).pow(exp); let n = x.as_big()?;
                     let (mut q,r) = n.div_mod_floor(&scale);
@@ -5887,8 +5948,12 @@ impl Engine<'_> {
                     if !f.is_finite() || !(-308..=308).contains(&digits) { return Err(self.core_fault("core.unready", name)); }
                     let rounded = if digits >= 0 { format!("{:.*}", digits as usize, f).parse::<f64>().map_err(|_| self.core_fault("core.unready", name))? }
                         else { let scale = 10f64.powi(-digits as i32); (f / scale).round_ties_even() * scale };
-                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { Value::of_big(BigInt::from(rounded as i128)) }
-                    else { crate::value::real_of(rounded, arith::DEFAULT_PLACES) }
+                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { Value::of_big(crate::value::from_binary(rounded).ok_or_else(|| self.core_fault("core.unready", name))?.0) }
+                    else {
+                        let text = format!("{:.*}", digits.max(0) as usize, rounded);
+                        let numerator = text.replace('.', "").parse::<BigInt>().map_err(|_| self.core_fault("core.unready", name))?;
+                        arith::shape_number(numerator, BigInt::from(10).pow(digits.max(0) as u32), Some(arith::DEFAULT_PLACES))
+                    }
                 }
             }
             Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => {

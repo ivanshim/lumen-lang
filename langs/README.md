@@ -721,7 +721,7 @@ only. The extension labels so far, all from PHP:
   gather members backward, number them, join walks abreast, call a routine
   on their members, or keep those for which a routine answers true.
   Nothing as the filtering routine asks the member itself. These calls
-  presently gather their answers eagerly and hand out a cursor over them.
+  hand out a cursor and ask their routines only as members are taken.
   `ext.builtin.start` names the first number for enumeration and the
   starting value for `ext.builtin.sum`.
 - `ext.builtin.all` asks whether every member holds true, including when

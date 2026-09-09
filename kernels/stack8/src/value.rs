@@ -113,12 +113,29 @@ impl Counted {
     }
 }
 
+/// A cursor keeps one pending item for a loop's question about its end.
+#[derive(Debug, Clone)]
+pub struct CursorState {
+    pub source: CursorSource,
+    pub pending: Option<Value>,
+    pub finished: bool,
+    pub busy: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum CursorSource {
+    Items(Vec<Value>, usize),
+    Numbered(Value, BigInt),
+    Combined(Vec<Value>, Option<Value>),
+    Selected(Value, Value),
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Native(crate::code::Builtin, Rc<str>),
     Tuple(Rc<Vec<Value>>),
     Set(Rc<Vec<Value>>),
-    Cursor(Rc<RefCell<(Vec<Value>, usize)>>),
+    Cursor(Rc<RefCell<CursorState>>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -277,6 +294,8 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Native(a,_), Value::Native(b,_)) => a == b,
+            (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a,b),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -287,7 +306,8 @@ impl Value {
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
-            (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
@@ -315,7 +335,8 @@ impl Value {
             return self.identical(&held);
         }
         match (self, other) {
-            (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.identical(k) && x.identical(y))
             }

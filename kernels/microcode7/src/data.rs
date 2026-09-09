@@ -117,12 +117,29 @@ impl Progression {
     }
 }
 
+/// A walk may keep a member aside while a loop asks whether it has more.
+#[derive(Clone)]
+pub struct IteratorState {
+    pub kind: IteratorKind,
+    pub peek: Option<Value>,
+    pub done: bool,
+}
+
+#[derive(Clone)]
+pub enum IteratorKind {
+    Stored(std::collections::VecDeque<Value>),
+    Count(Value, BigInt),
+    Parallel { inputs: Vec<Value>, mapper: Option<Value> },
+    Select(Value, Value),
+    Busy,
+}
+
 #[derive(Clone)]
 pub enum Value {
     Intrinsic(Rc<str>),
     Tuple(Rc<Vec<Value>>),
     Set(Rc<Vec<Value>>),
-    Iterator(Rc<RefCell<std::collections::VecDeque<Value>>>),
+    Iterator(Rc<RefCell<IteratorState>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -263,6 +280,8 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
+            (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -275,7 +294,8 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
