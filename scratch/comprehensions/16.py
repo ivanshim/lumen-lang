@@ -1,0 +1,6 @@
+print([1, "hello"])
+print([x for x in [1, "hello"]])
+print((x for x in [1, "hello"]))
+print({1, "hello"})
+print([1, *["hello"]])
+print({**{"a": [1, "hello"]}})

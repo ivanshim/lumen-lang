@@ -297,7 +297,7 @@ impl<'a> Machine<'a> {
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
-            loose_equals: table.single("ext.op.identical").is_some(),
+            loose_equals: table.has_any("ext.op.identical") && !table.has_any("ext.op.identical.negated"),
         }
     }
 
@@ -993,6 +993,101 @@ impl<'a> Machine<'a> {
     /// having been brought to the width and the other not.
     fn number_said(&self, v: &Value) -> Option<Value> {
         number_spelled_in(v).map(|n| self.at_width(n))
+    }
+
+    fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
+        match item {
+            Value::Vector(elements) => {
+                let mut shown = Vec::new();
+                for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
+                return Ok(format!("[{}]", shown.join(", ")));
+            }
+            Value::Dict(entries) => {
+                let mut shown = Vec::new();
+                for (key, value) in entries.iter() {
+                    let key = self.quoted_remainder(key)?;
+                    let value = self.quoted_remainder(value)?;
+                    shown.push(format!("{}: {}", key, value));
+                }
+                return Ok(format!("{{{}}}", shown.join(", ")));
+            }
+            Value::Frac(n) if n.places.is_some() => {
+                let mut shown = item.render(self.wording());
+                if !n.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown += ".0"; }
+                return Ok(shown);
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => return Ok(item.render(self.wording())),
+            Value::Text(_) => {}
+            _ => return Err(self.table.single("ext.op.rem.format.unsupported").unwrap_or_default().to_string()),
+        }
+        let Value::Text(text) = item else { unreachable!() };
+        let delimiter = if !text.contains('"') && text.contains('\'') { '"' } else { '\'' };
+        let middle: String = text.chars().map(|letter| match letter {
+            '\\' => "\\\\".to_string(),
+            '\t' => "\\t".to_string(),
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            c if c == delimiter => format!("\\{}", c),
+            c if c.is_control() => format!("\\x{:02x}", c as u32),
+            c => c.to_string(),
+        }).collect();
+        Ok(format!("{}{}{}", delimiter, middle, delimiter))
+    }
+
+    fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
+        let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
+        let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
+        let mut arguments = supplied.iter();
+        let letters: Vec<char> = pattern.chars().collect();
+        let mut at = 0;
+        let mut result = String::new();
+        while at < letters.len() {
+            let letter = letters[at];
+            at += 1;
+            if letter != '%' { result.push(letter); continue; }
+            if letters.get(at) == Some(&'%') { result.push('%'); at += 1; continue; }
+            let mut places = 6usize;
+            let specified = letters.get(at) == Some(&'.');
+            if specified {
+                at += 1;
+                let start = at;
+                while letters.get(at).map_or(false, char::is_ascii_digit) { at += 1; }
+                places = letters[start..at].iter().collect::<String>().parse().map_err(|_| unsupported.to_string())?;
+                if places > 10000 { return Err(unsupported.to_string()); }
+            }
+            let code = *letters.get(at).ok_or_else(|| unsupported.to_string())?;
+            at += 1;
+            if specified && code != 'f' { return Err(unsupported.to_string()); }
+            let worth = arguments.next().ok_or_else(|| mismatch.to_string())?;
+            match code {
+                'r' => result.push_str(&self.quoted_remainder(worth)?),
+                's' => {
+                    let text = match worth { Value::Text(s) => s.to_string(), other => self.quoted_remainder(other)? };
+                    result.push_str(&text);
+                }
+                'x' | 'd' => {
+                    let permitted = matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || (code == 'd' && matches!(worth, Value::Frac(n) if n.places.is_some()));
+                    if !permitted { return Err(mismatch.to_string()); }
+                    let n = worth.as_big().map_err(|_| mismatch.to_string())?;
+                    result.push_str(&n.to_str_radix(if code == 'x' { 16 } else { 10 }));
+                }
+                'f' => {
+                    if !matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_)) { return Err(mismatch.to_string()); }
+                    let binary = match worth {
+                        Value::Flag(truth) => if *truth { 1.0 } else { 0.0 },
+                        other => {
+                            let ratio = math::ratio_of(other).ok_or_else(|| mismatch.to_string())?;
+                            crate::data::nearest_binary(&ratio.above, &ratio.beneath)
+                        }
+                    };
+                    result.push_str(&format!("{:.1$}", binary, places));
+                }
+                _ => return Err(unsupported.to_string()),
+            }
+        }
+        if arguments.next().is_some() { return Err(mismatch.to_string()); }
+        Ok(result)
     }
 
     fn wording(&self) -> Names<'a> {
@@ -1791,6 +1886,13 @@ impl<'a> Machine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
+                        let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) => {
                         let i = as_index(&at)?;
                         Value::Dict(Rc::new(
@@ -1802,7 +1904,13 @@ impl<'a> Machine<'a> {
                                 .collect(),
                         ))
                     }
-                    Value::Dict(pairs) => Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    Value::Dict(pairs) => {
+                        let present = pairs.iter().any(|entry| entry.0.equals(&at));
+                        if self.table.has_any("ext.stmt.del") && !present {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into());
+                        }
+                        Value::Dict(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect()))
+                    },
                     held => return Err(format!("Cannot take a place out of {}", held.bare()).into()),
                 };
                 *inside = left;
@@ -1987,7 +2095,8 @@ impl<'a> Machine<'a> {
                     shared: RefCell::new(shared),
                 })))
             }
-            Form::Cycle { test, body, step, after } => {
+            Form::Cycle { test, body, step, after, otherwise } => {
+                let mut broken = false;
                 loop {
                     // A pass of a loop is a fair place to look at the
                     // clock as well as a statement is, since a loop whose
@@ -2010,7 +2119,7 @@ impl<'a> Machine<'a> {
                     }
                     match self.value_of(body, frame) {
                         Ok(_) | Err(Escape::Resume(1)) => {}
-                        Err(Escape::Leave(1)) => break,
+                        Err(Escape::Leave(1)) => { broken = true; break; },
                         Err(Escape::Leave(n)) => return Err(Escape::Leave(n - 1)),
                         Err(Escape::Resume(n)) => return Err(Escape::Resume(n - 1)),
                         Err(other) => return Err(other),
@@ -2024,6 +2133,9 @@ impl<'a> Machine<'a> {
                             break;
                         }
                     }
+                }
+                if !broken {
+                    if let Some(arm) = otherwise { self.value_of(arm, frame)?; }
                 }
                 Ok(Value::Nil)
             }
@@ -2821,11 +2933,22 @@ impl<'a> Machine<'a> {
             }
             return Ok(frame);
         }
-        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        let most = if self.reads_handed || program.gather_from.is_some() { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
             self.value_list(args, caller)?;
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
+        }
+        if let Some(start) = program.gather_from {
+            let mut values = self.value_list(args, caller)?;
+            let tail = values.split_off(start.min(values.len()));
+            values.resize(start, Value::Unset);
+            values.push(Value::Vector(Rc::new(tail)));
+            let frame = self.frame_for(program, &env);
+            for (slot, value) in program.formal_slots.iter().zip(values) {
+                frame.cells.borrow_mut()[*slot] = value;
+            }
+            return Ok(frame);
         }
         // Where what a call hands over can be read back, every argument
         // is worked out, even one the routine gives no name to.
@@ -3052,13 +3175,19 @@ impl<'a> Machine<'a> {
             }
             return self.drive(program, frame);
         }
-        let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
+        let most = if self.reads_handed || program.gather_from.is_some() { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, args.len()).into());
         }
         if self.reads_handed {
             self.pending = args.clone();
+        }
+        let mut args = args;
+        if let Some(first) = program.gather_from {
+            let rest = args.split_off(first.min(args.len()));
+            args.resize(first, Value::Unset);
+            args.push(Value::Vector(Rc::new(rest)));
         }
         let frame = if program.frameless {
             env
@@ -3295,6 +3424,32 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
+            Prim::Iterated => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+            Prim::CheckUnpack(count) => {
+                let values = self.gathered_members(&v[0])?;
+                if values.len() != count {
+                    return Err(self.table.single("ext.op.comprehension.unpack.amiss").unwrap_or("Comprehension target and item have different lengths").into());
+                }
+                Value::Vector(Rc::new(values))
+            }
+            Prim::ExtendLiteral(dictionary, expanded) => {
+                if !dictionary {
+                    let Value::Vector(prior) = &v[0] else { unreachable!() };
+                    let mut next = prior.to_vec();
+                    next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
+                    Value::Vector(Rc::new(next))
+                } else {
+                    let Value::Dict(prior) = &v[0] else { unreachable!() };
+                    let incoming = match &v[1] {
+                        Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
+                        Value::Dict(entries) if expanded => entries.to_vec(),
+                        _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
+                    };
+                    let mut combined = prior.to_vec();
+                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    Value::Dict(Rc::new(combined))
+                }
+            }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
             Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
             Prim::Couple => {
@@ -3443,9 +3598,11 @@ impl<'a> Machine<'a> {
                         // way counts places, and closing one up would
                         // draw every later member back a step beneath it.
                         let mut holds = thing.holds.borrow_mut();
-                        if let Some(at) = self.member_place(&holds, &called) {
-                            holds[at].1 = Value::Unset;
+                        let place = self.member_place(&holds, &called);
+                        if self.table.has_any("ext.stmt.del") && place.map_or(true, |at| matches!(holds[at].1, Value::Unset)) {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string());
                         }
+                        if let Some(at) = place { holds[at].1 = Value::Unset; }
                         Value::Nil
                     }
                     other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
@@ -4068,6 +4225,13 @@ impl<'a> Machine<'a> {
             Prim::Erase => {
                 n(2)?;
                 match &v[0] {
+                    Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
+                        let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) => {
                         let i = as_index(&v[1])?;
                         let kept: Vec<(Value, Value)> = items
@@ -4080,6 +4244,9 @@ impl<'a> Machine<'a> {
                     }
                     Value::Dict(entries) => {
                         let at = self.as_key(&v[1]);
+                        if self.table.has_any("ext.stmt.del") && entries.iter().all(|entry| !entry.0.equals(&at)) {
+                            return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string());
+                        }
                         let kept: Vec<(Value, Value)> = entries.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
                         Value::Dict(Rc::new(kept))
                     }
@@ -4217,6 +4384,32 @@ impl<'a> Machine<'a> {
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Contains | Prim::Absent => {
+                let present = match (&v[0], &v[1]) {
+                    (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
+                    (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
+                    _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(if op == Prim::Absent { !present } else { present })
+            }
+            Prim::Mod if self.table.flag("ext.op.rem.formats_text") && matches!(v[0], Value::Text(_)) => {
+                let Value::Text(pattern) = &v[0] else { unreachable!() };
+                Value::text(&self.text_remainder(pattern, &v[1])?)
+            }
+            Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
+                let identical = match (&v[0], &v[1]) {
+                    (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
+                    (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Flag(a), Value::Flag(b)) => a == b,
+                    (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
+                    _ if !v[0].selfsame(&v[1]) => false,
+                    _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(if op == Prim::Unlike { !identical } else { identical })
+            }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
@@ -4240,6 +4433,8 @@ impl<'a> Machine<'a> {
             // with, and anything that is not an array becomes an array
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::UnheldText => return Err(v[0].bare()),
+            Prim::RenderField => Value::text(&v[0].in_field(w, &v[1].bare(), &v[2].bare())),
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {
@@ -4459,6 +4654,27 @@ impl<'a> Machine<'a> {
                     self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some(), self.wording())));
                 }
                 Value::Nil
+            }
+            Prim::Listed => {
+                match v.len() {
+                    0 => Value::Vector(Rc::new(Vec::new())),
+                    1 => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                    _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
+                }
+            }
+            Prim::SomeTrue => {
+                n(1)?;
+                let members = self.gathered_members(&v[0])?;
+                Value::Flag(members.iter().any(|item| self.stands_true(item)))
+            }
+            Prim::Total => {
+                if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                let members = self.gathered_members(&v[0])?;
+                let start = v.get(1).cloned().unwrap_or(Value::Small(0));
+                let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
+                members.into_iter().try_fold(number(start), |prior, item| {
+                    math::compute(Calc::Plus, &prior, &number(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or("Invalid collection argument").into()))
+                })?
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
                 let wrong = || self.argument_fault("ext.syntax.call.amiss", None);
@@ -4917,6 +5133,26 @@ impl<'a> Machine<'a> {
             }
             _ => Err(self.no_places()),
         }
+    }
+
+    fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
+        Ok(match source {
+            Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::Vector(values) => values.to_vec(),
+            Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Progression(walk) => {
+                let mut values = Vec::new();
+                let mut position = BigInt::from(0);
+                let count = walk.count();
+                while position < count {
+                    values.push(Value::from_big(&walk.first + &walk.stride * &position));
+                    position += 1;
+                }
+                values
+            }
+            Value::Shared(held) => return self.gathered_members(&held.borrow()),
+            _ => return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Cannot gather members from this value").to_string()),
+        })
     }
 
     fn show(&self, v: &[Value]) -> String {

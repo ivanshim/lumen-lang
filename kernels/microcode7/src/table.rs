@@ -82,12 +82,13 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
-ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L \
+ext.lexical.string.long:L ext.op.lambda:L ext.op.tuple:L ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.stmt.class.unready:L ext.stmt.del:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unrun:L ext.system.scope.unready:L ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L ext.op.await:L ext.stmt.async:L ext.stmt.loop.else:B ext.stmt.del.unrun:L ext.stmt.binding.unrun:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.as:L ext.system.module.name:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
+ext.op.if_else:L ext.op.lambda.unsupported:L ext.op.lambda.enclosing:L ext.op.identical.negated:L ext.op.identical.unsupported:L ext.op.in:L ext.op.in.negated:L ext.op.in.unsupported:L ext.op.compare.chained:B ext.op.assign.expression:L ext.literal.ellipsis:L ext.op.rem.formats_text:B ext.op.rem.format.unsupported:L ext.op.rem.format.arguments:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.terminator:L ext.stmt.annotation:L ext.stmt.annotation.amiss:L ext.stmt.annotation.target.unready:L ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
@@ -104,7 +105,8 @@ ext.builtin.args.count:L ext.builtin.args.at:L ext.builtin.args.all.outside:L ex
 ext.system.runner:L ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L ext.system.source.routine:L ext.system.source.class:L ext.system.source.method:L \
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.complaint.reading:L ext.system.fault.class:L ext.system.fault.operands:L ext.op.increment.text:L ext.op.decrement.text:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.system.fault.class.value:L ext.system.fault.modulo:L ext.system.fault.shift:L ext.system.fault.class.walk:L ext.op.walk.giver.unwalkable:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
 ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.output.begun:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.system.kind.loose:L ext.builtin.uncaught:L ext.builtin.classes:L ext.builtin.routines:L ext.builtin.spelled:L ext.builtin.class.beneath:L ext.builtin.math:L ext.builtin.class.methods:L ext.builtin.class.properties:L ext.builtin.clock:L ext.builtin.room.used:L ext.builtin.room.most:L ext.builtin.room.most.forget:L ext.builtin.room.limit:L ext.builtin.write.operator:B ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.op.index.text.first:L ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
-ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
+ext.lexical.string.long:L ext.lexical.string.prefix.raw:L ext.lexical.string.prefix.bytes:L ext.lexical.string.prefix.plain:L ext.lexical.string.prefix.format:L ext.lexical.string.adjacent:B ext.lexical.string.amiss:L ext.lexical.escape.byte.digits:N ext.lexical.escape.codepoint.digits:N ext.lexical.escape.codepoint.wide:L ext.lexical.escape.codepoint.wide.digits:N ext.lexical.escape.named:L ext.lexical.escape.unavailable:L \
+ext.lexical.escape.continued:B ext.lexical.escape.controls:L ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
 ext.builtin.shell:L ext.builtin.wait:L ext.builtin.net.ask:L ext.builtin.run.begin:L ext.builtin.run.end:L ext.lexical.escape.byte:L ext.lexical.escape.octal:B ext.system.text.bytes:B ext.lexical.prologue.brief:L ext.lexical.prologue.brief.setting:L ext.lexical.interpolating.index.amiss:L ext.builtin.eval.place:L \
 ext.system.reading.unexpected:L ext.system.reading.unexpected.character:L ext.system.fault.class.reading:L \
 ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L ext.system.reading.unmatched:L \
@@ -146,7 +148,8 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 69] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
+    ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
@@ -175,13 +178,13 @@ pub const BUILTIN_LABELS: [(&str, Prim); 69] = [
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 24] = [
+const BINARY_LABELS: [(&str, Prim); 25] = [
     ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
     ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
     ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
-    ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
+    ("ext.op.in", Prim::Contains), ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
 ];
 
 fn top_object(text: &str) -> Result<serde_json::Map<String, Json>, String> {
@@ -547,7 +550,9 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+        // Only the object-class reader requires these operations.
+        if self.has_any("ext.stmt.class") && !self.has_any("ext.stmt.class.bases.open")
+            && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
@@ -585,7 +590,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["ext.op.index.slice.ellipsis", "ext.op.index.slice", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+        let symbol_labels = ["ext.lexical.string.long", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.yield", "ext.stmt.yield.from", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close", "ext.op.if_else", "ext.op.identical.negated", "ext.op.in.negated", "ext.op.assign.expression", "ext.literal.ellipsis",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",
@@ -599,7 +604,7 @@ impl Table {
             "ext.stmt.terminator", "ext.stmt.annotation", "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
-            "ext.stmt.assert", "ext.stmt.catch.as", "ext.stmt.catch.tuple.open", "ext.stmt.catch.tuple.close", "ext.stmt.catch.group", "ext.stmt.throw.from", "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
+            "ext.stmt.assert", "ext.stmt.catch.as", "ext.stmt.catch.tuple.open", "ext.stmt.catch.tuple.close", "ext.stmt.catch.group", "ext.stmt.throw.from", "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.async", "ext.op.await", "ext.stmt.yield", "ext.stmt.yield.from",
             "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise", "ext.op.hush", "ext.op.name_by_value", "ext.stmt.unpack"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());

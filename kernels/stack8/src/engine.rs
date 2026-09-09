@@ -1471,7 +1471,7 @@ impl<'a> Engine<'a> {
         } else { n };
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
-        let most = if self.lang.spare_args { usize::MAX } else { program.formals.len() };
+        let most = if self.lang.spare_args || program.rest_at.is_some() { usize::MAX } else { program.formals.len() };
         if n > most || n < program.least {
             let wanted = program.formals.len();
             return Err(format!("Function {} expects {} arguments, got {}", program.ident, wanted, n).into());
@@ -1516,6 +1516,11 @@ impl<'a> Engine<'a> {
             });
         }
         frame.extend(self.data.drain(at..));
+        if let Some(start) = program.rest_at {
+            let tail = if frame.len() > start { frame.split_off(start) } else { Vec::new() };
+            frame.resize(start, Value::Blank);
+            frame.push(Value::array(tail));
+        }
         // What the routine does not name stays aside rather than
         // spilling into the slots its own names sit in.
         frame.truncate(program.formals.len());
@@ -2171,6 +2176,14 @@ impl<'a> Engine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Array(items) if !self.lang.del_words.is_empty() => {
+                        let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
+                        let i = if raw < 0 { items.len() as i64 + raw } else { raw };
+                        if i < 0 || i as usize >= items.len() { return Err(self.lang.del_unrun.clone().into()); }
+                        let mut left = items.as_ref().clone();
+                        left.remove(i as usize);
+                        Value::array(left)
+                    }
                     Value::Array(items) => {
                         let i = as_index(&at)?;
                         Value::Map(Rc::new(
@@ -2182,7 +2195,12 @@ impl<'a> Engine<'a> {
                                 .collect(),
                         ))
                     }
-                    Value::Map(pairs) => Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect())),
+                    Value::Map(pairs) => {
+                        if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| k.equals(&at)) {
+                            return Err(self.lang.del_unrun.clone().into());
+                        }
+                        Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect()))
+                    },
                     v => return Err(format!("Cannot take a place out of {}", v.plain()).into()),
                 };
                 *inside = left;
@@ -2338,6 +2356,37 @@ impl<'a> Engine<'a> {
                         Ok(())
                     }
                 };
+            }
+            Action::ComprehensionItems => {
+                let source = self.drop_top()?;
+                Value::array(self.comprehension_items(&source)?)
+            }
+            Action::UnpackCount(wanted) => {
+                let source = self.drop_top()?;
+                let parts = self.comprehension_items(&source)?;
+                if parts.len() != *wanted {
+                    return Err(self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()).into());
+                }
+                Value::array(parts)
+            }
+            Action::GatherItem { map, spread } => {
+                let mut both = self.drop_many(2)?.into_iter();
+                let gathered_so_far = both.next().expect("growing literal");
+                let next = both.next().expect("literal item");
+                if *map {
+                    let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
+                    let new_pairs = match (spread, next) {
+                        (true, Value::Map(p)) => p.as_ref().clone(),
+                        (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
+                        _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
+                    };
+                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    Value::Map(Rc::new(pairs))
+                } else {
+                    let mut items = match gathered_so_far { Value::Array(a) => a.as_ref().clone(), _ => unreachable!() };
+                    if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
+                    Value::array(items)
+                }
             }
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
@@ -2544,7 +2593,12 @@ impl<'a> Engine<'a> {
                         // step under its feet.
                         let mut held = o.fields.borrow_mut();
                         if let Some(at) = self.member_at(&held, name) {
+                            if !self.lang.del_words.is_empty() && matches!(held[at].1, Value::Blank) {
+                                return Err(self.lang.del_unrun.clone().into());
+                            }
                             held[at].1 = Value::Blank;
+                        } else if !self.lang.del_words.is_empty() {
+                            return Err(self.lang.del_unrun.clone().into());
                         }
                         Value::Null
                     }
@@ -2945,6 +2999,16 @@ impl<'a> Engine<'a> {
                 self.data.pop();
                 Value::array(items)
             }
+            Action::StringFault => {
+                let message = self.drop_top()?.plain();
+                return Err(message.into());
+            }
+            Action::StringRender => {
+                let conversion = self.drop_top()?.plain();
+                let specification = self.drop_top()?.plain();
+                let value = self.drop_top()?;
+                Value::text(&value.string_field(&self.wording(), &specification, &conversion))
+            }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
                     return Err("Stack underflow".to_string().into());
@@ -3005,6 +3069,99 @@ impl<'a> Engine<'a> {
 
     fn number_of(&self, s: &str) -> Option<Value> {
         number_spelled(s).map(|n| self.at_real_width(n))
+    }
+
+    fn rem_repr(&self, value: &Value) -> Res<String> {
+        Ok(match value {
+            Value::Text(s) => {
+                let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+                let mut out = String::from(quote);
+                for c in s.chars() {
+                    match c {
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        '\\' => out.push_str("\\\\"),
+                        c if c == quote => { out.push('\\'); out.push(c); }
+                        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                        c => out.push(c),
+                    }
+                }
+                out.push(quote);
+                out
+            }
+            Value::Array(items) => {
+                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                format!("[{}]", parts.join(", "))
+            }
+            Value::Map(entries) => {
+                let mut parts = Vec::new();
+                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
+                format!("{{{}}}", parts.join(", "))
+            }
+            Value::Real(real) => {
+                let mut text = value.display(&self.wording());
+                if !real.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+                text
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => value.display(&self.wording()),
+            _ => return Err(self.lang.format_unsupported.clone().unwrap_or_default()),
+        })
+    }
+
+    /// Remainder over text fills one mark at a time. A list supplies
+    /// the marks in order; every other value supplies just one.
+    fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+        let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
+        let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
+        let values: Vec<&Value> = match arguments {
+            Value::Array(items) => items.iter().collect(),
+            one => vec![one],
+        };
+        let mut used = 0;
+        let mut out = String::new();
+        let mut chars = template.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '%' { out.push(c); continue; }
+            if chars.peek() == Some(&'%') { chars.next(); out.push('%'); continue; }
+            let mut precision = None;
+            if chars.peek() == Some(&'.') {
+                chars.next();
+                let mut digits = String::new();
+                while chars.peek().map_or(false, char::is_ascii_digit) { digits.push(chars.next().unwrap()); }
+                precision = Some(digits.parse::<usize>().map_err(|_| bad())?);
+            }
+            let kind = chars.next().ok_or_else(bad)?;
+            if precision.is_some() && kind != 'f' { return Err(bad()); }
+            let value = values.get(used).copied().ok_or_else(wrong)?;
+            used += 1;
+            let filled = match kind {
+                's' => match value { Value::Text(text) => text.to_string(), _ => self.rem_repr(value)? },
+                'r' => self.rem_repr(value)?,
+                'd' | 'x' => {
+                    if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Real(_)) { return Err(wrong()); }
+                    if kind == 'x' && matches!(value, Value::Real(_)) { return Err(wrong()); }
+                    let whole = value.as_big().map_err(|_| wrong())?;
+                    if kind == 'x' { whole.to_str_radix(16) } else { whole.to_string() }
+                }
+                'f' => {
+                    let number = match value {
+                        Value::Small(n) => *n as f64,
+                        Value::Huge(n) => n.to_f64().ok_or_else(wrong)?,
+                        Value::Flag(b) => u8::from(*b) as f64,
+                        Value::Real(r) => crate::value::as_binary(&r.p, &r.q),
+                        _ => return Err(wrong()),
+                    };
+                    let places = precision.unwrap_or(6);
+                    if places > 10000 { return Err(bad()); }
+                    format!("{:.*}", places, number)
+                }
+                _ => return Err(bad()),
+            };
+            out.push_str(&filled);
+        }
+        if used != values.len() { return Err(wrong()); }
+        Ok(out)
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
@@ -3089,6 +3246,35 @@ impl<'a> Engine<'a> {
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Contains | Action::Lacks => {
+                let found = match b {
+                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
+                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
+                    Value::Text(haystack) => match a {
+                        Value::Text(needle) => haystack.contains(needle.as_ref()),
+                        _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                    },
+                    _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                };
+                Value::Flag(found != matches!(op, Action::Lacks))
+            }
+            Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
+                let Value::Text(template) = a else { unreachable!() };
+                Value::text(&self.rem_text(template, b)?)
+            }
+            Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
+                let same = match (a, b) {
+                    (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
+                    (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+                    (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+                    (Value::Flag(x), Value::Flag(y)) => x == y,
+                    (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
+                    (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    _ if !a.identical(b) => false,
+                    _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
+                };
+                Value::Flag(same != matches!(op, Action::Unsame))
+            }
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
@@ -3775,6 +3961,27 @@ impl<'a> Engine<'a> {
 
     // ---------- builtins ----------
 
+    /// The collections this reader can walk without asking a protocol.
+    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+        match value {
+            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
+            Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
+            Value::Counted(range) => {
+                let mut items = Vec::new();
+                let mut next = range.start.clone();
+                let forward = range.step > BigInt::from(0);
+                while if forward { next < range.stop } else { next > range.stop } {
+                    items.push(Value::of_big(next.clone()));
+                    next += &range.step;
+                }
+                Ok(items)
+            }
+            Value::Bond(cell) => self.comprehension_items(&cell.borrow()),
+            _ => Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_else(|| "Value has no members to gather".to_string())),
+        }
+    }
+
     /// print and write: the values joined by spaces, or a template holding
     /// the definition's placeholders filled from the rest.
     fn render(&self, values: &[Value]) -> String {
@@ -4413,6 +4620,25 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::List => {
+                if args.is_empty() { return Ok(Value::array(Vec::new())); }
+                arity(1)?;
+                Value::array(self.comprehension_items(&args[0])?)
+            }
+            Builtin::Any => {
+                arity(1)?;
+                Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
+            }
+            Builtin::Sum => {
+                if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
+                let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+                if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                for item in self.comprehension_items(&args[0])? {
+                    let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
+                    total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;
+                }
+                total
+            }
             Builtin::Span if self.lang.range_value => {
                 if args.is_empty() || args.len() > 3 { return Err(self.lang.call_amiss[0].clone()); }
                 let mut bounds = Vec::new();
@@ -4703,6 +4929,14 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let at = self.key_quietly(&args.pop().expect("the place"));
                 match args.pop().expect("the array") {
+                    Value::Array(items) if !self.lang.del_words.is_empty() => {
+                        let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
+                        let i = if raw < 0 { items.len() as i64 + raw } else { raw };
+                        if i < 0 || i as usize >= items.len() { return Err(self.lang.del_unrun.clone().into()); }
+                        let mut left = items.as_ref().clone();
+                        left.remove(i as usize);
+                        Value::array(left)
+                    }
                     Value::Array(items) => {
                         let i = as_index(&at)?;
                         let kept: Vec<(Value, Value)> = items
@@ -4714,6 +4948,9 @@ impl<'a> Engine<'a> {
                         Value::Map(Rc::new(kept))
                     }
                     Value::Map(pairs) => {
+                        if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| k.equals(&at)) {
+                            return Err(self.lang.del_unrun.clone());
+                        }
                         let kept: Vec<(Value, Value)> = pairs.iter().filter(|(k, _)| !k.equals(&at)).cloned().collect();
                         Value::Map(Rc::new(kept))
                     }

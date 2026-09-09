@@ -48,7 +48,22 @@ pub struct Lang {
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
     pub raw_quotes: Vec<char>,
+    pub long_quotes: Vec<String>,
+    pub raw_prefixes: Vec<char>,
+    pub byte_prefixes: Vec<char>,
+    pub plain_prefixes: Vec<char>,
+    pub format_prefixes: Vec<char>,
+    pub adjacent_strings: bool,
+    pub string_amiss: Option<String>,
+    pub byte_digits: Option<usize>,
+    pub codepoint_digits: Option<usize>,
+    pub wide_letter: Option<char>,
+    pub wide_digits: Option<usize>,
+    pub named_letter: Option<char>,
+    pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
+    pub control_escapes: Vec<char>,
+    pub continued_strings: bool,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
     pub codepoint_letter: Option<char>,
@@ -192,7 +207,6 @@ pub struct Lang {
     pub to_string_encoding: Vec<String>,
     pub to_string_errors: Vec<String>,
     pub to_string_unready: Vec<String>,
-    pub range_value: bool,
     pub range_zero: Vec<String>,
     pub range_integer: Vec<String>,
     pub range_index: Vec<String>,
@@ -362,7 +376,25 @@ pub struct Lang {
     /// `x op= e` for every binary operator, when the switch is on.
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
+    pub tuple_marks: Vec<String>,
+    pub class_bases_open: Vec<String>,
+    pub class_bases_close: Vec<String>,
+    pub class_unready: Vec<String>,
+    pub del_words: Vec<String>,
+    pub nonlocal_words: Vec<String>,
+    pub nonlocal_unrun: Vec<String>,
+    pub with_words: Vec<String>,
+    pub with_as_words: Vec<String>,
+    pub yield_words: Vec<String>,
+    pub yield_from_words: Vec<String>,
+    pub yield_unrun: Vec<String>,
+    pub scope_unready: Vec<String>,
     pub global_words: Vec<String>,
+    pub await_words: Vec<String>,
+    pub async_words: Vec<String>,
+    pub loop_else: bool,
+    pub binding_unrun: String,
+    pub del_unrun: String,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
@@ -412,6 +444,22 @@ pub struct Lang {
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub if_else_words: Vec<String>,
+    pub lambda_words: Vec<String>,
+    pub lambda_unsupported: Option<String>,
+    pub lambda_enclosing: Option<String>,
+    pub identity_not: Vec<String>,
+    pub identity_unsupported: Option<String>,
+    pub membership_words: Vec<String>,
+    pub membership_not: Vec<String>,
+    pub membership_unsupported: Option<String>,
+    pub chained_comparisons: bool,
+    pub expression_assign: Vec<String>,
+    pub ellipsis_words: Vec<String>,
+    pub rem_formats_text: bool,
+    pub format_unsupported: Option<String>,
+    pub format_arguments: Option<String>,
+
     pub hush_words: Vec<String>,
     /// The mark written before a value to say that the value spells a
     /// name, and the name is what is meant.
@@ -531,6 +579,24 @@ pub struct Lang {
     pub append_index: bool,
     /// `for v in a` walks what a holds when a is not a range.
     pub for_collections: bool,
+    pub comprehension_async: Vec<String>,
+    pub comprehension_async_unavailable: Vec<String>,
+    pub comprehension_target_unavailable: Vec<String>,
+    pub sum_non_number: Vec<String>,
+    pub range_non_integer: Vec<String>,
+    pub range_zero_step: Vec<String>,
+
+    pub comprehension_for: Vec<String>,
+    pub comprehension_in: Vec<String>,
+    pub comprehension_if: Vec<String>,
+    pub set_literals: bool,
+    pub array_spread: Vec<String>,
+    pub map_spread: Vec<String>,
+    pub collection_unwalkable: Vec<String>,
+    pub spread_unmapped: Vec<String>,
+    pub comprehension_unpack_amiss: Vec<String>,
+    pub range_value: bool,
+
 
     /// Classes and their objects.
     pub class_words: Vec<String>,
@@ -709,14 +775,22 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
+
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
+w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
+
+w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
+
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+ | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
-w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
+w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -746,14 +820,16 @@ w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.dro
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
-w ext.system.fault.modulo | w ext.system.fault.shift | b ext.op.bit.shift.numbers
+w ext.system.fault.modulo | w ext.system.fault.shift
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
-w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+
+ | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
+b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
@@ -1087,7 +1163,7 @@ impl Lang {
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
             ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
-            ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
+            ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1181,6 +1257,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
@@ -1272,7 +1349,22 @@ impl Lang {
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
             raw_quotes,
+            long_quotes: r.strings("ext.lexical.string.long")?,
+            raw_prefixes: r.letters("ext.lexical.string.prefix.raw")?,
+            byte_prefixes: r.letters("ext.lexical.string.prefix.bytes")?,
+            plain_prefixes: r.letters("ext.lexical.string.prefix.plain")?,
+            format_prefixes: r.letters("ext.lexical.string.prefix.format")?,
+            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
+            string_amiss: r.head("ext.lexical.string.amiss")?,
+            byte_digits: r.count("ext.lexical.escape.byte.digits")?,
+            codepoint_digits: r.count("ext.lexical.escape.codepoint.digits")?,
+            wide_letter: r.letter("ext.lexical.escape.codepoint.wide")?,
+            wide_digits: r.count("ext.lexical.escape.codepoint.wide.digits")?,
+            named_letter: r.letter("ext.lexical.escape.named")?,
+            escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             escape_letters: escapes,
+            control_escapes: r.letters("ext.lexical.escape.controls")?,
+            continued_strings: r.flag("ext.lexical.escape.continued")?,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
@@ -1378,7 +1470,7 @@ impl Lang {
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
-            loose_equality: tells_same,
+            loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
             complaint_words: {
                 let named = [
                     (Complaint::Warning, "ext.system.complaint.warning"),
@@ -1451,7 +1543,25 @@ impl Lang {
             c_for_words: r.strings("ext.stmt.for.c")?,
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
+            tuple_marks: r.strings("ext.op.tuple")?,
+            class_bases_open: r.strings("ext.stmt.class.bases.open")?,
+            class_bases_close: r.strings("ext.stmt.class.bases.close")?,
+            class_unready: r.strings("ext.stmt.class.unready")?,
+            del_words: r.strings("ext.stmt.del")?,
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
+            with_words: r.strings("ext.stmt.with")?,
+            with_as_words: r.strings("ext.stmt.with.as")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            yield_from_words: r.strings("ext.stmt.yield.from")?,
+            yield_unrun: r.strings("ext.stmt.yield.unrun")?,
+            scope_unready: r.strings("ext.system.scope.unready")?,
             global_words: r.strings("ext.stmt.global")?,
+            await_words: r.strings("ext.op.await")?,
+            async_words: r.strings("ext.stmt.async")?,
+            loop_else: r.flag("ext.stmt.loop.else")?,
+            binding_unrun: r.head("ext.stmt.binding.unrun")?.unwrap_or_default(),
+            del_unrun: r.head("ext.stmt.del.unrun")?.unwrap_or_default(),
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
@@ -1493,6 +1603,22 @@ impl Lang {
             },
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
+            if_else_words: r.strings("ext.op.if_else")?,
+            lambda_words: r.strings("ext.op.lambda")?,
+            lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
+            lambda_enclosing: r.head("ext.op.lambda.enclosing")?,
+            identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unsupported: r.head("ext.op.identical.unsupported")?,
+            membership_words: r.strings("ext.op.in")?,
+            membership_not: r.strings("ext.op.in.negated")?,
+            membership_unsupported: r.head("ext.op.in.unsupported")?,
+            chained_comparisons: r.flag("ext.op.compare.chained")?,
+            expression_assign: r.strings("ext.op.assign.expression")?,
+            ellipsis_words: r.strings("ext.literal.ellipsis")?,
+            rem_formats_text: r.flag("ext.op.rem.formats_text")?,
+            format_unsupported: r.head("ext.op.rem.format.unsupported")?,
+            format_arguments: r.head("ext.op.rem.format.arguments")?,
+
             hush_words: hushes,
             naming_words: r.strings("ext.op.name_by_value")?,
             casts_kinds: r.flag("ext.op.cast")?,
@@ -1536,6 +1662,23 @@ impl Lang {
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
+            comprehension_async: r.strings("ext.op.comprehension.async")?,
+            comprehension_async_unavailable: r.strings("ext.op.comprehension.async.unavailable")?,
+            comprehension_target_unavailable: r.strings("ext.op.comprehension.target.unavailable")?,
+            sum_non_number: r.strings("ext.builtin.sum.non_number")?,
+            range_non_integer: r.strings("ext.builtin.range.non_integer")?,
+            range_zero_step: r.strings("ext.builtin.range.zero_step")?,
+
+            comprehension_for: r.strings("ext.op.comprehension.for")?,
+            comprehension_in: r.strings("ext.op.comprehension.in")?,
+            comprehension_if: r.strings("ext.op.comprehension.if")?,
+            set_literals: r.flag("ext.syntax.set")?,
+            array_spread: r.strings("ext.syntax.array.spread")?,
+            map_spread: r.strings("ext.syntax.map.spread")?,
+            collection_unwalkable: r.strings("ext.syntax.collection.unwalkable")?,
+            spread_unmapped: r.strings("ext.syntax.map.spread.unmapped")?,
+            comprehension_unpack_amiss: r.strings("ext.op.comprehension.unpack.amiss")?,
+
             class_words: r.strings("ext.stmt.class")?,
             extends_words: r.strings("ext.stmt.class.extends")?,
             new_words: r.strings("ext.stmt.class.new")?,
@@ -1661,7 +1804,9 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        // Classes read as scoped suites do not use member access or a new word.
+        if !lang.class_words.is_empty() && lang.class_bases_open.is_empty()
+            && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
@@ -1720,6 +1865,9 @@ impl Lang {
             place(question);
             place(mark);
         }
+        for mark in &self.long_quotes {
+            place(mark);
+        }
         for lex in &self.plus_words {
             place(lex);
         }
@@ -1740,8 +1888,9 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
+            &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
+            &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
             &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
             &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
@@ -1759,6 +1908,9 @@ impl Lang {
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
+            &self.finally_words, &self.throw_words,
+            &self.with_words, &self.with_as_words, &self.del_words, &self.nonlocal_words,
+            &self.async_words, &self.await_words, &self.yield_words, &self.yield_from_words,
             &self.finally_words, &self.throw_words, &self.assert_words, &self.catch_as, &self.throw_from,
             &self.import_words, &self.import_from_words, &self.import_as_words,
         ];

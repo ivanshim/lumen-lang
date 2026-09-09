@@ -124,6 +124,7 @@ pub enum Value {
     Text(Rc<str>),
     Flag(bool),
     Null,
+    Ellipsis,
     Array(Rc<Vec<Value>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
@@ -234,7 +235,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Slice(_) => true,
+            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -257,6 +258,7 @@ impl Value {
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -276,7 +278,7 @@ impl Value {
             }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Null, Value::Null) => true,
+            (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -360,12 +362,58 @@ impl Value {
         }
     }
 
+    /// A field is rendered after its specification has itself been
+    /// worked out. The small common formats are honoured here; the
+    /// rest keep the plain rendering until the run knows their rules.
+    pub fn string_field(&self, words: &Wording, spec: &str, conversion: &str) -> String {
+        let mut shown = self.display(words);
+        if let Value::Text(text) = self {
+            if conversion == "r" || conversion == "a" {
+                let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                shown = String::from(quote);
+                for c in text.chars() {
+                    match c {
+                        '\\' => shown.push_str("\\\\"),
+                        '\n' => shown.push_str("\\n"), '\r' => shown.push_str("\\r"), '\t' => shown.push_str("\\t"),
+                        c if c == quote => { shown.push('\\'); shown.push(c); }
+                        c if c.is_control() || conversion == "a" && !c.is_ascii() => {
+                            let n = c as u32;
+                            if n <= 255 { shown.push_str(&format!("\\x{n:02x}")); }
+                            else if n <= 65535 { shown.push_str(&format!("\\u{n:04x}")); }
+                            else { shown.push_str(&format!("\\U{n:08x}")); }
+                        }
+                        c => shown.push(c),
+                    }
+                }
+                shown.push(quote);
+            }
+        }
+        if conversion.is_empty() && !matches!(self, Value::Text(_)) {
+            if let Some(places) = spec.strip_prefix('.').and_then(|s| s.strip_suffix('f')).and_then(|s| s.parse::<usize>().ok()).filter(|n| *n <= 1000) {
+                if let Ok(number) = shown.parse::<f64>() { return format!("{number:.places$}"); }
+            }
+        }
+        let letters: Vec<char> = spec.chars().collect();
+        let (fill, align, offset) = if letters.len() > 1 && matches!(letters[1], '<' | '>' | '^') {
+            (letters[0], letters[1], 2)
+        } else if letters.first().map_or(false, |c| matches!(c, '<' | '>' | '^')) { (' ', letters[0], 1) }
+        else { return shown; };
+        let width = letters[offset..].iter().collect::<String>().parse::<usize>().ok().filter(|n| *n <= 100000);
+        if let Some(width) = width {
+            let spaces = width.saturating_sub(shown.chars().count());
+            let left = match align { '>' => spaces, '^' => spaces / 2, _ => 0 };
+            shown = format!("{}{}{}", fill.to_string().repeat(left), shown, fill.to_string().repeat(spaces - left));
+        }
+        shown
+    }
+
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
+            Value::Ellipsis => "Ellipsis".to_string(),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
