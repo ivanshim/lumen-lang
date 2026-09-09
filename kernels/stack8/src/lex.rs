@@ -963,14 +963,27 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         // Either marker may open a run of code, whichever stands first.
         // The short one says the run is a thing to be written out, and
         // the word that writes it is put before it.
-        let plainly = marker_at(rest, &opening, lang.prologue_folded);
-        let briefly = lang.prologue_echo.as_ref().and_then(|mark| marker_at(rest, mark, lang.prologue_folded));
-        let (at, mark, writes) = match (plainly, briefly) {
-            (Some(a), Some(b)) if b < a => (b, lang.prologue_echo.clone().expect("the short marker"), true),
-            (Some(a), _) => (a, opening.clone(), false),
-            (None, Some(b)) => (b, lang.prologue_echo.clone().expect("the short marker"), true),
-            (None, None) => break,
-        };
+        // Whichever marker stands first opens the run. Where two stand
+        // in the same place, the longer of them is the one meant: a
+        // marker that is the opening of another says nothing on its own.
+        let mut found: Option<(usize, String, bool)> = None;
+        let markers = [
+            (Some(opening.clone()), false),
+            (lang.prologue_echo.clone(), true),
+            (lang.prologue_brief.clone(), false),
+        ];
+        for (mark, writes) in markers.into_iter() {
+            let Some(mark) = mark else { continue };
+            let Some(at) = marker_at(rest, &mark, lang.prologue_folded) else { continue };
+            let better = match &found {
+                None => true,
+                Some((was, seen, _)) => at < *was || (at == *was && mark.len() > seen.len()),
+            };
+            if better {
+                found = Some((at, mark, writes));
+            }
+        }
+        let Some((at, mark, writes)) = found else { break };
         told(&rest[..at], &mut out);
         row += rest[..at].matches('\n').count();
         let after = &rest[at + mark.len()..];

@@ -409,6 +409,12 @@
   ],
   "ext.lexical.escape.octal": true,
   "ext.system.text.bytes": true,
+  "ext.lexical.prologue.brief": [
+    "<?"
+  ],
+  "ext.lexical.prologue.brief.setting": [
+    "short_open_tag"
+  ],
   "ext.lexical.interpolating.index.amiss": [
     "string content, expecting \"-\" or identifier or variable or number"
   ],

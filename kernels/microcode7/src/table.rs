@@ -103,7 +103,7 @@ ext.system.runner:L ext.system.source.file:L ext.system.source.directory:L ext.s
 ext.system.complaint.warning:L ext.system.complaint.notice:L ext.system.complaint.deprecated:L ext.system.complaint.fatal:L ext.system.complaint.reading:L ext.system.fault.class:L ext.system.fault.operands:L ext.op.increment.text:L ext.op.decrement.text:L ext.system.fault.class.arithmetic:L ext.system.fault.class.division:L ext.system.fault.class.kind:L ext.system.fault.class.value:L ext.system.fault.modulo:L ext.system.fault.shift:L ext.system.fault.class.walk:L ext.op.walk.giver.unwalkable:L ext.builtin.time_limit:L ext.system.kind.brief:L ext.builtin.file.read:L ext.builtin.file.write:L \
 ext.builtin.file.exists:L ext.builtin.file.remove:L ext.builtin.eval:L ext.builtin.include:L ext.builtin.include.once:L ext.builtin.output.hold:L ext.builtin.output.held:L ext.builtin.output.drop:L ext.builtin.output.depth:L ext.builtin.output.begun:L ext.builtin.at_end:L ext.builtin.complaint.handler:L ext.builtin.complaint.say:L ext.builtin.calls:L ext.system.kind.object:L ext.system.kind.loose:L ext.builtin.uncaught:L ext.builtin.classes:L ext.builtin.routines:L ext.builtin.spelled:L ext.builtin.class.beneath:L ext.builtin.math:L ext.builtin.class.methods:L ext.builtin.class.properties:L ext.builtin.clock:L ext.builtin.write.operator:B ext.op.hush:L ext.op.name_by_value:L ext.op.cast:B ext.op.member.by_value:B ext.op.index.text:B ext.op.index.text.first:L ext.system.globals:L ext.op.reference.unshared.written:L ext.op.reference.unshared.given:L ext.op.reference.unshared.handed:L ext.stmt.terminator.only:B ext.stmt.block.instead:L ext.stmt.block.instead.close:L ext.op.spelled:B ext.system.class.folded:B ext.stmt.unpack:L ext.builtin.isset:L ext.builtin.empty:L ext.stmt.do:L ext.op.index.makes:B ext.system.untrue.text:L ext.system.untrue.empty_array:B ext.builtin.exit:L \
 ext.lexical.escape.codepoint:L ext.lexical.escape.codepoint.open:L ext.lexical.escape.codepoint.close:L ext.lexical.escape.codepoint.amiss:L ext.lexical.escape.codepoint.beyond:L ext.lexical.number.amiss:L \
-ext.lexical.escape.byte:L ext.lexical.escape.octal:B ext.system.text.bytes:B ext.lexical.interpolating.index.amiss:L ext.builtin.eval.place:L \
+ext.lexical.escape.byte:L ext.lexical.escape.octal:B ext.system.text.bytes:B ext.lexical.prologue.brief:L ext.lexical.prologue.brief.setting:L ext.lexical.interpolating.index.amiss:L ext.builtin.eval.place:L \
 ext.system.reading.unexpected:L ext.system.reading.unexpected.character:L ext.system.fault.class.reading:L \
 ext.system.reading.unclosed:L ext.system.reading.unclosed.line:L ext.system.reading.unclosed.mismatch:L ext.system.reading.unmatched:L \
 ext.lexical.number.binary_prefix:L ext.lexical.number.octal_prefix:L ext.lexical.number.octal_lead:B \
@@ -247,6 +247,15 @@ impl Table {
             Some(Entry::Strings(l)) => l,
             _ => panic!("'{key}' is not a list label"),
         }
+    }
+
+    /// Empty a label of words, so that everything reading it afterwards
+    /// finds none. The label is left standing rather than taken away,
+    /// since a label the roster names must always be there to be read.
+    /// It is for a label whose worth a run is started with rather than
+    /// written into the definition.
+    pub fn put_by(&mut self, key: &'static str) {
+        self.cells.insert(key, Entry::Strings(Vec::new()));
     }
 
     pub fn single(&self, key: &str) -> Option<&str> {

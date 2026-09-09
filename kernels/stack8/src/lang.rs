@@ -285,6 +285,12 @@ pub struct Lang {
     /// Whether a run of figures in eights after a backslash names a
     /// character by its number: the reference's `\101`.
     pub octal_escapes: bool,
+    /// A shorter marker that opens a run of code, and the name of the
+    /// setting that must be turned on before it does. Where the setting
+    /// is off the marker is taken away before a word of the program is
+    /// read, so that what stands after it is page and not program.
+    pub prologue_brief: Option<String>,
+    pub prologue_brief_setting: Option<String>,
     /// Whether text is held as the bytes it was written in rather than
     /// as the letters those bytes spell. Under this, every character of
     /// a piece of text stands for one byte and is worth its number, so
@@ -595,7 +601,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
-w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
@@ -1283,6 +1289,8 @@ impl Lang {
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
             heredoc: r.head("ext.lexical.heredoc")?,
             octal_escapes: r.flag("ext.lexical.escape.octal")?,
+            prologue_brief: r.head("ext.lexical.prologue.brief")?,
+            prologue_brief_setting: r.head("ext.lexical.prologue.brief.setting")?,
             text_is_bytes: r.flag("ext.system.text.bytes")?,
             concat: r.head("op.concat")?,
             foreach_words: r.strings("stmt.foreach")?,

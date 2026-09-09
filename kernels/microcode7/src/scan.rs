@@ -430,16 +430,28 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
     let mut row: u32 = 1;
     let briefly = table.single("ext.lexical.prologue.echo");
     let folded = table.flag("ext.lexical.prologue.folded");
+    // A shorter marker still, which the run may or may not be given.
+    let shortly = table.single("ext.lexical.prologue.brief");
     loop {
         // A run of code may be opened by either marker, whichever comes
         // first. The brief one asks for what the run comes to be
         // written out, so the word that writes stands before it.
-        let (at, mark, writes) = match (marker_at(rest, opening, folded), briefly.and_then(|m| marker_at(rest, m, folded))) {
-            (Some(a), Some(b)) if b < a => (b, briefly.expect("the brief marker"), true),
-            (Some(a), _) => (a, opening, false),
-            (None, Some(b)) => (b, briefly.expect("the brief marker"), true),
-            (None, None) => break,
-        };
+        // The run of code is opened by whichever marker comes soonest.
+        // Two of them may stand in one place, one being the opening of
+        // the other; there the longer is meant, since the shorter says
+        // nothing the longer does not say more exactly.
+        let mut soonest: Option<(usize, &str, bool)> = None;
+        for (mark, writes) in [(Some(opening), false), (briefly, true), (shortly, false)] {
+            let Some(mark) = mark else { continue };
+            let Some(at) = marker_at(rest, mark, folded) else { continue };
+            let takes = soonest.map_or(true, |(was, seen, _): (usize, &str, bool)| {
+                at < was || (at == was && mark.len() > seen.len())
+            });
+            if takes {
+                soonest = Some((at, mark, writes));
+            }
+        }
+        let Some((at, mark, writes)) = soonest else { break };
         says(&rest[..at], row, &mut out);
         row += rest[..at].matches('\n').count() as u32;
         let after = &rest[at + mark.len()..];

@@ -780,6 +780,17 @@ only. The extension labels so far, all from PHP:
   `ext.lexical.escape.codepoint`, which brackets a number of any length.
   The letter with no digit after it names no character and is kept as it
   was written.
+- `ext.lexical.prologue.brief`: a shorter marker that opens a run of
+  code besides the plain one, the reference's `<?`. Where two markers
+  stand in the same place the longer is the one meant, so `<?php` and
+  `<?=` are still themselves. Said together with the next label.
+- `ext.lexical.prologue.brief.setting`: the name of the setting that
+  must be turned on before that shorter marker opens anything. It is
+  looked at once, before the first word of the program is read, since
+  the reference will not let it change while a run goes; where it is
+  off, or was never given, the marker is put by and what follows it is
+  page like any other text. Anything but the words for no — nothing at
+  all, `0`, `off`, `false`, `no` — counts as yes.
 - `ext.system.text.bytes`: whether text is held as the bytes it was
   written in rather than as the letters those bytes spell. Under it a
   program is read byte by byte, every character of a piece of text
@@ -1504,6 +1515,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.octal_lead` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | - | - | - | `0o` `0O` | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | - | - | - | `_` | - | - |
+| `ext.lexical.prologue.brief` | - | - | - | - | - | - | - | `<?` | - | - |
+| `ext.lexical.prologue.brief.setting` | - | - | - | - | - | - | - | `short_open_tag` | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | - | - | - | `<?=` | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.lexical.template` | - | - | - | - | - | - | - | `true` | - | - |

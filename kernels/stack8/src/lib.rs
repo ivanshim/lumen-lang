@@ -42,7 +42,8 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
-            let lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
+            let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
+            settle_brief(&mut lang, request);
             return go(&lang, source, program_args, request);
         }
     }
@@ -51,8 +52,28 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 
 /// Run `source` under a definition given as JSON text.
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    settle_brief(&mut lang, request);
     go(&lang, source, program_args, request)
+}
+
+/// Whether the shorter marker opens a run of code at all. The setting
+/// that says so is one the run is started with and cannot change while
+/// it goes, so it is settled once, before a word of the program is
+/// read. Where it is off the marker is taken away, and what follows it
+/// is page like any other text.
+fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
+    let Some(setting) = lang.prologue_brief_setting.clone() else { return };
+    let said = request
+        .iter()
+        .find(|(from, key, ..)| from == "SETTINGS" && *key == setting)
+        .map(|(.., worth, _)| worth.trim().to_ascii_lowercase());
+    // A setting stands for yes unless it is one of the words for no,
+    // which is how the reference reads one written in a file.
+    let on = matches!(said.as_deref(), Some(worth) if !matches!(worth, "" | "0" | "off" | "false" | "no"));
+    if !on {
+        lang.prologue_brief = None;
+    }
 }
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {

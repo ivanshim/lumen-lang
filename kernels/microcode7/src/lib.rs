@@ -50,7 +50,8 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 }
 
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    let mut table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    brief_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| format!("{}: {}", prefix, e))
 }
@@ -97,6 +98,25 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
     use std::io::Write;
     let _ = std::io::stdout().flush();
     said.to_string()
+}
+
+/// Whether the shortest marker opens a run of code. What says so is a
+/// setting the run was started with, not anything in the definition,
+/// and it cannot change while the run goes; so it is looked at once,
+/// before the first word is read, and where it says no the marker is
+/// put by and what follows it stays page.
+fn brief_settled(table: &mut Table, request: &[(String, String, String, bool)]) {
+    let Some(setting) = table.single("ext.lexical.prologue.brief.setting").map(str::to_string) else { return };
+    let told = request
+        .iter()
+        .find(|(from, key, ..)| from == "SETTINGS" && *key == setting)
+        .map(|(.., worth, _)| worth.trim().to_ascii_lowercase());
+    // Anything but the words for no counts as yes, the way the
+    // reference reads a setting written down for it.
+    let no = ["", "0", "off", "false", "no"];
+    if !matches!(told.as_deref(), Some(worth) if !no.contains(&worth)) {
+        table.put_by("ext.lexical.prologue.brief");
+    }
 }
 
 fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
