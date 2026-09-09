@@ -535,7 +535,8 @@ only. The extension labels so far, all from PHP:
   without complaint. `scratch/file-float/3.py` reads such bodies and
   `scratch/file-float/4.py` reaches the complaint; `15.py` carries an
   exponent beyond the ordinary float range. `14.py` witnesses the
-  complex suite's reading.
+  complex suite's outward jumps inside an unreadied context: when its
+  body is set aside, the jumps recorded for that body are set aside too.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real. Python spells both
   letters; `scratch/file-float/2.py` witnesses both signs and points.

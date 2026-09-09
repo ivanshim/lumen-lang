@@ -925,6 +925,19 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// When a read body is set aside, its outward jumps go with it.
+    /// The surrounding loop must never try to mend words no longer kept.
+    fn discard_scope_code(&mut self, from: usize) {
+        let unit = self.piece();
+        unit.instrs.truncate(from);
+        unit.escapes.retain(|at| *at < from);
+        for cycle in &mut unit.cycles {
+            cycle.resumes.retain(|at| *at < from);
+            cycle.leaves.retain(|at| *at < from);
+        }
+        self.keyed.retain(|at| *at < from);
+    }
+
     /// A form may be read whole before the run has the means to keep it.
     fn scope_fault(&mut self, words: &[String]) {
         self.constant(Value::text(words.first().map_or("", String::as_str)));
@@ -1008,7 +1021,7 @@ impl<'a> Compiler<'a> {
             }
             message = if Lang::spells(&lang.yield_words, &word) { &lang.yield_unrun } else { &lang.scope_unready };
         }
-        self.piece().instrs.truncate(from);
+        self.discard_scope_code(from);
         self.scope_fault(message);
         Ok(())
     }
@@ -2252,7 +2265,7 @@ impl<'a> Compiler<'a> {
                 self.write(&bag);
                 self.walk(&bag, None, &var, false, None)?;
                 if unpacked {
-                    self.piece().instrs.truncate(beginning);
+                    self.discard_scope_code(beginning);
                     self.scope_fault(&lang.scope_unready);
                 }
                 return Ok(());
