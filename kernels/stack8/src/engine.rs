@@ -1122,6 +1122,7 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            binary_reals: self.lang.real_bits.is_some(),
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
             hidden_word: self.lang.hidden_words.first().map(String::as_str),

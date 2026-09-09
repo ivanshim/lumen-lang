@@ -167,6 +167,7 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
+    pub bit_reals: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -341,6 +342,7 @@ impl Value {
             // A language whose reals are numbers of bits writes one to
             // its own count of figures.
             Value::Frac(e) if w.real_figures.is_some() => spelled_out(nearest_binary(&e.above, &e.beneath), figures_asked(false).unwrap_or(w.real_figures)),
+            Value::Frac(e) if w.bit_reals && e.places.is_some() => ordinary_real(nearest_binary(&e.above, &e.beneath), e.places.unwrap()),
             other => other.bare(),
         }
     }
@@ -828,4 +830,31 @@ pub fn spelled_out(x: f64, figures: Option<usize>) -> String {
 /// one, else to the fewest figures that read back as the number itself.
 pub fn figured(x: f64, figures: Option<usize>) -> String {
     spelled_out(x, figures.or_else(|| figures_asked(true).flatten()))
+}
+
+/// Write a real to its usual figures, keeping powers of ten expanded.
+/// Rounding the display hides the remaining digits of its binary ratio.
+fn ordinary_real(worth: f64, figures: usize) -> String {
+    let shown = spelled_out(worth, Some(figures));
+    match shown.split_once('E') {
+        None => shown,
+        Some((head, power)) => {
+            let negative = head.starts_with('-');
+            let run = head.trim_start_matches('-').replace('.', "");
+            let run = run.trim_end_matches('0');
+            let point = power.parse::<i32>().unwrap_or(0) + 1;
+            let mut result = if negative { String::from("-") } else { String::new() };
+            if point <= 0 {
+                result.push_str("0.");
+                result.push_str(&"0".repeat(-point as usize));
+                result.push_str(run);
+            } else {
+                for index in 0..run.len().max(point as usize) {
+                    if index == point as usize { result.push('.'); }
+                    result.push(run.as_bytes().get(index).copied().unwrap_or(b'0') as char);
+                }
+            }
+            result
+        }
+    }
 }

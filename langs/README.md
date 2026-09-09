@@ -592,8 +592,8 @@ only. The extension labels so far, all from PHP:
   Python retains 64-bit real arithmetic but uses the existing kernel
   rendering, not CPython's shortest round-trip spelling: whole reals
   omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
-  For example, the kernels show `0.30000000000000`, `10000000000000000`,
-  `1`, `0.00001000000000`, `-0`, `INF` and `NAN` where CPython shows
+  For example, the kernels show `0.3`, `10000000000000000`,
+  `1`, `0.00001`, `-0`, `INF` and `NAN` where CPython shows
   `0.30000000000000004`, `1e+16`, `1.0`, `1e-05`, `-0.0`, `inf` and `nan`.
 - `ext.builtin.round`: nearest rounding with ties to even. Omitting the
   places, or passing null, returns an integer; explicit places retain the

@@ -160,6 +160,7 @@ pub struct Wording<'a> {
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
     pub real_digits: Option<usize>,
+    pub binary_reals: bool,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
@@ -358,6 +359,7 @@ impl Value {
             // to its own count of significant figures.
             Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
             Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
+            Value::Real(r) if sp.binary_reals => expanded_real(as_binary(&r.p, &r.q), r.places),
             other => other.plain(),
         }
     }
@@ -882,4 +884,15 @@ fn laid_flat(figures: &str, power: i32) -> String {
         return format!("{}{}", figures, "0".repeat(point - figures.len()));
     }
     format!("{}.{}", &figures[..point], &figures[point..])
+}
+
+/// Keep the ordinary decimal spelling after arithmetic rounds to a binary
+/// width, without exposing the tail of the stored binary ratio.
+fn expanded_real(number: f64, places: usize) -> String {
+    let text = written_out(number, Some(places));
+    let Some((front, power)) = text.split_once('E') else { return text };
+    let sign = if front.starts_with('-') { "-" } else { "" };
+    let digits = front.trim_start_matches('-').replace('.', "");
+    let digits = digits.trim_end_matches('0');
+    format!("{}{}", sign, laid_flat(digits, power.parse().unwrap_or(0)))
 }
