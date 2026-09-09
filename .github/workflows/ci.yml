@@ -92,3 +92,64 @@ jobs:
             tests/REPORT.md
             reference.log
           if-no-files-found: ignore
+
+  scratch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build scratch programs
+        run: |
+          cargo build --release
+      - name: Run scratch programs on both full kernels
+        shell: bash
+        run: |
+          shopt -s nullglob
+          programs=(scratch/*/*.py)
+          if [ "${#programs[@]}" -eq 0 ]; then
+            echo 'No scratch programs found; scratch/ is absent or empty.'
+            exit 0
+          fi
+          mapfile -d '' -t programs < <(printf '%s\0' "${programs[@]}" | LC_ALL=C sort -z)
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          failures=0
+          for f in "${programs[@]}"; do
+            for kernel in stack8 microcode7; do
+              printf '\n=== %s (%s) ===\n' "$f" "$kernel"
+              status=0
+              target/release/lumen-lang --kernel "$kernel" "$f" </dev/null >"$tmp/stdout" 2>"$tmp/stderr" || status=$?
+              printf '%s\n' '--- stdout ---'
+              cat "$tmp/stdout"
+              printf '\n%s\n' '--- stderr ---'
+              cat "$tmp/stderr"
+              printf '\nExit status: %s\n' "$status"
+              failed=0
+              if [ -f "${f%.py}.out" ]; then
+                if [ "$status" -ne 0 ]; then
+                  echo 'Expected a successful exit.'
+                  failed=1
+                fi
+                if ! diff -u "${f%.py}.out" "$tmp/stdout"; then
+                  failed=1
+                fi
+              elif [ -f "${f%.py}.err" ]; then
+                if [ "$status" -eq 0 ]; then
+                  echo 'Expected a non-zero exit.'
+                  failed=1
+                fi
+                head -n 1 "${f%.py}.err" >"$tmp/expected-error"
+                head -n 1 "$tmp/stderr" >"$tmp/actual-error"
+                if ! diff -u "$tmp/expected-error" "$tmp/actual-error"; then
+                  failed=1
+                fi
+              else
+                echo 'Missing expected .out or .err file.'
+                failed=1
+              fi
+              failures=$((failures + failed))
+            done
+          done
+          echo "Scratch failures: $failures"
+          test "$failures" -eq 0
