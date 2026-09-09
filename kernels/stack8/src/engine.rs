@@ -2933,6 +2933,22 @@ impl<'a> Engine<'a> {
                 self.data.pop();
                 Value::array(items)
             }
+            Action::StringFault => {
+                let message = self.drop_top()?.plain();
+                return Err(message.into());
+            }
+            Action::StringRender => {
+                let conversion = self.drop_top()?.plain();
+                let specification = self.drop_top()?.plain();
+                let value = self.drop_top()?;
+                let plain = conversion.is_empty() || conversion == "s";
+                let integer = matches!(value, Value::Small(_) | Value::Huge(_));
+                if !specification.is_empty() || !plain && !integer
+                    || !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Text(_) | Value::Flag(_) | Value::Null) {
+                    return Err(self.lang.string_unready.clone().unwrap_or_default().into());
+                }
+                Value::text(&value.display(&self.wording()))
+            }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
                     return Err("Stack underflow".to_string().into());
@@ -3081,6 +3097,19 @@ impl<'a> Engine<'a> {
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
+            Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
+                let same = match (a, b) {
+                    (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
+                    (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+                    (Value::Null, Value::Null) => true,
+                    (Value::Flag(x), Value::Flag(y)) => x == y,
+                    (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
+                    (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    _ if !a.identical(b) => false,
+                    _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
+                };
+                Value::Flag(same != matches!(op, Action::Unsame))
+            }
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),

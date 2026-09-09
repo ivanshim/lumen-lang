@@ -48,7 +48,35 @@ pub struct Lang {
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
     pub raw_quotes: Vec<char>,
+    pub long_quotes: Vec<String>,
+    pub raw_prefixes: Vec<char>,
+    pub byte_prefixes: Vec<char>,
+    pub plain_prefixes: Vec<char>,
+    pub format_prefixes: Vec<char>,
+    pub adjacent_strings: bool,
+    pub string_amiss: Option<String>,
+    pub string_unready: Option<String>,
+    pub bases_open: Option<String>,
+    pub bases_close: Option<String>,
+    pub class_unready: Option<String>,
+    pub member_pipes: bool,
+    pub with_words: Vec<String>,
+    pub with_as_words: Vec<String>,
+    pub with_unready: Option<String>,
+    pub tuple_words: Vec<String>,
+    pub tuple_unready: Option<String>,
+    pub identity_not: Vec<String>,
+    pub identity_unsupported: Option<String>,
+    pub range_zero_start: bool,
+    pub byte_digits: Option<usize>,
+    pub codepoint_digits: Option<usize>,
+    pub wide_letter: Option<char>,
+    pub wide_digits: Option<usize>,
+    pub named_letter: Option<char>,
+    pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
+    pub control_escapes: Vec<char>,
+    pub continued_strings: bool,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
     pub codepoint_letter: Option<char>,
@@ -730,7 +758,9 @@ b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w e
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
-w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+
+w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | b ext.op.member.pipes | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.op.identical.negated | w ext.op.identical.unsupported | b ext.builtin.range.zero_start | w ext.lexical.string.value.unready | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
+b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
@@ -1249,7 +1279,35 @@ impl Lang {
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
             raw_quotes,
+            long_quotes: r.strings("ext.lexical.string.long")?,
+            raw_prefixes: r.letters("ext.lexical.string.prefix.raw")?,
+            byte_prefixes: r.letters("ext.lexical.string.prefix.bytes")?,
+            plain_prefixes: r.letters("ext.lexical.string.prefix.plain")?,
+            format_prefixes: r.letters("ext.lexical.string.prefix.format")?,
+            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
+            string_amiss: r.head("ext.lexical.string.amiss")?,
+            string_unready: r.head("ext.lexical.string.value.unready")?,
+            bases_open: r.head("ext.stmt.class.bases.open")?,
+            bases_close: r.head("ext.stmt.class.bases.close")?,
+            class_unready: r.head("ext.stmt.class.unready")?,
+            member_pipes: r.flag("ext.op.member.pipes")?,
+            with_words: r.strings("ext.stmt.with")?,
+            with_as_words: r.strings("ext.stmt.with.as")?,
+            with_unready: r.head("ext.stmt.with.unready")?,
+            tuple_words: r.strings("ext.op.tuple")?,
+            tuple_unready: r.head("ext.op.tuple.unready")?,
+            identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unsupported: r.head("ext.op.identical.unsupported")?,
+            range_zero_start: r.flag("ext.builtin.range.zero_start")?,
+            byte_digits: r.count("ext.lexical.escape.byte.digits")?,
+            codepoint_digits: r.count("ext.lexical.escape.codepoint.digits")?,
+            wide_letter: r.letter("ext.lexical.escape.codepoint.wide")?,
+            wide_digits: r.count("ext.lexical.escape.codepoint.wide.digits")?,
+            named_letter: r.letter("ext.lexical.escape.named")?,
+            escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             escape_letters: escapes,
+            control_escapes: r.letters("ext.lexical.escape.controls")?,
+            continued_strings: r.flag("ext.lexical.escape.continued")?,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
@@ -1355,7 +1413,7 @@ impl Lang {
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
-            loose_equality: tells_same,
+            loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
             complaint_words: {
                 let named = [
                     (Complaint::Warning, "ext.system.complaint.warning"),
@@ -1615,7 +1673,7 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        if !lang.class_words.is_empty() && lang.bases_open.is_none() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
@@ -1674,6 +1732,10 @@ impl Lang {
             place(question);
             place(mark);
         }
+        for mark in self.bases_open.iter().chain(self.bases_close.iter()) { place(mark); }
+        for mark in &self.long_quotes {
+            place(mark);
+        }
         for lex in &self.plus_words {
             place(lex);
         }
@@ -1694,6 +1756,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.with_words, &self.with_as_words, &self.tuple_words, &self.identity_not,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,

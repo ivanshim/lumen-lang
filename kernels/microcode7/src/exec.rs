@@ -297,7 +297,7 @@ impl<'a> Machine<'a> {
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
-            loose_equals: table.single("ext.op.identical").is_some(),
+            loose_equals: table.has_any("ext.op.identical") && !table.has_any("ext.op.identical.negated"),
         }
     }
 
@@ -4082,6 +4082,19 @@ impl<'a> Machine<'a> {
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
+                let identical = match (&v[0], &v[1]) {
+                    (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
+                    (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Nil, Value::Nil) => true,
+                    (Value::Flag(a), Value::Flag(b)) => a == b,
+                    (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
+                    _ if !v[0].selfsame(&v[1]) => false,
+                    _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(if op == Prim::Unlike { !identical } else { identical })
+            }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
@@ -4105,6 +4118,18 @@ impl<'a> Machine<'a> {
             // with, and anything that is not an array becomes an array
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::UnheldText => return Err(v[0].bare()),
+            Prim::RenderField => {
+                let manner = v[2].bare();
+                let ordinary = manner.is_empty() || manner == "s";
+                let count = matches!(&v[0], Value::Small(_) | Value::Huge(_));
+                let scalar = matches!(&v[0], Value::Small(_) | Value::Huge(_) | Value::Text(_) | Value::Flag(_) | Value::Nil);
+                if scalar && v[1].bare().is_empty() && (ordinary || count) {
+                    Value::text(&v[0].render(w))
+                } else {
+                    return Err(self.table.single("ext.lexical.string.value.unready").unwrap_or("").to_owned());
+                }
+            }
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {

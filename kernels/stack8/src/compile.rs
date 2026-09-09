@@ -932,6 +932,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.until_words, &w) {
                 return self.until_stmt();
             }
+            if Lang::spells(&lang.with_words, &w) { return self.read_with_body(); }
             if Lang::spells(&lang.for_words, &w) {
                 return self.for_stmt();
             }
@@ -2062,6 +2063,14 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         self.take();
         let var = self.want_name("as the loop variable")?;
+        if self.on_any(&lang.tuple_words) {
+            while self.on_any(&lang.tuple_words) {
+                self.take();
+                self.want_name("as another loop target")?;
+            }
+            self.constant(Value::text(lang.tuple_unready.as_deref().unwrap_or_default()));
+            self.act(Action::StringFault, 1);
+        }
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
@@ -2074,11 +2083,16 @@ impl<'a> Compiler<'a> {
             let call = lang.calling.clone().expect("call brackets");
             self.take();
             self.expr(0)?;
-            self.write(&var);
-            if let Some(sep) = &call.between {
-                self.want_sign(sep, "between the range bounds")?;
+            if lang.range_zero_start && self.at_symbol(&call.close) {
+                self.constant(Value::Small(0));
+                self.write(&var);
+            } else {
+                self.write(&var);
+                if let Some(sep) = &call.between {
+                    self.want_sign(sep, "between the range bounds")?;
+                }
+                self.expr(0)?;
             }
-            self.expr(0)?;
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
@@ -2470,7 +2484,51 @@ impl<'a> Compiler<'a> {
     /// A class and its members: properties, constants, the values it
     /// keeps for itself, and its methods. The class becomes a value
     /// bound to its name, so `new C` and `C::X` are ordinary reads.
+    fn read_class_body(&mut self) -> Res<()> {
+        self.take();
+        let name = self.want_name("as the class name")?;
+        let start = self.mark();
+        if let Some(open) = self.lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
+            self.take();
+            let _ = open;
+            let close = self.lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
+            while !self.at_symbol(&close) {
+                self.expr(0)?;
+                self.discard();
+                if !self.on_any(&self.lang.tuple_words) { break; }
+                self.take();
+            }
+            self.want_sign(&close, "after the bases")?;
+        }
+        self.routine(&name, Vec::new(), 0, false, |a| a.body())?;
+        self.piece().instrs.truncate(start);
+        self.constant(Value::text(self.lang.class_unready.as_deref().unwrap_or_default()));
+        self.act(Action::StringFault, 1);
+        Ok(())
+    }
+
+    fn read_with_body(&mut self) -> Res<()> {
+        self.take();
+        let start = self.mark();
+        loop {
+            self.expr(0)?;
+            self.discard();
+            if self.on_keyword(&self.lang.with_as_words) {
+                self.take();
+                self.want_name("after the context binding word")?;
+            }
+            if !self.on_any(&self.lang.tuple_words) { break; }
+            self.take();
+        }
+        self.body()?;
+        self.piece().instrs.truncate(start);
+        self.constant(Value::text(self.lang.with_unready.as_deref().unwrap_or_default()));
+        self.act(Action::StringFault, 1);
+        Ok(())
+    }
+
     fn class_decl(&mut self) -> Res<()> {
+        if self.lang.bases_open.is_some() { return self.read_class_body(); }
         let lang = self.lang;
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
@@ -3919,6 +3977,11 @@ impl<'a> Compiler<'a> {
                 break;
             }
             self.take();
+            let mut infix = infix;
+            if matches!(infix.action, Action::Same) && self.on_keyword(&lang.identity_not) {
+                self.take();
+                infix.action = Action::Unsame;
+            }
             let right_floor = if infix.right_assoc { infix.level } else { infix.level + 1 };
             match infix.action {
                 Action::And | Action::Or => {
@@ -4066,6 +4129,33 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn string_piece(&mut self) -> Res<()> {
+        let token = self.take();
+        match token.shape {
+            Shape::Quote => self.constant(Value::text(&token.lexeme)),
+            Shape::StringFault => {
+                self.constant(Value::text(&token.lexeme));
+                self.act(Action::StringFault, 1);
+            }
+            Shape::StringBegin => {
+                self.constant(Value::text(""));
+                while self.look().shape != Shape::StringEnd {
+                    if self.look().shape == Shape::StringField {
+                        let field = self.take();
+                        self.expr(0)?;
+                        self.string_piece()?;
+                        self.constant(Value::text(&field.lexeme));
+                        self.act(Action::StringRender, 3);
+                    } else { self.string_piece()?; }
+                    self.act(Action::Join, 2);
+                }
+                self.take();
+            }
+            _ => return Err(self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())),
+        }
+        Ok(())
+    }
+
     fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.mark();
@@ -4156,9 +4246,12 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Quote => {
-                self.take();
-                self.constant(Value::text(&tok.lexeme));
+            Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+                self.string_piece()?;
+                while lang.adjacent_strings && matches!(self.look().shape, Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                    self.string_piece()?;
+                    self.act(Action::Join, 2);
+                }
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
                 self.take();
@@ -4327,8 +4420,21 @@ impl<'a> Compiler<'a> {
                 if let Some(group) = lang.grouping.clone() {
                     if tok.lexeme == group.open {
                         self.take();
-                        self.expr(0)?;
+                        let start = self.mark();
+                        let mut tuple = !lang.tuple_words.is_empty() && self.at_symbol(&group.close);
+                        if !tuple { self.expr(0)?; }
+                        while self.on_any(&lang.tuple_words) {
+                            tuple = true;
+                            self.take();
+                            if self.at_symbol(&group.close) { break; }
+                            self.expr(0)?;
+                        }
                         self.want_sign(&group.close, "to close a group")?;
+                        if tuple {
+                            self.piece().instrs.truncate(start);
+                            self.constant(Value::text(lang.tuple_unready.as_deref().unwrap_or_default()));
+                            self.act(Action::StringFault, 1);
+                        }
                         self.called_on_value()?;
                         return self.indexing(from);
                     }
@@ -5013,6 +5119,7 @@ impl<'a> Compiler<'a> {
         loop {
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
+            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme) { break; }
             if !member && !scope {
                 break;
             }

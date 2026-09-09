@@ -90,6 +90,8 @@ pub enum Action {
     And,
     Or,
     Join,
+    StringRender,
+    StringFault,
     At,
     /// The three bounds of a span, kept until its array is known.
     Slice,

@@ -1165,6 +1165,7 @@ impl<'a> Builder<'a> {
                     },
                 );
             }
+            if self.key("ext.stmt.with") { return self.deferred_context(); }
             if self.key("stmt.for") {
                 return self.for_stmt();
             }
@@ -1740,7 +1741,43 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    fn deferred_class(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let title = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.class.bases.open") {
+            self.advance();
+            let right = table.single("ext.stmt.class.bases.close").ok_or("Class bases need a closing mark")?;
+            loop {
+                if self.sign(right) { break; }
+                self.expr(0)?;
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+            }
+            self.need_sign(right, "after the bases")?;
+        }
+        self.routine(&title, Holds::Every, Traps::Naught, Vec::new(), 0, |r| r.body())?;
+        Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(table.single("ext.stmt.class.unready").unwrap_or_default()))]))
+    }
+
+    fn deferred_context(&mut self) -> Res<Form> {
+        self.advance();
+        loop {
+            self.expr(0)?;
+            if self.key("ext.stmt.with.as") {
+                self.advance();
+                self.need_word("as the context target")?;
+            }
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+        }
+        self.body()?;
+        let complaint = self.table.single("ext.stmt.with.unready").unwrap_or_default();
+        Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(complaint))]))
+    }
+
     fn class_decl(&mut self) -> Res<Form> {
+        if self.table.has_any("ext.stmt.class.bases.open") { return self.deferred_class(); }
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
@@ -2521,6 +2558,18 @@ impl<'a> Builder<'a> {
         let table = self.table;
         self.advance();
         let var = self.need_word("as the loop variable")?;
+        if self.on_any("ext.op.tuple") {
+            while self.on_any("ext.op.tuple") {
+                self.advance();
+                self.need_word("as another loop target")?;
+            }
+            if !self.key("stmt.for.in") { return Err("Expected the collection after the targets".into()); }
+            self.advance();
+            self.expr(0)?;
+            self.body()?;
+            let words = table.single("ext.op.tuple.unready").unwrap_or_default();
+            return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(words))]));
+        }
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
@@ -2531,13 +2580,18 @@ impl<'a> Builder<'a> {
         let (start, end) = if ranged {
             self.advance();
             self.advance();
-            let start = self.expr(0)?;
-            if let Some(sep) = table.single("syntax.call.separator") {
-                self.need_sign(sep, "between the range bounds")?;
-            }
-            let end = self.expr(0)?;
-            self.need_sign(table.single("syntax.call.close").unwrap(), "after the range")?;
-            (start, end)
+            let first = self.expr(0)?;
+            let close = table.single("syntax.call.close").unwrap();
+            let bounds = if table.flag("ext.builtin.range.zero_start") && self.sign(close) {
+                (constant(Value::Small(0)), first)
+            } else {
+                if let Some(sep) = table.single("syntax.call.separator") {
+                    self.need_sign(sep, "between the range bounds")?;
+                }
+                (first, self.expr(0)?)
+            };
+            self.need_sign(close, "after the range")?;
+            bounds
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let start = self.expr(tier + 1)?;
@@ -3780,6 +3834,11 @@ impl<'a> Builder<'a> {
                 break;
             }
             self.advance();
+            let mut op = op;
+            if op.prim == Prim::Selfsame && self.key("ext.op.identical.negated") {
+                self.advance();
+                op.prim = Prim::Unlike;
+            }
             let floor_right = if op.right_assoc { op.level } else { op.level + 1 };
             left = match op.prim {
                 // The right side is a program, run only when the left leaves it open.
@@ -3855,6 +3914,27 @@ impl<'a> Builder<'a> {
             return self.step_of(piece, by, false);
         }
         Ok(piece)
+    }
+
+    fn quotation(&mut self) -> Res<Form> {
+        let start = self.advance();
+        if start.shape == Shape::Quote { return Ok(constant(Value::text(&start.lexeme))); }
+        if start.shape == Shape::Unheld { return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(&start.lexeme))])); }
+        if start.shape != Shape::Woven {
+            return Err(self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned());
+        }
+        let mut result = constant(Value::text(""));
+        loop {
+            if self.look().shape == Shape::WovenEnd { self.advance(); break; }
+            let piece = if self.look().shape == Shape::Field {
+                let conversion = self.advance().lexeme;
+                let value = self.expr(0)?;
+                let spec = self.quotation()?;
+                prim_call(Prim::RenderField, vec![value, spec, constant(Value::text(&conversion))])
+            } else { self.quotation()? };
+            result = prim_call(Prim::Join, vec![result, piece]);
+        }
+        Ok(result)
     }
 
     fn monadic_piece(&mut self) -> Res<Form> {
@@ -3944,9 +4024,14 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
-            Shape::Quote => {
-                self.advance();
-                constant(Value::text(&t.lexeme))
+            Shape::Quote | Shape::Woven | Shape::Unheld => {
+                let mut text = self.quotation()?;
+                if table.flag("ext.lexical.string.adjacent") {
+                    while matches!(self.look().shape, Shape::Quote | Shape::Woven | Shape::Unheld) {
+                        text = prim_call(Prim::Join, vec![text, self.quotation()?]);
+                    }
+                }
+                text
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();
@@ -4069,8 +4154,20 @@ impl<'a> Builder<'a> {
             Shape::Sign => {
                 if table.single("syntax.group.open") == Some(t.lexeme.as_str()) {
                     self.advance();
-                    let inner = self.expr(0)?;
-                    self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
+                    let close = table.single("syntax.group.close").unwrap();
+                    let empty = table.has_any("ext.op.tuple") && self.sign(close);
+                    let mut inner = if empty { constant(Value::Nil) } else { self.expr(0)? };
+                    let mut tuple = empty;
+                    while self.on_any("ext.op.tuple") {
+                        self.advance();
+                        tuple = true;
+                        if self.sign(close) { break; }
+                        self.expr(0)?;
+                    }
+                    self.need_sign(close, "to close a group")?;
+                    if tuple {
+                        inner = prim_call(Prim::UnheldText, vec![constant(Value::text(table.single("ext.op.tuple.unready").unwrap_or_default()))]);
+                    }
                     self.called_on_value(inner)?
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {
                     self.advance();
@@ -4591,6 +4688,7 @@ impl<'a> Builder<'a> {
         loop {
             let reaching = table.single("ext.op.member").map_or(false, |m| self.sign(m));
             let owning = table.single("ext.op.scope").map_or(false, |m| self.sign(m));
+            if reaching && table.flag("ext.op.member.pipes") && table.prims.contains_key(&self.glance(1).lexeme) { return Ok(node); }
             if !reaching && !owning {
                 return Ok(node);
             }
