@@ -728,7 +728,25 @@ impl<'a> Machine<'a> {
                 if !text.is_empty() {
                     self.written_out.set(true);
                 }
-                print!("{}", text);
+                self.put_out(text);
+            }
+        }
+    }
+
+    /// Text sent where the run puts what it writes. A language holding
+    /// text as bytes means every character of it stands for a byte, and
+    /// what goes out is those bytes and no encoding of them; otherwise
+    /// the letters go out spelled as letters are.
+    fn put_out(&self, text: &str) {
+        match self.table.flag("ext.system.text.bytes") {
+            false => print!("{}", text),
+            true => {
+                use std::io::Write as _;
+                let raw = text.chars().fold(Vec::with_capacity(text.len()), |mut so_far, c| {
+                    so_far.push(c as u32 as u8);
+                    so_far
+                });
+                let _ = std::io::stdout().lock().write_all(&raw);
             }
         }
     }
@@ -942,6 +960,7 @@ impl<'a> Machine<'a> {
             },
             within_word: self.table.single("ext.stmt.class.guarded"),
             alone_word: self.table.single("ext.stmt.class.hidden"),
+            kept_as_bytes: self.table.flag("ext.system.text.bytes"),
         }
     }
 
@@ -3211,7 +3230,7 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 let w = self.wording();
                 let (place, what) = (v[0].render(w), v[1].render(w));
-                match std::fs::write(place, what.as_bytes()) {
+                match std::fs::write(place, self.table.raw_of(&what)) {
                     Ok(()) => Value::Small(what.len() as i64),
                     Err(_) => Value::Flag(false),
                 }
@@ -3531,7 +3550,10 @@ impl<'a> Machine<'a> {
             // Turning text over works letter by letter; anything else is
             // read as a whole number of sixty-four bits first.
             Prim::BitsOver => match &v[0] {
-                Value::Text(s) => Value::text(&letters_turned(s)),
+                Value::Text(s) => {
+                    let over: Vec<u8> = self.table.raw_of(s).iter().map(|b| !b).collect();
+                    Value::text(&self.table.said_of(&over))
+                }
                 other => Value::Small(!self.bits_told(other)?),
             },
             // Two pieces of text meet letter by letter. The shorter one
@@ -3541,7 +3563,8 @@ impl<'a> Machine<'a> {
                 if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
             {
                 let (left, right) = (v[0].bare(), v[1].bare());
-                let (left, right) = (left.as_bytes(), right.as_bytes());
+                let (left, right) = (self.table.raw_of(&left), self.table.raw_of(&right));
+                let (left, right) = (&left[..], &right[..]);
                 let far = if op == Prim::BitsEither { left.len().max(right.len()) } else { left.len().min(right.len()) };
                 let mut letters: Vec<u8> = Vec::with_capacity(far);
                 for at in 0..far {
@@ -4289,7 +4312,13 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
         Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "float(-0)".to_string(),
         Value::Frac(e) if binary_reals => format!("float({})", crate::data::figured(crate::data::nearest_binary(&e.above, &e.beneath), None)),
         Value::Frac(_) => format!("float({})", v.bare()),
-        Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
+        Value::Text(s) => {
+            // Kept as bytes, a character is a byte and the width is the
+            // count of them; kept as letters, it is what they are
+            // spelled with that is counted.
+            let wide = if w.kept_as_bytes { s.chars().count() } else { s.len() };
+            format!("string({}) \"{}\"", wide, s)
+        }
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
             let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))).collect();
@@ -4722,11 +4751,6 @@ fn number_spelled_in(v: &Value) -> Option<Value> {
     Some(math::make_number((above * &scale + below) * sign, scale, Some(digits_told)))
 }
 
-/// Every letter of a piece of text with its bits turned over.
-fn letters_turned(s: &str) -> String {
-    let letters: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
-    String::from_utf8_lossy(&letters).into_owned()
-}
 
 /// A value as a whole number of sixty-four bits. Text spelling a number
 /// stands for it and text spelling none stands for nothing; what lies

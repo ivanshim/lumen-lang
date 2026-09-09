@@ -780,6 +780,19 @@ only. The extension labels so far, all from PHP:
   `ext.lexical.escape.codepoint`, which brackets a number of any length.
   The letter with no digit after it names no character and is kept as it
   was written.
+- `ext.system.text.bytes`: whether text is held as the bytes it was
+  written in rather than as the letters those bytes spell. Under it a
+  program is read byte by byte, every character of a piece of text
+  stands for one byte and is worth its number, and what is written out
+  goes out as those bytes and no encoding of them. So the length of a
+  piece of text is the count of its bytes, `\u{...}` puts down the bytes
+  that spell the number rather than the character it names — half of a
+  pair among them, which names no character at all — and turning the
+  bits of text about turns each byte about within itself. A name may be
+  spelled with bytes past the plain seven-bit ones where the language
+  also allows names beyond them. Only the two full kernels give this
+  label meaning; the four that read past it hold text as letters, which
+  leaves what a program writes out unchanged.
 - `ext.lexical.escape.octal`: whether a run of figures in eights right
   after the escape mark names a character by its number, three figures
   at most: `"\101"` is an A. Unlike its two sisters above, no letter
@@ -1647,6 +1660,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.line` | - | - | - | - | - | - | - | `__LINE__` | - | - |
 | `ext.system.source.method` | - | - | - | - | - | - | - | `__METHOD__` | - | - |
 | `ext.system.source.routine` | - | - | - | - | - | - | - | `__FUNCTION__` | - | - |
+| `ext.system.text.bytes` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.untrue.empty_array` | - | - | - | - | - | - | - | `true` | - | - |
 | `ext.system.untrue.text` | - | - | - | - | - | - | - | `0` | - | - |
 <!-- table:end -->

@@ -157,14 +157,50 @@ struct Invocation {
     program_args: Vec<String>,
 }
 
+/// Whether a language holds text as the bytes it was written in rather
+/// than as the letters those bytes spell. It is the definition that
+/// says so, not the kernel, so a program is read the same way whichever
+/// kernel is to run it.
+fn text_is_bytes(language: &Language) -> bool {
+    let definition = match language {
+        Language::File { text, .. } => text.clone(),
+        Language::Named(name) => match lumen_microcode11::embedded(name) {
+            Ok(text) => text.to_string(),
+            Err(_) => return false,
+        },
+    };
+    lumen_stack8::lang::Lang::parse(&definition).map_or(false, |lang| lang.text_is_bytes)
+}
+
+/// Whether a kernel gives the extension labels any meaning. The four
+/// reference kernels read past them, so for those a program is read as
+/// the letters its bytes spell however the definition holds text — as
+/// an unread label leaves everything else it touches unchanged.
+fn honours_extensions(kernel: &str) -> bool {
+    matches!(kernel, "stack8" | "microcode7")
+}
+
+/// What was written in a file, as the kernel is to hold it. Where text
+/// is bytes, each byte stands as the character of its own number, so
+/// that nothing of what was written is lost and the count of characters
+/// is the count of bytes. Where it is letters, the bytes are read as
+/// the letters they spell, and a byte spelling none is passed over.
+fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
+    match as_bytes {
+        true => written.into_iter().map(char::from).collect(),
+        false => String::from_utf8_lossy(&written).into_owned(),
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let inv = parse_args(&args);
 
-    let source = fs::read_to_string(&inv.file).unwrap_or_else(|e| {
+    let written = fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
     });
+    let source = source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
     let source = without_shebang(source);
 
     // Every program runs on top of its language's library.
@@ -202,7 +238,7 @@ fn main() {
     // What a web request carries, gathered once here so that a kernel
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
-    let mut request = web::gathered();
+    let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.
     let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));

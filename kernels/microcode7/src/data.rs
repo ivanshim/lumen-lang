@@ -141,6 +141,10 @@ pub struct Names<'a> {
     /// the name where a thing is shown.
     pub within_word: Option<&'a str>,
     pub alone_word: Option<&'a str>,
+    /// Whether text is kept as bytes, in which case a character of it
+    /// is one byte and the width of a piece of text is how many
+    /// characters it has rather than what the letters would take.
+    pub kept_as_bytes: bool,
 }
 
 impl Value {

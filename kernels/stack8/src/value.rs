@@ -135,6 +135,10 @@ pub struct Wording<'a> {
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
+    /// Whether text is held as the bytes it was written in, so that the
+    /// width of a piece of text is the count of its characters and not
+    /// the count of bytes the letters they spell would take.
+    pub text_is_bytes: bool,
     pub guarded_word: Option<&'a str>,
     pub hidden_word: Option<&'a str>,
 }

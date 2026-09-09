@@ -17,19 +17,19 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 99, differs 3, error 2, skipped 10 | pass 99, differs 3, error 2, skipped 10 |
+| `php/basic` | 114 | pass 100, differs 2, error 2, skipped 10 | pass 100, differs 2, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 203, differs 5, error 0, skipped 5 | pass 203, differs 5, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
-| `php/lang/operators` | 64 | pass 57, differs 1, error 0, skipped 6 | pass 57, differs 1, error 0, skipped 6 |
-| `php/lang/string` | 9 | pass 8, differs 1, error 0, skipped 0 | pass 8, differs 1, error 0, skipped 0 |
-| all | 422 | pass 385, differs 10, error 2, skipped 25 | pass 385, differs 10, error 2, skipped 25 |
+| `php/lang/operators` | 64 | pass 58, differs 0, error 0, skipped 6 | pass 58, differs 0, error 0, skipped 6 |
+| `php/lang/string` | 9 | pass 9, differs 0, error 0, skipped 0 | pass 9, differs 0, error 0, skipped 0 |
+| all | 422 | pass 388, differs 7, error 2, skipped 25 | pass 388, differs 7, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
-| ran, printed something else | 10 |
 | skip this test is for 32bit platform only | 9 |
+| ran, printed something else | 7 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
 | no --FILE-- section | 2 |
@@ -194,7 +194,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/019.phpt` | pass | pass |  |
 | `php/basic/020.phpt` | pass | pass |  |
 | `php/basic/021.phpt` | pass | pass |  |
-| `php/basic/022.phpt` | differs | differs | ran, printed something else |
+| `php/basic/022.phpt` | pass | pass |  |
 | `php/basic/023.phpt` | pass | pass |  |
 | `php/basic/025.phpt` | pass | pass |  |
 | `php/basic/028.phpt` | pass | pass |  |
@@ -488,7 +488,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/operators/bitwiseAnd_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseAnd_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseNot_basiclong_64bit.phpt` | pass | pass |  |
-| `php/lang/operators/bitwiseNot_variationStr.phpt` | differs | differs | ran, printed something else |
+| `php/lang/operators/bitwiseNot_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseOr_basiclong_64bit.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseOr_variationStr.phpt` | pass | pass |  |
 | `php/lang/operators/bitwiseShiftLeft_basiclong_64bit.phpt` | pass | pass |  |
@@ -581,7 +581,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/string/unicode_escape_legacy.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_sign.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_sign2.phpt` | pass | pass |  |
-| `php/lang/string/unicode_escape_surrogates.phpt` | differs | differs | ran, printed something else |
+| `php/lang/string/unicode_escape_surrogates.phpt` | pass | pass |  |
 | `php/lang/string/unicode_escape_whitespace.phpt` | pass | pass |  |
 | `php/lang/string_decimals_001.phpt` | pass | pass |  |
 | `php/lang/syntax_errors.phpt` | pass | pass |  |

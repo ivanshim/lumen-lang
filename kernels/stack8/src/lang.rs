@@ -285,6 +285,11 @@ pub struct Lang {
     /// Whether a run of figures in eights after a backslash names a
     /// character by its number: the reference's `\101`.
     pub octal_escapes: bool,
+    /// Whether text is held as the bytes it was written in rather than
+    /// as the letters those bytes spell. Under this, every character of
+    /// a piece of text stands for one byte and is worth its number, so
+    /// that the length of a piece of text is the count of its bytes.
+    pub text_is_bytes: bool,
     pub concat: Option<String>,
     pub foreach_words: Vec<String>,
     pub foreach_as_words: Vec<String>,
@@ -590,7 +595,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
-w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
@@ -1278,6 +1283,7 @@ impl Lang {
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
             heredoc: r.head("ext.lexical.heredoc")?,
             octal_escapes: r.flag("ext.lexical.escape.octal")?,
+            text_is_bytes: r.flag("ext.system.text.bytes")?,
             concat: r.head("op.concat")?,
             foreach_words: r.strings("stmt.foreach")?,
             foreach_as_words: r.strings("stmt.foreach.as")?,
@@ -1612,10 +1618,36 @@ impl Lang {
     }
 
     pub fn begins_name(&self, c: char) -> bool {
+        if self.text_is_bytes {
+            // Where text is bytes, a name is spelled in bytes too, and
+            // every byte past the plain seven-bit ones may stand in one.
+            return c == '_' || c.is_ascii_alphabetic() || (self.unicode_names && c >= '\u{80}');
+        }
         c == '_' || if self.unicode_names { c.is_alphabetic() } else { c.is_ascii_alphabetic() }
     }
 
     pub fn extends_name(&self, c: char) -> bool {
+        if self.text_is_bytes {
+            return c == '_' || c.is_ascii_alphanumeric() || (self.unicode_names && c >= '\u{80}');
+        }
         c == '_' || if self.unicode_names { c.is_alphanumeric() } else { c.is_ascii_alphanumeric() }
+    }
+
+    /// The bytes a piece of text stands for. Where text is bytes each
+    /// character is one of them and is worth its own number; otherwise
+    /// the bytes are the ones the letters are spelled with.
+    pub fn bytes_of(&self, s: &str) -> Vec<u8> {
+        match self.text_is_bytes {
+            true => s.chars().map(|c| c as u32 as u8).collect(),
+            false => s.as_bytes().to_vec(),
+        }
+    }
+
+    /// The text a run of bytes stands for, which is the other way about.
+    pub fn text_of(&self, bytes: &[u8]) -> String {
+        match self.text_is_bytes {
+            true => bytes.iter().map(|b| char::from(*b)).collect(),
+            false => String::from_utf8_lossy(bytes).into_owned(),
+        }
     }
 }

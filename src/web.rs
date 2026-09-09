@@ -46,20 +46,36 @@ const CGI_VARS: [&str; 14] = [
 /// outright stops the run. Each is taken as far as it reads and the
 /// rest of it left behind, so that one such name cannot keep a program
 /// from starting at all.
-fn named_around() -> Vec<(String, String)> {
+fn named_around(as_bytes: bool) -> Vec<(String, String)> {
     env::vars_os()
-        .map(|(name, worth)| (name.to_string_lossy().into_owned(), worth.to_string_lossy().into_owned()))
+        .map(|(name, worth)| (held(&name, as_bytes), held(&worth, as_bytes)))
         .collect()
 }
 
-pub fn gathered() -> Request {
+/// What the host gave under one name, as the run is to hold it. Where
+/// text is bytes, every byte stands as the character of its own number,
+/// so that a worth carrying bytes that spell no letter reaches the
+/// program whole. Where text is letters, a byte spelling none is
+/// passed over, since no letter answers to it.
+fn told(name: &str, as_bytes: bool) -> String {
+    env::var_os(name).map_or_else(String::new, |worth| held(&worth, as_bytes))
+}
+
+fn held(worth: &std::ffi::OsStr, as_bytes: bool) -> String {
+    match as_bytes {
+        true => worth.as_encoded_bytes().iter().map(|b| char::from(*b)).collect(),
+        false => worth.to_string_lossy().into_owned(),
+    }
+}
+
+pub fn gathered(as_bytes: bool) -> Request {
     let mut request = Request::new();
     // A run may be told which of the groups to gather at all, each by a
     // letter of its own, and how deep a name may point.
     let wanted = setting("variables_order").unwrap_or_else(|| "EGPCS".to_string());
     let takes = |letter: char| wanted.contains(letter);
     let deepest = setting("max_input_nesting_level").and_then(|said| said.trim().parse::<usize>().ok());
-    let query = env::var("QUERY_STRING").unwrap_or_default();
+    let query = told("QUERY_STRING", as_bytes);
     let asked = shallow_enough(fields(&query), deepest);
     for (key, value) in asked {
         if takes('G') {
@@ -81,7 +97,7 @@ pub fn gathered() -> Request {
     for (key, value, counted) in &sent {
         request.push(("FILES".to_string(), key.clone(), value.clone(), *counted));
     }
-    let cookies = env::var("HTTP_COOKIE").unwrap_or_default();
+    let cookies = told("HTTP_COOKIE", as_bytes);
     for (key, value) in crumbs(&cookies) {
         if takes('C') {
             request.push(("COOKIE".to_string(), key, value, false));
@@ -89,20 +105,20 @@ pub fn gathered() -> Request {
     }
     if takes('S') {
         for name in CGI_VARS {
-            if let Ok(value) = env::var(name) {
-                request.push(("SERVER".to_string(), name.to_string(), value, false));
+            if env::var_os(name).is_some() {
+                request.push(("SERVER".to_string(), name.to_string(), told(name, as_bytes), false));
             }
         }
     }
     if takes('E') {
-        for (name, value) in named_around() {
+        for (name, value) in named_around(as_bytes) {
             request.push(("ENV".to_string(), name, value, false));
         }
     }
     // What the run was started with, each under its own name. It is told
     // apart from the rest because a run may be told to gather none of
     // the groups and must still know what it was started with.
-    for (name, value) in named_around() {
+    for (name, value) in named_around(as_bytes) {
         if let Some(named) = name.strip_prefix("PHP_INI_") {
             request.push(("SETTINGS".to_string(), named.to_string(), value, false));
         }

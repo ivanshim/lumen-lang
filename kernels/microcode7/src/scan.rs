@@ -114,6 +114,7 @@ struct Backslash<'a> {
     numbered: Option<char>,
     unbracketed: Option<char>,
     eights: bool,
+    in_bytes: bool,
     open: Option<char>,
     shut: Option<char>,
     amiss: &'a str,
@@ -164,6 +165,17 @@ impl Backslash<'_> {
             };
             if number > 0x10FFFF {
                 return Err(self.beyond.to_string());
+            }
+            // Text kept as bytes takes the number spelled out in the
+            // bytes that spell it, whatever it names — half of a pair
+            // standing for one character between them included, which
+            // no letter of its own answers to.
+            if self.in_bytes {
+                for byte in numbered_bytes(number) {
+                    plain.push(out.chars().count());
+                    out.push(char::from(byte));
+                }
+                return Ok(j);
             }
             match char::from_u32(number) {
                 Some(made) => {
@@ -299,6 +311,27 @@ fn folded(text: &str, table: &Table) -> Option<(String, bool, usize)> {
 /// else is written out as it stands, as though the program said so.
 pub fn scan(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     scan_at(source, table).map_err(|(said, _)| said)
+}
+
+/// A character's number laid out in the bytes that spell it. One below
+/// a hundred and twenty-eight is a byte on its own; above that the
+/// number is cut into six-bit pieces, the first byte saying by its
+/// leading ones how many pieces there are and each of the rest
+/// carrying one. Nothing here refuses a number for what it names, so
+/// half of a pair is spelled as readily as anything else.
+fn numbered_bytes(number: u32) -> Vec<u8> {
+    let pieces = match number {
+        n if n < 0x80 => return vec![n as u8],
+        n if n < 0x800 => 2,
+        n if n < 0x10000 => 3,
+        _ => 4,
+    };
+    let lead = [0u8, 0, 0xC0, 0xE0, 0xF0][pieces];
+    let mut out = vec![lead | (number >> (6 * (pieces - 1))) as u8];
+    for left in (0..pieces - 1).rev() {
+        out.push(0x80 | ((number >> (6 * left)) & 0x3F) as u8);
+    }
+    out
 }
 
 /// The place the closing marker holds when nothing is spelling it
@@ -467,6 +500,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
     let unbracketed = table.letter("ext.lexical.escape.byte");
     // Whether figures in eights after a backslash name a character too.
     let eights = table.flag("ext.lexical.escape.octal");
+    // Whether what is kept is bytes rather than the letters they spell.
+    let in_bytes = table.flag("ext.system.text.bytes");
     let point = table.letter("lexical.number.decimal_point");
     let base = table.letter("lexical.number.base_marker");
     let expo = table.letter("lexical.number.exponent_marker");
@@ -545,6 +580,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 numbered: if is_raw { None } else { numbered },
                 unbracketed: if is_raw { None } else { unbracketed },
                 eights: !is_raw && eights,
+                in_bytes,
                 open: number_open,
                 shut: number_close,
                 amiss: badly,
@@ -669,6 +705,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 numbered,
                 unbracketed,
                 eights,
+                in_bytes,
                 open: number_open,
                 shut: number_close,
                 amiss: badly,

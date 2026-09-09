@@ -408,6 +408,7 @@
     "<<<"
   ],
   "ext.lexical.escape.octal": true,
+  "ext.system.text.bytes": true,
   "ext.lexical.interpolating.index.amiss": [
     "string content, expecting \"-\" or identifier or variable or number"
   ],

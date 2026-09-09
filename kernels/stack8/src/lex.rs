@@ -291,7 +291,7 @@ impl<'a> Cursor<'a> {
     /// character between them is a number without a character, and a
     /// kernel whose text is made of characters cannot hold it, so the
     /// escape is left as it was written.
-    fn codepoint(&mut self) -> Result<(Option<char>, String), String> {
+    fn codepoint(&mut self) -> Result<(u32, Option<char>, String), String> {
         let amiss = || self.lang.codepoint_amiss.clone().unwrap_or_else(|| "Bad character number".to_string());
         let open = self.lang.codepoint_open.expect("the escape has brackets");
         let close = self.lang.codepoint_close.ok_or_else(amiss)?;
@@ -326,7 +326,7 @@ impl<'a> Cursor<'a> {
         if number > 0x10FFFF {
             return Err(beyond());
         }
-        Ok((char::from_u32(number), written))
+        Ok((number, char::from_u32(number), written))
     }
 
     /// One escape, from the backslash to the end of what it names: the
@@ -346,7 +346,18 @@ impl<'a> Cursor<'a> {
         // written in sixteens between its brackets, and the character
         // of that number in its place.
         if how.numbered && Some(next) == self.lang.codepoint_letter && self.look(0) == self.lang.codepoint_open {
-            let (made, written) = self.codepoint()?;
+            let (number, made, written) = self.codepoint()?;
+            // Where text is bytes, what the number names is written out
+            // in the bytes that spell it, and a number naming half of a
+            // pair is spelled the same way as any other, since the text
+            // is bytes and no letter need answer to it.
+            if self.lang.text_is_bytes {
+                for byte in spelled_bytes(number) {
+                    shielded.push(s.chars().count());
+                    s.push(char::from(byte));
+                }
+                return Ok(());
+            }
             match made {
                 Some(made) => {
                     shielded.push(s.chars().count());
@@ -839,6 +850,30 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 /// stands between the prologue and the epilogue is read as code, and
 /// everything else is written out as it stands, as though the program
 /// had said so itself.
+/// The bytes that spell a character's number, by the rule that spells
+/// every one of them: a number under a hundred and twenty-eight stands
+/// alone, and each wider band is written with one leading byte saying
+/// how many follow. Half of a pair standing for one character between
+/// them is spelled here like any other number, the reference spelling
+/// it so where text is bytes.
+fn spelled_bytes(number: u32) -> Vec<u8> {
+    match number {
+        n if n < 0x80 => vec![n as u8],
+        n if n < 0x800 => vec![0xC0 | (n >> 6) as u8, 0x80 | (n & 0x3F) as u8],
+        n if n < 0x10000 => vec![
+            0xE0 | (n >> 12) as u8,
+            0x80 | ((n >> 6) & 0x3F) as u8,
+            0x80 | (n & 0x3F) as u8,
+        ],
+        n => vec![
+            0xF0 | (n >> 18) as u8,
+            0x80 | ((n >> 12) & 0x3F) as u8,
+            0x80 | ((n >> 6) & 0x3F) as u8,
+            0x80 | (n & 0x3F) as u8,
+        ],
+    }
+}
+
 /// Where a run of code ends: the first closing marker that is not
 /// standing inside something spelling it out. One written between
 /// quotes, or in a string laid over lines, is part of what that string

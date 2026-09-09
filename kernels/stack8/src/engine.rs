@@ -436,9 +436,24 @@ impl<'a> Engine<'a> {
                 if !text.is_empty() {
                     self.written_out.set(true);
                 }
-                print!("{}", text);
+                self.let_out(text);
             }
         }
+    }
+
+    /// Text put where the run writes. Where the language holds text as
+    /// bytes, each character stands for one byte and is written as that
+    /// byte alone; a character standing for no byte cannot arise there.
+    /// Where text is letters, it goes out as the letters spell it.
+    fn let_out(&self, text: &str) {
+        if !self.lang.text_is_bytes {
+            print!("{}", text);
+            return;
+        }
+        use std::io::Write as _;
+        let bytes: Vec<u8> = text.chars().map(|c| c as u32 as u8).collect();
+        let out = std::io::stdout();
+        let _ = out.lock().write_all(&bytes);
     }
 
     /// The routines named to run once the program is done, in the order
@@ -1057,6 +1072,7 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
             hidden_word: self.lang.hidden_words.first().map(String::as_str),
         }
@@ -1947,8 +1963,8 @@ impl<'a> Engine<'a> {
                 let v = self.drop_top()?;
                 match &v {
                     Value::Text(s) => {
-                        let out: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
-                        Value::text(&String::from_utf8_lossy(&out))
+                        let out: Vec<u8> = self.lang.bytes_of(s).iter().map(|c| !c).collect();
+                        Value::text(&self.lang.text_of(&out))
                     }
                     _ => Value::Small(!self.bits_said(&v)?),
                 }
@@ -2813,7 +2829,8 @@ impl<'a> Engine<'a> {
             // where the longer one stands on as it is.
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
-                let (x, y) = (x.as_bytes(), y.as_bytes());
+                let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));
+                let (x, y) = (x.as_slice(), y.as_slice());
                 let mut out: Vec<u8> = Vec::new();
                 let reach = if matches!(op, Action::BitEither) { x.len().max(y.len()) } else { x.len().min(y.len()) };
                 for i in 0..reach {
@@ -3424,7 +3441,7 @@ impl<'a> Engine<'a> {
                 }
                 let sp = self.wording();
                 let (where_to, what) = (args[0].display(&sp), args[1].display(&sp));
-                match std::fs::write(where_to, what.as_bytes()) {
+                match std::fs::write(where_to, self.lang.bytes_of(&what)) {
                     Ok(()) => Value::Small(what.len() as i64),
                     Err(_) => Value::Flag(false),
                 }
@@ -4071,6 +4088,16 @@ pub fn places_default() -> Value {
 /// A value with its kind, as PHP's var_dump shows it: a number as
 /// `int(n)` or `float(x)`, text with its byte length, an array one
 /// entry per line, nested arrays indented two more.
+/// How wide a piece of text is, counted in bytes. Where text is held as
+/// bytes each character stands for one; otherwise the count is of the
+/// bytes the letters are spelled with.
+fn text_width(s: &str, as_bytes: bool) -> usize {
+    match as_bytes {
+        true => s.chars().count(),
+        false => s.len(),
+    }
+}
+
 fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
     let pad = "  ".repeat(depth);
     // A place whose cell some name still holds besides the one holding
@@ -4091,7 +4118,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
         Value::Real(r) if r.below && num_traits::Zero::is_zero(&r.p) => "float(-0)".to_string(),
         Value::Real(r) if binary_reals => format!("float({})", crate::value::binary_string(crate::value::as_binary(&r.p, &r.q), None)),
         Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
-        Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
+        Value::Text(s) => format!("string({}) \"{}\"", text_width(s, sp.text_is_bytes), s),
         Value::Flag(b) => format!("bool({})", b),
         Value::Array(items) => {
             let mut out = format!("array({}) {{\n", items.len());

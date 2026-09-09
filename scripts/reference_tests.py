@@ -62,9 +62,9 @@ def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     # says where it belongs, put it there; otherwise anywhere will do.
     if beside is not None and not beside.with_suffix(suffix).exists():
         path = str(beside.with_suffix(suffix))
-        Path(path).write_text(source, encoding="utf-8")
+        Path(path).write_text(source, encoding=BYTEWISE)
     else:
-        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding=BYTEWISE) as f:
             f.write(source)
             path = f.name
     # php-src's own run-tests.php tells a test where the binary under
@@ -74,12 +74,30 @@ def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     body = (request or {}).get("body", "")
     try:
         p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path] + list(given), input=body, capture_output=True,
-                           text=True, timeout=TIMEOUT, errors="replace", env=setting)
+                           encoding=BYTEWISE, timeout=TIMEOUT, env=bytewise_env(setting))
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+BYTEWISE = "latin-1"
+
+
+def bytewise_env(setting):
+    """The run's surroundings as the host wants them, in bytes. A worth
+    a test gave is written in the characters its bytes stood for, so it
+    is turned back into those bytes; a worth this program was started
+    among is already what the host handed over, and goes back the way
+    it came."""
+    out = {}
+    for name, worth in setting.items():
+        try:
+            out[name.encode(BYTEWISE)] = worth.encode(BYTEWISE)
+        except UnicodeEncodeError:
+            out[name.encode("utf-8", "surrogateescape")] = worth.encode("utf-8", "surrogateescape")
+    return out
 
 
 def normalise(message, banner):
@@ -181,7 +199,7 @@ def web_request(sections):
 
 
 def run_phpt(path, kernel):
-    s = phpt_sections(path.read_text(encoding="utf-8", errors="replace"))
+    s = phpt_sections(path.read_text(encoding=BYTEWISE))
     if "FILE" not in s:
         return "skipped", "no --FILE-- section"
     # run-tests.php runs a test's SKIPIF section and passes the test over
@@ -226,7 +244,7 @@ def run_phpt(path, kernel):
 # ---------------------------------------------------------------- python
 
 def run_python(path, kernel):
-    source = path.read_text(encoding="utf-8", errors="replace")
+    source = path.read_text(encoding=BYTEWISE)
     code, out, err = run(kernel, [], source, ".py")
     if code == 0:
         return "differs", "ran to the end without asserting anything"
@@ -272,11 +290,11 @@ def main():
 
     php_calls = Counter()
     for f in php_files:
-        s = phpt_sections(f.read_text(encoding="utf-8", errors="replace"))
+        s = phpt_sections(f.read_text(encoding=BYTEWISE))
         php_calls.update(calls_in(s.get("FILE", ""), PHP_RESERVED))
     py_calls = Counter()
     for f in py_files:
-        py_calls.update(calls_in(f.read_text(encoding="utf-8", errors="replace"), PYTHON_KEYWORDS))
+        py_calls.update(calls_in(f.read_text(encoding=BYTEWISE), PYTHON_KEYWORDS))
 
     def totals(kernel, files):
         return Counter(results[kernel][f][0] for f in files)
