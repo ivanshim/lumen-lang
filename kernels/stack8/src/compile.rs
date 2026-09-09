@@ -671,6 +671,10 @@ impl<'a> Compiler<'a> {
     /// result after the function, a call of the function's own name inside
     /// it is the global program, not the result being built.
     fn read_callee(&mut self, name: &str) {
+        if self.class_names.last().map_or(false, |(depth, names)| *depth == self.pieces.len() && names.contains_key(name)) {
+            self.read(name);
+            return;
+        }
         let own = self.lang.named_result && self.piece().ident == name && !self.piece().outermost;
         let mut slot = self.cell_to_read(name, false);
         if own {
@@ -2315,6 +2319,11 @@ impl<'a> Compiler<'a> {
                 let named = self.want_name("as the method name")?;
                 let method = self.method(&named)?;
                 methods.retain(|(old, _)| old != &named);
+                shared.retain(|(old, _)| old != &named);
+                let slot = self.gensym("method");
+                self.constant(Value::Routine(method.clone()));
+                self.write(&slot);
+                self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
                 methods.push((named, method));
             } else if self.on_keyword(&lang.pass_words) {
                 self.take();
@@ -4789,9 +4798,13 @@ impl<'a> Compiler<'a> {
                 let fallback = self.skip();
                 self.read(&held);
                 if let Some(brackets) = &call {
+                    self.act(Action::Grab(named.as_str().into()), 1);
+                    let callee = self.gensym("method_value");
+                    self.write(&callee);
                     self.take();
                     let argc = self.arguments_of(&named, brackets)?;
-                    self.act(Action::Send(named.as_str().into()), argc + 1);
+                    self.read(&callee);
+                    self.act(Action::Invoke(named.as_str().into()), argc + 1);
                 } else { self.act(Action::Grab(named.as_str().into()), 1); }
                 let finish = self.leap();
                 self.land(fallback);

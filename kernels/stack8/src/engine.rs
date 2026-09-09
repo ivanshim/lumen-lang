@@ -2321,7 +2321,11 @@ impl<'a> Engine<'a> {
                         // that was asked for.
                         None if self.lang.member_pipes && o.class.holder(name).is_some() => {
                             self.data.push(Value::Class(o.class.clone()));
-                            return self.perform(&Action::Reach(name.clone()), 1);
+                            self.perform(&Action::Reach(name.clone()), 1)?;
+                            match self.drop_top()? {
+                                Value::Routine(method) => Value::Method(o, method),
+                                held => held,
+                            }
                         }
                         None if self.lang.member_pipes && o.class.method(name).is_some() => {
                             let method = o.class.method(name).expect("the member exists").clone();

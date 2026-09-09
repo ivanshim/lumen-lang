@@ -1645,6 +1645,13 @@ impl<'a> Builder<'a> {
                 let method_name = self.need_word("as the method name")?;
                 let body = self.method(&method_name)?;
                 methods.retain(|(old, _)| old != &method_name);
+                if let Some(i) = attributes.iter().position(|old| old == &method_name) {
+                    attributes.remove(i);
+                    values.remove(i + usize::from(parent.is_some()));
+                }
+                let slot = self.gensym("method_body");
+                setup.push(Form::Write(slot.clone(), Box::new(constant(Value::Routine(body.clone())))));
+                self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
                 methods.push((method_name, body));
             } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
                 self.advance();
@@ -4409,12 +4416,11 @@ impl<'a> Builder<'a> {
                 let test = prim_call(Prim::HasMember, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
                 let begin = self.pos;
                 let yes = self.limb(Traps::Naught, |r| {
-                    let mut args = vec![Form::Read(held.clone()), constant(Value::text(&named))];
-                    if calling {
-                        r.advance();
-                        args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
-                    }
-                    Ok(prim_call(if calling { Prim::Ask } else { Prim::Of }, args))
+                    let member = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
+                    if !calling { return Ok(member); }
+                    r.advance();
+                    let args = r.args("syntax.call.close", "syntax.call.separator")?;
+                    Ok(invoke(member, args))
                 })?;
                 self.pos = begin;
                 let no = self.limb(Traps::Naught, |r| {

@@ -2446,7 +2446,12 @@ impl<'a> Machine<'a> {
             _ => return None,
         };
         if let Some(keeper) = class.keeper(name) {
-            return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| x.clone());
+            return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| {
+                match (value, x) {
+                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    _ => x.clone(),
+                }
+            });
         }
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         class.program(name).map(|body| match value {
