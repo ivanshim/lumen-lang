@@ -339,6 +339,21 @@ pub struct Lang {
     /// `x op= e` for every binary operator, when the switch is on.
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
+    pub long_quotes: Vec<String>,
+    pub lambda_words: Vec<String>,
+    pub tuple_marks: Vec<String>,
+    pub class_bases_open: Vec<String>,
+    pub class_bases_close: Vec<String>,
+    pub class_unready: Vec<String>,
+    pub del_words: Vec<String>,
+    pub nonlocal_words: Vec<String>,
+    pub nonlocal_unrun: Vec<String>,
+    pub with_words: Vec<String>,
+    pub with_as_words: Vec<String>,
+    pub yield_words: Vec<String>,
+    pub yield_from_words: Vec<String>,
+    pub yield_unrun: Vec<String>,
+    pub scope_unready: Vec<String>,
     pub global_words: Vec<String>,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
@@ -704,6 +719,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
+
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
@@ -1451,6 +1468,21 @@ impl Lang {
             c_for_words: r.strings("ext.stmt.for.c")?,
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
+            long_quotes: r.strings("ext.lexical.string.long")?,
+            lambda_words: r.strings("ext.op.lambda")?,
+            tuple_marks: r.strings("ext.op.tuple")?,
+            class_bases_open: r.strings("ext.stmt.class.bases.open")?,
+            class_bases_close: r.strings("ext.stmt.class.bases.close")?,
+            class_unready: r.strings("ext.stmt.class.unready")?,
+            del_words: r.strings("ext.stmt.del")?,
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
+            with_words: r.strings("ext.stmt.with")?,
+            with_as_words: r.strings("ext.stmt.with.as")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            yield_from_words: r.strings("ext.stmt.yield.from")?,
+            yield_unrun: r.strings("ext.stmt.yield.unrun")?,
+            scope_unready: r.strings("ext.system.scope.unready")?,
             global_words: r.strings("ext.stmt.global")?,
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
@@ -1738,6 +1770,7 @@ impl Lang {
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
+            &self.long_quotes, &self.lambda_words, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
             &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
             &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
