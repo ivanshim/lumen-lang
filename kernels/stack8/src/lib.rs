@@ -178,12 +178,18 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
+    for name in &lang.module_names {
+        registry.slot(name);
+    }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    for name in &lang.module_names {
+        machine.define(name, Value::text("__main__"));
+    }
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
     }

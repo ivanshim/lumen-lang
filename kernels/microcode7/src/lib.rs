@@ -179,6 +179,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(table.single("ext.system.request.body").map(str::to_string));
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
+    seeded.extend(table.strings("ext.system.module.name").iter().cloned());
     let before: u32 = request
         .iter()
         .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
@@ -206,6 +207,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
+    table.strings("ext.system.module.name").iter().for_each(|binding| {
+        machine.define(binding, Value::text("__main__"));
+    });
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
     }

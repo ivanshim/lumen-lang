@@ -313,7 +313,12 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
+  "ext.block.lone_statement": true,
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.stmt.for.collection": true,
+  "ext.stmt.import": ["import"],
+  "ext.stmt.import.from": ["from"],
+  "ext.stmt.import.as": ["as"],
+  "ext.system.module.name": ["__name__"]
 }

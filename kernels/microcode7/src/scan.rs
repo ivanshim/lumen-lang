@@ -46,7 +46,9 @@ fn drop_comments(source: &str, table: &Table) -> String {
             true => text[lead..].to_ascii_lowercase().starts_with(&p.to_ascii_lowercase()),
             false => text[lead..].starts_with(p),
         };
-        if !text[..lead].contains('\n') && opens {
+        // Once imports can be read, their bindings belong to the run.
+        let read_import = p.split_whitespace().next().map_or(false, |head| table.spells("ext.stmt.import", head));
+        if !read_import && !text[..lead].contains('\n') && opens {
             text = &text[lead + p.len()..];
         }
     }
