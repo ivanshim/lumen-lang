@@ -1579,11 +1579,11 @@ impl<'a> Builder<'a> {
         let mut contexts = Vec::new();
         loop {
             let mut value = self.expr(0)?;
-            if let Some(method) = table.strings("ext.stmt.class.special").get(33) {
+            if table.strings("ext.stmt.class.special").get(33).is_some() {
                 let manager = self.gensym("manager");
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
-                value = Form::Apply(Callee::Code(Box::new(prim_call(Prim::Of, vec![manager_read, Form::Const(Value::text(method))]))), Vec::new());
+                value = prim_call(Prim::StartContext, vec![manager_read]);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
                 value = Form::Read(entered);

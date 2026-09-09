@@ -1211,11 +1211,11 @@ impl<'a> Compiler<'a> {
         let mut watchers = Vec::new();
         loop {
             self.expr(0)?;
-            if let Some(enter) = lang.class_special.get(33) {
+            if lang.class_special.get(33).is_some() {
                 let manager = self.gensym("context");
                 self.write(&manager);
                 self.read(&manager);
-                self.act(Action::Send(Rc::from(enter.as_str())), 1);
+                self.act(Action::ContextEnter, 1);
                 let cell = self.cell_to_write(&manager);
                 let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
                 watchers.push(mark);

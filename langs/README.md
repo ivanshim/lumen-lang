@@ -646,7 +646,8 @@ only. The extension labels so far, all from PHP:
   place, deleting a place, membership, beginning a walk, stepping a walk,
   calling, addition, subtraction, multiplication, division, whole division,
   remainder, power, negation, the seven reflected arithmetic operations,
-  entering and leaving a with block, and the class, attribute map and class
+  entering and leaving a with block for objects (other values keep the
+  earlier binding-only rule), and the class, attribute map and class
   name members. An absent list leaves ordinary operations as they stood.
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is

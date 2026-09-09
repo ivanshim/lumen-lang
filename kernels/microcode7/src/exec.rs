@@ -1901,6 +1901,11 @@ impl<'a> Machine<'a> {
                     fields.remove(position);
                     return Ok(Value::Nil);
                 }
+                if matches!(&target, Value::Dict(entries) if entries.iter().any(|(k, _)| matches!(k, Value::Keyed(..)))) {
+                    let remaining = self.user_operation(Prim::Erase, &[target, named])?.ok_or_else(|| self.bad_answer())?;
+                    if let Value::Shared(cell) = holder { *cell.borrow_mut() = remaining; return Ok(Value::Nil); }
+                    return Err(self.bad_answer().into());
+                }
                 if self.appointed(&target, 13).is_some() {
                     self.ask_special(&target, 13, &[named])?;
                     return Ok(Value::Nil);
@@ -2027,6 +2032,7 @@ impl<'a> Machine<'a> {
                 };
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
+                    if !matches!(&manager, Value::Thing(_)) { return body_result; }
                     let arguments = if let Err(Escape::Thrown(v)) = &body_result {
                         let kind = match v { Value::Thing(t) => Value::Blueprint(t.of.clone()), _ => Value::Nil };
                         vec![kind, v.clone(), Value::Nil]
@@ -2427,6 +2433,15 @@ impl<'a> Machine<'a> {
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
                     if self.table.has_any("ext.stmt.class.special") {
                         let target = self.fetch(slot, frame)?;
+                        if let (Some(key), Value::Dict(entries)) = (&key, &target) {
+                            let key = self.hash_key(key)?;
+                            let mut entries = entries.to_vec();
+                            let mut position = 0;
+                            while position < entries.len() && !self.keys_agree(&entries[position].0, &key)? { position += 1; }
+                            if position < entries.len() { entries[position].1 = value; } else { entries.push((key, value)); }
+                            self.store(slot, frame, Value::Dict(Rc::new(entries)))?;
+                            return Ok(Value::Nil);
+                        }
                         if let (Some(Value::Text(word)), Value::Attributes(t)) = (&key, &target) {
                             let mut slots = t.holds.borrow_mut();
                             match slots.iter_mut().find(|(n, _)| n == word.as_ref()) {
@@ -2695,7 +2710,10 @@ impl<'a> Machine<'a> {
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
-                if let Some(at) = self.member_place(&fields, name) { return Some(fields[at].1.clone()); }
+                if let Some(at) = self.member_place(&fields, name) {
+                    let value = match &fields[at].1 { Value::Shared(cell) => cell.borrow().clone(), v => v.clone() };
+                    return Some(value);
+                }
                 &thing.of
             }
             Value::Blueprint(class) => class,
@@ -3532,6 +3550,25 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn hash_key(&mut self, value: &Value) -> Result<Value, String> {
+        if self.table.has_any("ext.stmt.class.special") && matches!(value, Value::Thing(_)) {
+            let hash = self.user_operation(Prim::SpecialHash, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
+            Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(hash)))
+        } else { Ok(value.clone()) }
+    }
+
+    fn keys_agree(&mut self, first: &Value, second: &Value) -> Result<bool, String> {
+        let objects = match (first, second) {
+            (Value::Keyed(a, ah), Value::Keyed(b, bh)) if ah.equals(bh) => (a.as_ref(), b.as_ref()),
+            (Value::Keyed(a, hash), b) | (b, Value::Keyed(a, hash)) if matches!(b, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && hash.equals(b) => (a.as_ref(), b),
+            (Value::Keyed(..), _) | (_, Value::Keyed(..)) => return Ok(false),
+            _ => return Ok(first.equals(second)),
+        };
+        if matches!(objects, (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b)) { return Ok(true); }
+        let test = self.prim(Prim::Eq, "", &[objects.0.clone(), objects.1.clone()])?;
+        self.object_truth(&test)
+    }
+
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
         let names = self.table.strings("ext.stmt.class.special");
         let word = names.get(index)?;
@@ -3578,7 +3615,7 @@ impl<'a> Machine<'a> {
 
     fn carries_instance(value: &Value) -> bool {
         match value {
-            Value::Attributes(_) | Value::Thing(_) => true,
+            Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) => true,
             Value::Vector(v) => v.iter().any(Self::carries_instance),
             Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(Self::carries_instance),
             _ => false,
@@ -3588,6 +3625,7 @@ impl<'a> Machine<'a> {
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(subject.render(self.wording())); }
         match subject {
+            Value::Keyed(value, _) => self.object_words(value, quoted),
             Value::Attributes(t) => {
                 let pairs = t.holds.borrow().iter().filter(|(_, v)| !matches!(v, Value::Unset)).map(|(name, v)| (Value::text(name), v.clone())).collect();
                 self.object_words(&Value::Dict(Rc::new(pairs)), true)
@@ -3713,6 +3751,31 @@ impl<'a> Machine<'a> {
             }
         }
         let value = match (operation, operands) {
+            (Prim::StartContext, [manager]) => {
+                if matches!(manager, Value::Thing(_)) {
+                    if self.appointment(manager, 34).is_none() { return Err(self.bad_answer()); }
+                    self.ask_special(manager, 33, &[])?.ok_or_else(|| self.bad_answer())?
+                } else { manager.clone() }
+            }
+            (Prim::Onto, [_, Value::Text(name), _]) if self.table.strings("ext.stmt.class.special").get(35..38).map_or(false, |members| members.iter().any(|word| word == name.as_ref())) => {
+                return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned());
+            }
+            (Prim::Contains | Prim::Absent, [needle, Value::Dict(entries)]) => {
+                let key = self.hash_key(needle)?;
+                let mut found = false;
+                for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
+                Value::Flag(found != (operation == Prim::Absent))
+            }
+            (Prim::Erase, [Value::Dict(entries), key]) => {
+                let key = self.hash_key(key)?;
+                let mut remaining = Vec::new();
+                let mut removed = false;
+                for (old, item) in entries.iter() {
+                    if self.keys_agree(old, &key)? { removed = true; } else { remaining.push((old.clone(), item.clone())); }
+                }
+                if !removed { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string()); }
+                Value::Dict(Rc::new(remaining))
+            }
             (Prim::Contains | Prim::Absent, [needle, haystack]) if self.appointed(haystack, 14).is_some() => {
                 let found = self.ask_special(haystack, 14, std::slice::from_ref(needle))?.unwrap();
                 Value::Flag(self.object_truth(&found)? != (operation == Prim::Absent))
@@ -3720,15 +3783,21 @@ impl<'a> Machine<'a> {
             (Prim::At, [Value::Attributes(t), Value::Text(key)]) => {
                 t.holds.borrow().iter().find(|(n, _)| n == key.as_ref()).map(|(_, value)| value.clone()).ok_or_else(|| self.bad_answer())?
             }
+            (Prim::Erase, [one @ Value::Attributes(t), Value::Text(key)]) => {
+                let mut attributes = t.holds.borrow_mut();
+                let index = attributes.iter().position(|(word, _)| word == key.as_ref()).ok_or_else(|| self.bad_answer())?;
+                attributes.remove(index);
+                one.clone()
+            }
             (Prim::Erase, [one, key]) if self.appointed(one, 13).is_some() => {
                 self.ask_special(one, 13, std::slice::from_ref(key))?;
                 one.clone()
             }
             (Prim::Length, [Value::Attributes(t)]) => Value::Small(t.holds.borrow().iter().filter(|(_, x)| !matches!(x, Value::Unset)).count() as i64),
-            (Prim::At, [Value::Dict(entries), key]) => {
+            (Prim::At | Prim::Fetch, [Value::Dict(entries), key]) => {
+                let hashed = self.hash_key(key)?;
                 for (candidate, value) in entries.iter() {
-                    let equal = self.prim(Prim::Eq, "", &[candidate.clone(), key.clone()])?;
-                    if self.object_truth(&equal)? { return Ok(Some(value.clone())); }
+                    if self.keys_agree(candidate, &hashed)? { return Ok(Some(value.clone())); }
                 }
                 return Ok(None);
             }
@@ -3758,15 +3827,14 @@ impl<'a> Machine<'a> {
                 for candidate in members.iter() {
                     let mut duplicate = false;
                     if matches!(candidate, Value::Thing(_)) {
-                        self.user_operation(Prim::SpecialHash, std::slice::from_ref(candidate))?;
+                        let hashed = self.hash_key(candidate)?;
                         for old in &result {
-                            let test = self.prim(Prim::Eq, "", &[old.clone(), candidate.clone()])?;
-                            if self.object_truth(&test)? { duplicate = true; break; }
+                            if self.keys_agree(old, &hashed)? { duplicate = true; break; }
                         }
-                    }
-                    if !duplicate { result.push(candidate.clone()); }
+                        if !duplicate { result.push(hashed); }
+                    } else { result.push(candidate.clone()); }
                 }
-                Value::Vector(Rc::new(result))
+                Value::Vector(Rc::new(result.into_iter().map(|v| match v { Value::Keyed(raw, _) => raw.as_ref().clone(), v => v }).collect()))
             }
             (Prim::SpecialSorted, [one]) => {
                 let input = self.object_members(one)?;
@@ -3788,7 +3856,19 @@ impl<'a> Machine<'a> {
                 Some(iterator) => iterator,
                 None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
             },
-            (Prim::SpecialNext, [Value::Cursor(cursor)]) => cursor.borrow_mut().pop_front().ok_or_else(|| self.bad_answer())?,
+            (Prim::SpecialNext, [one, otherwise]) => self.advance_object(one)?.unwrap_or_else(|| otherwise.clone()),
+            (Prim::SpecialNext, [Value::Cursor(cursor)]) => {
+                if let Some(value) = cursor.borrow_mut().pop_front() { value } else {
+                    let class = Blueprint {
+                        name: self.table.single("ext.stmt.class.special.stop").unwrap_or_default().to_owned(),
+                        under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![],
+                    };
+                    self.made += 1;
+                    let value = Value::Thing(Rc::new(Thing { of: Rc::new(class), holds: RefCell::new(vec![]), turn: self.made }));
+                    self.got_away = Some(Escape::Thrown(value));
+                    return Err(self.table.single("ext.stmt.class.special.stop").unwrap_or_default().to_string());
+                }
+            },
             (Prim::SpecialNext, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::SpecialIsInstance, [one, Value::Blueprint(class)]) => {
                 Value::Flag(matches!(one, Value::Thing(t) if t.of.goes_by(&class.name, false)))
@@ -3806,7 +3886,7 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
-            Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
+            Prim::StartContext | Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -3846,7 +3926,7 @@ impl<'a> Machine<'a> {
                 let mut values: Vec<Value> = match &v[0] {
                     Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
-                    Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+                    Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
                     Value::Vector(v) => v.to_vec(),
                     _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
                 };
@@ -3888,7 +3968,14 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
                     };
                     let mut combined = prior.to_vec();
-                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    for (key, value) in incoming {
+                        if !self.table.has_any("ext.stmt.class.special") { set_key(&mut combined, key, value); continue; }
+                        let key = self.hash_key(&key)?;
+                        let mut position = 0;
+                        while position < combined.len() && !self.keys_agree(&combined[position].0, &key)? { position += 1; }
+                        if position == combined.len() { combined.push((key, value)); }
+                        else { combined[position].1 = value; }
+                    }
                     Value::Dict(Rc::new(combined))
                 }
             }
@@ -5484,7 +5571,7 @@ impl<'a> Machine<'a> {
         let (span, picked, unit) = self.span_selection(bounds, row.len())?;
         let coming: Vec<Value> = match handed {
             Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
-            Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
             Value::Vector(values) => values.iter().cloned().collect(),
             _ => return Err(self.span_complaint("assign")),
         };
@@ -5604,7 +5691,7 @@ impl<'a> Machine<'a> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Vector(values) => values.to_vec(),
-            Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
             Value::Progression(walk) => {
                 let mut values = Vec::new();
                 let mut position = BigInt::from(0);
