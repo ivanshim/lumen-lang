@@ -1028,7 +1028,7 @@ impl<'a> Compiler<'a> {
             self.take();
             self.expr(0)?;
             if self.look().shape != Shape::LineEnd {
-                return Err(amiss.clone());
+                return Err(amiss());
             }
             let name = self.gensym("decorator");
             self.write(&name);
@@ -1038,7 +1038,7 @@ impl<'a> Compiler<'a> {
             }
         }
         if !self.on_keyword(&lang.function_words) {
-            return Err(amiss.clone());
+            return Err(amiss());
         }
         self.take();
         let gives_cell = self.skip_reference();
@@ -1964,7 +1964,7 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            if target.is_some() { self.tuple_value()?; } else { self.expr(tier + 1)?; }
+            if !lang.tuple_marks.is_empty() { self.tuple_value()?; } else { self.expr(tier + 1)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -2907,6 +2907,7 @@ impl<'a> Compiler<'a> {
             begin += 1;
             end -= 1;
             if begin == end { listed = true; break; }
+            if listed { break; }
             let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
             if !commas.is_empty() { listed = true; break; }
         }

@@ -2391,7 +2391,7 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = if place.is_some() { self.comma_value()? } else { self.expr(tier + 1)? };
+            let start = if table.single("ext.op.tuple").is_some() { self.comma_value()? } else { self.expr(tier + 1)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -2893,6 +2893,7 @@ impl<'a> Builder<'a> {
             lo += 1;
             hi -= 1;
             if lo == hi { array = true; }
+            if array { break; }
             if !self.divided_at(lo, hi, "ext.op.tuple").is_empty() { break; }
         }
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
@@ -4462,7 +4463,7 @@ impl<'a> Builder<'a> {
                 continue;
             }
             self.advance();
-            let index = self.expr(0)?;
+            let index = self.comma_value()?;
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, index]);
             // What a look comes to may itself be called.
