@@ -523,6 +523,8 @@ pub enum Instr {
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
+    /// Ordinary, positional, named, gathered items, or gathered pairs.
+    pub parameter_rules: Option<Vec<u8>>,
     /// The class each parameter is declared to take, where one was
     /// written and it names a class. Nothing for a parameter written
     /// without one, or with a kind that is not a class.

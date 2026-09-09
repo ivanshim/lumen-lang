@@ -95,7 +95,7 @@ ext.system.request.query:L ext.system.request.form:L ext.system.request.cookies:
 ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext.system.request.settings:L ext.op.index.absent:B ext.op.index.scalar:L ext.op.index.nothing:L ext.stmt.class.destructor:L ext.stmt.class.reader:L ext.stmt.class.writer:L ext.stmt.class.caller:L \
 ext.system.args.list:L ext.system.args.count:L ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
 ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.op.walk.live:B ext.builtin.array.front:L ext.stmt.case.mark.instead:L \
-ext.stmt.function.carries:L ext.stmt.function.short:L ext.stmt.class.trait:L ext.stmt.class.uses:L ext.stmt.class.uses.alias:L ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L ext.lexical.prologue.folded:B \
+ext.stmt.function.carries.pairs:L ext.stmt.function.keyword_only:L ext.stmt.function.positional_only:L ext.syntax.call.bind_names:B ext.syntax.call.spread:L ext.syntax.call.spread.pairs:L ext.syntax.call.amiss:L ext.syntax.call.amiss.missing:L ext.syntax.call.amiss.unknown:L ext.syntax.call.amiss.duplicate:L ext.syntax.call.amiss.builtin:L ext.syntax.call.spread.amiss:L ext.syntax.call.spread.pairs.amiss:L ext.stmt.function.defaults.amiss:L ext.stmt.function.parameters.amiss:L ext.stmt.function.carries:L ext.stmt.function.short:L ext.stmt.class.trait:L ext.stmt.class.uses:L ext.stmt.class.uses.alias:L ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L ext.lexical.prologue.folded:B \
 ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.bit.shift.numbers:B ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
 ext.builtin.args.count:L ext.builtin.args.at:L ext.builtin.args.all.outside:L ext.builtin.args.count.outside:L ext.builtin.args.at.outside:L ext.builtin.args.at.below:L ext.builtin.args.at.beyond:L ext.op.assign.value:B ext.op.index.plain_keys:B \
@@ -588,6 +588,7 @@ impl Table {
             "ext.op.increment", "ext.op.decrement", "ext.stmt.case.mark", "ext.op.ternary", "ext.stmt.for.c", "ext.stmt.static",
             "ext.stmt.global", "ext.stmt.decorator", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
             "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
+            "ext.stmt.function.carries", "ext.stmt.function.carries.pairs", "ext.stmt.function.keyword_only", "ext.stmt.function.positional_only", "ext.syntax.call.spread", "ext.syntax.call.spread.pairs",
             "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",

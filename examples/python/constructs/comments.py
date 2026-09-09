@@ -7,7 +7,7 @@ print(result)
 def add_numbers(a, b):
     return a + b
 
-value = add_numbers(10, 20)
+value = add_numbers(a= 10, b= 20)
 print(value)
 if value > 20:
     print("Value is greater than 20")

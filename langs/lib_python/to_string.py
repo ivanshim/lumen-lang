@@ -19,11 +19,11 @@ def integer_to_base_string(n, radix):
 
 def real_to_base_string(value, radix, precision):
     i = int(value)
-    f = frac(value)
-    int_part = integer_to_base_string(i, radix)
+    f = frac(x= value)
+    int_part = integer_to_base_string(n= i, radix= radix)
     if f == 0:
         return int_part
-    frac_part = frac_to_base_string(f, radix, precision)
+    frac_part = frac_to_base_string(f= f, radix= radix, limit= precision)
     return int_part + "." + frac_part
 
 def frac_to_base_string(f, radix, limit):
@@ -36,6 +36,6 @@ def frac_to_base_string(f, radix, limit):
         f = f * float(radix)
         digit = int(f)
         result = result + alphabet[digit]
-        f = frac(f)
+        f = frac(x= f)
         count = count + 1
     return result

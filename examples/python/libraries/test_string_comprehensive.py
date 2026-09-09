@@ -5,7 +5,7 @@ print("Password Strength Validator:")
 def has_digit_char(s):
     digit_i = 0
     while digit_i < len(s):
-        if is_digit(s[digit_i]):
+        if is_digit(c= s[digit_i]):
             return True
         digit_i = digit_i + 1
     return False
@@ -13,7 +13,7 @@ def has_digit_char(s):
 def has_alpha_char(s):
     alpha_i = 0
     while alpha_i < len(s):
-        if is_alpha(s[alpha_i]):
+        if is_alpha(c= s[alpha_i]):
             return True
         alpha_i = alpha_i + 1
     return False
@@ -47,16 +47,16 @@ def validate_password(pwd):
     if len(pwd) < 8:
         print("    WEAK: Too short (minimum 8 characters)")
         return False
-    if not has_digit_char(pwd):
+    if not has_digit_char(s= pwd):
         print("    WEAK: Must contain at least one digit")
         return False
-    if not has_alpha_char(pwd):
+    if not has_alpha_char(s= pwd):
         print("    WEAK: Must contain at least one letter")
         return False
-    if not has_upper_char(pwd):
+    if not has_upper_char(s= pwd):
         print("    WEAK: Must contain at least one uppercase letter")
         return False
-    if not has_lower_char(pwd):
+    if not has_lower_char(s= pwd):
         print("    WEAK: Must contain at least one lowercase letter")
         return False
     print("    STRONG: All requirements met")
@@ -65,7 +65,7 @@ def validate_password(pwd):
 passwords = ["abc123", "PASSWORD123", "Pass123", "MyP@ssw0rd"]
 pwd_i = 0
 while pwd_i < len(passwords):
-    validate_password(passwords[pwd_i])
+    validate_password(pwd= passwords[pwd_i])
     pwd_i = pwd_i + 1
 print("")
 print("Extract and Sum Numbers from Text:")
@@ -76,18 +76,18 @@ def extract_all_numbers(s):
     c = ""
     while extract_i < len(s):
         c = s[extract_i]
-        if is_digit(c):
+        if is_digit(c= c):
             current_num = current_num + c
         elif len(current_num) > 0:
-            numbers.append(string_to_value(current_num))
+            numbers.append(string_to_value(s= current_num))
             current_num = ""
         extract_i = extract_i + 1
     if len(current_num) > 0:
-        numbers.append(string_to_value(current_num))
+        numbers.append(string_to_value(s= current_num))
     return numbers
 
 def sum_numbers_in_text(s):
-    nums = extract_all_numbers(s)
+    nums = extract_all_numbers(s= s)
     sum = 0
     sum_i = 0
     while sum_i < len(nums):
@@ -101,26 +101,26 @@ text = ""
 sum = 0
 while text_i < len(texts):
     text = texts[text_i]
-    sum = sum_numbers_in_text(text)
+    sum = sum_numbers_in_text(s= text)
     print("  '" + text + "'")
     print("    Sum: " + str(sum))
     text_i = text_i + 1
 print("")
 print("Normalize and Compare Strings:")
 def normalize_string(s):
-    lower = string_to_lower(s)
+    lower = string_to_lower(s= s)
     result = ""
     normalize_i = 0
     c = ""
     while normalize_i < len(lower):
         c = lower[normalize_i]
-        if is_alnum(c):
+        if is_alnum(c= c):
             result = result + c
         normalize_i = normalize_i + 1
     return result
 
 def strings_match_normalized(a, b):
-    return normalize_string(a) == normalize_string(b)
+    return normalize_string(s= a) == normalize_string(s= b)
 
 pairs = [["Hello World", "hello world"], ["Test-123", "TEST123"], ["Lumen Lang", "LumenLang"], ["Different", "Strings"]]
 pair_i = 0
@@ -130,7 +130,7 @@ match = False
 while pair_i < len(pairs):
     a = pairs[pair_i][0]
     b = pairs[pair_i][1]
-    match = strings_match_normalized(a, b)
+    match = strings_match_normalized(a= a, b= b)
     print("  '" + a + "' vs '" + b + "': " + str(match))
     pair_i = pair_i + 1
 print("")
@@ -157,7 +157,7 @@ def generate_acronym(phrase):
     while acronym_j < len(words):
         word = words[acronym_j]
         if len(word) > 0:
-            acronym = acronym + char_to_upper(word[0])
+            acronym = acronym + char_to_upper(c= word[0])
         acronym_j = acronym_j + 1
     return acronym
 
@@ -167,13 +167,13 @@ phrase = ""
 acronym = ""
 while phrase_i < len(phrases):
     phrase = phrases[phrase_i]
-    acronym = generate_acronym(phrase)
+    acronym = generate_acronym(phrase= phrase)
     print("  '" + phrase + "' -> " + acronym)
     phrase_i = phrase_i + 1
 print("")
 print("Simple Caesar Cipher (letters only, shift by 3):")
 def caesar_shift_char(c):
-    if not is_alpha(c):
+    if not is_alpha(c= c):
         return c
     o = ord(c)
     if o >= ord("a") and o <= ord("z"):
@@ -191,7 +191,7 @@ def caesar_encrypt(s):
     shifted = 0
     while caesar_i < len(s):
         c = s[caesar_i]
-        if not is_alpha(c):
+        if not is_alpha(c= c):
             result = result + c
         else:
             o = ord(c)
@@ -210,6 +210,6 @@ msg = ""
 encrypted = ""
 while msg_i < len(messages):
     msg = messages[msg_i]
-    encrypted = caesar_encrypt(msg)
+    encrypted = caesar_encrypt(s= msg)
     print("  '" + msg + "' -> '" + encrypted + "'")
     msg_i = msg_i + 1

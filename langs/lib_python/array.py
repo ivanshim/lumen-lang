@@ -29,7 +29,7 @@ def array_index_of(a, x):
     return -1
 
 def array_contains(a, x):
-    return array_index_of(a, x) >= 0
+    return array_index_of(a= a, x= x) >= 0
 
 def array_reverse(a):
     out = []

@@ -1367,6 +1367,78 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// Untie call arguments only at the call boundary. A literal's ties
+    /// have already become a map by then and remain ordinary values.
+    fn call_items(&self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+        let mut items = Vec::new();
+        for value in args {
+            match value {
+                Value::Tie(pair) => match &pair.0 {
+                    Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
+                    Value::Flag(false) => match &pair.1 {
+                        Value::Array(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
+                        Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
+                        Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
+                        _ => return Err(self.lang.spread_amiss[0].clone().into()),
+                    },
+                    Value::Flag(true) => {
+                        let Value::Map(m) = &pair.1 else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
+                        for (key, held) in m.iter() {
+                            let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
+                            items.push((Some(name.to_string()), held.clone()));
+                        }
+                    }
+                    _ => return Err(self.lang.call_amiss[0].clone().into()),
+                },
+                other => items.push((None, other)),
+            }
+        }
+        Ok(items)
+    }
+
+    fn named_fault(words: &[String], name: &str) -> String {
+        format!("{}{}{}", words.first().map_or("", String::as_str), name, words.get(1).map_or("", String::as_str))
+    }
+
+    /// Fill positional places first, then the named ones. Gatherers
+    /// keep what has no ordinary place, and defaults keep the holes.
+    fn bind_call(&self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
+        let items = self.call_items(args)?;
+        let mut frame = vec![Value::Blank; rules.len()];
+        let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
+        let rest = rules.iter().position(|r| *r == 3);
+        let pairs = rules.iter().position(|r| *r == 4);
+        let mut tail = Vec::new();
+        for (at, (_, value)) in items.iter().filter(|(name, _)| name.is_none()).enumerate() {
+            if let Some(slot) = slots.get(at) { frame[*slot] = value.clone(); }
+            else if rest.is_some() { tail.push(value.clone()); }
+            else { return Err(self.lang.call_amiss[0].clone().into()); }
+        }
+        let mut keywords = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in items {
+            let Some(name) = name else { continue };
+            if !seen.insert(name.clone()) {
+                return Err(Self::named_fault(&self.lang.call_duplicate, &name).into());
+            }
+            let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
+            match slot {
+                Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
+                Some(_) => return Err(Self::named_fault(&self.lang.call_duplicate, &name).into()),
+                None if pairs.is_some() => keywords.push((Value::text(&name), value)),
+                None => return Err(Self::named_fault(&self.lang.call_unknown, &name).into()),
+            }
+        }
+        if let Some(i) = rest { frame[i] = Value::array(tail); }
+        if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords)); }
+        for (i, value) in frame.iter().enumerate() {
+            if matches!(value, Value::Blank) && !program.carried.contains(&i) {
+                return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
+            }
+        }
+        Ok(frame)
+    }
+
     pub fn invoke(&mut self, program: &Rc<Routine>, args: Vec<Value>) -> Flow<()> {
         let n = args.len();
         self.data.extend(args);
@@ -1376,6 +1448,13 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        let n = if let Some(rules) = &program.parameter_rules {
+            let given = self.drop_many(n)?;
+            let bound = self.bind_call(program, given, rules)?;
+            let count = bound.len();
+            self.data.extend(bound);
+            count
+        } else { n };
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
         let most = if self.lang.spare_args { usize::MAX } else { program.formals.len() };
@@ -1434,7 +1513,9 @@ impl<'a> Engine<'a> {
         // A routine written where a value stands carried names away
         // from around it: each fills the slot it was given here.
         for (slot, held) in program.carried.iter().zip(program.held.iter()) {
-            frame[*slot] = held.clone();
+            if program.parameter_rules.is_none() || *slot >= program.formals.len() || matches!(frame[*slot], Value::Blank) {
+                frame[*slot] = held.clone();
+            }
         }
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
@@ -2506,6 +2587,10 @@ impl<'a> Engine<'a> {
                     return Err("Only a routine can carry names away with it".to_string().into());
                 };
                 let carried = self.drop_many(argc - 1)?;
+                if program.parameter_rules.is_some() && program.carried.iter().zip(&carried).any(|(slot, value)|
+                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::Map(_) | Value::Object(_))) {
+                    return Err(self.lang.defaults_amiss[0].clone().into());
+                }
                 let mut made = (*program).clone();
                 made.held = carried;
                 Value::Routine(Rc::new(made))
@@ -2728,6 +2813,13 @@ impl<'a> Engine<'a> {
                 let mut args = std::mem::take(&mut self.buffer);
                 args.clear();
                 args.extend(self.data.drain(at..));
+                if self.lang.bind_names {
+                    let items = self.call_items(std::mem::take(&mut args))?;
+                    for (key, value) in items {
+                        if key.is_some() { return Err(self.lang.call_builtin_amiss[0].clone().into()); }
+                        args.push(value);
+                    }
+                }
                 let result = self.builtin(*builtin, name, &mut args);
                 self.buffer = args;
                 match self.carried.take() {

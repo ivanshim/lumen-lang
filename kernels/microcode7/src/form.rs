@@ -518,6 +518,8 @@ pub struct Routine {
     pub least: usize,
     pub ident: String,
     pub formals: Vec<String>,
+    /// How each place is filled: both ways, by position, by name, or gathered.
+    pub taking: Option<Vec<char>>,
     /// The class each parameter is written to take, where one was
     /// written and it names a class. Nothing for a parameter with none,
     /// or with a kind that is no class.

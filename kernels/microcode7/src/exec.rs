@@ -2100,6 +2100,10 @@ impl<'a> Machine<'a> {
                     {
                         let mut cells = took.cells.borrow_mut();
                         for (slot, held) in program.carried.iter().zip(values) {
+                            if program.taking.is_some() && program.formal_slots.contains(slot)
+                                && matches!(held, Value::Vector(_) | Value::Dict(_) | Value::Thing(_)) {
+                                return Err(self.argument_fault("ext.stmt.function.defaults.amiss", None).into());
+                            }
                             cells[*slot] = held;
                         }
                     }
@@ -2270,7 +2274,14 @@ impl<'a> Machine<'a> {
                     Err(Escape::Done)
                 }
                 op => {
-                    let values = self.value_list(args, frame)?;
+                    let mut values = self.value_list(args, frame)?;
+                    if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
+                        let (positions, keywords) = self.open_arguments(values)?;
+                        if !keywords.is_empty() {
+                            return Err(self.argument_fault("ext.syntax.call.amiss.builtin", None).into());
+                        }
+                        values = positions;
+                    }
                     // What a call was handed is read back as it stands
                     // now: a parameter written to since holds what was
                     // written, and one handed a cell reads as what the
@@ -2521,7 +2532,105 @@ impl<'a> Machine<'a> {
         frame
     }
 
+    fn argument_fault(&self, key: &str, name: Option<&str>) -> String {
+        let words = self.table.strings(key);
+        let mut said = words.first().cloned().unwrap_or_default();
+        if let Some(name) = name {
+            said.push_str(name);
+            if let Some(end) = words.get(1) { said.push_str(end); }
+        }
+        said
+    }
+
+    /// Gather the positional things apart from the named ones, retaining
+    /// every keyword until the call has checked for repeated names.
+    fn open_arguments(&self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let mut positions = Vec::new();
+        let mut names = Vec::new();
+        for worth in values {
+            let Value::Couple(pair) = worth else { positions.push(worth); continue };
+            match &pair.0 {
+                Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
+                Value::Flag(true) => {
+                    let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
+                    if let Value::Dict(entries) = &pair.1 {
+                        for (k, v) in entries.iter() {
+                            match k {
+                                Value::Text(text) => names.push((text.to_string(), v.clone())),
+                                _ => return Err(fault().into()),
+                            }
+                        }
+                    } else { return Err(fault().into()); }
+                }
+                Value::Flag(false) => {
+                    match &pair.1 {
+                        Value::Vector(values) => positions.extend(values.iter().cloned()),
+                        Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
+                        Value::Text(text) => {
+                            for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
+                        }
+                        _ => return Err(self.argument_fault("ext.syntax.call.spread.amiss", None).into()),
+                    }
+                }
+                _ => return Err(self.argument_fault("ext.syntax.call.amiss", None).into()),
+            }
+        }
+        Ok((positions, names))
+    }
+
+    fn fit_arguments(&self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
+        let (positional, named) = self.open_arguments(values)?;
+        let mut fitted = vec![Value::Unset; manners.len()];
+        let ordinary: Vec<usize> = manners.iter().enumerate()
+            .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
+        let gather = manners.iter().position(|how| *how == 'v');
+        let gather_names = manners.iter().position(|how| *how == 'k');
+        if positional.len() > ordinary.len() && gather.is_none() {
+            return Err(self.argument_fault("ext.syntax.call.amiss", None).into());
+        }
+        let mut remaining = Vec::new();
+        for (n, held) in positional.into_iter().enumerate() {
+            match ordinary.get(n) {
+                Some(slot) => fitted[*slot] = held,
+                None => remaining.push(held),
+            }
+        }
+        if let Some(slot) = gather { fitted[slot] = Value::Vector(Rc::new(remaining)); }
+        let mut spare_names = Vec::new();
+        let mut already = std::collections::HashSet::new();
+        for (key, worth) in named {
+            let duplicate = || self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key));
+            if !already.insert(key.clone()) { return Err(duplicate().into()); }
+            let found = program.formals.iter().enumerate()
+                .find(|(at, name)| **name == key && matches!(manners[*at], 'b' | 'n'));
+            if let Some((at, _)) = found {
+                if !matches!(fitted[at], Value::Unset) { return Err(duplicate().into()); }
+                fitted[at] = worth;
+            } else if gather_names.is_some() {
+                spare_names.push((Value::text(&key), worth));
+            } else {
+                return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)).into());
+            }
+        }
+        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names)); }
+        for at in 0..fitted.len() {
+            if matches!(fitted[at], Value::Unset) && !program.carried.contains(&program.formal_slots[at]) {
+                return Err(self.argument_fault("ext.syntax.call.amiss.missing", Some(&program.formals[at])).into());
+            }
+        }
+        Ok(fitted)
+    }
+
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
+        if let Some(manners) = &program.taking {
+            let values = self.value_list(args, caller)?;
+            let fitted = self.fit_arguments(program, manners, values)?;
+            let frame = self.frame_for(program, &env);
+            for (slot, worth) in program.formal_slots.iter().zip(fitted) {
+                if !matches!(worth, Value::Unset) { frame.cells.borrow_mut()[*slot] = worth; }
+            }
+            return Ok(frame);
+        }
         let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
             self.value_list(args, caller)?;
@@ -2742,6 +2851,17 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        if let Some(manners) = &program.taking {
+            let fitted = self.fit_arguments(&program, manners, args)?;
+            let frame = self.frame_for(&program, &env);
+            {
+                let mut cells = frame.cells.borrow_mut();
+                for (slot, value) in program.formal_slots.iter().zip(fitted) {
+                    if !matches!(value, Value::Unset) { cells[*slot] = value; }
+                }
+            }
+            return self.drive(program, frame);
+        }
         let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
             let wanted = program.formals.len();

@@ -17,9 +17,9 @@ def integer_to_base_string(n, radix):
     return result
 
 print("Test: Convert 255 to hex")
-result = integer_to_base_string(255, 16)
+result = integer_to_base_string(n= 255, radix= 16)
 print(result)
 print("Test: Convert 42 to binary")
-result2 = integer_to_base_string(42, 2)
+result2 = integer_to_base_string(n= 42, radix= 2)
 print(result2)
 print("Done!")

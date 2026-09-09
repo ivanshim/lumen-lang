@@ -20,9 +20,9 @@ print("Calling explicit_null():")
 result2 = explicit_null()
 print(result2)
 print("conditional_null(5):")
-print(conditional_null(5))
+print(conditional_null(x= 5))
 print("conditional_null(-3):")
-print(conditional_null(-3))
+print(conditional_null(x= -3))
 x = None
 print("let x = null:")
 print(x)
@@ -32,6 +32,6 @@ def check_value(val):
     else:
         print("Value is not null")
 
-check_value(None)
-check_value(42)
-check_value("hello")
+check_value(val= None)
+check_value(val= 42)
+check_value(val= "hello")

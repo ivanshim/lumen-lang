@@ -3,17 +3,17 @@ def factorial(n):
     if n <= 1:
         return 1
     else:
-        return n * factorial(n - 1)
+        return n * factorial(n= n - 1)
 
 def countdown(n):
     if n <= 0:
         print("Done")
     else:
         print(n)
-        return countdown(n - 1)
+        return countdown(n= n - 1)
 
 print("Test: Recursion")
 print("Factorial of 5:")
-print(factorial(5))
+print(factorial(n= 5))
 print("Countdown from 3:")
-countdown(3)
+countdown(n= 3)

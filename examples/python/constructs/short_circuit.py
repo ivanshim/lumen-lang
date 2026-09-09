@@ -13,16 +13,16 @@ def is_positive(x):
 
 print("Test: Short-Circuit Evaluation")
 print("false and is_even(10):")
-result = False and is_even(10)
+result = False and is_even(x= 10)
 print(result)
 print("true and is_even(10):")
-result = True and is_even(10)
+result = True and is_even(x= 10)
 print(result)
 print("true or is_positive(5):")
-result = True or is_positive(5)
+result = True or is_positive(x= 5)
 print(result)
 print("false or is_positive(5):")
-result = False or is_positive(5)
+result = False or is_positive(x= 5)
 print(result)
 print("Testing division by zero avoidance:")
 x = 0
@@ -36,5 +36,5 @@ def safe_check(value):
     else:
         print("Value is null or not greater than 10")
 
-safe_check(15)
-safe_check(5)
+safe_check(value= 15)
+safe_check(value= 5)

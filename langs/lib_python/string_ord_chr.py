@@ -12,7 +12,7 @@ def is_alpha(c):
     return (o >= ord("A") and o <= ord("Z")) or (o >= ord("a") and o <= ord("z"))
 
 def is_alnum(c):
-    return is_alpha(c) or is_digit(c)
+    return is_alpha(c= c) or is_digit(c= c)
 
 def char_to_upper(c):
     o = ord(c)
@@ -32,7 +32,7 @@ def string_to_upper(s):
     result = ""
     i = 0
     while i < len(s):
-        result = result + char_to_upper(s[i])
+        result = result + char_to_upper(c= s[i])
         i = i + 1
     return result
 
@@ -40,7 +40,7 @@ def string_to_lower(s):
     result = ""
     i = 0
     while i < len(s):
-        result = result + char_to_lower(s[i])
+        result = result + char_to_lower(c= s[i])
         i = i + 1
     return result
 
@@ -58,8 +58,8 @@ def capitalize_first_word(s):
     done = False
     while i < len(s):
         c = s[i]
-        if not done and is_alpha(c):
-            result = result + char_to_upper(c)
+        if not done and is_alpha(c= c):
+            result = result + char_to_upper(c= c)
             done = True
         else:
             result = result + c
@@ -72,9 +72,9 @@ def capitalize_words(s):
     at_word_start = True
     while i < len(s):
         c = s[i]
-        if is_alpha(c):
+        if is_alpha(c= c):
             if at_word_start:
-                result = result + char_to_upper(c)
+                result = result + char_to_upper(c= c)
                 at_word_start = False
             else:
                 result = result + c
@@ -90,25 +90,25 @@ def is_whitespace(c):
 
 def trim_start(s):
     i = 0
-    while i < len(s) and is_whitespace(s[i]):
+    while i < len(s) and is_whitespace(c= s[i]):
         i = i + 1
-    return substring_end(s, i)
+    return substring_end(s= s, from_here= i)
 
 def trim_end(s):
     i = len(s) - 1
-    while i >= 0 and is_whitespace(s[i]):
+    while i >= 0 and is_whitespace(c= s[i]):
         i = i - 1
-    return substring(s, 0, i + 1)
+    return substring(s= s, from_start= 0, to_end= i + 1)
 
 def trim(s):
-    return trim_start(trim_end(s))
+    return trim_start(s= trim_end(s= s))
 
 def is_alpha_string(s):
     if len(s) == 0:
         return False
     i = 0
     while i < len(s):
-        if not is_alpha(s[i]):
+        if not is_alpha(c= s[i]):
             return False
         i = i + 1
     return True

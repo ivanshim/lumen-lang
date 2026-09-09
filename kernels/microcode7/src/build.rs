@@ -133,6 +133,7 @@ pub struct Builder<'a> {
     /// take, gathered as the parameters are read and taken up by the
     /// routine they belong to.
     formal_kinds: Vec<Option<Rc<str>>>,
+    taking: Option<Vec<char>>,
     tells_place: bool,
 }
 
@@ -239,7 +240,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -309,7 +310,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -893,6 +894,7 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        let taking = self.taking.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is set aside while
         // this one is built, so that each keeps only its own.
@@ -912,7 +914,7 @@ impl<'a> Builder<'a> {
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -929,7 +931,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -2449,6 +2451,13 @@ impl<'a> Builder<'a> {
         let close = table.single("syntax.call.close").unwrap().to_string();
         let typed = table.flag("stmt.let.type_first");
         let mut params = Vec::new();
+        let bind = table.flag("ext.syntax.call.bind_names");
+        let mut manners: Vec<char> = Vec::new();
+        let mut beyond = false;
+        let mut slash = false;
+        let mut closed = false;
+        let mut optional = false;
+        let wrong = || table.single("ext.stmt.function.parameters.amiss").unwrap_or("").to_string();
         // Which parameter, and where its own value stands: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
@@ -2459,6 +2468,37 @@ impl<'a> Builder<'a> {
         // the routine is declared.
         let mut said: Vec<Form> = Vec::new();
         while !self.sign(&close) && !self.exhausted() {
+            let mut manner = if beyond { 'n' } else { 'b' };
+            if bind {
+                if closed { return Err(wrong()); }
+                let word = self.look().lexeme.clone();
+                if table.spells("ext.stmt.function.positional_only", &word) {
+                    if slash || beyond || params.is_empty() { return Err(wrong()); }
+                    for before in &mut manners { *before = 'p'; }
+                    slash = true;
+                    self.advance();
+                    if !self.sign(&close) {
+                        self.need_sign(table.single("syntax.call.separator").unwrap_or(""), "after the positional mark")?;
+                    }
+                    continue;
+                }
+                if table.spells("ext.stmt.function.carries.pairs", &word) {
+                    closed = true;
+                    manner = 'k';
+                    self.advance();
+                } else if table.spells("ext.stmt.function.carries", &word) || table.spells("ext.stmt.function.keyword_only", &word) {
+                    if beyond { return Err(wrong()); }
+                    beyond = true;
+                    self.advance();
+                    let separator = table.single("syntax.call.separator").unwrap_or("");
+                    if self.sign(separator) {
+                        self.advance();
+                        if self.sign(&close) || table.spells("ext.stmt.function.carries.pairs", &self.look().lexeme) { return Err(wrong()); }
+                        continue;
+                    }
+                    manner = 'v';
+                }
+            }
             let mut takes_nothing = false;
             let mut kinded = false;
             self.skip_reference();
@@ -2499,6 +2539,17 @@ impl<'a> Builder<'a> {
                     self.advance();
                     self.need_word("as a type name")?;
                 }
+            }
+            if bind {
+                let last = params.last().ok_or_else(wrong)?;
+                if params.iter().filter(|p| *p == last).count() != 1 { return Err(wrong()); }
+                match (self.on_assign(), manner) {
+                    (true, 'v' | 'k') => return Err(wrong()),
+                    (true, 'b') => optional = true,
+                    (false, 'b') if optional => return Err(wrong()),
+                    _ => {}
+                }
+                manners.push(manner);
             }
             if for_the_thing {
                 also_property.push(params.last().expect("the parameter just read").clone());
@@ -2555,6 +2606,7 @@ impl<'a> Builder<'a> {
             }
         }
         self.need_sign(&close, "after parameters")?;
+        self.taking = if bind { Some(manners) } else { None };
         Ok((params, spares, also_property, said))
     }
 
@@ -2607,6 +2659,16 @@ impl<'a> Builder<'a> {
         let (params, spares, _, said) = self.parameters(&name)?;
         let least = params.len() - spares.len();
         let formals = params.clone();
+        let keep_defaults = table.flag("ext.syntax.call.bind_names");
+        let mut default_values = Vec::new();
+        if keep_defaults {
+            let resume = self.pos;
+            for (_, start) in &spares {
+                self.pos = *start;
+                default_values.push(self.expr(0)?);
+            }
+            self.pos = resume;
+        }
         let returns_here = |b: &Self| {
             b.look().shape == Shape::Sign
                 && (table.spells("stmt.function.returns", &b.look().lexeme) || table.spells("ext.stmt.function.returns", &b.look().lexeme))
@@ -2630,7 +2692,10 @@ impl<'a> Builder<'a> {
                 let slot = r.address_to_write(named);
                 r.carrying.push(slot.at);
             }
-            let mut items = r.spare_values(spares, &formals)?;
+            let mut items = if keep_defaults {
+                for (place, _) in spares { r.carrying.push(place); }
+                Vec::new()
+            } else { r.spare_values(spares, &formals)? };
             if declared {
                 loop {
                     r.skip_line_ends();
@@ -2650,7 +2715,7 @@ impl<'a> Builder<'a> {
         // stands for itself; one written out is bound to its name.
         // What is taken away is read where the routine stands, and the
         // routine carries it off.
-        let program = match carried.is_empty() {
+        let program = match carried.is_empty() && default_values.is_empty() {
             true => program,
             false => {
                 let mut given = vec![program];
@@ -2663,6 +2728,7 @@ impl<'a> Builder<'a> {
                         false => self.read(named),
                     });
                 }
+                given.extend(default_values);
                 prim_call(Prim::Carry, given)
             }
         };
@@ -4396,10 +4462,24 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
-            if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign && self.table.spells("syntax.call.label", &self.glance(1).lexeme) {
+            let label = self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign
+                && self.table.spells("syntax.call.label", &self.glance(1).lexeme);
+            let mut tag = None;
+            let bind = self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close";
+            if label {
+                if bind { tag = Some(Value::text(&self.look().lexeme)); }
                 self.pos += 2;
+            } else if bind {
+                let word = &self.look().lexeme;
+                if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
+                else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
+                if tag.is_some() { self.advance(); }
             }
-            items.push(self.expr(0)?);
+            let value = self.expr(0)?;
+            items.push(match tag {
+                Some(key) => prim_call(Prim::Couple, vec![constant(key), value]),
+                None => value,
+            });
             if let Some(s) = &sep {
                 if self.sign(s) {
                     self.advance();
@@ -4845,7 +4925,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

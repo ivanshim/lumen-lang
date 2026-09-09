@@ -171,6 +171,7 @@ pub struct Compiler<'a> {
     /// take, gathered as the parameters are read and taken by the
     /// routine they belong to.
     formal_kinds: Vec<Option<Rc<str>>>,
+    parameter_rules: Option<Vec<u8>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -260,7 +261,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -329,7 +330,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -750,6 +751,7 @@ impl<'a> Compiler<'a> {
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
         // this one is put together, so that each keeps its own.
@@ -796,7 +798,7 @@ impl<'a> Compiler<'a> {
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -2489,6 +2491,9 @@ impl<'a> Compiler<'a> {
     fn parameters(&mut self, named: &str, call: &Brackets) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>)> {
         let lang = self.lang;
         let mut formals = Vec::new();
+        let mut rules = Vec::new();
+        let (mut named_only, mut divided, mut gather, mut pairs, mut default_seen) = (false, false, false, false, false);
+        let bad = || lang.parameters_amiss.first().cloned().unwrap_or_default();
         // Which parameter, and where its own value is written: it is read
         // again inside the program, where its names mean what they should.
         let mut spares: Vec<(usize, usize)> = Vec::new();
@@ -2496,6 +2501,37 @@ impl<'a> Compiler<'a> {
         // The kind each parameter was written with, as they are read.
         let mut kinded: Vec<Option<Rc<str>>> = Vec::new();
         while !self.at_symbol(&call.close) && !self.exhausted() {
+            let mut rule = if named_only { 2 } else { 0 };
+            if lang.bind_names {
+                if pairs { return Err(bad()); }
+                let sign = self.look().lexeme.clone();
+                if Lang::spells(&lang.positional_only, &sign) {
+                    if divided || named_only || formals.is_empty() { return Err(bad()); }
+                    divided = true;
+                    rules.fill(1);
+                    self.take();
+                    if !self.at_symbol(&call.close) {
+                        self.want_sign(call.between.as_deref().unwrap_or(""), "after positional parameters")?;
+                    }
+                    continue;
+                }
+                if Lang::spells(&lang.carries_pairs, &sign) {
+                    self.take();
+                    pairs = true;
+                    rule = 4;
+                } else if Lang::spells(&lang.carries_words, &sign) || Lang::spells(&lang.keyword_only, &sign) {
+                    if gather || named_only { return Err(bad()); }
+                    self.take();
+                    named_only = true;
+                    if call.between.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                        self.take();
+                        if self.at_symbol(&call.close) || Lang::spells(&lang.carries_pairs, &self.look().lexeme) { return Err(bad()); }
+                        continue;
+                    }
+                    gather = true;
+                    rule = 3;
+                }
+            }
             let mut takes_nothing = false;
             let _by_cell = self.skip_reference();
             let mut names_property = false;
@@ -2536,6 +2572,15 @@ impl<'a> Compiler<'a> {
                     self.take();
                     self.want_name("as a type name")?;
                 }
+            }
+            if lang.bind_names {
+                let newest = formals.last().ok_or_else(bad)?;
+                if formals[..formals.len() - 1].contains(newest) { return Err(bad()); }
+                if self.on_assign() {
+                    if rule >= 3 { return Err(bad()); }
+                    if rule == 0 { default_seen = true; }
+                } else if rule == 0 && default_seen { return Err(bad()); }
+                rules.push(rule);
             }
             if names_property {
                 promoted.push(formals.last().expect("the parameter just read").clone());
@@ -2593,6 +2638,7 @@ impl<'a> Compiler<'a> {
             }
         }
         self.want_sign(&call.close, "after parameters")?;
+        self.parameter_rules = lang.bind_names.then_some(rules);
         Ok((formals, spares, promoted))
     }
 
@@ -2651,6 +2697,7 @@ impl<'a> Compiler<'a> {
         let (formals, spares, _) = self.parameters(&name, &call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
+        let defaults = spares.clone();
         // A routine written where a value stands may carry names from
         // around it away with it, since the names around it are gone by
         // the time it is called.
@@ -2670,7 +2717,11 @@ impl<'a> Compiler<'a> {
                 let cell = a.cell_to_write(named);
                 a.carrying.push(cell.near[0]);
             }
-            a.spare_values(&spares, &given)?;
+            if lang.bind_names {
+                a.carrying.extend(spares.iter().map(|(slot, _)| *slot));
+            } else {
+                a.spare_values(&spares, &given)?;
+            }
             if declarations {
                 loop {
                     a.skip_seps();
@@ -2694,9 +2745,18 @@ impl<'a> Compiler<'a> {
                 false => self.read(named),
             }
         }
+        if lang.bind_names {
+            let after = self.pos;
+            for (_, from) in &defaults {
+                self.pos = *from;
+                self.expr(0)?;
+            }
+            self.pos = after;
+        }
         self.constant(Value::Routine(program));
-        if !carried.is_empty() {
-            self.act(Action::Close, carried.len() + 1);
+        let count = carried.len() + if lang.bind_names { defaults.len() } else { 0 };
+        if count != 0 {
+            self.act(Action::Close, count + 1);
         }
         Ok(())
     }
@@ -4773,10 +4833,19 @@ impl<'a> Compiler<'a> {
             let labelled = self.look().shape == Shape::Instr
                 && self.look_ahead(1).shape == Shape::Sign
                 && Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme);
-            if labelled {
-                self.pos += 2;
+            let tagged = self.lang.bind_names && labelled;
+            let spread = self.lang.bind_names && !labelled
+                && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
+                    || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+            if tagged {
+                self.constant(Value::text(&self.look().lexeme));
+            } else if spread {
+                self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));
+                self.take();
             }
+            if labelled { self.pos += 2; }
             self.expr(0)?;
+            if tagged || spread { self.act(Action::Tie, 2); }
             count += 1;
             if let Some(sep) = &pair.between {
                 if self.at_symbol(sep) {

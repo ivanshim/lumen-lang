@@ -14,16 +14,16 @@ def substring(s, from_start, to_end):
     return out
 
 def substring_end(s, from_here):
-    return substring(s, from_here, len(s))
+    return substring(s= s, from_start= from_here, to_end= len(s))
 
 def substring_start(s, to_here):
-    return substring(s, 0, to_here)
+    return substring(s= s, from_start= 0, to_end= to_here)
 
 def starts_with(s, prefix):
-    return len(prefix) <= len(s) and substring(s, 0, len(prefix)) == prefix
+    return len(prefix) <= len(s) and substring(s= s, from_start= 0, to_end= len(prefix)) == prefix
 
 def ends_with(s, suffix):
-    return len(suffix) <= len(s) and substring(s, len(s) - len(suffix), len(s)) == suffix
+    return len(suffix) <= len(s) and substring(s= s, from_start= len(s) - len(suffix), to_end= len(s)) == suffix
 
 def repeat_string(s, repetitions):
     out = ""
@@ -48,10 +48,10 @@ def index_of(s, needle):
     n = len(needle)
     i = 0
     while i + n <= len(s):
-        if substring(s, i, i + n) == needle:
+        if substring(s= s, from_start= i, to_end= i + n) == needle:
             return i
         i = i + 1
     return -1
 
 def has_substring(s, needle):
-    return index_of(s, needle) >= 0
+    return index_of(s= s, needle= needle) >= 0
