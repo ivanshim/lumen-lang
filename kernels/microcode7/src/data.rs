@@ -132,6 +132,7 @@ pub enum Value {
     Ellipsis,
     Vector(Rc<Vec<Value>>),
     Set(Rc<RefCell<SetStore>>),
+    SetCursor { source: Rc<RefCell<SetStore>>, count: usize },
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -279,7 +280,7 @@ impl Value {
             Value::Vector(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Ellipsis | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
@@ -316,7 +317,7 @@ impl Value {
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
-            Value::Set(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::SetCursor { .. } | Value::Set(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -479,6 +480,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::SetCursor { .. } => String::from("<set walk>"),
             Value::Set(items) => items.borrow().written(Value::bare),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {

@@ -4582,7 +4582,10 @@ impl<'a> Compiler<'a> {
                 argc += self.arguments(&call)?;
             }
         }
-        self.call(&name, argc)
+        if let Some(method) = native.filter(|b| b.set_method()) {
+            self.act(Action::Builtin(method, Rc::from(name.as_str())), argc);
+            Ok(())
+        } else { self.call(&name, argc) }
     }
 
     /// `test ? a : b`, the test just assembled: one arm's value is left.
@@ -6191,7 +6194,7 @@ impl<'a> Compiler<'a> {
     /// A call by name, the arguments already on the stack: a builtin of
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
-        match self.lang.builtins.get(name).copied() {
+        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method()) {
             Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }

@@ -129,6 +129,7 @@ pub enum Value {
     Ellipsis,
     Array(Rc<Vec<Value>>),
     Set(Rc<RefCell<Members>>),
+    SetWalk(Rc<RefCell<Members>>, usize),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -309,7 +310,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Set(s) => !s.borrow().held.is_empty(),
-            Value::Stream(_) => true,
+            Value::SetWalk(..) | Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -343,7 +344,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Set(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::SetWalk(..) | Value::Set(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -502,6 +503,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::SetWalk(..) => "<set walk>".into(),
             Value::Set(s) => s.borrow().show(Value::plain),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }

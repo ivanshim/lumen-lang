@@ -118,7 +118,7 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
-        let set_fault = ["unhashable", "missing", "empty", "operands", "arguments", "unsupported", "unsortable"].iter().any(|name| {
+        let set_fault = ["unhashable", "missing", "changed", "empty", "operands", "arguments", "unsupported", "unsortable"].iter().any(|name| {
             let words = &lang.set_words[&format!("ext.builtin.set.{name}")];
             match words.as_slice() {
                 [said] => if *name == "missing" { e.starts_with(said) } else { e == *said },

@@ -386,6 +386,9 @@
   "ext.builtin.set.arguments": [
     "TypeError: invalid arguments to set operation"
   ],
+  "ext.builtin.set.changed": [
+    "RuntimeError: Set changed size during iteration"
+  ],
   "ext.builtin.set.clear": [
     "clear"
   ],

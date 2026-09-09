@@ -694,6 +694,8 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.set.pop` takes and answers one member, `ext.builtin.set.clear`
   empties the set, and `ext.builtin.set.copy` gives an independent copy.
   `ext.builtin.set.update` takes the members of each iterable given.
+  These method names follow the member operator; a bare call still asks
+  for the routine bound to that name.
 - `ext.builtin.set.union`, `ext.builtin.set.intersection`,
   `ext.builtin.set.difference` and `ext.builtin.set.symmetric_difference`
   gather all members, shared members, those on the first side alone,
@@ -718,6 +720,8 @@ only. The extension labels so far, all from PHP:
   operands that are not sets, an ill-shaped call, a hash not yet provided,
   and members with no ordering. Lists, maps and sets have no member hash;
   the class hashing protocol is not yet provided.
+  `ext.builtin.set.changed` says that a set changed size while a loop or
+  comprehension was walking it; the next step stops with these words.
 - `ext.syntax.array.spread` and `ext.syntax.map.spread`: a mark before
   a literal item takes all its members; the former takes array items,
   letters of text or map keys, the latter takes map pairs, later keys
@@ -2024,6 +2028,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set` | - | - | `set` `frozenset` | - | - | - | - | - | - | - |
 | `ext.builtin.set.add` | - | - | `add` | - | - | - | - | - | - | - |
 | `ext.builtin.set.arguments` | - | - | `TypeError: invalid arguments to set operation` | - | - | - | - | - | - | - |
+| `ext.builtin.set.changed` | - | - | `RuntimeError: Set changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.builtin.set.clear` | - | - | `clear` | - | - | - | - | - | - | - |
 | `ext.builtin.set.copy` | - | - | `copy` | - | - | - | - | - | - | - |
 | `ext.builtin.set.difference` | - | - | `difference` | - | - | - | - | - | - | - |

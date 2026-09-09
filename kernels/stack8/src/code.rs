@@ -600,6 +600,12 @@ pub enum Instr {
     SkipCmp { op: Action, a: Operand, b: Operand, to: usize },
 }
 
+impl Builtin {
+    pub fn set_method(self) -> bool {
+        matches!(self, Self::SetAdd | Self::SetRemove | Self::SetDiscard | Self::SetPop | Self::SetClear | Self::SetCopy | Self::SetUpdate | Self::SetUnion | Self::SetIntersection | Self::SetDifference | Self::SetSymmetric | Self::SetSubset | Self::SetSuperset | Self::SetDisjoint | Self::SetMeetUpdate | Self::SetLessUpdate | Self::SetXorUpdate)
+    }
+}
+
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {

@@ -2361,7 +2361,10 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                Value::array(self.comprehension_items(&source)?)
+                match self.set_walk(&source) {
+                    Some(walk) => walk,
+                    None => Value::array(self.comprehension_items(&source)?),
+                }
             }
             Action::UnpackCount(wanted) => {
                 let source = self.drop_top()?;
@@ -2407,6 +2410,11 @@ impl<'a> Engine<'a> {
                 let pair = self.drop_many(2)?;
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
+                if self.walked_set(&pair[0])?.is_some() {
+                    let item = self.element(&pair[0], &pair[1], Reading::Plain)?;
+                    self.data.push(item);
+                    return Ok(());
+                }
                 match &pair[0] {
                     Value::Set(s) => s.borrow().items().get(at).cloned().ok_or_else(|| self.set_said(".missing", &at.to_string()))?,
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
@@ -2900,6 +2908,7 @@ impl<'a> Engine<'a> {
                     handed = next;
                 }
                 self.line = stood_on;
+                if let Some(walk) = self.set_walk(&handed) { self.data.push(walk); return Ok(()); }
                 match self.walker(&handed) {
                     Some(_) => {
                         self.walk_asked(&handed, self.lang.walk_rewind.clone())?;
@@ -2948,6 +2957,10 @@ impl<'a> Engine<'a> {
             }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
+                if let Some(set) = self.walked_set(&pair[0])? {
+                    self.data.push(Value::Flag(as_index(&pair[1]).map_or(false, |at| at < set.borrow().held.len())));
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None if matches!(&pair[0], Value::Counted(_)) => {
@@ -2988,6 +3001,7 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::Extent => match self.drop_top()? {
+                value @ Value::SetWalk(..) if self.walked_set(&value)?.is_some() => Value::Small(self.walked_set(&value)?.unwrap().borrow().held.len() as i64),
                 Value::Counted(r) => Value::of_big(r.length()),
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -3806,6 +3820,11 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Some(cell) = self.walked_set(target)? {
+            let held = cell.borrow();
+            let index = as_index(at)?;
+            return held.row.get(index).map(|key| held.held[key].clone()).ok_or_else(|| self.set_said(".missing", &index.to_string()));
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -3995,6 +4014,20 @@ impl<'a> Engine<'a> {
     }
 
     // ---------- builtins ----------
+
+    /// The walk keeps its first size beside the shared members.
+    fn set_walk(&self, source: &Value) -> Option<Value> {
+        let Value::Set(cell) = source else { return None };
+        Some(Value::SetWalk(cell.clone(), cell.borrow().held.len()))
+    }
+
+    fn walked_set(&self, value: &Value) -> Res<Option<Rc<RefCell<crate::value::Members>>>> {
+        if let Value::SetWalk(cell, count) = value {
+            if *count != cell.borrow().held.len() { return Err(self.set_said(".changed", "")); }
+            return Ok(Some(cell.clone()));
+        }
+        Ok(None)
+    }
 
     fn set_said(&self, label: &str, piece: &str) -> String {
         let words = &self.lang.set_words[&format!("ext.builtin.set{}", label)];

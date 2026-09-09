@@ -4190,7 +4190,10 @@ impl<'a> Builder<'a> {
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
-                left = self.named_call(&name, args)?;
+                left = match table.prims.get(&name).copied() {
+                    Some(op @ Prim::SetCall(1..=17)) => Form::Apply(Callee::Prim(op, Rc::from(name.as_str())), args),
+                    _ => self.named_call(&name, args)?,
+                };
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
@@ -5634,7 +5637,7 @@ impl<'a> Builder<'a> {
     }
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
-        match self.table.prims.get(name).copied() {
+        match self.table.prims.get(name).copied().filter(|op| !matches!(op, Prim::SetCall(1..=17))) {
             // What is put in front of may be a name standing for a
             // shared cell, since the library of a language may spell it
             // as a routine taking one, so the place it names is looked

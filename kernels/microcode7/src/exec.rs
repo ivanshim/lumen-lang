@@ -449,6 +449,7 @@ impl<'a> Machine<'a> {
                     walking = further;
                 }
                 self.row = row;
+                if let Some(walk) = self.begin_set_walk(&walking) { return Ok(walk); }
                 match self.walks_itself(&walking) {
                     Some(_) => {
                         self.walk_asked(&walking, self.table.single("ext.op.walk.rewind").map(str::to_string))?;
@@ -474,6 +475,10 @@ impl<'a> Machine<'a> {
             }
             Prim::MoreYet => {
                 n(2)?;
+                if let Some(contents) = self.check_set_walk(&v[0])? {
+                    let more = as_index(&v[1]).map_or(false, |position| position < contents.borrow().entries.len());
+                    return Ok(Value::Flag(more));
+                }
                 match self.walk_asked(&v[0], self.table.single("ext.op.walk.more").map(str::to_string))? {
                     Some(answer) => Value::Flag(self.stands_true(&answer)),
                     None if matches!(&v[0], Value::Progression(_)) => {
@@ -3457,7 +3462,10 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
-            Prim::Iterated => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+            Prim::Iterated => match self.begin_set_walk(&v[0]) {
+                None => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                Some(walk) => walk,
+            },
             Prim::CheckUnpack(count) => {
                 let values = self.gathered_members(&v[0])?;
                 if values.len() != count {
@@ -3496,6 +3504,7 @@ impl<'a> Machine<'a> {
             Prim::KeyAt | Prim::ItemAt => {
                 n(2)?;
                 let at = as_index(&v[1])?;
+                if self.check_set_walk(&v[0])?.is_some() { return self.element(&v[0], &v[1], Reading::Plain); }
                 let wants_key = op == Prim::KeyAt;
                 match &v[0] {
                     Value::Progression(walk) => {
@@ -4779,6 +4788,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Length => {
                 n(1)?;
+                if let Some(held) = self.check_set_walk(&v[0])? { return Ok(Value::Small(held.borrow().entries.len() as i64)); }
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
@@ -4985,6 +4995,10 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Some(store) = self.check_set_walk(target)? {
+            let position = as_index(at)?;
+            return store.borrow().entries.get(position).map(|(_, item)| item.clone()).ok_or_else(|| self.set_complaint("missing", &position.to_string()));
+        }
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
@@ -5174,6 +5188,20 @@ impl<'a> Machine<'a> {
             }
             _ => Err(self.no_places()),
         }
+    }
+
+    fn begin_set_walk(&self, value: &Value) -> Option<Value> {
+        match value {
+            Value::Set(store) => Some(Value::SetCursor { source: store.clone(), count: store.borrow().entries.len() }),
+            _ => None,
+        }
+    }
+
+    /// Each step asks whether the size still agrees with the first one.
+    fn check_set_walk(&self, value: &Value) -> Result<Option<Rc<RefCell<crate::data::SetStore>>>, String> {
+        let Value::SetCursor { source, count } = value else { return Ok(None) };
+        if source.borrow().keys.len() == *count { Ok(Some(source.clone())) }
+        else { Err(self.set_complaint("changed", "")) }
     }
 
     fn set_complaint(&self, suffix: &str, insert: &str) -> String {
