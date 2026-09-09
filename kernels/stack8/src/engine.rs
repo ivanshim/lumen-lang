@@ -22,6 +22,7 @@ pub struct Engine<'a> {
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
     data: Vec<Value>,
+    caught: Vec<Value>,
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
@@ -205,6 +206,7 @@ impl<'a> Engine<'a> {
             lang,
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
+            caught: Vec::new(),
             memo: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
@@ -1547,12 +1549,72 @@ impl<'a> Engine<'a> {
     }
 
     fn run_body(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
-        let mut pc = 0;
+        self.run_span(program, frame, instrs, (0, instrs.len())).map(|_| ())
+    }
+
+    /// Each arm runs in the same frame. A leap beyond its span is an
+    /// outward return or loop step, and the last part runs before it goes.
+    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<usize> {
+        if plan.clauses.iter().any(|arm| arm.grouped) {
+            return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
+        }
+        let depth = self.data.len();
+        let active = self.caught.len();
+        let ending = self.run_span(program, frame, instrs, plan.body);
+        let mut ending = match ending {
+            Ok(at) if at == plan.body.1 => match plan.otherwise {
+                Some(span) => self.run_span(program, frame, instrs, span).map(|at| if at == span.1 { plan.after } else { at }),
+                None => Ok(plan.after),
+            },
+            Err(Fault::Thrown(raised)) => {
+                self.data.truncate(depth);
+                self.caught.push(raised.clone());
+                let handled = (|| {
+                    for arm in &plan.clauses {
+                        let mut takes = arm.kinds.is_empty();
+                        for span in &arm.kinds {
+                            self.run_span(program, frame, instrs, *span)?;
+                            let kind = self.drop_top()?;
+                            if let (Value::Object(object), Value::Class(class)) = (&raised, kind) {
+                                takes |= object.class.named(&class.name, self.lang.classes_folded);
+                            }
+                            if takes { break; }
+                        }
+                        if !takes { continue; }
+                        self.under = None;
+                        self.entering = None;
+                        if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
+                        let outcome = self.run_span(program, frame, instrs, arm.body);
+                        if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
+                        return outcome.map(|at| if at == arm.body.1 { plan.after } else { at });
+                    }
+                    Err(Fault::Thrown(raised))
+                })();
+                self.caught.truncate(active);
+                handled
+            }
+            other => other,
+        };
+        if let Some(last) = plan.last {
+            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+            let saved = self.data.len();
+            let finished = self.run_span(program, frame, instrs, last);
+            self.caught.truncate(active);
+            match finished {
+                Ok(at) if at == last.1 => self.data.truncate(saved),
+                other => ending = other,
+            }
+        }
+        ending
+    }
+
+    fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<usize> {
+        let mut pc = span.0;
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
-        while pc < instrs.len() {
+        while pc >= span.0 && pc < span.1 {
             // A complaint raised where the run could only read waits to
             // be handed over; here, before the next word, is where the
             // run can reach back into the program to hand it on.
@@ -1648,6 +1710,10 @@ impl<'a> Engine<'a> {
                         pc = catch;
                         continue;
                     }
+                }
+                Instr::Attempt(plan) => {
+                    pc = self.run_attempt(program, frame, instrs, plan)?;
+                    continue;
                 }
                 Instr::Guard(catch) => guards.push((*catch, self.data.len(), self.hushed.get())),
                 Instr::Unguard => {
@@ -1835,7 +1901,7 @@ impl<'a> Engine<'a> {
             }
             pc += 1;
         }
-        Ok(())
+        Ok(pc)
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -2531,6 +2597,24 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.named(n, self.lang.classes_folded))),
                 _ => Value::Flag(false),
             },
+            Action::Reraise => {
+                let value = self.caught.last().cloned().ok_or_else(|| self.lang.throw_empty.clone().unwrap_or_default())?;
+                return Err(Fault::Thrown(value));
+            }
+            Action::AssertFault => {
+                let message = self.drop_top()?;
+                let class = Rc::new(Class {
+                    name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
+                    answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
+                    methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                });
+                self.made += 1;
+                let raised = Value::Object(Rc::new(Instance {
+                    class, fields: RefCell::new(vec![("message".to_string(), message)]), mark: self.made,
+                }));
+                self.hurled_at.set(self.line);
+                return Err(Fault::Thrown(raised));
+            }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
                 return Err(Fault::Thrown(self.drop_top()?));

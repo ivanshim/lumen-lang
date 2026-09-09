@@ -14,6 +14,43 @@ pub const OF_A_CLASS: &str = "\0class";
 
 use crate::value::Value;
 
+/// A watched body and its arms, as spans in the same routine. Keeping
+/// them in that routine leaves their bindings and outward leaps whole.
+#[derive(Debug, Clone)]
+pub struct Attempt {
+    pub body: (usize, usize),
+    pub clauses: Vec<Taking>,
+    pub otherwise: Option<(usize, usize)>,
+    pub last: Option<(usize, usize)>,
+    pub after: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Taking {
+    pub kinds: Vec<(usize, usize)>,
+    pub held: Option<Cell>,
+    pub body: (usize, usize),
+    pub grouped: bool,
+}
+
+impl Attempt {
+    pub fn move_marks(&mut self, mut at: impl FnMut(usize) -> usize) {
+        let span = |pair: &mut (usize, usize), at: &mut dyn FnMut(usize) -> usize| {
+            pair.0 = at(pair.0);
+            pair.1 = at(pair.1);
+        };
+        span(&mut self.body, &mut at);
+        for clause in &mut self.clauses {
+            for kind in &mut clause.kinds { span(kind, &mut at); }
+            span(&mut clause.body, &mut at);
+        }
+        for pair in [&mut self.otherwise, &mut self.last].into_iter().flatten() {
+            span(pair, &mut at);
+        }
+        self.after = at(self.after);
+    }
+}
+
 /// A binding's address: candidate local slots (innermost first) and the
 /// global slot of the same name. A load reads the first local that holds
 /// a value and falls through to the global; a store writes the first
@@ -248,6 +285,8 @@ pub enum Action {
     Titled,
     /// Raise the value above as a fault to be caught.
     Hurl,
+    Reraise,
+    AssertFault,
     /// Whether the value above is of any of those classes; it is consumed.
     Matches(Rc<Vec<String>>),
     /// Push the value above a second time.
@@ -506,6 +545,7 @@ pub enum Instr {
     /// stack goes back to its depth here, the value is pushed, and the
     /// run goes on at the index.
     Guard(usize),
+    Attempt(Box<Attempt>),
     Unguard,
     /// A binary operation whose operands come from bindings, constants or
     /// the stack, the result pushed: an operator that never touches the

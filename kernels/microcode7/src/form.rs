@@ -374,7 +374,9 @@ pub enum Form {
     Class { plan: Rc<Plan>, values: Vec<Form> },
     /// A body run with clauses ready to take what it raises, and a last
     /// part that runs however the body ends.
-    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>> },
+    Again,
+    Assert { condition: Box<Form>, message: Box<Form> },
+    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
     /// A statement together with the line of the source it was written
@@ -460,6 +462,8 @@ pub enum Form {
 #[derive(Debug)]
 pub struct Clause {
     pub classes: Vec<String>,
+    pub choices: Option<Vec<Form>>,
+    pub grouped: bool,
     pub held: Option<Address>,
     pub body: Form,
 }

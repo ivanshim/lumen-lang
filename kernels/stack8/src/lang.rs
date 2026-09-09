@@ -577,6 +577,16 @@ pub struct Lang {
     pub self_words: Vec<String>,
     /// Signs a name may be led by, which say nothing: PHP's `\Error`.
     pub name_leads: Vec<char>,
+    pub assert_words: Vec<String>,
+    pub assert_kind: Option<String>,
+    pub catch_as: Vec<String>,
+    pub catch_tuple_open: Option<String>,
+    pub catch_tuple_close: Option<String>,
+    pub catch_group: Option<String>,
+    pub catch_group_unsupported: Option<String>,
+    pub try_else: bool,
+    pub throw_from: Vec<String>,
+    pub throw_empty: Option<String>,
     pub try_words: Vec<String>,
     pub catch_words: Vec<String>,
     pub finally_words: Vec<String>,
@@ -656,7 +666,7 @@ w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destruct
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
-w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
@@ -1500,6 +1510,16 @@ impl Lang {
             parent_words: r.strings("ext.stmt.class.parent")?,
             self_words: r.strings("ext.stmt.class.self")?,
             name_leads: r.letters("ext.lexical.name_lead")?,
+            assert_words: r.strings("ext.stmt.assert")?,
+            assert_kind: r.head("ext.stmt.assert.kind")?,
+            catch_as: r.strings("ext.stmt.catch.as")?,
+            catch_tuple_open: r.head("ext.stmt.catch.tuple.open")?,
+            catch_tuple_close: r.head("ext.stmt.catch.tuple.close")?,
+            catch_group: r.head("ext.stmt.catch.group")?,
+            catch_group_unsupported: r.head("ext.stmt.catch.group.unsupported")?,
+            try_else: r.flag("ext.stmt.try.else")?,
+            throw_from: r.strings("ext.stmt.throw.from")?,
+            throw_empty: r.head("ext.stmt.throw.empty")?,
             try_words: r.strings("ext.stmt.try")?,
             catch_words: r.strings("ext.stmt.catch")?,
             finally_words: r.strings("ext.stmt.finally")?,
@@ -1596,7 +1616,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
+        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.catch_tuple_open, &self.catch_tuple_close, &self.catch_group, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {
@@ -1625,7 +1645,7 @@ impl Lang {
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
-            &self.finally_words, &self.throw_words,
+            &self.finally_words, &self.throw_words, &self.assert_words, &self.catch_as, &self.throw_from,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {

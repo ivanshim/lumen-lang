@@ -490,6 +490,25 @@ only. The extension labels so far, all from PHP:
   first clause whose class takes it holding it, and a last part that runs
   however the body ended, a return through it included. What no clause
   takes is raised again.
+- `ext.stmt.catch.as`: the word before the name holding a caught value.
+  Where spelled, a clause needs no outer group and may take every raised
+  value by naming no class. An unbound class name takes nothing and says
+  nothing. `ext.stmt.catch.tuple.open` and `.close` enclose a list of
+  classes; `ext.stmt.catch.separator` parts them, within or without it.
+- `ext.stmt.try.else`: a switch; the ordinary else word may follow the
+  clauses, and its body runs only when the watched body ended of its own
+  accord. A value raised there is not offered to those clauses.
+- `ext.stmt.throw.from`: the word before a cause. The cause is read whole
+  and set aside. Where spelled, a throw without a value raises again what
+  the innermost clause is holding. `ext.stmt.throw.empty` gives the words
+  said when there is no such value.
+- `ext.stmt.assert`: a condition that must hold, followed, if wished, by
+  the call separator and a message. Only a false condition works out the
+  message and raises it; `ext.stmt.assert.kind` names the kind so raised.
+- `ext.stmt.catch.group`: a sign before the classes of a clause taking
+  parts of an exception group. The clause is read whole, but reaching the
+  attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
+  cannot yet part such groups.
 - `ext.lexical.name_lead`: signs a name may be led by that say nothing,
   PHP's `\TypeError`.
 - `ext.lexical.template`: a switch; the source is text with code in it.
@@ -1710,14 +1729,21 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.onward` | - | - | - | - | `next` | - | - | - | - | - |
 | `ext.op.walk.rewind` | - | - | - | - | `rewind` | - | - | - | - | - |
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
+| `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
+| `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.case` | - | - | - | - | `case` | - | - | - | - | - |
 | `ext.stmt.case.mark` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.case.mark.instead` | - | - | - | - | `Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead` | - | - | - | - | - |
-| `ext.stmt.catch` | - | - | - | - | `catch` | - | - | - | - | - |
-| `ext.stmt.catch.separator` | - | - | - | - | `\|` | - | - | - | - | - |
+| `ext.stmt.catch` | - | - | `except` | - | `catch` | - | - | - | - | - |
+| `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.group.unsupported` | - | - | `Exception groups are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
+| `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | - | - | `class` | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | - | - | `__construct` | - | - | - | - | - |
@@ -1743,7 +1769,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
 | `ext.stmt.do` | - | - | - | - | `do` | - | - | - | - | - |
-| `ext.stmt.finally` | - | - | - | - | `finally` | - | - | - | - | - |
+| `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | - | - | `use` | - | - | - | - | - |
@@ -1757,8 +1783,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
 | `ext.stmt.terminator.only` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.stmt.throw` | - | - | - | - | `throw` | - | - | - | - | - |
-| `ext.stmt.try` | - | - | - | - | `try` | - | - | - | - | - |
+| `ext.stmt.throw` | - | - | `raise` | - | `throw` | - | - | - | - | - |
+| `ext.stmt.throw.empty` | - | - | `No active exception to reraise` | - | - | - | - | - | - | - |
+| `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
+| `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |

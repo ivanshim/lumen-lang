@@ -32,7 +32,7 @@ use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::{Reach, Value};
-use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan};
+use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt, Taking};
 
 /// The global names, each with a slot.
 #[derive(Default)]
@@ -952,8 +952,33 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.throw_words, &w) {
                 self.take();
+                if !lang.throw_from.is_empty() && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+                    self.act(Action::Reraise, 0);
+                } else {
+                    self.expr(0)?;
+                    if self.on_keyword(&lang.throw_from) {
+                        self.take();
+                        let from = self.mark();
+                        self.expr(0)?;
+                        self.piece().instrs.truncate(from);
+                    }
+                    self.act(Action::Hurl, 1);
+                }
+                return Ok(());
+            }
+            if Lang::spells(&lang.assert_words, &w) {
+                self.take();
                 self.expr(0)?;
-                self.act(Action::Hurl, 1);
+                self.act(Action::Not, 1);
+                let passed = self.skip();
+                if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
+                    self.take();
+                    self.expr(0)?;
+                } else {
+                    self.constant(Value::text(""));
+                }
+                self.act(Action::AssertFault, 1);
+                self.land(passed);
                 return Ok(());
             }
             if Lang::spells(&lang.foreach_words, &w) {
@@ -2035,6 +2060,9 @@ impl<'a> Compiler<'a> {
     /// clause takes is raised again. The last part, if there is one, runs
     /// on both ways out, so it is written twice.
     fn attempt(&mut self) -> Res<()> {
+        if !self.lang.catch_as.is_empty() {
+            return self.indented_attempt();
+        }
         let lang = self.lang;
         self.take();
         // Where the last part begins, found before the body is read, so
@@ -2091,6 +2119,88 @@ impl<'a> Compiler<'a> {
             self.land(at);
         }
         self.last_part(last)?;
+        Ok(())
+    }
+
+    /// A colon body may stand on the same line as its head. This small
+    /// reading belongs to the watched statement and each of its arms.
+    fn attempt_body(&mut self) -> Res<(usize, usize)> {
+        let start = self.mark();
+        if self.lang.blocks == Blocks::Indented && self.on_any(&self.lang.block_intros) {
+            self.take();
+            if self.look().shape != Shape::LineEnd {
+                loop {
+                    self.stmt()?;
+                    if !self.at_symbol(";") { break; }
+                    self.take();
+                    if matches!(self.look().shape, Shape::LineEnd | Shape::Finish) { break; }
+                }
+                return Ok((start, self.mark()));
+            }
+        }
+        self.body()?;
+        Ok((start, self.mark()))
+    }
+
+    fn indented_attempt(&mut self) -> Res<()> {
+        self.take();
+        let mark = self.put(Instr::Attempt(Box::new(Attempt {
+            body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+        })));
+        let body = self.attempt_body()?;
+        let mut clauses = Vec::new();
+        self.skip_seps();
+        let lang = self.lang;
+        while self.on_keyword(&lang.catch_words) {
+            self.take();
+            let grouped = lang.catch_group.as_ref().map_or(false, |m| self.at_symbol(m));
+            if grouped { self.take(); }
+            let tuple = lang.catch_tuple_open.as_ref().map_or(false, |m| self.at_symbol(m));
+            if tuple { self.take(); }
+            let mut kinds = Vec::new();
+            if !self.on_any(&lang.block_intros) {
+                loop {
+                    let from = self.mark();
+                    self.expr(0)?;
+                    let to = self.mark();
+                    // A lone missing name takes nothing, without a complaint.
+                    if to == from + 1 {
+                        if let Instr::Read(cell) = self.piece().instrs[from].clone() {
+                            self.piece().instrs[from] = Instr::Glance(cell);
+                        }
+                    }
+                    kinds.push((from, to));
+                    if !lang.catch_between.as_ref().map_or(false, |m| self.at_symbol(m)) { break; }
+                    self.take();
+                    if tuple && lang.catch_tuple_close.as_ref().map_or(false, |m| self.at_symbol(m)) { break; }
+                }
+            }
+            if tuple {
+                self.want_sign(lang.catch_tuple_close.as_deref().unwrap_or(")"), "after the classes caught")?;
+            }
+            let held = if self.on_keyword(&lang.catch_as) {
+                self.take();
+                let name = self.want_name("after the caught value's binding word")?;
+                Some(self.cell_to_write(&name))
+            } else { None };
+            let arm = self.attempt_body()?;
+            clauses.push(Taking { kinds, held, body: arm, grouped });
+            self.skip_seps();
+        }
+        let otherwise = if lang.try_else && self.on_keyword(&lang.else_words) {
+            self.take();
+            Some(self.attempt_body()?)
+        } else { None };
+        self.skip_seps();
+        let last = if self.on_keyword(&lang.finally_words) {
+            self.take();
+            Some(self.attempt_body()?)
+        } else { None };
+        if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
+            return Err("A try needs a catch or a last part".to_string());
+        }
+        let after = self.mark();
+        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { body, clauses, otherwise, last, after }));
         Ok(())
     }
 
@@ -5198,13 +5308,15 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
     // of the very statement written to take it.
     let mut watched = vec![false; instrs.len()];
     let mut depth = 0usize;
+    let mut watched_to = 0;
     for (at, w) in instrs.iter().enumerate() {
+        if let Instr::Attempt(plan) = w { watched_to = watched_to.max(plan.after); }
         match w {
             Instr::Guard(_) => depth += 1,
             Instr::Unguard => depth = depth.saturating_sub(1),
             _ => {}
         }
-        watched[at] = depth > 0;
+        watched[at] = depth > 0 || at < watched_to;
     }
     let comparison = |op: &Action| matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge);
     let arithmetic = |op: &Action| comparison(op) || matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Join | Action::At);
@@ -5271,6 +5383,7 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
     for w in out.iter_mut() {
         match w {
             Instr::Skip(t) | Instr::SkipCmp { to: t, .. } | Instr::Guard(t) => *t = map[*t],
+            Instr::Attempt(plan) => plan.move_marks(|i| map[i]),
             _ => {}
         }
     }
@@ -5409,6 +5522,10 @@ fn relocated(instrs: Vec<Instr>, delta: i64) -> Vec<Instr> {
         .map(|w| match w {
             Instr::Skip(t) => Instr::Skip((t as i64 + delta) as usize),
             Instr::Guard(t) => Instr::Guard((t as i64 + delta) as usize),
+            Instr::Attempt(mut plan) => {
+                plan.move_marks(|i| (i as i64 + delta) as usize);
+                Instr::Attempt(plan)
+            }
             other => other,
         })
         .collect()

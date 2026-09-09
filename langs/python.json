@@ -313,7 +313,54 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
-  "ext.stmt.decorator": ["@"],
-  "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.stmt.assert": [
+    "assert"
+  ],
+  "ext.stmt.assert.kind": [
+    "AssertionError"
+  ],
+  "ext.stmt.catch": [
+    "except"
+  ],
+  "ext.stmt.catch.as": [
+    "as"
+  ],
+  "ext.stmt.catch.group": [
+    "*"
+  ],
+  "ext.stmt.catch.group.unsupported": [
+    "Exception groups are not supported"
+  ],
+  "ext.stmt.catch.separator": [
+    ","
+  ],
+  "ext.stmt.catch.tuple.close": [
+    ")"
+  ],
+  "ext.stmt.catch.tuple.open": [
+    "("
+  ],
+  "ext.stmt.decorator": [
+    "@"
+  ],
+  "ext.stmt.decorator.amiss": [
+    "A decorator must stand on its own line before a function definition"
+  ],
+  "ext.stmt.finally": [
+    "finally"
+  ],
+  "ext.stmt.for.collection": true,
+  "ext.stmt.throw": [
+    "raise"
+  ],
+  "ext.stmt.throw.empty": [
+    "No active exception to reraise"
+  ],
+  "ext.stmt.throw.from": [
+    "from"
+  ],
+  "ext.stmt.try": [
+    "try"
+  ],
+  "ext.stmt.try.else": true
 }
