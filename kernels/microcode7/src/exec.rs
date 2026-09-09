@@ -403,6 +403,7 @@ impl<'a> Machine<'a> {
     /// and may name pieces of text it holds untrue.
     fn stands_true(&self, v: &Value) -> bool {
         match v {
+            Value::Mutable(place, _) => self.stands_true(&place.borrow()),
             Value::Shared(cell) => self.stands_true(&cell.borrow()),
             Value::Vector(items) if self.hollow_is_false => !items.is_empty(),
             Value::Dict(pairs) if self.hollow_is_false => !pairs.is_empty(),

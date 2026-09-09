@@ -421,6 +421,7 @@ impl<'a> Engine<'a> {
     /// untrue, and may name pieces of text it counts as untrue.
     fn truth(&self, v: &Value) -> bool {
         match v {
+            Value::Native(cell, _) => self.truth(&cell.borrow()),
             Value::Bond(shared) => self.truth(&shared.borrow()),
             Value::Array(items) if self.lang.untrue_empty => !items.is_empty(),
             Value::Map(pairs) if self.lang.untrue_empty => !pairs.is_empty(),
@@ -4183,6 +4184,8 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
+            Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -4491,8 +4494,6 @@ impl<'a> Engine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     match builtin {
-            Builtin::ValueMethod => Err(self.lang.method_errors["attribute"].clone()),
-            Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)) },
                         Builtin::ClassMethods => named.extend(class.methods.iter().map(|(n, _)| n.clone())),
                         _ => named.extend(class.fields.iter().map(|(n, _)| crate::value::who_keeps(n).0.to_string())),
                     }

@@ -1167,7 +1167,6 @@ impl Lang {
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
             ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
-            if native == Builtin::ValueMethod { continue; }
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
                 let entry = Operator { action: op.clone(), level: tier, right_assoc: rights.contains(&lex) };
@@ -1295,6 +1294,7 @@ impl Lang {
             ("ext.builtin.net.ask", Builtin::NetAsk), ("ext.builtin.wait", Builtin::Waited),
             ("ext.builtin.run.begin", Builtin::RunBegin), ("ext.builtin.run.end", Builtin::RunEnd),
         ] {
+            if native == Builtin::ValueMethod { continue; }
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
                 if !begins || lex.chars().any(|c| c.is_whitespace() || quotes.contains(&c)) {
