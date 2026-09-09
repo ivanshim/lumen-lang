@@ -2,7 +2,7 @@
 
 `0.py` takes the continued sum from `test_backslash` in the grammar
 suite. It must print `2`. The base reader stops at the backslash;
-`claude/py-lexical` owns the full account of continued lines.
+The lexical piece owns the full account of continued lines.
 
 The continued-line reading is taken from that branch, under its own
 `ext.lexical.line_continuation` label (a list spelling `\`). No numeric
@@ -51,3 +51,11 @@ lexical branch; its printing changes remain there. The existing
 `_`, and `invalid numeric literal`. The `.point.bare` and
 `.separator.after_prefix` switches are true. The core hex prefix also
 spells `0X`. `11.py` refuses a doubled separator in a whole number.
+
+`12.py` reads empty, single, trailing-comma, and nested tuples, and
+a loop over values joined without brackets, in an uncalled routine.
+It prints `read`. `13.py` reaches a tuple and says
+`NotImplementedError: tuple values are not supported`.
+The existing `ext.op.tuple` list spells `,`; its `.unready` list holds
+those words. This is the small read needed by the grammar file; the
+tuple piece remains responsible for tuple values and taking them apart.

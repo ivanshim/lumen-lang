@@ -462,7 +462,9 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class.unready`: the words for a class body whose reading
   is known but whose running is not. With indented blocks the class
   header takes ordinary call arguments for its bases, and the body is
-  read in a scope of its own. Reaching the declaration says these
+  read in a scope of its own. This form requires call brackets and a
+  block introduction; the executable form still requires member access
+  and a maker word. Reaching the declaration says these
   words; none of its bases or members is worked out. The fuller class
   account may use the same complaint for only the forms it cannot run.
 - `ext.stmt.class` and its family: `ext.stmt.class.extends`,
@@ -1359,6 +1361,12 @@ only. The extension labels so far, all from PHP:
   the other does not leaving them past telling apart. Text spelling a
   number stands for that number, and a number met by text spelling
   none is itself read as text.
+- `ext.op.tuple`: the comma joining values within grouping brackets or
+  in the collection a loop walks. Empty brackets and a trailing comma
+  likewise name tuples. The small reading uses `ext.op.tuple.unready`
+  for the words said when a tuple value is reached; its members are
+  read whole but not worked out. The tuple piece supplies the fuller
+  account of values, stores, and taking apart.
 - `ext.op.matrix`: the matrix product sign, taking its place among the
   binary operators by `op.precedence`. The compound assignment switch
   gives it a writing form as well. Both operands are read whole; where
@@ -1856,6 +1864,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
+| `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
+| `ext.op.tuple.unready` | - | - | `NotImplementedError: tuple values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |

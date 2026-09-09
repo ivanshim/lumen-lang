@@ -356,6 +356,8 @@
   "ext.op.index.slice.zero": ["slice step cannot be zero"],
   "ext.op.matrix": ["@"],
   "ext.op.matrix.unready": ["NotImplementedError: matrix multiplication is not supported"],
+  "ext.op.tuple": [","],
+  "ext.op.tuple.unready": ["NotImplementedError: tuple values are not supported"],
   "ext.stmt.annotation": [":"],
   "ext.stmt.annotation.amiss": ["invalid syntax"],
   "ext.stmt.annotation.target.unready": ["NotImplementedError: annotated attribute targets are not supported"],

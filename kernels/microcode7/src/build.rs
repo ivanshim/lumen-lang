@@ -2550,7 +2550,7 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = self.expr(tier + 1)?;
+            let start = if table.has_any("ext.op.tuple") { self.grammar_values()? } else { self.expr(tier + 1)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3703,6 +3703,25 @@ impl<'a> Builder<'a> {
 
     // ---------- expressions
 
+    fn grammar_values(&mut self) -> Res<Form> {
+        let first = self.expr(0)?;
+        if !self.on_any("ext.op.tuple") { return Ok(first); }
+        loop {
+            self.advance();
+            let ends = ["syntax.group.close", "syntax.array.close", "syntax.map.close", "block.intro"]
+                .iter().any(|key| self.on_any(key));
+            if ends || self.on_stmt_end() || matches!(self.look().shape, Shape::Close | Shape::Finish) { break; }
+            self.expr(0)?;
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        Ok(self.tuple_cannot_run())
+    }
+
+    fn tuple_cannot_run(&self) -> Form {
+        let words = self.table.single("ext.op.tuple.unready").unwrap_or_default();
+        prim_call(Prim::Raise, vec![constant(Value::text(words))])
+    }
+
     fn expr(&mut self, floor: u32) -> Res<Form> {
         self.expr_at(floor, true)
     }
@@ -4079,7 +4098,9 @@ impl<'a> Builder<'a> {
             Shape::Sign => {
                 if table.single("syntax.group.open") == Some(t.lexeme.as_str()) {
                     self.advance();
-                    let inner = self.expr(0)?;
+                    let inner = if table.has_any("ext.op.tuple") {
+                        if self.on_any("syntax.group.close") { self.tuple_cannot_run() } else { self.grammar_values()? }
+                    } else { self.expr(0)? };
                     self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                     self.called_on_value(inner)?
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {

@@ -49,6 +49,8 @@ pub struct Lang {
     pub bare_number_point: bool,
     pub separator_after_prefix: bool,
     pub whole_bits: bool,
+    pub tuple_marks: Vec<String>,
+    pub tuple_unready: Option<String>,
     pub class_unready: Option<String>,
     pub matrix_words: Vec<String>,
     pub matrix_unready: Option<String>,
@@ -694,7 +696,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
-b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
@@ -1419,6 +1421,8 @@ impl Lang {
             bare_number_point: r.flag("ext.lexical.number.point.bare")?,
             separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
+            tuple_marks: r.strings("ext.op.tuple")?,
+            tuple_unready: r.head("ext.op.tuple.unready")?,
             class_unready: r.head("ext.stmt.class.unready")?,
             matrix_words: r.strings("ext.op.matrix")?,
             matrix_unready: r.head("ext.op.matrix.unready")?,
@@ -1629,8 +1633,14 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
-            return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+        if !lang.class_words.is_empty() {
+            if lang.blocks == Blocks::Indented && lang.class_unready.is_some() {
+                if lang.calling.is_none() || lang.block_intros.is_empty() {
+                    return Err("An indented class needs call brackets and block.intro".to_string());
+                }
+            } else if lang.member_mark.is_none() || lang.new_words.is_empty() {
+                return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+            }
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
             return Err("stmt.foreach needs stmt.foreach.as".to_string());
@@ -1710,7 +1720,7 @@ impl Lang {
         let mut lists: Vec<&Vec<String>> = vec![
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.line_continuations, &self.matrix_words,
+            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.line_continuations, &self.matrix_words, &self.tuple_marks,
             &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
         if self.blocks != Blocks::Indented {

@@ -2083,7 +2083,7 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
+            if lang.tuple_marks.is_empty() { self.expr(tier + 1)?; } else { self.grammar_values()?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -3988,6 +3988,29 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Commas between values belong to their tuple, not to an outer call.
+    fn grammar_values(&mut self) -> Res<()> {
+        let began = self.mark();
+        self.expr(0)?;
+        if !self.on_any(&self.lang.tuple_marks) { return Ok(()); }
+        while self.on_any(&self.lang.tuple_marks) {
+            self.take();
+            let closed = [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets]
+                .into_iter().flatten().any(|p| self.at_symbol(&p.close));
+            if closed || self.on_sep() || self.exhausted() || self.look().shape == Shape::Close
+                || self.on_any(&self.lang.block_intros) { break; }
+            self.expr(0)?;
+        }
+        self.piece().instrs.truncate(began);
+        self.tuple_cannot_run();
+        Ok(())
+    }
+
+    fn tuple_cannot_run(&mut self) {
+        self.constant(Value::text(self.lang.tuple_unready.as_deref().unwrap_or_default()));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("tuple")), 1);
+    }
+
     /// After a pipe: a call with the piped value first, or a bare name,
     /// a call with no other argument.
     fn pipe_target(&mut self, left: usize) -> Res<()> {
@@ -4339,7 +4362,11 @@ impl<'a> Compiler<'a> {
                 if let Some(group) = lang.grouping.clone() {
                     if tok.lexeme == group.open {
                         self.take();
-                        self.expr(0)?;
+                        if !lang.tuple_marks.is_empty() && self.at_symbol(&group.close) {
+                            self.tuple_cannot_run();
+                        } else if !lang.tuple_marks.is_empty() {
+                            self.grammar_values()?;
+                        } else { self.expr(0)?; }
                         self.want_sign(&group.close, "to close a group")?;
                         self.called_on_value()?;
                         return self.indexing(from);
