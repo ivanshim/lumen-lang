@@ -2452,8 +2452,12 @@ impl<'a> Compiler<'a> {
         let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + 1, from)).collect();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
-            self.skip_nothing_mark();
-            self.want_name("as a return type")?;
+            if lang.annotation_marks.is_empty() {
+                self.skip_nothing_mark();
+                self.want_name("as a return type")?;
+            } else {
+                self.annotation_expression(&lang.block_intros)?;
+            }
         }
         // A method may be named and not written out, in a class of
         // method names only; it answers with nothing. A body on the line
@@ -2532,7 +2536,13 @@ impl<'a> Compiler<'a> {
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
-                if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
+                if self.on_any(&lang.annotation_marks) {
+                    self.take();
+                    let mut ends = lang.assign_words.clone();
+                    ends.push(call.close.clone());
+                    ends.extend(call.between.iter().cloned());
+                    self.annotation_expression(&ends)?;
+                } else if self.look().shape == Shape::Sign && Lang::spells(&lang.type_marks, &self.look().lexeme) {
                     self.take();
                     self.want_name("as a type name")?;
                 }
@@ -2594,6 +2604,38 @@ impl<'a> Compiler<'a> {
         }
         self.want_sign(&call.close, "after parameters")?;
         Ok((formals, spares, promoted))
+    }
+
+    /// An annotation is kept only long enough to find its end. No
+    /// names are sought and no words for the run are made from it.
+    fn annotation_expression(&mut self, ends: &[String]) -> Res<()> {
+        let lang = self.lang;
+        let pairs: Vec<&Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets,
+            &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
+        let mut closing: Vec<String> = Vec::new();
+        let began = self.pos;
+        while !self.exhausted() {
+            let token = self.look();
+            if closing.is_empty() && (self.on_sep() || self.on_any(ends)
+                || matches!(token.shape, Shape::Open | Shape::Close)) {
+                break;
+            }
+            if token.shape == Shape::Sign {
+                if let Some(pair) = pairs.iter().find(|pair| pair.open == token.lexeme) {
+                    closing.push(pair.close.clone());
+                } else if pairs.iter().any(|pair| pair.close == token.lexeme) {
+                    if closing.last() != Some(&token.lexeme) {
+                        return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an expression".into()));
+                    }
+                    closing.pop();
+                }
+            }
+            self.take();
+        }
+        if self.pos == began || !closing.is_empty() {
+            return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an expression".into()));
+        }
+        Ok(())
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
@@ -2658,8 +2700,12 @@ impl<'a> Compiler<'a> {
         let taken = carried.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
-            self.skip_nothing_mark();
-            self.want_name("as a return type")?;
+            if lang.annotation_marks.is_empty() {
+                self.skip_nothing_mark();
+                self.want_name("as a return type")?;
+            } else {
+                self.annotation_expression(&lang.block_intros)?;
+            }
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
         let program = self.routine(name, formals, least, true, |a| {
@@ -2716,8 +2762,12 @@ impl<'a> Compiler<'a> {
         let given = formals.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
-            self.skip_nothing_mark();
-            self.want_name("as a return type")?;
+            if lang.annotation_marks.is_empty() {
+                self.skip_nothing_mark();
+                self.want_name("as a return type")?;
+            } else {
+                self.annotation_expression(&lang.block_intros)?;
+            }
         }
         self.want_sign(&mark, "before the body of a short routine")?;
         // Which names the body wants cannot be said in a routine written
@@ -2822,6 +2872,52 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The target has been read as a value, as for an ordinary store.
+    /// With no store, a name does nothing and an index works out only
+    /// its footing and key, without asking what stands at that key.
+    fn annotated_statement(&mut self, from: usize, target_at: usize) -> Res<()> {
+        let lang = self.lang;
+        let target_end = self.pos;
+        let words = &self.piece().instrs[from..];
+        let name = matches!(words, [Instr::Read(_)]);
+        let index = matches!(words.last(), Some(Instr::Act(Action::At, 2)));
+        let member = matches!(words.last(), Some(Instr::Act(Action::Grab(_), 1)));
+        let piped = self.tokens[target_at..target_end].iter().any(|t|
+            t.shape == Shape::Sign && Lang::spells(&lang.pipe_words, &t.lexeme));
+        if !name && !index && !member && !piped {
+            return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an assignment target".into()));
+        }
+        self.take();
+        let mut ends = lang.assign_words.clone();
+        ends.extend(lang.annotation_marks.iter().cloned());
+        if let Some(call) = &lang.calling {
+            ends.extend(call.between.iter().cloned());
+        }
+        self.annotation_expression(&ends)?;
+        if piped && lang.member_mark.is_none() {
+            self.piece().instrs.truncate(from);
+            if self.on_assign() {
+                self.take();
+                self.expr(0)?;
+                self.put_away();
+            }
+            let said = lang.annotation_target_unready.as_deref().unwrap_or("This annotation target cannot be written");
+            self.constant(Value::text(said));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("annotation")), 1);
+        } else if self.on_assign() {
+            self.assignment(from, None)?;
+        } else if name {
+            self.piece().instrs.truncate(from);
+        } else {
+            self.piece().instrs.pop();
+            self.put_away();
+            if index {
+                self.put_away();
+            }
+        }
+        Ok(())
+    }
+
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
         // The running result is emptied before the statement is worked
@@ -2832,7 +2928,11 @@ impl<'a> Compiler<'a> {
         let running = self.cell_to_write(RESULT_CELL);
         let emptied = self.put(Instr::Emptied(running));
         let from = self.mark();
+        let target_at = self.pos;
         self.expr_at(0, false)?;
+        if self.on_any(&self.lang.annotation_marks) {
+            return self.annotated_statement(from, target_at);
+        }
         let done = if self.on_writing() {
             self.assignment(from, None)
         } else {

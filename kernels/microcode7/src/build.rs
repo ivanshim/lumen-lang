@@ -1774,8 +1774,13 @@ impl<'a> Builder<'a> {
             && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme))
         {
             self.advance();
-            self.skip_nothing_mark();
-            self.need_word("as a return type")?;
+            match table.has_any("ext.stmt.annotation") {
+                true => self.put_by_annotation(&["block.intro"])?,
+                false => {
+                    self.skip_nothing_mark();
+                    self.need_word("as a return type")?;
+                }
+            }
         }
         // A method may be named and not written out, in a class of
         // method names only; it answers with nothing. A body on the line
@@ -2495,7 +2500,10 @@ impl<'a> Builder<'a> {
                 }
                 self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
-                if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
+                if self.on_any("ext.stmt.annotation") {
+                    self.advance();
+                    self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
+                } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
                     self.advance();
                     self.need_word("as a type name")?;
                 }
@@ -2558,6 +2566,55 @@ impl<'a> Builder<'a> {
         Ok((params, spares, also_property, said))
     }
 
+    /// Pass over the kind written beside a name. Its brackets shelter
+    /// their contents from the marks ending the surrounding declaration.
+    fn put_by_annotation(&mut self, boundaries: &[&str]) -> Res<()> {
+        let table = self.table;
+        let mut nesting = Vec::new();
+        let mut count = 0;
+        loop {
+            let shape = self.look().shape;
+            if shape == Shape::Finish {
+                break;
+            }
+            if nesting.is_empty() {
+                let boundary = boundaries.iter().any(|label| self.on_any(label));
+                if boundary || self.on_stmt_end() || matches!(shape, Shape::Open | Shape::Close) {
+                    break;
+                }
+            }
+            if shape == Shape::Sign {
+                let spelling = self.look().lexeme.as_str();
+                let mut opener = None;
+                let mut is_close = false;
+                for (left, right) in [("syntax.group.open", "syntax.group.close"),
+                    ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close"),
+                    ("syntax.call.open", "syntax.call.close"), ("op.index.open", "op.index.close")] {
+                    if table.spells(left, spelling) {
+                        opener = table.single(right).map(str::to_string);
+                    }
+                    is_close |= table.spells(right, spelling);
+                }
+                match opener {
+                    Some(end) => nesting.push(end),
+                    None if is_close => {
+                        if nesting.pop().as_deref() != Some(spelling) {
+                            return Err(table.single("ext.stmt.annotation.amiss").unwrap_or("Expected an expression").into());
+                        }
+                    }
+                    None => {}
+                }
+            }
+            count += 1;
+            self.advance();
+        }
+        if count > 0 && nesting.is_empty() {
+            Ok(())
+        } else {
+            Err(table.single("ext.stmt.annotation.amiss").unwrap_or("Expected an expression").to_string())
+        }
+    }
+
     /// Step over the sign saying a type takes nothing as well: `?int`.
     fn skip_nothing_mark(&mut self) -> bool {
         let marks = self.table.strings("ext.op.ternary");
@@ -2613,8 +2670,13 @@ impl<'a> Builder<'a> {
         };
         if returns_here(self) {
             self.advance();
-            self.skip_nothing_mark();
-            self.need_word("as a return type")?;
+            match table.has_any("ext.stmt.annotation") {
+                true => self.put_by_annotation(&["block.intro"])?,
+                false => {
+                    self.skip_nothing_mark();
+                    self.need_word("as a return type")?;
+                }
+            }
         }
         // A routine written where a value stands may take names from
         // around it away with it: the names around it are gone by the
@@ -2698,8 +2760,13 @@ impl<'a> Builder<'a> {
             && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme));
         if returns_here {
             self.advance();
-            self.skip_nothing_mark();
-            self.need_word("as a return type")?;
+            match table.has_any("ext.stmt.annotation") {
+                true => self.put_by_annotation(&["block.intro"])?,
+                false => {
+                    self.skip_nothing_mark();
+                    self.need_word("as a return type")?;
+                }
+            }
         }
         let mark = table.strings("ext.stmt.function.short").get(1).cloned().ok_or_else(|| "A short routine needs a mark before its body".to_string())?;
         self.need_sign(&mark, "before the body of a short routine")?;
@@ -2801,8 +2868,46 @@ impl<'a> Builder<'a> {
         Ok(names)
     }
 
+    /// A declaration with its kind put by. A name alone has no work;
+    /// a subscript without a value still works out its two parts.
+    fn with_annotation(&mut self, place: Form, began: usize) -> Res<Form> {
+        let table = self.table;
+        let through_pipe = self.tokens[began..self.pos].iter().any(|word|
+            word.shape == Shape::Sign && table.spells("op.pipe", &word.lexeme));
+        let ordinary = matches!(&place, Form::Read(_)
+            | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _));
+        if !ordinary && !through_pipe {
+            return Err(table.single("ext.stmt.annotation.amiss").unwrap_or("Expected an assignment target").to_string());
+        }
+        self.advance();
+        self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
+        if through_pipe && !table.has_any("ext.op.member") {
+            let mut steps = Vec::new();
+            if self.on_assign() {
+                self.advance();
+                steps.push(self.expr(0)?);
+            }
+            let words = table.single("ext.stmt.annotation.target.unready").unwrap_or("This annotation target cannot be written");
+            steps.push(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+            return Ok(sequence(steps));
+        }
+        if self.on_assign() {
+            return self.written(place, false);
+        }
+        Ok(match place {
+            Form::Read(_) => constant(Value::Nil),
+            Form::Apply(Callee::Prim(Prim::At, _), parts) => sequence(parts),
+            Form::Apply(Callee::Prim(Prim::Of, _), mut parts) => parts.remove(0),
+            _ => unreachable!("the annotation target was read above"),
+        })
+    }
+
     fn write_or_expr(&mut self) -> Res<Form> {
+        let began = self.pos;
         let expr = self.expr_at(0, false)?;
+        if self.on_any("ext.stmt.annotation") {
+            return self.with_annotation(expr, began);
+        }
         if !self.on_writing() {
             return Ok(expr);
         }

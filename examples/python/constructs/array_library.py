@@ -1,12 +1,12 @@
 # Ported from examples/lumen/constructs/array_library.lm by scripts/port_examples.py; edit the Lumen original, not this file.
-a = [1, 2, 3]
-b = [4, 5]
-both = array_concat(a, b)
-print(both)
-print(array_slice(both, 1, 4))
-print(array_index_of(b, 5))
-print(array_index_of(b, 9))
-print(array_contains(a, 2))
-print(array_contains(a, 7))
-print(array_reverse(both))
-print(len(array_reverse([])))
+a = [1, 2, 3];
+b = [4, 5];
+both = array_concat(a, b);
+print(both);
+print(array_slice(both, 1, 4));
+print(array_index_of(b, 5));
+print(array_index_of(b, 9));
+print(array_contains(a, 2));
+print(array_contains(a, 7));
+print(array_reverse(both));
+print(len(array_reverse([])));

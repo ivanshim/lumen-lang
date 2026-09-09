@@ -45,7 +45,7 @@
     ":"
   ],
   "block.indent_size": 4,
-  "stmt.terminator": [],
+  "stmt.terminator": [";"],
   "syntax.notation": "infix",
   "syntax.group.open": [
     "("
@@ -112,6 +112,9 @@
       ">",
       "<=",
       ">="
+    ],
+    [
+      "|"
     ],
     [
       "+",
@@ -313,7 +316,12 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
+  "ext.op.bit.or": ["|"],
+  "ext.stmt.annotation": [":"],
+  "ext.stmt.annotation.amiss": ["invalid syntax"],
+  "ext.stmt.annotation.target.unready": ["NotImplementedError: annotated attribute targets are not supported"],
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.stmt.for.collection": true,
+  "ext.stmt.function.returns": ["->"]
 }
