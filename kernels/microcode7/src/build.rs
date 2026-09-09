@@ -4525,6 +4525,10 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
+                } else if table.spells("ext.builtin.print.file.output", &t.lexeme) {
+                    constant(Value::Channel(1))
+                } else if table.spells("ext.builtin.print.file.error", &t.lexeme) {
+                    constant(Value::Channel(2))
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
                     && table.single("syntax.call.open").map_or(false, |o| self.sign(o))
                 {

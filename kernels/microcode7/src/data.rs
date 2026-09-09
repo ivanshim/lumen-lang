@@ -91,8 +91,36 @@ impl Ratio {
     }
 }
 
+/// Three numbers suffice for a walk, however far its end stands.
+#[derive(Clone)]
+pub struct Progression {
+    pub first: BigInt,
+    pub limit: BigInt,
+    pub stride: BigInt,
+    pub word: String,
+}
+
+impl Progression {
+    pub fn count(&self) -> BigInt {
+        let forward = self.stride > BigInt::zero();
+        if (forward && self.first >= self.limit) || (!forward && self.first <= self.limit) {
+            return BigInt::zero();
+        }
+        ((&self.limit - &self.first).abs() - BigInt::one()) / self.stride.abs() + BigInt::one()
+    }
+
+    pub fn item(&self, position: &BigInt) -> Option<Value> {
+        let count = self.count();
+        let offset = if position < &BigInt::zero() { position + &count } else { position.clone() };
+        if offset < BigInt::zero() || offset >= count { return None; }
+        Some(Value::from_big(&self.first + &self.stride * offset))
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
+    Channel(u8),
+    Progression(Rc<Progression>),
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Ratio>),
@@ -172,12 +200,13 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Ellipsis | Value::Span(_) => return None,
+            Value::Ellipsis | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
@@ -206,6 +235,7 @@ impl Value {
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -228,6 +258,15 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Channel(left), Value::Channel(right)) => left == right,
+            (Value::Progression(left), Value::Progression(right)) => {
+                if left.count() != right.count() { return false; }
+                match left.count().to_u8() {
+                    Some(0) => true,
+                    Some(1) => left.first == right.first,
+                    _ => left.first == right.first && left.stride == right.stride,
+                }
+            }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -356,6 +395,11 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
+            Value::Progression(p) => {
+                let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
+                format!("{}({}, {}{})", p.word, p.first, p.limit, tail)
+            }
             Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),

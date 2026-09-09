@@ -4827,6 +4827,10 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
+                } else if Lang::spells(&lang.print_file_error, &tok.lexeme) {
+                    self.constant(Value::Stream(true));
+                } else if Lang::spells(&lang.print_file_output, &tok.lexeme) {
+                    self.constant(Value::Stream(false));
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
                     && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
                 {
