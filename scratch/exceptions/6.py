@@ -1,0 +1,6 @@
+try: raise "boom" from MissingCause()
+except (A, B) as e: print(e)
+except C, D: print("wrong")
+except: print("tuple-fallthrough")
+finally: print("inline-finally")
+assert True, MissingMessage()

@@ -123,6 +123,7 @@ pub struct Machine<'a> {
     /// in, which a complaint names, and the line the last value raised
     /// was raised on.
     row: u32,
+    holding_fault: Vec<Value>,
     raised_on: u32,
     written_in: Rc<str>,
     /// Where the language keeps its own pages, as the run was
@@ -256,6 +257,7 @@ impl<'a> Machine<'a> {
             pending: Vec::new(),
             made: 0,
             row: 0,
+            holding_fault: Vec::new(),
             raised_on: 0,
             allowed: 0,
             alongside: HashMap::new(),
@@ -1852,51 +1854,93 @@ impl<'a> Machine<'a> {
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
                 Ok(Value::Flag(empty))
             }
-            Form::Attempt { body, clauses, last } => {
-                let ending = self.value_of(body, frame);
-                // A language that names a class for the kernel's own
-                // faults has one raised as a value of that class, so a
-                // clause may take it like any other raised value.
-                let ending = match ending {
+            Form::Again => {
+                match self.holding_fault.last() {
+                    Some(value) => Err(Escape::Thrown(value.clone())),
+                    None => Err(self.table.single("ext.stmt.throw.empty").unwrap_or_default().to_string().into()),
+                }
+            }
+            Form::Assert { condition, message } => {
+                let tested = self.value_of(condition, frame)?;
+                if self.stands_true(&tested) { return Ok(Value::Nil); }
+                let held = self.value_of(message, frame)?;
+                let kind = Blueprint {
+                    name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
+                    fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+                    shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
+                };
+                self.raised_on = self.row;
+                Err(Escape::Thrown(Value::Thing(Rc::new(Thing {
+                    of: Rc::new(kind), turn: 0,
+                    holds: RefCell::new(vec![("message".to_string(), held)]),
+                }))))
+            }
+            Form::Attempt { body, clauses, last, otherwise } => {
+                if clauses.iter().any(|part| part.grouped) {
+                    return Err(self.table.single("ext.stmt.catch.group.unsupported").unwrap_or_default().to_string().into());
+                }
+                let preceding = self.holding_fault.len();
+                let body_result = match self.value_of(body, frame) {
                     Err(Escape::Error(told)) => match self.as_raised(&told) {
-                        Some(made) => Err(Escape::Thrown(made)),
+                        Some(value) => Err(Escape::Thrown(value)),
                         None => Err(Escape::Error(told)),
                     },
-                    other => other,
+                    result => result,
                 };
-                let ending = match ending {
+                let ending = match body_result {
+                    Ok(value) => match otherwise {
+                        Some(limb) => self.value_of(limb, frame),
+                        None => Ok(value),
+                    },
                     Err(Escape::Thrown(raised)) => {
-                        // The first clause that takes this class holds it
-                        // and runs; what none takes is raised again.
-                        let of = match &raised {
-                            Value::Thing(thing) => Some(thing.of.clone()),
-                            _ => None,
-                        };
-                        let taken = clauses.iter().find(|clause| {
-                            of.as_ref().map_or(false, |o| {
-                                clause.classes.iter().any(|name| o.goes_by(name, self.classes_either_way))
-                            })
-                        });
-                        match taken {
-                            Some(clause) => {
-                                // Taken here, the calls it was raised
-                                // under are nobody's business any more.
-                                self.under = None;
-                                self.entering = None;
-                                if let Some(slot) = &clause.held {
-                                    self.store(slot, frame, raised)?;
+                        self.holding_fault.push(raised.clone());
+                        let chosen = (|| {
+                            for clause in clauses {
+                                let accepts = match &clause.choices {
+                                    None => match &raised {
+                                        Value::Thing(value) => clause.classes.iter().any(|name| value.of.goes_by(name, self.classes_either_way)),
+                                        _ => false,
+                                    },
+                                    Some(choices) => {
+                                        let mut fits = clause.takes_all;
+                                        for choice in choices {
+                                            let class = self.value_of(choice, frame)?;
+                                            if !matches!(class, Value::Unset | Value::Blueprint(_)) {
+                                                return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
+                                            }
+                                            if let Value::Blueprint(kind) = class {
+                                                if let Value::Thing(value) = &raised {
+                                                    fits |= value.of.goes_by(&kind.name, self.classes_either_way);
+                                                }
+                                            }
+                                            if fits { break; }
+                                        }
+                                        fits
+                                    }
+                                };
+                                if accepts {
+                                    self.under = None;
+                                    self.entering = None;
+                                    if let Some(place) = &clause.held { self.store(place, frame, raised.clone())?; }
+                                    let answer = self.value_of(&clause.body, frame);
+                                    if clause.choices.is_some() {
+                                        if let Some(place) = &clause.held { self.store(place, frame, Value::Unset)?; }
+                                    }
+                                    return answer;
                                 }
-                                self.value_of(&clause.body, frame)
                             }
-                            None => Err(Escape::Thrown(raised)),
-                        }
+                            Err(Escape::Thrown(raised))
+                        })();
+                        self.holding_fault.truncate(preceding);
+                        chosen
                     }
-                    other => other,
+                    escape => escape,
                 };
-                // The last part runs however the body ended, and only
-                // then does whatever stopped it go on.
-                if let Some(last) = last {
-                    self.value_of(last, frame)?;
+                if let Some(limb) = last {
+                    if let Err(Escape::Thrown(value)) = &ending { self.holding_fault.push(value.clone()); }
+                    let final_result = self.value_of(limb, frame);
+                    self.holding_fault.truncate(preceding);
+                    final_result?;
                 }
                 ending
             }

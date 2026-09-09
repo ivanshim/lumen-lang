@@ -1227,8 +1227,26 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.throw") {
                 self.advance();
+                if self.table.single("ext.stmt.throw.from").is_some()
+                    && (matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.on_any("stmt.terminator"))
+                {
+                    return Ok(Form::Again);
+                }
                 let raised = self.expr(0)?;
+                if self.key("ext.stmt.throw.from") {
+                    self.advance();
+                    let _cause = self.expr(0)?;
+                }
                 return Ok(prim_call(Prim::Hurl, vec![raised]));
+            }
+            if self.key("ext.stmt.assert") {
+                self.advance();
+                let condition = Box::new(self.expr(0)?);
+                let message = if self.on_any("syntax.call.separator") {
+                    self.advance();
+                    self.expr(0)?
+                } else { constant(Value::text("")) };
+                return Ok(Form::Assert { condition, message: Box::new(message) });
             }
             if self.key("stmt.foreach") {
                 return self.foreach_stmt();
@@ -1526,13 +1544,31 @@ impl<'a> Builder<'a> {
         Ok(sequence(items))
     }
 
+    /// A watched arm written beside its colon ends at the line end;
+    /// one written below it follows the ordinary indentation reading.
+    fn watched_body(&mut self) -> Res<Form> {
+        if self.table.blocks != Blocks::Indented || !self.on_any("block.intro") {
+            return self.body();
+        }
+        self.advance();
+        if self.look().shape == Shape::LineEnd { return self.body(); }
+        let mut words = vec![self.stmt()?];
+        while self.on_any("stmt.terminator") {
+            self.advance();
+            if matches!(self.look().shape, Shape::LineEnd | Shape::Finish) { break; }
+            words.push(self.stmt()?);
+        }
+        Ok(sequence(words))
+    }
+
     /// `try { } catch (A | B $e) { } finally { }`: the body is watched,
     /// the first clause whose class it raises takes it, and the last
     /// part runs however the body ended, so a return leaves through it.
     fn attempt_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
-        let body = self.body()?;
+        let bare_clauses = table.single("ext.stmt.catch.as").is_some();
+        let body = if bare_clauses { self.watched_body()? } else { self.body()? };
         let open = table.single("syntax.group.open").ok_or_else(|| "A catch needs syntax.group".to_string())?.to_string();
         let close = table.single("syntax.group.close").unwrap().to_string();
         let mut clauses = Vec::new();
@@ -1540,35 +1576,72 @@ impl<'a> Builder<'a> {
         self.skip_line_ends();
         while self.key("ext.stmt.catch") {
             self.advance();
-            self.need_sign(&open, "after catch")?;
-            let mut classes = vec![self.need_word("as the class caught")?];
-            while table.single("ext.stmt.catch.separator").map_or(false, |s| self.sign(s)) {
-                self.advance();
-                classes.push(self.need_word("as another class caught")?);
-            }
-            let held = match self.look().shape {
-                Shape::Bare => {
-                    let name = self.advance().lexeme;
-                    Some(self.address_to_write(&name))
+            let mut classes = Vec::new();
+            let mut choices = None;
+            let grouped = bare_clauses && self.on_any("ext.stmt.catch.group");
+            if grouped { self.advance(); }
+            let held;
+            let mut takes_all = false;
+            if bare_clauses {
+                let mut selectors = Vec::new();
+                let bracketed = self.on_any("ext.stmt.catch.tuple.open");
+                if bracketed { self.advance(); }
+                takes_all = !bracketed && self.on_any("block.intro");
+                if !takes_all && !(bracketed && self.on_any("ext.stmt.catch.tuple.close")) {
+                    loop {
+                        let selector = match self.expr(0)? {
+                            Form::Read(place) => Form::Glance(place),
+                            other => other,
+                        };
+                        selectors.push(selector);
+                        if !self.on_any("ext.stmt.catch.separator") { break; }
+                        self.advance();
+                        if bracketed && self.on_any("ext.stmt.catch.tuple.close") { break; }
+                    }
                 }
-                _ => None,
-            };
-            self.need_sign(&close, "after the class caught")?;
-            let body = self.body()?;
-            clauses.push(Clause { classes, held, body });
+                if bracketed {
+                    self.need_sign(table.single("ext.stmt.catch.tuple.close").unwrap_or(")"), "after the classes caught")?;
+                }
+                held = if self.key("ext.stmt.catch.as") {
+                    self.advance();
+                    let binding = self.need_word("after the caught value's binding word")?;
+                    Some(self.address_to_write(&binding))
+                } else { None };
+                choices = Some(selectors);
+            } else {
+                self.need_sign(&open, "after catch")?;
+                classes.push(self.need_word("as the class caught")?);
+                while table.single("ext.stmt.catch.separator").map_or(false, |s| self.sign(s)) {
+                    self.advance();
+                    classes.push(self.need_word("as another class caught")?);
+                }
+                held = if self.look().shape == Shape::Bare {
+                    let binding = self.advance().lexeme;
+                    Some(self.address_to_write(&binding))
+                } else { None };
+                self.need_sign(&close, "after the class caught")?;
+            }
+            let body = if bare_clauses { self.watched_body()? } else { self.body()? };
+            clauses.push(Clause { classes, choices, grouped, takes_all, held, body });
             self.skip_line_ends();
         }
+        let otherwise = if table.flag("ext.stmt.try.else") && self.key("stmt.else") {
+            self.advance();
+            let limb = self.watched_body()?;
+            self.skip_line_ends();
+            Some(Box::new(limb))
+        } else { None };
         let last = match self.key("ext.stmt.finally") {
             true => {
                 self.advance();
-                Some(Box::new(self.body()?))
+                Some(Box::new(if bare_clauses { self.watched_body()? } else { self.body()? }))
             }
             false => None,
         };
-        if clauses.is_empty() && last.is_none() {
+        if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
         }
-        Ok(Form::Attempt { body: Box::new(body), clauses, last })
+        Ok(Form::Attempt { body: Box::new(body), clauses, last, otherwise })
     }
 
     /// A class and what it holds: properties, constants, values kept by

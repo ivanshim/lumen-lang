@@ -15,6 +15,14 @@ use crate::arith::{self, Operation};
 use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
+/// An arm may end where it stands, or leave for a routine's end or a
+/// loop written around it. Only the latter must pass through last parts.
+#[derive(Clone, Copy)]
+enum Passage {
+    Along(usize),
+    Leaves { to: usize, cycle: Option<usize> },
+}
+
 pub struct Engine<'a> {
     lang: &'a Lang,
     world: Vec<Value>,
@@ -22,6 +30,7 @@ pub struct Engine<'a> {
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
     data: Vec<Value>,
+    caught: Vec<Value>,
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
@@ -205,6 +214,7 @@ impl<'a> Engine<'a> {
             lang,
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
+            caught: Vec::new(),
             memo: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
@@ -1628,12 +1638,93 @@ impl<'a> Engine<'a> {
     }
 
     fn run_body(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
-        let mut pc = 0;
+        self.run_span(program, frame, instrs, (0, instrs.len())).map(|_| ())
+    }
+
+    /// Each arm runs in the same frame. A leap beyond its span is an
+    /// outward return or loop step, and the last part runs before it goes.
+    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
+        if plan.clauses.iter().any(|arm| arm.grouped) {
+            return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
+        }
+        let depth = self.data.len();
+        let active = self.caught.len();
+        let ending = self.run_span(program, frame, instrs, plan.body);
+        let mut ending = match ending {
+            Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
+                Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
+                    Passage::Along(at) if at == span.1 => Passage::Along(plan.after),
+                    other => other,
+                }),
+                None => Ok(Passage::Along(plan.after)),
+            },
+            Err(Fault::Thrown(raised)) => {
+                self.data.truncate(depth);
+                self.caught.push(raised.clone());
+                let handled = (|| {
+                    for arm in &plan.clauses {
+                        let mut takes = arm.bare;
+                        for span in &arm.kinds {
+                            self.run_span(program, frame, instrs, *span)?;
+                            let kind = self.drop_top()?;
+                            match kind {
+                                Value::Blank => {},
+                                Value::Class(class) => {
+                                    if let Value::Object(object) = &raised {
+                                        takes |= object.class.named(&class.name, self.lang.classes_folded);
+                                    }
+                                }
+                                _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
+                            }
+                            if takes { break; }
+                        }
+                        if !takes { continue; }
+                        self.under = None;
+                        self.entering = None;
+                        if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
+                        let outcome = self.run_span(program, frame, instrs, arm.body);
+                        if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
+                        return outcome.map(|end| match end {
+                            Passage::Along(at) if at == arm.body.1 => Passage::Along(plan.after),
+                            other => other,
+                        });
+                    }
+                    Err(Fault::Thrown(raised))
+                })();
+                self.caught.truncate(active);
+                handled
+            }
+            other => other,
+        };
+        if let Some(last) = plan.last {
+            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+            let saved = self.data.len();
+            let finished = self.run_span(program, frame, instrs, last);
+            self.caught.truncate(active);
+            match finished {
+                Ok(Passage::Along(at)) if at == last.1 => self.data.truncate(saved),
+                Ok(end @ Passage::Leaves { cycle: None, .. }) => {
+                    let returned = self.drop_top()?;
+                    self.data.truncate(depth);
+                    self.data.push(returned);
+                    ending = Ok(end);
+                }
+                other => {
+                    self.data.truncate(depth);
+                    ending = other;
+                }
+            }
+        }
+        ending
+    }
+
+    fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
+        let mut pc = span.0;
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
-        while pc < instrs.len() {
+        while pc >= span.0 && pc < span.1 {
             // A complaint raised where the run could only read waits to
             // be handed over; here, before the next word, is where the
             // run can reach back into the program to hand it on.
@@ -1729,6 +1820,23 @@ impl<'a> Engine<'a> {
                         pc = catch;
                         continue;
                     }
+                }
+                Instr::Attempt(plan) => {
+                    match self.run_attempt(program, frame, instrs, plan)? {
+                        Passage::Along(at) => pc = at,
+                        end @ Passage::Leaves { to, cycle } => {
+                            if !cycle.map_or(false, |i| i >= span.0 && i < span.1) { return Ok(end); }
+                            pc = to;
+                        }
+                    }
+                    continue;
+                }
+                Instr::Depart { to, cycle } => {
+                    if !cycle.map_or(false, |i| i >= span.0 && i < span.1) {
+                        return Ok(Passage::Leaves { to: *to, cycle: *cycle });
+                    }
+                    pc = *to;
+                    continue;
                 }
                 Instr::Guard(catch) => guards.push((*catch, self.data.len(), self.hushed.get())),
                 Instr::Unguard => {
@@ -1916,7 +2024,7 @@ impl<'a> Engine<'a> {
             }
             pc += 1;
         }
-        Ok(())
+        Ok(Passage::Along(pc))
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -2623,6 +2731,27 @@ impl<'a> Engine<'a> {
                 Value::Object(o) => Value::Flag(names.iter().any(|n| o.class.named(n, self.lang.classes_folded))),
                 _ => Value::Flag(false),
             },
+            Action::Reraise => {
+                let value = self.caught.last().cloned().ok_or_else(|| self.lang.throw_empty.clone().unwrap_or_default())?;
+                return Err(Fault::Thrown(value));
+            }
+            Action::AssertFault => {
+                let message = self.drop_top()?;
+                let class = Rc::new(Class {
+                    name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
+                    answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
+                    methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                });
+                self.made += 1;
+                let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
+                    Vec::new()
+                } else { vec![("message".to_string(), message)] };
+                let raised = Value::Object(Rc::new(Instance {
+                    class, fields: RefCell::new(fields), mark: self.made,
+                }));
+                self.hurled_at.set(self.line);
+                return Err(Fault::Thrown(raised));
+            }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
                 return Err(Fault::Thrown(self.drop_top()?));
