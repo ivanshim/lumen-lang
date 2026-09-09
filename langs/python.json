@@ -117,6 +117,16 @@
       "|"
     ],
     [
+      "^"
+    ],
+    [
+      "&"
+    ],
+    [
+      "<<",
+      ">>"
+    ],
+    [
       "+",
       "-"
     ],
@@ -127,7 +137,8 @@
       "%"
     ],
     [
-      "-"
+      "-",
+      "~"
     ],
     [
       "**"
@@ -325,7 +336,12 @@
   "ext.builtin.sum": ["sum"],
   "ext.builtin.sum.non_number": ["TypeError: sum needs numbers"],
   "ext.op.assign.compound": true,
+  "ext.op.bit.and": ["&"],
+  "ext.op.bit.left": ["<<"],
+  "ext.op.bit.not": ["~"],
   "ext.op.bit.or": ["|"],
+  "ext.op.bit.right": [">>"],
+  "ext.op.bit.xor": ["^"],
   "ext.op.comprehension.async": ["async"],
   "ext.op.comprehension.async.unavailable": ["NotImplementedError: asynchronous comprehensions are not supported"],
   "ext.op.comprehension.for": ["for"],

@@ -2071,7 +2071,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {
@@ -2088,7 +2088,7 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
+            self.tuple_expression(tier + 1)?;
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -2148,7 +2148,7 @@ impl<'a> Compiler<'a> {
         } else if by_cell {
             self.a_cell(&self.lang.unshared_given.clone(), true, None)?;
         } else {
-            self.expr(0)?;
+            self.tuple_expression(0)?;
         }
         // The value is worked out first, then the last parts of any open
         // try statements run, and only then does the program leave.
@@ -3283,7 +3283,7 @@ impl<'a> Compiler<'a> {
         // before each of its places.
         match self.waiting.clone() {
             Some(cell) => self.read(&cell),
-            None => self.expr(0)?,
+            None => self.tuple_expression(0)?,
         }
         self.kept(keep);
         Ok(())
@@ -3834,6 +3834,23 @@ impl<'a> Compiler<'a> {
     }
 
     // ---------- expressions ----------
+
+    /// A comma list at a statement boundary, where commas cannot be arguments.
+    fn tuple_expression(&mut self, floor: u32) -> Res<()> {
+        self.expr(floor)?;
+        let Some(mark) = self.lang.tuple_separator.clone() else { return Ok(()) };
+        if !self.at_symbol(&mark) { return Ok(()); }
+        self.act(Action::MakeArray, 1);
+        while self.at_symbol(&mark) {
+            self.take();
+            if self.on_sep() || self.exhausted() || self.on_any(&self.lang.block_intros) || self.on_any(&self.lang.block_closes) { break; }
+            let spread = self.on_any(&self.lang.array_spread);
+            if spread { self.take(); }
+            self.expr(floor)?;
+            self.act(Action::GatherItem { map: false, spread }, 2);
+        }
+        Ok(())
+    }
 
     fn expr(&mut self, floor: u32) -> Res<()> {
         self.expr_at(floor, true)

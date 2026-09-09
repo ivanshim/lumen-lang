@@ -1186,7 +1186,7 @@ impl<'a> Builder<'a> {
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.given").to_vec(), true, None)?]
                 } else {
-                    vec![self.expr(0)?]
+                    vec![self.tuple_expression(0)?]
                 };
                 return Ok(prim_call(Prim::Yield, value));
             }
@@ -2530,7 +2530,7 @@ impl<'a> Builder<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
         self.advance();
-        let ranged = self.look().shape == Shape::Bare
+        let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged {
@@ -2545,7 +2545,7 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = self.expr(tier + 1)?;
+            let start = self.tuple_expression(tier + 1)?;
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3294,7 +3294,7 @@ impl<'a> Builder<'a> {
             // source of its own after the sign.
             (Some(by), _, None) => constant(Value::Small(by)),
             (None, Some(cell), None) => self.read(&cell),
-            (None, None, None) => self.expr(0)?,
+            (None, None, None) => self.tuple_expression(0)?,
         };
         // The value comes before the bounds of a slice assignment.
         let before_bounds = if plain && slice_target(&expr) {
@@ -3697,6 +3697,22 @@ impl<'a> Builder<'a> {
     }
 
     // ---------- expressions
+
+    fn tuple_expression(&mut self, floor: u32) -> Res<Form> {
+        let first = self.expr(floor)?;
+        if !self.on_any("ext.op.tuple") { return Ok(first); }
+        let mut result = prim_call(Prim::MakeArray, vec![first]);
+        loop {
+            self.advance();
+            if self.on_stmt_end() || self.exhausted() || self.on_any("block.intro") || self.on_any("block.close") { break; }
+            let expanded = self.on_any("ext.syntax.array.spread");
+            if expanded { self.advance(); }
+            let next = self.expr(floor)?;
+            result = prim_call(Prim::ExtendLiteral(false, expanded), vec![result, next]);
+            if !self.on_any("ext.op.tuple") { break; }
+        }
+        Ok(result)
+    }
 
     fn expr(&mut self, floor: u32) -> Res<Form> {
         self.expr_at(floor, true)

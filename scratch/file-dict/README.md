@@ -44,3 +44,19 @@ for `test_dictcomps.py` and `test_setcomps.py`, on both kernels. The
 Python reasons table counts six files at the former complaint and
 21 at the latter. The spelling of `ext.op.bit.and` belongs to the
 lexical piece, and `ext.stmt.class` to the class piece. The full-file reading has not been proved here.
+
+`6.py` spells the remaining bit operators used by dictionary and set view
+expressions, using the kernels' existing operations and Python precedence.
+Its executable checks use integers; the view calls are read within an
+uncalled function. This removes the lexical rejection of `&` in the whole
+files without claiming dictionary-view operations are implemented.
+
+`7.py` checks ordinary loops over one-, two- and three-argument range values,
+an empty range, and the tuple of sizes in `test_dict.py`. A language that
+spells `ext.builtin.range.value` now walks that value in ordinary loops,
+just as in comprehensions, instead of using the older two-bound range
+syntax. Other languages retain that syntax.
+
+`8.py` reads unparenthesized tuples after assignments, returns, and the
+`in` of an ordinary loop, including the pair of mapping expressions in
+`test_dict.py`. Commas inside calls still separate arguments.
