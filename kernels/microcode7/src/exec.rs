@@ -2803,7 +2803,7 @@ impl<'a> Machine<'a> {
             let mut at = sorted.len();
             while at != 0 {
                 let arguments = if reverse { [sorted[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), sorted[at-1].0.clone()] };
-                let lower = if let (Value::Text(a), Value::Text(b)) = (&arguments[0], &arguments[1]) { a < b } else { self.prim(Prim::Lt, "", &arguments)?.is_true() };
+                let lower = if let (Value::Text(a), Value::Text(b)) = (&arguments[0], &arguments[1]) { a < b } else { self.prim(Prim::Lt, "", &arguments).map_err(|_| self.method_fault("unready"))?.is_true() };
                 if !lower { break; }
                 at -= 1;
             }

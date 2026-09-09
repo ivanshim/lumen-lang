@@ -4150,7 +4150,7 @@ impl<'a> Engine<'a> {
             let mut j = i;
             while j > 0 {
                 let (left, right) = if backwards { (&decorated[j-1].0, &decorated[j].0) } else { (&decorated[j].0, &decorated[j-1].0) };
-                let lower = match (left.contents(), right.contents()) { (Value::Text(a), Value::Text(b)) => a < b, _ => self.truth(&self.dyadic(&Action::Lt, left, right)?) };
+                let lower = match (left.contents(), right.contents()) { (Value::Text(a), Value::Text(b)) => a < b, _ => self.truth(&self.dyadic(&Action::Lt, left, right).map_err(|_| self.lang.method_errors["unready"].clone())?) };
                 if !lower { break; }
                 decorated.swap(j, j-1); j -= 1;
             }
