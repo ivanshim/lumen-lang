@@ -1020,7 +1020,7 @@ impl<'a> Compiler<'a> {
             }
             if Lang::spells(&lang.assert_words, &w) {
                 self.take();
-                self.expr(0)?;
+                self.assert_condition()?;
                 self.act(Action::Not, 1);
                 let passed = self.skip();
                 if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
@@ -2157,6 +2157,41 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn assert_condition(&mut self) -> Res<()> {
+        let lang = self.lang;
+        if let Some(group) = lang.grouping.clone().filter(|b| self.at_symbol(&b.open)) {
+            let mut ends = Vec::new();
+            let mut comma = false;
+            let mut after = None;
+            let pairs = [&lang.grouping, &lang.array_brackets, &lang.map_brackets];
+            for (offset, token) in self.tokens[self.pos..].iter().enumerate() {
+                if token.shape != Shape::Sign { continue; }
+                if let Some(pair) = pairs.iter().filter_map(|p| p.as_ref()).find(|p| p.open == token.lexeme) {
+                    ends.push(pair.close.clone());
+                } else if ends.last() == Some(&token.lexeme) {
+                    ends.pop();
+                    if ends.is_empty() { after = Some(self.pos + offset + 1); break; }
+                } else if ends.len() == 1 && Lang::spells(&lang.tuple_separator, &token.lexeme) { comma = true; }
+            }
+            let whole = after.and_then(|at| self.tokens.get(at)).map_or(false, |t|
+                matches!(t.shape, Shape::LineEnd | Shape::Finish | Shape::Close)
+                || lang.ends_stmt(&t.lexeme) || Lang::spells(&lang.tuple_separator, &t.lexeme));
+            if comma && whole {
+                self.take();
+                while !self.at_symbol(&group.close) {
+                    self.expr(0)?;
+                    self.discard();
+                    if !self.on_any(&lang.tuple_separator) { break; }
+                    self.take();
+                }
+                self.want_sign(&group.close, "after the asserted tuple")?;
+                self.constant(Value::Flag(true));
+                return Ok(());
+            }
+        }
+        self.expr(0)
+    }
+
     fn unready(&mut self, words: &[String]) {
         self.act(Action::Unready(Rc::from(words.first().map_or("", String::as_str))), 0);
     }
@@ -3133,18 +3168,31 @@ impl<'a> Compiler<'a> {
         let (names, defaults, _) = self.parameters(ANONYMOUS, &call)?;
         let least = names.len() - defaults.len();
         let held_defaults = defaults.clone();
+        let outer = self.pieces.last().unwrap();
+        let captured: Vec<String> = if outer.outermost { Vec::new() } else {
+            outer.idents.iter().filter(|n| !n.starts_with('#') && !names.contains(n)).cloned().collect()
+        };
         let program = self.routine(ANONYMOUS, names, least, true, |a| {
+            for name in &captured {
+                let cell = a.cell_to_write(name);
+                a.carrying.push(cell.near[0]);
+            }
             a.carrying.extend(defaults.iter().map(|(slot, _)| *slot));
             a.expr(0)?;
             a.piece().result_touched = true;
             a.write(RESULT_CELL);
             Ok(())
         })?;
+        for name in &captured {
+            let cell = self.cell_to_read(name, false);
+            self.put(Instr::Bond(cell));
+        }
         let after = self.pos;
         for (_, at) in &held_defaults { self.pos = *at; self.expr(0)?; }
         self.pos = after;
         self.constant(Value::Routine(program));
-        if !held_defaults.is_empty() { self.act(Action::Close, held_defaults.len() + 1); }
+        let count = held_defaults.len() + captured.len();
+        if count > 0 { self.act(Action::Close, count + 1); }
         Ok(())
     }
 

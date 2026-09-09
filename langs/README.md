@@ -548,10 +548,13 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.function.short.bare`: a switch; a short routine has no brackets
   about its parameters. Its body mark ends the parameter list. Gathering,
   positional and keyword marks follow the ordinary parameter rules, and
-  defaults are kept where the short routine is written.
+  defaults are kept where the short routine is written. Names already
+  bound in an enclosing routine are carried as shared cells.
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
   the call separator and a message. Only a false condition works out the
   message and raises it; `ext.stmt.assert.kind` names the kind so raised.
+  A parenthesised tuple used as the whole condition works out every item
+  and is true; the tuple itself need not be kept.
 - `ext.stmt.catch.group`: a sign before the classes of a clause taking
   parts of an exception group. Where `ext.stmt.catch.group.unsupported`
   is spelled, reaching the attempt stops in those words. Without those
@@ -1287,6 +1290,10 @@ only. The extension labels so far, all from PHP:
   run that passes it is stopped and told with the word for the end of a
   run; nothing may take it back, since it is the run itself that ended
   and not a value raised within it.
+- `ext.system.fault.class.value`: the class for a value outside what an
+  operation takes. With `ext.stmt.catch.as` spelled, that class is bound
+  before the run. Raising a class in that spelling makes a bare instance
+  for the ordinary catch to take.
 - `ext.system.fault.class`: the class a fault of the kernel's own is
   raised as, where a language names one. A statement written to take a
   raised value then takes a fault as it takes anything else, and one
@@ -2004,7 +2011,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
-| `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
+| `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |

@@ -11,3 +11,10 @@ if False:
     nonlocal missing
 print((lambda x: lambda y: y + 1)(0)(3))
 print((lambda x: x if x else 2)(0))
+def enclosing():
+    x = 6
+    f = lambda: x
+    x = 7
+    return f
+print(enclosing()())
+print((lambda x: lambda y: x + y)(4)(5))

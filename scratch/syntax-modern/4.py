@@ -8,4 +8,4 @@ def change():
     x = 9
 change()
 print(x)
-print(type(3))
+type(3)

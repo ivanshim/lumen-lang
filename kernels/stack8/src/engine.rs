@@ -210,9 +210,18 @@ impl<'a> Engine<'a> {
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
+        let mut world = vec![Value::Blank; idents.len()];
+        if !lang.catch_as.is_empty() {
+            if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
+                world[slot] = Value::Class(Rc::new(Class {
+                    name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                }));
+            }
+        }
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world,
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -2755,7 +2764,14 @@ impl<'a> Engine<'a> {
             }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
-                return Err(Fault::Thrown(self.drop_top()?));
+                let mut raised = self.drop_top()?;
+                if !self.lang.catch_as.is_empty() {
+                    if let Value::Class(class) = raised {
+                        self.made += 1;
+                        raised = Value::Object(Rc::new(Instance { class, fields: RefCell::new(Vec::new()), mark: self.made }));
+                    }
+                }
+                return Err(Fault::Thrown(raised));
             }
             Action::Titled => match self.drop_top()? {
                 Value::Object(o) => Value::text(&o.class.name),

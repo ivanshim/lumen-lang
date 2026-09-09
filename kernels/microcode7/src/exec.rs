@@ -243,9 +243,20 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
 impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let outermost = Env::make(idents.len(), None);
+        if table.has_any("ext.stmt.catch.as") {
+            if let Some(at) = find("ext.system.fault.class.value") {
+                let blueprint = Blueprint {
+                    name: idents[at].clone(), under: None, answers: Vec::new(),
+                    fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
+                    shared: RefCell::new(Vec::new()), reaches: Vec::new(),
+                };
+                outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
+            }
+        }
         Machine {
             table,
-            outermost: Env::make(idents.len(), None),
+            outermost,
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
@@ -2125,6 +2136,13 @@ impl<'a> Machine<'a> {
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
+                    let raised = match raised {
+                        Value::Blueprint(of) if self.table.has_any("ext.stmt.catch.as") => {
+                            self.made += 1;
+                            Value::Thing(Rc::new(Thing { of, holds: RefCell::new(Vec::new()), turn: self.made }))
+                        }
+                        worth => worth,
+                    };
                     self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }

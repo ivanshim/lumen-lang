@@ -394,5 +394,6 @@
   "ext.syntax.tuple.unsupported": ["NotImplementedError: tuple expressions are not supported"],
   "ext.syntax.value.spread": ["*"],
   "ext.syntax.value.spread.unsupported": ["NotImplementedError: starred expressions are not supported"],
+  "ext.system.fault.class.value": ["ValueError"],
   "ext.system.module.name": ["__name__"]
 }

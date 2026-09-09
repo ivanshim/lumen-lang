@@ -1265,7 +1265,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
-                let condition = Box::new(self.expr(0)?);
+                let condition = Box::new(self.assert_test()?);
                 let message = if self.on_any("syntax.call.separator") {
                     self.advance();
                     self.expr(0)?
@@ -2542,6 +2542,41 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn assert_test(&mut self) -> Res<Form> {
+        let table = self.table;
+        let mut depth = 0usize;
+        let mut row = false;
+        let mut whole = false;
+        if self.on_any("syntax.group.open") {
+            for (at, token) in self.tokens.iter().enumerate().skip(self.pos) {
+                if token.shape != Shape::Sign { continue; }
+                if ["syntax.group.open", "syntax.array.open", "syntax.map.open"].iter().any(|label| table.spells(label, &token.lexeme)) {
+                    depth += 1;
+                } else if ["syntax.group.close", "syntax.array.close", "syntax.map.close"].iter().any(|label| table.spells(label, &token.lexeme)) {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        whole = self.tokens.get(at + 1).map_or(false, |next|
+                            matches!(next.shape, Shape::LineEnd | Shape::Finish | Shape::Close)
+                            || table.spells("stmt.terminator", &next.lexeme)
+                            || table.spells("ext.syntax.tuple.separator", &next.lexeme));
+                        break;
+                    }
+                } else if depth == 1 && table.spells("ext.syntax.tuple.separator", &token.lexeme) { row = true; }
+            }
+        }
+        if !row || !whole { return self.expr(0); }
+        self.advance();
+        let mut effects = Vec::new();
+        while !self.on_any("syntax.group.close") {
+            effects.push(self.expr(0)?);
+            if !self.on_any("ext.syntax.tuple.separator") { break; }
+            self.advance();
+        }
+        self.need_sign(table.single("syntax.group.close").unwrap_or(""), "after the asserted tuple")?;
+        effects.push(constant(Value::Flag(true)));
+        Ok(sequence(effects))
+    }
+
     fn unavailable(&self, label: &str) -> Form {
         prim_call(Prim::Unready, vec![constant(Value::text(self.table.single(label).unwrap_or("")))])
     }
@@ -3061,9 +3096,19 @@ impl<'a> Builder<'a> {
     fn bare_short_func(&mut self) -> Res<Form> {
         let (params, defaults, _, notes) = self.parameters_until(ANONYMOUS, "ext.stmt.function.short")?;
         let required = params.len() - defaults.len();
+        let mut captured = Vec::new();
+        for layer in self.layers.iter().skip(1).rev() {
+            for name in &layer.idents {
+                if !name.starts_with('#') && !params.contains(name) && !captured.contains(name) { captured.push(name.clone()); }
+            }
+            if layer.holds == Holds::Every { break; }
+        }
         let manner = self.taking.take();
         let resume = self.pos;
-        let mut values = Vec::new();
+        let mut values: Vec<Form> = captured.iter().map(|name| {
+            let address = self.address_to_read(name);
+            Form::Share(address)
+        }).collect();
         for (_, at) in &defaults {
             self.pos = *at;
             values.push(self.expr(0)?);
@@ -3071,6 +3116,10 @@ impl<'a> Builder<'a> {
         self.pos = resume;
         self.taking = manner;
         let routine = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, params, required, |reader| {
+            for name in captured {
+                let slot = reader.address_to_write(&name);
+                reader.carrying.push(slot.at);
+            }
             for (slot, _) in defaults { reader.carrying.push(slot); }
             reader.expr(0)
         })?;
