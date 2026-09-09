@@ -3554,7 +3554,7 @@ impl<'a> Machine<'a> {
                 return self.prim(plain, name, v);
             }
             Prim::Iterated => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
-            Prim::CheckUnpack(count) => {
+            Prim::CheckUnpack(count) | Prim::BindingWidth(count) => {
                 let values = if let Value::Generator(generator) = &v[0] {
                     let mut taken = Vec::new();
                     for _ in 0..=count {
@@ -3564,7 +3564,8 @@ impl<'a> Machine<'a> {
                     taken
                 } else { self.gathered_members(&v[0])? };
                 if values.len() != count {
-                    return Err(self.table.single("ext.op.comprehension.unpack.amiss").unwrap_or("Comprehension target and item have different lengths").into());
+                    let label = if matches!(op, Prim::BindingWidth(_)) { "ext.stmt.binding.unrun" } else { "ext.op.comprehension.unpack.amiss" };
+                    return Err(self.table.single(label).unwrap_or("Comprehension target and item have different lengths").into());
                 }
                 Value::Vector(Rc::new(values))
             }

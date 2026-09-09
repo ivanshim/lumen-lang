@@ -1618,7 +1618,7 @@ impl<'a> Builder<'a> {
         if spread { return refusal; }
         if self.table.flag("ext.stmt.yield.suspends") {
             let value = self.read(source);
-            return self.write(source, prim_call(Prim::CheckUnpack(width), vec![value]));
+            return self.write(source, prim_call(Prim::BindingWidth(width), vec![value]));
         }
         let value = self.read(source);
         let size = prim_call(Prim::Length, vec![value]);
@@ -3580,6 +3580,7 @@ impl<'a> Builder<'a> {
                 let token = &self.tokens[offset];
                 if level == 0 {
                     if matches!(token.shape, Shape::Finish | Shape::LineEnd) || self.table.spells("stmt.terminator", &token.lexeme) { break; }
+                    if self.table.spells("ext.stmt.annotation", &token.lexeme) { break; }
                     if self.table.spells("stmt.assign", &token.lexeme) { sign = Some(offset); break; }
                 }
                 if ["syntax.group.open", "syntax.array.open"].iter().any(|label| self.table.spells(label, &token.lexeme)) { level += 1; }

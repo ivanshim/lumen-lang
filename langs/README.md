@@ -345,7 +345,9 @@ only. The extension labels so far, all from PHP:
   yield; `ext.stmt.yield.busy` refuses a second asking while one runs.
   `ext.stmt.yield.unsupported` refuses a form whose pending work cannot
   yet be kept; `ext.stmt.yield.throw.unavailable` refuses raising into
-  a suspended body. These complaints leave no part falsely run.
+  a suspended body. A watched body containing a yield cannot yet keep
+  its pending clauses, and stops before that body begins. Enclosing
+  function cells and starred yield values likewise remain owed.
   `ext.builtin.next`, `ext.builtin.iter` and `ext.builtin.tuple` name the
   calls that ask for one item (with an optional answer at the end), make
   a walk, and gather its items into a tuple.
@@ -368,8 +370,10 @@ only. The extension labels so far, all from PHP:
 - `ext.op.tuple` joins values within grouping marks, a returned value,
   an assigned value, or a statement's targets. A final mark still joins
   a tuple of one, and empty grouping marks hold a tuple of none. This
-  reading does not give arrays the name of tuples: reaching a tuple or
-  a taking-apart raises `ext.system.scope.unready` pending tuple values.
+  reading does not give arrays the name of tuples. General tuple
+  expressions still raise `ext.system.scope.unready`. Where suspension
+  is enabled, yielded tuples and tuples gathered by `ext.builtin.tuple`
+  are held as tuples, and binding targets may take their items apart.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet

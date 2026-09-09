@@ -120,6 +120,7 @@ pub enum Action {
     /// The values walked by a comprehension, with maps handing out keys.
     ComprehensionItems,
     UnpackCount(usize),
+    BindCount(usize),
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.
     MakeMap,

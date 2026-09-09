@@ -364,6 +364,7 @@ pub enum Prim {
     ExtendLiteral(bool, bool),
     Iterated,
     CheckUnpack(usize),
+    BindingWidth(usize),
     // control
     Seq,
     Choose,

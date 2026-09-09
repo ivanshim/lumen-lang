@@ -2450,11 +2450,22 @@ impl<'a> Engine<'a> {
                 let source = self.drop_top()?;
                 Value::array(self.comprehension_items(&source)?)
             }
-            Action::UnpackCount(wanted) => {
+            Action::UnpackCount(wanted) | Action::BindCount(wanted) => {
                 let source = self.drop_top()?;
-                let parts = self.comprehension_items(&source)?;
+                let parts = if let Value::Generator(walk) = &source {
+                    let mut parts = Vec::new();
+                    for _ in 0..=*wanted {
+                        match self.resume_generator(walk, Value::Null)? {
+                            Some(item) => parts.push(item),
+                            None => break,
+                        }
+                    }
+                    parts
+                } else { self.comprehension_items(&source)? };
                 if parts.len() != *wanted {
-                    return Err(self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()).into());
+                    let said = if matches!(op, Action::BindCount(_)) { self.lang.binding_unrun.clone() }
+                        else { self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()) };
+                    return Err(said.into());
                 }
                 Value::array(parts)
             }

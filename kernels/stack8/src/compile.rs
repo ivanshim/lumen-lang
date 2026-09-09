@@ -1271,7 +1271,7 @@ impl<'a> Compiler<'a> {
     fn binding_size(&mut self, held: &str, count: usize, starred: bool) {
         if !starred && self.lang.yield_suspends {
             self.read(held);
-            self.act(Action::UnpackCount(count), 1);
+            self.act(Action::BindCount(count), 1);
             self.write(held);
             return;
         }
@@ -3697,6 +3697,7 @@ impl<'a> Compiler<'a> {
             let mut assignment = None;
             for (index, token) in self.tokens.iter().enumerate().skip(target_at) {
                 if nesting == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Finish) || self.lang.ends_stmt(&token.lexeme)) { break; }
+                if nesting == 0 && Lang::spells(&self.lang.annotation_marks, &token.lexeme) { break; }
                 if nesting == 0 && Lang::spells(&self.lang.assign_words, &token.lexeme) { assignment = Some(index); break; }
                 for pair in [self.lang.grouping.as_ref(), self.lang.array_brackets.as_ref()].into_iter().flatten() {
                     if token.lexeme == pair.open { nesting += 1; }
