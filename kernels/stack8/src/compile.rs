@@ -2571,6 +2571,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as the class name")?;
         if let Some(said) = &lang.class_unready {
             let said = said.clone();
+            let unreadied = self.mark();
             if let Some(call) = lang.calling.clone() {
                 if self.at_symbol(&call.open) {
                     self.take();
@@ -2580,6 +2581,7 @@ impl<'a> Compiler<'a> {
             // Read each member in a scope of its own. Making the class
             // awaits the rules for its namespace and its ancestors.
             self.routine(&name, Vec::new(), 0, false, |a| a.body())?;
+            self.piece().instrs.truncate(unreadied);
             self.constant(Value::text(&said));
             self.act(Action::Builtin(Builtin::Raise, Rc::from(name.as_str())), 1);
             return Ok(());

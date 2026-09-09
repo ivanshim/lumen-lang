@@ -544,7 +544,8 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class.unready`: words said when a class body cannot yet be
   made into a namespace. With `ext.stmt.class` spelled, the name, base
   arguments and every statement of the body are read in full. Reaching
-  the declaration says these words. This narrow reading leaves class
+  the declaration says these words before its base arguments run.
+  This narrow reading leaves class
   construction to the fuller account of classes.
 - `ext.stmt.catch.as`: the word before the name holding a caught value.
   Where spelled, a clause needs no outer group and may take every raised
