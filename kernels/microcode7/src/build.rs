@@ -1159,7 +1159,7 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.tuple") { return Ok(first); }
         loop {
             self.advance();
-            if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
+            if self.on_stmt_end() || self.on_assign() || self.on_any("block.intro") || self.on_any("syntax.group.close")
                 || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
             let _item = self.expr_at(0, false)?;
             if !self.on_any("ext.op.tuple") { break; }
@@ -1213,6 +1213,7 @@ impl<'a> Builder<'a> {
         for index in self.pos + 1..self.tokens.len() {
             let word = &self.tokens[index];
             if word.shape == Shape::LineEnd || word.shape == Shape::Finish { break; }
+            if word.shape != Shape::Sign && word.shape != Shape::Bare { continue; }
             if nesting == 0 && self.table.spells("block.intro", &word.lexeme) { return true; }
             if ["syntax.group.open", "syntax.array.open", "syntax.map.open"].iter().any(|key| self.table.spells(key, &word.lexeme)) { nesting += 1; }
             if ["syntax.group.close", "syntax.array.close", "syntax.map.close"].iter().any(|key| self.table.spells(key, &word.lexeme)) { nesting -= 1; }
@@ -2712,10 +2713,35 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn gathered_names(&mut self) -> Res<()> {
+        let table = self.table;
+        loop {
+            let end = if self.on_any("syntax.group.open") { Some("syntax.group.close") }
+                else if self.on_any("syntax.array.open") { Some("syntax.array.close") } else { None };
+            match end {
+                Some(end) => {
+                    self.advance();
+                    if !self.on_any(end) { self.gathered_names()?; }
+                    self.need_sign(table.single(end).unwrap(), "after a gathering of names")?;
+                }
+                None => {
+                    if self.on_any("ext.syntax.array.spread") { self.advance(); }
+                    self.need_word("to bind a loop item")?;
+                }
+            }
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+            if ["stmt.for.in", "syntax.group.close", "syntax.array.close"].iter().any(|key| self.on_any(key)) { break; }
+        }
+        Ok(())
+    }
+
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
-        let var = self.need_word("as the loop variable")?;
+        let apart = table.has_any("ext.op.tuple") && !table.spells("stmt.for.in", &self.glance(1).lexeme);
+        let var = if apart { self.gathered_names()?; self.gather_name("loopitem") }
+            else { self.need_word("as the loop variable")? };
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
@@ -2736,14 +2762,15 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = self.expr(tier + 1)?;
+            let start = if table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(tier + 1)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None, None);
+                let walk = self.walk(start, None, var, None, None)?;
+                return Ok(if apart { sequence(vec![self.scope_unrun("ext.system.scope.unready"), walk]) } else { walk });
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -4256,7 +4283,7 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
         }
-        if table.spells("ext.op.await", &t.lexeme) {
+        if t.shape == Shape::Bare && table.spells("ext.op.await", &t.lexeme) {
             self.advance();
             let _waited = self.monadic_piece()?;
             return Ok(self.scope_unrun("ext.system.scope.unready"));
@@ -5432,9 +5459,8 @@ impl<'a> Builder<'a> {
                 if bind { tag = Some(Value::text(&self.look().lexeme)); }
                 self.pos += 2;
             } else if bind {
-                let word = &self.look().lexeme;
-                if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
-                else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
+                if self.on_any("ext.syntax.call.spread.pairs") { tag = Some(Value::Flag(true)); }
+                else if self.on_any("ext.syntax.call.spread") { tag = Some(Value::Flag(false)); }
                 if tag.is_some() { self.advance(); }
             }
             let value = self.expr(0)?;

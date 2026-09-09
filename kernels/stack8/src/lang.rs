@@ -52,7 +52,6 @@ pub struct Lang {
     pub match_cases: Vec<String>,
     pub type_alias_words: Vec<String>,
     pub type_parameters: bool,
-    pub line_continuations: Vec<String>,
     pub whole_bits: bool,
     pub line_comments: Vec<String>,
     pub block_comments: Vec<(String, String)>,
@@ -759,7 +758,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters
-w ext.lexical.line_continuation | b ext.op.bit.whole
+b ext.op.bit.whole
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1337,7 +1336,6 @@ impl Lang {
             match_cases: r.strings("ext.stmt.match.case")?,
             type_alias_words: r.strings("ext.stmt.type_alias")?,
             type_parameters: r.flag("ext.stmt.type_parameters")?,
-            line_continuations: r.strings("ext.lexical.line_continuation")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
@@ -1858,7 +1856,7 @@ impl Lang {
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words,
-            &self.slice_ellipsis, &self.slice_marks, &self.await_words, &self.async_words, &self.match_words, &self.match_cases, &self.type_alias_words, &self.line_continuations, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
+            &self.slice_ellipsis, &self.slice_marks, &self.await_words, &self.async_words, &self.match_words, &self.match_cases, &self.type_alias_words, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
             &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
         if self.blocks != Blocks::Indented {

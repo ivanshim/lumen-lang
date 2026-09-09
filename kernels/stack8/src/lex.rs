@@ -1057,23 +1057,6 @@ impl<'a> Cursor<'a> {
                 }
             }
             let c = self.text[self.at];
-            let joined = lang.line_continuations.iter().find_map(|mark| {
-                if !at_word(&self.text, self.at, mark) {
-                    return None;
-                }
-                let width = mark.chars().count();
-                match (self.look(width), self.look(width + 1)) {
-                    (Some('\n'), _) => Some(width + 1),
-                    (Some('\r'), Some('\n')) => Some(width + 2),
-                    _ => None,
-                }
-            });
-            if let Some(width) = joined {
-                for _ in 0..width {
-                    self.step();
-                }
-                continue;
-            }
             if c == '\n' {
                 let (line, col) = (self.row, self.column);
                 self.step();

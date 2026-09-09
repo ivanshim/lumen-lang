@@ -324,6 +324,10 @@ only. The extension labels so far, all from PHP:
   a tuple of one, and empty grouping marks hold a tuple of none. This
   reading does not give arrays the name of tuples: reaching a tuple or
   a taking-apart raises `ext.system.scope.unready` pending tuple values.
+  In a walk, the tuple mark also joins the source values and gathers
+  binding names, with nested brackets and starred names admitted.
+  Gathered loop bindings presently stop in `ext.system.scope.unready`
+  words; their execution awaits the fuller taking-apart account.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -348,9 +352,6 @@ only. The extension labels so far, all from PHP:
   The head is distinguished from a call or assignment by its body mark.
   Pattern binding is still owed: `ext.system.scope.unready` stops the run
   before the subject or any arm is worked out.
-- `ext.lexical.line_continuation` joins a physical line to the next when
-  its mark stands immediately before the line end. The joined line gives
-  no indentation boundary. A mark before any other character stays a mark.
 - `ext.lexical.number.imaginary` gives the suffix of an imaginary numeral.
   The suffix stays with the number through reading; reaching it says
   `ext.lexical.number.imaginary.unready`, since complex values are owed.
@@ -1255,7 +1256,8 @@ only. The extension labels so far, all from PHP:
   is mutable. The kernels' arrays and maps are values, so they cannot yet
   share a mutable default between calls as Python requires.
 - `ext.syntax.call.spread`: a sign before a call argument handing out its
-  items as positional arguments. Arrays, text and the keys of maps may
+  items as positional arguments. Quoted text spelling that sign remains
+  text, as does text spelling `ext.syntax.call.spread.pairs`. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
   `ext.syntax.call.spread.amiss`.
 - `ext.syntax.call.spread.pairs`: a sign before a call argument handing
@@ -1967,7 +1969,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
-| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |

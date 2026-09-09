@@ -964,7 +964,7 @@ impl<'a> Compiler<'a> {
         while self.on_any(&self.lang.tuple_marks) {
             self.take();
             if self.on_sep() || matches!(self.look().shape, Shape::Close | Shape::Finish)
-                || self.on_assign()
+                || self.on_assign() || self.on_any(&self.lang.block_intros)
                 || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
             self.expr_at(0, false)?;
         }
@@ -1021,6 +1021,7 @@ impl<'a> Compiler<'a> {
         let mut depth = 0usize;
         for token in self.tokens.iter().skip(self.pos + 1) {
             if matches!(token.shape, Shape::LineEnd | Shape::Finish) { return false; }
+            if !matches!(token.shape, Shape::Sign | Shape::Instr) { continue; }
             if depth == 0 && Lang::spells(&self.lang.block_intros, &token.lexeme) { return true; }
             for pair in [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten() {
                 if token.lexeme == pair.open { depth += 1; }
@@ -2285,11 +2286,37 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Gathered loop names await the fuller taking-apart account.
+    fn loop_names(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let pair = [&lang.grouping, &lang.array_brackets].into_iter().flatten()
+            .find(|pair| self.at_symbol(&pair.open));
+        if let Some(pair) = pair {
+            self.take();
+            if !self.at_symbol(&pair.close) { self.loop_names()?; }
+            self.want_sign(&pair.close, "after loop names")?;
+        } else {
+            if self.on_any(&lang.array_spread) { self.take(); }
+            self.want_name("as a loop binding")?;
+        }
+        if self.on_any(&lang.tuple_marks) {
+            self.take();
+            let closes = [&lang.grouping, &lang.array_brackets].into_iter().flatten().any(|pair| self.at_symbol(&pair.close));
+            if !self.on_keyword(&lang.in_words) && !closes { self.loop_names()?; }
+        }
+        Ok(())
+    }
+
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
-        let var = self.want_name("as the loop variable")?;
+        let gathered = !lang.tuple_marks.is_empty() && !Lang::spells(&lang.in_words, &self.look_ahead(1).lexeme);
+        let var = if gathered {
+            self.loop_names()?;
+            self.scope_fault(&lang.scope_unready);
+            self.gensym("loopitem")
+        } else { self.want_name("as the loop variable")? };
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
@@ -2312,7 +2339,8 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
+            if lang.tuple_marks.is_empty() { self.expr(tier + 1)?; }
+            else { self.scope_value()?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -4545,7 +4573,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
-        if Lang::spells(&lang.await_words, &tok.lexeme) {
+        if tok.shape == Shape::Instr && Lang::spells(&lang.await_words, &tok.lexeme) {
             self.take();
             self.prefix_piece()?;
             self.piece().instrs.truncate(from);
@@ -5954,10 +5982,9 @@ impl<'a> Compiler<'a> {
                 && (Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme)
                     || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)));
             let tagged = self.lang.bind_names && labelled;
-            let named_spread = Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
+            let named_spread = self.on_any(&self.lang.call_spread_pairs);
             let spread = self.lang.bind_names && !labelled
-                && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
-                    || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+                && (self.on_any(&self.lang.call_spread) || named_spread);
             if tagged {
                 self.constant(Value::text(&self.look().lexeme));
             } else if spread {
