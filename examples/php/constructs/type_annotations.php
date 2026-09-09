@@ -13,12 +13,12 @@ print($flag . "\n");
 $empty = null;
 print("let empty: null = null\n");
 print($empty . "\n");
-function add($a, $b) {
+function add_($a, $b) {
     return $a + $b;
 }
 
 print("add(5, 3):\n");
-print(add(5, 3) . "\n");
+print(add_(5, 3) . "\n");
 function greet($name) {
     return "Hello, " . $name;
 }

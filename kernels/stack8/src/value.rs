@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::code::Routine;
@@ -44,6 +45,16 @@ pub struct Frac {
 }
 
 /// p/q shown to `places` significant digits.
+///
+/// A real of a width also holds two things no ratio does: the one no
+/// number answers to, itself included, and the one lying past every
+/// number on either side. Both are written here with nought beneath,
+/// which no ratio in lowest terms ever is; the top then tells them
+/// apart, being nought for the first and its sign for the second. It is
+/// held so because a whole new kind of value would have to be answered
+/// for everywhere a value is looked at, while nought beneath is answered
+/// for where numbers are worked and set against one another and nowhere
+/// else.
 #[derive(Debug, Clone)]
 pub struct Real {
     pub p: BigInt,
@@ -53,6 +64,30 @@ pub struct Real {
     /// the minus, since a real of a width has two noughts and a language
     /// holding reals to a width writes them apart.
     pub below: bool,
+}
+
+impl Real {
+    /// Whether this stands outside the numbers altogether.
+    pub fn outside(&self) -> bool {
+        self.q.is_zero()
+    }
+
+    /// Whether this is the one no number answers to.
+    pub fn no_number(&self) -> bool {
+        self.q.is_zero() && self.p.is_zero()
+    }
+
+    /// How such a value is written, which is one of three ways.
+    pub fn spelled(&self) -> &'static str {
+        if !self.q.is_zero() {
+            return "";
+        }
+        match (self.p.is_zero(), self.p.is_negative()) {
+            (true, _) => "NAN",
+            (_, true) => "-INF",
+            _ => "INF",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +135,10 @@ pub struct Wording<'a> {
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
+    /// Whether text is held as the bytes it was written in, so that the
+    /// width of a piece of text is the count of its characters and not
+    /// the count of bytes the letters they spell would take.
+    pub text_is_bytes: bool,
     pub guarded_word: Option<&'a str>,
     pub hidden_word: Option<&'a str>,
 }
@@ -135,12 +174,33 @@ impl Value {
         })
     }
 
+    /// Whether a value stands outside the numbers: the one no number
+    /// answers to, or one past every number.
+    pub fn outside_numbers(&self) -> bool {
+        match self {
+            Value::Real(r) => r.outside(),
+            Value::Bond(shared) => shared.borrow().outside_numbers(),
+            _ => false,
+        }
+    }
+
+    /// Whether a value is the one no number answers to.
+    pub fn no_number(&self) -> bool {
+        match self {
+            Value::Real(r) => r.no_number(),
+            Value::Bond(shared) => shared.borrow().no_number(),
+            _ => false,
+        }
+    }
+
     pub fn is_true(&self) -> bool {
         match self {
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
-            Value::Real(r) => !r.p.is_zero(),
+            // Neither what stands outside the numbers is nought, so
+            // both count as true, though the top of the one is nought.
+            Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
@@ -155,6 +215,9 @@ impl Value {
         match self {
             Value::Small(n) => Ok(BigInt::from(*n)),
             Value::Huge(n) => Ok((**n).clone()),
+            // What stands outside the numbers has no whole part; such
+            // a language counts it as nought.
+            Value::Real(r) if r.outside() => Ok(BigInt::zero()),
             Value::Real(r) => Ok(&r.p / &r.q),
             Value::Flag(b) => Ok(BigInt::from(*b as i64)),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
@@ -250,10 +313,13 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
+            // What stands outside the numbers is written by its name at
+            // any width, since there are no figures to write.
+            Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
             Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
-            Value::Real(r) if sp.real_digits.is_some() => binary_string(as_binary(&r.p, &r.q), sp.real_digits),
+            Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
             other => other.plain(),
         }
     }
@@ -264,6 +330,7 @@ impl Value {
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
+            Value::Real(r) if r.outside() => r.spelled().to_string(),
             Value::Real(r) => decimal_string(&r.p, &r.q, r.places),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
@@ -489,22 +556,63 @@ pub struct Instance {
 /// such a language means by an unbounded number.
 pub fn as_binary(p: &BigInt, q: &BigInt) -> f64 {
     let beyond = || if p.is_negative() { f64::NEG_INFINITY } else { f64::INFINITY };
+    // Nought beneath is no ratio at all but the mark of a value
+    // standing outside the numbers, and the width has one for each.
+    if q.is_zero() {
+        return match p.is_zero() {
+            true => f64::NAN,
+            false => beyond(),
+        };
+    }
     if q.is_one() {
         return p.to_f64().unwrap_or_else(beyond);
     }
-    match (p.to_f64(), q.to_f64()) {
-        (Some(a), Some(b)) if a.is_finite() && b.is_finite() && b != 0.0 => a / b,
-        // Too large for the division to be done straight off: bring
-        // both down by the same power of two and divide those.
-        _ => {
-            let shift = p.bits().max(q.bits()).saturating_sub(900);
-            let (a, b) = (p >> shift, q >> shift);
-            match (a.to_f64(), b.to_f64()) {
-                (Some(a), Some(b)) if b != 0.0 => a / b,
-                _ => beyond(),
-            }
-        }
+    let (top, bottom) = (p.abs(), q.abs());
+    let below = p.is_negative() != q.is_negative();
+    let signed = |x: f64| if below { -x } else { x };
+    // A bottom that is a power of two, which is what every real of the
+    // width itself comes to, asks only for so many halvings, and a top
+    // of that width is held to the last bit as it stands.
+    if bottom.trailing_zeros() == Some(bottom.bits() - 1) && top.bits() <= 53 {
+        return signed(by_twos(top.to_f64().unwrap_or(0.0), 1 - bottom.bits() as i64));
     }
+    // Where both sides are held to the last bit by a real of the width,
+    // dividing them gives the nearest real to the ratio outright.
+    if top.bits() <= 53 && bottom.bits() <= 53 {
+        return signed(top.to_f64().unwrap_or(0.0) / bottom.to_f64().unwrap_or(1.0));
+    }
+    // Otherwise the division is done on the whole numbers themselves,
+    // since rounding each side to the width first and dividing after
+    // rounds twice and need not land where rounding once lands. The top
+    // is raised by as many twos as it takes for the answer to keep more
+    // bits than the width holds, and they are taken off it again.
+    let raise = bottom.bits() as i64 + 128 - top.bits() as i64;
+    let raised = match raise >= 0 {
+        true => top << raise as usize,
+        false => top >> (-raise) as usize,
+    };
+    let (mut whole, left) = raised.div_rem(&bottom);
+    // A bit set where the division did not come out even keeps the
+    // rounding from falling the wrong way where the answer would
+    // otherwise sit halfway between two reals of the width.
+    if !left.is_zero() {
+        whole.set_bit(0, true);
+    }
+    signed(by_twos(whole.to_f64().unwrap_or(f64::INFINITY), -raise))
+}
+
+/// A real of the width taken 2^n times, in steps small enough that only
+/// the last of them can fall past what the width holds, so that the
+/// answer is rounded once and no more.
+fn by_twos(x: f64, n: i64) -> f64 {
+    let mut worth = x;
+    let mut left = n;
+    while left != 0 && worth != 0.0 && worth.is_finite() {
+        let step = left.clamp(-500, 500);
+        worth *= (2.0f64).powi(step as i32);
+        left -= step;
+    }
+    worth
 }
 
 /// What a binary real is worth, held exactly: a whole number of halves,
@@ -537,6 +645,29 @@ pub fn from_binary(x: f64) -> Option<(BigInt, BigInt)> {
     })
 }
 
+/// A binary real of the width as a value: held exactly where it is a
+/// number, and as what stands outside the numbers where it is not. This
+/// is the way back from working at the width, which every real-valued
+/// reckoning must come home by.
+pub fn real_of(x: f64, places: usize) -> Value {
+    match from_binary(x) {
+        // A nought that came out below nought keeps its minus.
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), x.is_sign_negative()),
+        None => outside_number(x, places),
+    }
+}
+
+/// The value standing for what no number answers to, or for what lies
+/// past every number on the side the sign says.
+pub fn outside_number(x: f64, places: usize) -> Value {
+    let p = match (x.is_nan(), x.is_sign_negative()) {
+        (true, _) => BigInt::zero(),
+        (_, true) => -BigInt::one(),
+        _ => BigInt::one(),
+    };
+    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false }))
+}
+
 /// A real brought to the nearest one of a width of bits, held exactly.
 /// Where the language holds no width, or the number is past every one
 /// of that width, it is left as it stands.
@@ -556,12 +687,57 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
     }
 }
 
+thread_local! {
+    /// The cells a run keeps its counts of figures in, where the
+    /// language gives those counts a name of their own: how many
+    /// figures a real written plainly carries, and how many one shown
+    /// with its kind carries. Both stand empty for a language that
+    /// keeps no such count.
+    static FIGURES: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Hand the kernel the cells the run keeps its counts of figures in.
+/// The run writes into them by the names the definition gives, so a
+/// count set while the run goes is the count the next real written out
+/// follows.
+pub fn figures_kept_in(plainly: Option<Rc<RefCell<Value>>>, with_kind: Option<Rc<RefCell<Value>>>) {
+    FIGURES.with(|held| *held.borrow_mut() = (plainly, with_kind));
+}
+
+/// What the run's count of figures stands at now. Nothing at all where
+/// the run keeps no count of its own; within that, a count of figures,
+/// or nothing again where the count is below nought, by which the run
+/// asks for the fewest figures that read back as the same number.
+fn figures_now(with_kind: bool) -> Option<Option<usize>> {
+    FIGURES.with(|held| {
+        let held = held.borrow();
+        let cell = match with_kind {
+            true => held.1.as_ref()?,
+            false => held.0.as_ref()?,
+        };
+        let said = cell.borrow();
+        let count = match &*said {
+            Value::Small(n) => *n,
+            Value::Huge(n) => n.to_i64().unwrap_or(0),
+            Value::Text(s) => s.trim().parse().unwrap_or(0),
+            _ => 0,
+        };
+        // No real of the width spells out more figures than the widest
+        // of them needs, so a greater count asks only for noughts, and
+        // those are dropped again below.
+        Some(match count >= 0 {
+            true => Some(count.min(1100) as usize),
+            false => None,
+        })
+    })
+}
+
 /// A binary real written out the way such a language writes one: the
 /// fewest digits that read back as the same number, with a power of ten
 /// after them where the number is very large or very small. `digits`
 /// caps the significant figures, as a language's own setting does when
 /// a number is simply written out rather than shown with its kind.
-pub fn binary_string(x: f64, digits: Option<usize>) -> String {
+pub fn written_out(x: f64, digits: Option<usize>) -> String {
     if x.is_nan() {
         return "NAN".to_string();
     }
@@ -585,14 +761,24 @@ pub fn binary_string(x: f64, digits: Option<usize>) -> String {
     }
     let sign = if mantissa.starts_with('-') { "-" } else { "" };
     // Written plainly while the power is small, and with the power
-    // spelled out beyond that, which is where such a language changes.
-    if (-4..15).contains(&power) {
+    // spelled out beyond that, which is where such a language changes:
+    // at as many figures as are being shown, which is the count the
+    // language sets when it is set and the whole of what tells one such
+    // number from its neighbours when it is not.
+    if (-4..digits.unwrap_or(17) as i32).contains(&power) {
         return format!("{}{}", sign, laid_flat(&figures, power));
     }
     let rest = &figures[1..];
     let after = if rest.is_empty() { "0".to_string() } else { rest.to_string() };
     let mark = if power < 0 { "-" } else { "+" };
     format!("{}{}.{}E{}{}", sign, &figures[..1], after, mark, power.abs())
+}
+
+/// A binary real written out as the run shows one with its kind: to the
+/// count of figures asked for, else to the count the run keeps for
+/// showing one, else in the fewest that read back as the same number.
+pub fn binary_string(x: f64, digits: Option<usize>) -> String {
+    written_out(x, digits.or_else(|| figures_now(true).flatten()))
 }
 
 /// A run of significant figures written out plainly at the power of ten
@@ -608,3 +794,4 @@ fn laid_flat(figures: &str, power: i32) -> String {
     }
     format!("{}.{}", &figures[..point], &figures[point..])
 }
+

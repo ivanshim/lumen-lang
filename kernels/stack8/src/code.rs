@@ -7,6 +7,11 @@
 
 use std::rc::Rc;
 
+/// What is put after a class's name to file it under: a class and a
+/// routine may go by one name, and a binding is one thing, so the three
+/// are told apart by how each is filed rather than by what it holds.
+pub const OF_A_CLASS: &str = "\0class";
+
 use crate::value::Value;
 
 /// A binding's address: candidate local slots (innermost first) and the
@@ -80,6 +85,14 @@ pub enum Action {
     Toward,
     /// `a[]`, which only an assignment may write to.
     AtEnd,
+    /// The value under the thing it is about to be written into, made
+    /// what a place in that thing will hold. Where the thing is text
+    /// and the language writes into text, a place holds one letter, so
+    /// only the first of what was handed over goes in and that letter
+    /// is what the write itself is worth; anything else is left as it
+    /// stands. The thing is handed back untouched, the write still
+    /// wanting it.
+    Fitted,
     /// How many places an array or a map holds.
     Extent,
     /// Whether the place a walk has reached holds a member the walk may
@@ -105,6 +118,11 @@ pub enum Action {
     /// thing that is its own walk has no such cells, and a language with
     /// words for that says so and stops.
     WalkAlone,
+    /// Where a walk that keeps its place by the item it handed out goes
+    /// on from. Below the cell of that item stand the place the pass was
+    /// at and the array as it now stands, since the body may have moved
+    /// the item, or taken it away altogether.
+    WalkPast,
     /// Which of two values comes first: below, alike, or above.
     Rank,
     /// Whether two values are the very same: of one kind, and alike
@@ -219,6 +237,13 @@ pub enum Action {
     Summon(Rc<str>),
     /// Whether the object above is of that class, or of one beneath it.
     Kindred(Rc<str>),
+    /// Whether a thing is of the class a value stands for, where the
+    /// class to test against is only known as the run reaches it.
+    KindredTo,
+    /// A routine written where a value stands, carrying away the values
+    /// under it: the routine is on top, and each value below it fills
+    /// one of the slots the routine names as carried.
+    Close,
     /// The name of the class of the value above.
     Titled,
     /// Raise the value above as a fault to be caught.
@@ -251,6 +276,12 @@ pub enum Builtin {
     Leave,
     /// Take a binding, or a place in an array, away (ext.builtin.unset).
     Erase,
+    /// Put values at the head of a named array, the places after them
+    /// moving along to make room (ext.builtin.array.front). What a place
+    /// is called by a whole number is called anew from nought; what it
+    /// is called by a word keeps that word. The answer is how many
+    /// places the array holds afterwards.
+    Lead,
     /// Whether each of those bindings, or places in an array, holds
     /// something other than nothing, asking without minding that a
     /// binding was never written or a place is not there
@@ -281,9 +312,29 @@ pub enum Builtin {
     FileWrite,
     FileThere,
     FileGone,
+    /// A command handed to the host's own shell, answering with all
+    /// that the shell wrote where a run writes (ext.builtin.shell).
+    /// Only a language that spells this may start another program at
+    /// all.
+    ShellSaid,
+    NetAsk,
+    Waited,
+    RunBegin,
+    RunEnd,
     /// How long the run may take from here, in seconds; nought lifts
     /// the limit (ext.builtin.time_limit).
     TimeLimit,
+    /// The room the run has taken, in bytes: what it holds at this
+    /// moment (ext.builtin.room.used), the most it ever held at once
+    /// (ext.builtin.room.most), and the forgetting of that highest
+    /// reading so that it is counted afresh from here
+    /// (ext.builtin.room.most.forget).
+    RoomUsed,
+    RoomMost,
+    RoomForget,
+    /// How much room the run may take, in bytes; nought lifts the
+    /// limit (ext.builtin.room.limit).
+    RoomLimit,
     /// Keeping what the run writes out rather than letting it go
     /// (ext.builtin.output.*): begin keeping, what has been kept since
     /// the last beginning, stop keeping and give up what was kept, and
@@ -315,9 +366,24 @@ pub enum Builtin {
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,
     RoutinesBound,
+    /// The words the language spells of its own, by name.
+    Spelled,
+    /// The methods a class answers to, and the properties its things
+    /// hold, by name: what it has of its own and what it stands on has.
+    ClassMethods,
+    ClassProperties,
+    /// How many seconds have passed since the start of the year the
+    /// system counts from (ext.builtin.clock).
+    Clock,
     /// The name of the class the one above stands on, where it stands on
     /// any: a thing is asked of its own class (ext.builtin.class.beneath).
     ClassBeneath,
+    /// A working over the reals of the width, named by the first thing
+    /// it is given and worked on the rest (ext.builtin.math): the roots,
+    /// the curves and the angles a width of bits can be asked for but a
+    /// definition has no words of its own for. One label for all of
+    /// them, since it is the one power the kernel is lending.
+    Math,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,
@@ -388,6 +454,10 @@ pub enum Instr {
     /// lets a program hush what one piece of it has to say about
     /// itself says where the quiet begins and ends.
     Hush(bool),
+    /// Read this binding as it stands, saying nothing about it: where it
+    /// holds nothing at all, nothing at all is what is read, so that
+    /// writing it somewhere else leaves that place unwritten too.
+    Glance(Cell),
     /// Make this binding a shared cell if it is not one already, and
     /// push that cell, so another name can be fastened to it.
     Bond(Cell),
@@ -406,6 +476,23 @@ pub enum Instr {
     BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// Put nothing at all in this binding, letting go of whatever it
+    /// held. The slot a routine keeps its running result in is emptied
+    /// this way at the head of a statement, so that what the statement
+    /// before came to is finished with before the next is worked out
+    /// and not after it.
+    Emptied(Cell),
+    /// Pop the top of the stack and let it go. A statement written for
+    /// what it does rather than for what it comes to ends with this, so
+    /// that what it came to is finished with there and then and not held
+    /// alive until something else takes its place.
+    Shed,
+    /// A word that does nothing at all. One stands where a word already
+    /// written down has turned out not to be wanted and cannot be taken
+    /// out without moving everything after it; the peephole takes them
+    /// out at the end, when it is moving jumps in any case, so the
+    /// engine never meets one.
+    Nothing,
     /// From here until the mark that ends it, the run says nothing at
     /// all about itself: how a language lets a program silence a piece
     /// of itself outright, where Hush only keeps quiet about what is
@@ -432,7 +519,7 @@ pub enum Instr {
 }
 
 /// A compiled program.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Routine {
     pub ident: String,
     pub formals: Vec<String>,
@@ -464,7 +551,14 @@ pub struct Routine {
     /// way into it names: such a fault belongs where the program is
     /// written and not where the call stood.
     pub declared_on: u32,
-    pub instrs: Vec<Instr>,
+    /// The slots a routine written where a value stands fills from what
+    /// it carried away with it, in the order the names were written.
+    pub carried: Vec<usize>,
+    /// What one such routine carried away: a value for each of those
+    /// slots. Empty for every routine written out under a name, which
+    /// carries nothing.
+    pub held: Vec<crate::value::Value>,
+    pub instrs: Rc<Vec<Instr>>,
 }
 
 /// What a class declaration comes to: everything about the class that is

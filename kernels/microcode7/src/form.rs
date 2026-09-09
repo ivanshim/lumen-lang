@@ -7,6 +7,11 @@
 
 use std::rc::Rc;
 
+/// What is put after a class's name to file it under: a class and a
+/// routine may go by one name, and a binding is one thing again, so the
+/// three are told apart by how each is filed and not by what it holds.
+pub const OF_A_CLASS: &str = "\0class";
+
 use crate::data::Value;
 
 /// Where a binding lives: `depth` frames up, at `index`. A name that has
@@ -103,9 +108,29 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    /// Everything the host's own shell wrote out, having been handed a
+    /// command to run (ext.builtin.shell). Starting a second program
+    /// beside this one is something only a language spelling this may
+    /// ask for.
+    Shelled,
+    Reached,
+    Bided,
+    Raised,
+    Laid,
     /// How long the run may take from here, counted in seconds; nought
     /// takes the limit away (ext.builtin.time_limit).
     Clock,
+    /// What the run has taken of the room the host hands out, counted in
+    /// bytes: what it holds as things stand (ext.builtin.room.used), the
+    /// highest it ever stood at (ext.builtin.room.most), and that highest
+    /// reading thrown away so that it is gathered again from this moment
+    /// (ext.builtin.room.most.forget).
+    RoomHeld,
+    RoomHighest,
+    RoomAnew,
+    /// How much room the run may take from here, counted in bytes;
+    /// nought takes the mark away (ext.builtin.room.limit).
+    RoomMark,
     /// Keeping what the run writes out instead of letting it go
     /// (ext.builtin.output.*): begin keeping, what has been kept since
     /// the last beginning, stop keeping and give up what was kept, and
@@ -137,9 +162,28 @@ pub enum Prim {
     /// (ext.builtin.classes, ext.builtin.routines).
     ClassesBound,
     RoutinesBound,
+    /// The words the language has of its own, by name.
+    WordsSpelled,
+    /// The methods a class answers to, and the properties its things
+    /// hold, by name: its own and those of the class it is built on.
+    ClassMethods,
+    ClassProperties,
+    /// A routine written where a value stands, taking away with it the
+    /// values after it: the routine comes first, and each value after
+    /// fills one of the slots the routine names as carried.
+    Carry,
+    /// How many seconds have passed since the start of the year the
+    /// system counts from (ext.builtin.clock).
+    SinceEpoch,
     /// The name of the class the one above stands on, where it stands on
     /// any: a thing is asked of its own class (ext.builtin.class.beneath).
     ClassBeneath,
+    /// A working over the reals of the width, named by the first worth
+    /// handed over and worked on the rest (ext.builtin.math): the roots,
+    /// the curves and the angles a width of bits can be asked for and a
+    /// definition has no words of its own for. One label covers them
+    /// all, since the one power lent is the working at the width.
+    Reckon,
     /// Whether anything has gone out of the run yet: what is held back
     /// in a piece of output kept aside has not (ext.builtin.output.begun).
     OutBegun,
@@ -222,8 +266,25 @@ pub enum Prim {
     /// that is its own walk keeps no such cells, and a language with
     /// words for that says so and stops.
     AloneWalk,
+    /// The place a walk that keeps its place by the item it handed out
+    /// takes up again: what is walked, the place the pass stood at, and
+    /// the cell of the item handed out there, which the body may have
+    /// carried elsewhere in the array or taken out of it.
+    PastHeld,
+    /// Put values before everything a named array holds, the places
+    /// after them moving along (ext.builtin.array.front). A place named
+    /// by a whole number is named anew from nought; one named by a word
+    /// keeps its word. The answer is how many places there are then.
+    Front,
     /// `a[]`, a place only a store reaches.
     AtEnd,
+    /// The first value made what a place in the second will hold. Where
+    /// the second is text and the language writes into text, a place
+    /// there holds one letter, so only the first letter of the value
+    /// goes in, and the language says as much where more than one was
+    /// handed over; anything else is answered with as it stands. It is
+    /// what tells a write into text what the write itself is worth.
+    Letter,
     /// A thing of the class given, its maker run over the rest.
     Spawn,
     /// The property named by the second value, of the thing in the first.
@@ -294,6 +355,10 @@ pub enum Prim {
 pub enum Form {
     Const(Value),
     Read(Address),
+    /// The same, read as it stands and with nothing said about it: a
+    /// binding that holds nothing at all reads as nothing at all, so
+    /// that writing it elsewhere leaves that place unwritten too.
+    Glance(Address),
     Write(Address, Box<Form>),
     Apply(Callee, Vec<Form>),
     /// A loop as a form, run in the frame it appears in, instead
@@ -475,5 +540,9 @@ pub struct Routine {
     /// the way into it names: such a fault belongs where the program
     /// stands and not where the call did.
     pub declared_on: u32,
+    /// The slots a routine written where a value stands fills from what
+    /// it carried away with it, in the order the names were written.
+    /// Empty for every routine written out under a name.
+    pub carried: Vec<usize>,
     pub body: Form,
 }

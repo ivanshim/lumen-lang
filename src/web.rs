@@ -40,21 +40,62 @@ const CGI_VARS: [&str; 14] = [
 
 /// The request this run was given: what stands in the environment, and
 /// the body on the input when the request says one is coming.
-pub fn gathered() -> Request {
+/// Everything the run was started among, by name. What the host was
+/// given need not be text a program can hold: a name or a worth may
+/// carry bytes that spell no letter, and asking for those as text
+/// outright stops the run. Each is taken as far as it reads and the
+/// rest of it left behind, so that one such name cannot keep a program
+/// from starting at all.
+fn named_around(as_bytes: bool) -> Vec<(String, String)> {
+    env::vars_os()
+        .map(|(name, worth)| (held(&name, as_bytes), held(&worth, as_bytes)))
+        .collect()
+}
+
+/// What the host gave under one name, as the run is to hold it. Where
+/// text is bytes, every byte stands as the character of its own number,
+/// so that a worth carrying bytes that spell no letter reaches the
+/// program whole. Where text is letters, a byte spelling none is
+/// passed over, since no letter answers to it.
+fn told(name: &str, as_bytes: bool) -> String {
+    env::var_os(name).map_or_else(String::new, |worth| held(&worth, as_bytes))
+}
+
+fn held(worth: &std::ffi::OsStr, as_bytes: bool) -> String {
+    match as_bytes {
+        true => worth.as_encoded_bytes().iter().map(|b| char::from(*b)).collect(),
+        false => worth.to_string_lossy().into_owned(),
+    }
+}
+
+/// The same for a run of bytes the host read rather than was told: the
+/// body of a request and the parts it is written in. Where text is
+/// bytes every byte stands as the character of its own number, so a
+/// body written in some other encoding than the run's own reaches the
+/// program as the bytes that were sent; where text is letters the bytes
+/// are read as letters and one spelling none is passed over.
+fn bytes_held(worth: &[u8], as_bytes: bool) -> String {
+    match as_bytes {
+        true => worth.iter().map(|b| char::from(*b)).collect(),
+        false => String::from_utf8_lossy(worth).into_owned(),
+    }
+}
+
+pub fn gathered(as_bytes: bool) -> Request {
     let mut request = Request::new();
     // A run may be told which of the groups to gather at all, each by a
     // letter of its own, and how deep a name may point.
     let wanted = setting("variables_order").unwrap_or_else(|| "EGPCS".to_string());
     let takes = |letter: char| wanted.contains(letter);
     let deepest = setting("max_input_nesting_level").and_then(|said| said.trim().parse::<usize>().ok());
-    let query = env::var("QUERY_STRING").unwrap_or_default();
-    let asked = shallow_enough(fields(&query), deepest);
+    let query = told("QUERY_STRING", as_bytes);
+    let asked = shallow_enough(fields(&query, as_bytes), deepest);
     for (key, value) in asked {
         if takes('G') {
             request.push(("GET".to_string(), key, value, false));
         }
     }
-    let (posted, sent, amiss, raw) = body_given();
+    let (posted, sent, amiss, raw) = body_given(as_bytes);
     if let Some(raw) = raw {
         request.push(("SELF".to_string(), "body".to_string(), raw, false));
     }
@@ -69,28 +110,28 @@ pub fn gathered() -> Request {
     for (key, value, counted) in &sent {
         request.push(("FILES".to_string(), key.clone(), value.clone(), *counted));
     }
-    let cookies = env::var("HTTP_COOKIE").unwrap_or_default();
-    for (key, value) in crumbs(&cookies) {
+    let cookies = told("HTTP_COOKIE", as_bytes);
+    for (key, value) in crumbs(&cookies, as_bytes) {
         if takes('C') {
             request.push(("COOKIE".to_string(), key, value, false));
         }
     }
     if takes('S') {
         for name in CGI_VARS {
-            if let Ok(value) = env::var(name) {
-                request.push(("SERVER".to_string(), name.to_string(), value, false));
+            if env::var_os(name).is_some() {
+                request.push(("SERVER".to_string(), name.to_string(), told(name, as_bytes), false));
             }
         }
     }
     if takes('E') {
-        for (name, value) in env::vars() {
+        for (name, value) in named_around(as_bytes) {
             request.push(("ENV".to_string(), name, value, false));
         }
     }
     // What the run was started with, each under its own name. It is told
     // apart from the rest because a run may be told to gather none of
     // the groups and must still know what it was started with.
-    for (name, value) in env::vars() {
+    for (name, value) in named_around(as_bytes) {
         if let Some(named) = name.strip_prefix("PHP_INI_") {
             request.push(("SETTINGS".to_string(), named.to_string(), value, false));
         }
@@ -175,7 +216,7 @@ fn setting(name: &str) -> Option<String> {
 /// it. A body written as one piece is read as a form; a body written in
 /// parts is cut at its boundary, and a part naming a file is written out
 /// where the program can read it.
-fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>, Option<String>) {
+fn body_given(as_bytes: bool) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>, Option<String>) {
     let kind = env::var("CONTENT_TYPE").unwrap_or_default();
     let plain = kind.starts_with("application/x-www-form-urlencoded");
     // What a part is cut at runs from `boundary=` to the first comma, as
@@ -201,7 +242,7 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<Stri
     }
     // Whatever the body holds is kept as it came, so a program may read
     // it for itself however the run reads it.
-    let raw = Some(String::from_utf8_lossy(&body).into_owned());
+    let raw = Some(bytes_held(&body, as_bytes));
     // A run may be told not to take anything out of the body; it is
     // still there to be read as it came.
     let reads_body = setting("enable_post_data_reading").map_or(true, |said| !matches!(said.trim(), "0" | "" | "off" | "Off" | "false"));
@@ -214,7 +255,7 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<Stri
     if boundary.is_none() {
         let amiss = if in_parts_said { vec!["boundary".to_string()] } else { Vec::new() };
         return match plain {
-            true => (fields(raw.as_deref().unwrap_or_default()), Vec::new(), amiss, raw),
+            true => (fields(raw.as_deref().unwrap_or_default(), as_bytes), Vec::new(), amiss, raw),
             false => (Vec::new(), Vec::new(), amiss, raw),
         };
     }
@@ -222,14 +263,14 @@ fn body_given() -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<Stri
     if mark.starts_with('"') && !mark.ends_with('"') {
         return (Vec::new(), Vec::new(), vec!["boundary.wrong".to_string()], raw);
     }
-    let (posted, sent, amiss) = in_parts(&body, mark.trim_matches('"'));
+    let (posted, sent, amiss) = in_parts(&body, mark.trim_matches('"'), as_bytes);
     (posted, sent, amiss, raw)
 }
 
 /// A body written in parts: each part says what it is called, and a part
 /// that names a file is written out to a place of its own, which the
 /// program is told about the way PHP tells it.
-fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>) {
+fn in_parts(body: &[u8], boundary: &str, as_bytes: bool) -> (Vec<(String, String)>, Vec<(String, String, bool)>, Vec<String>) {
     let (mut posted, mut sent) = (Vec::new(), Vec::new());
     let mut amiss: Vec<String> = Vec::new();
     // A run may be told to take no files at all, and to take none larger
@@ -257,11 +298,16 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
         let head_end = find_bytes(piece, b"\r\n\r\n").map(|p| (p, 4)).or_else(|| find_bytes(piece, b"\n\n").map(|p| (p, 2)));
         rest = &after[end.min(after.len())..];
         let Some((head_end, gap)) = head_end else { continue };
-        let head = String::from_utf8_lossy(&piece[..head_end]).into_owned();
+        let head = bytes_held(&piece[..head_end], as_bytes);
         let mut content = &piece[head_end + gap..];
+        // The line ending that stands between a part and the mark after
+        // it belongs to neither and is taken off. Only the one: a part
+        // whose own last line is empty ends in two, and the second of
+        // them is the part's own.
         for tail in [b"\r\n".as_slice(), b"\n".as_slice()] {
             if content.ends_with(tail) {
                 content = &content[..content.len() - tail.len()];
+                break;
             }
         }
         let named = |what: &str| -> Option<String> { attribute(&head, what) };
@@ -288,7 +334,7 @@ fn in_parts(body: &[u8], boundary: &str) -> (Vec<(String, String)>, Vec<(String,
                 continue;
             }
             (Some(name), None) => {
-                let said = String::from_utf8_lossy(content).into_owned();
+                let said = bytes_held(content, as_bytes);
                 if name == "MAX_FILE_SIZE" {
                     form_limit = said.trim().parse().ok();
                 }
@@ -408,17 +454,17 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// `a=1&b=2` as pairs, each part unescaped.
-fn fields(text: &str) -> Vec<(String, String)> {
-    pairs(text, '&')
+fn fields(text: &str, as_bytes: bool) -> Vec<(String, String)> {
+    pairs(text, '&', as_bytes)
 }
 
-fn pairs(text: &str, between: char) -> Vec<(String, String)> {
+fn pairs(text: &str, between: char, as_bytes: bool) -> Vec<(String, String)> {
     text.split(between)
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .map(|part| match part.split_once('=') {
-            Some((key, value)) => (steps_of(&unescaped(key)), unescaped(value)),
-            None => (steps_of(&unescaped(part)), String::new()),
+            Some((key, value)) => (steps_of(&unescaped(key, as_bytes)), unescaped(value, as_bytes)),
+            None => (steps_of(&unescaped(part, as_bytes)), String::new()),
         })
         .collect()
 }
@@ -461,7 +507,7 @@ fn steps_of(name: &str) -> String {
 /// the space before it is dropped, and what follows the `=` is kept to
 /// the last letter, trailing spaces and all. Where a name comes twice
 /// the first one stands: a cookie is not written over by a later one.
-fn crumbs(text: &str) -> Vec<(String, String)> {
+fn crumbs(text: &str, as_bytes: bool) -> Vec<(String, String)> {
     let mut found: Vec<(String, String)> = Vec::new();
     for part in text.split(';') {
         let part = part.trim_start_matches([' ', '\t']);
@@ -469,7 +515,7 @@ fn crumbs(text: &str) -> Vec<(String, String)> {
             continue;
         }
         let (name, value) = match part.split_once('=') {
-            Some((name, value)) => (steps_of(name), unescaped_plainly(value)),
+            Some((name, value)) => (steps_of(name), unescaped_plainly(value, as_bytes)),
             None => (steps_of(part), String::new()),
         };
         if !found.iter().any(|(had, _)| *had == name) {
@@ -481,18 +527,26 @@ fn crumbs(text: &str) -> Vec<(String, String)> {
 
 /// A part of a URL as the text it stands for: `%41` is `A`, and a plus
 /// is a space where the piece was written as a form writes one.
-fn unescaped(text: &str) -> String {
-    undone(text, true)
+fn unescaped(text: &str, as_bytes: bool) -> String {
+    undone(text, true, as_bytes)
 }
 
 /// The same, save that a plus stands for itself: what a cookie carries
 /// is written plainly and a plus in it is a plus.
-fn unescaped_plainly(text: &str) -> String {
-    undone(text, false)
+fn unescaped_plainly(text: &str, as_bytes: bool) -> String {
+    undone(text, false, as_bytes)
 }
 
-fn undone(text: &str, plus_is_space: bool) -> String {
-    let bytes = text.as_bytes();
+fn undone(text: &str, plus_is_space: bool, as_bytes: bool) -> String {
+    // Where text is bytes, every character of the text stands for one
+    // byte already, so it is read a character at a time and what comes
+    // of it written back the same way. Where text is letters, the bytes
+    // an escape names are read as letters together, as they always were.
+    let bytes: Vec<u8> = match as_bytes {
+        true => text.chars().map(|letter| letter as u8).collect(),
+        false => text.as_bytes().to_vec(),
+    };
+    let bytes = bytes.as_slice();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -512,7 +566,7 @@ fn undone(text: &str, plus_is_space: bool) -> String {
         }
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    bytes_held(&out, as_bytes)
 }
 
 /// Answer requests on the given address by running the program once for

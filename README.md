@@ -50,7 +50,7 @@ cargo run -- --lang py examples/python/demo.py
 cargo run -- examples/rplumen/fibonacci.rpl
 
 # Run under a language definition read from disk at run time
-cargo run -- --lang langs/extras/php.json examples/php/loop.php
+cargo run -- --lang langs/php.json examples/php/loop.php
 cargo run -- --lang langs/extras/ruby.json examples/ruby/demo.rb
 cargo run -- --lang langs/extras/c.json examples/c/fibonacci.c
 cargo run -- --lang langs/extras/swift.json examples/swift/demo.swift
@@ -77,8 +77,8 @@ kernels/stack8/        crate lumen-stack8: the five, and three words for speed
 langs/                 language definitions as JSON, one file per language,
                        with a generated side-by-side comparison; every kernel
                        reads them. Lumen, RPLumen, Python and Rust are embedded at
-                       build time; langs/extras/ holds definitions read from
-                       disk at run time with --lang <path>
+                       build time; langs/php.json and langs/extras/ are read
+                       from disk at run time with --lang <path>
 langs/lib_lumen/       the Lumen standard library, written in Lumen
 langs/lib_<language>/  the same library as each other language spells it,
                        written by the porter from langs/lib_lumen/ and prepended
@@ -190,7 +190,7 @@ the default. See [docs/LUMEN_KERNEL_STACK8.md](docs/LUMEN_KERNEL_STACK8.md).
 | RPLumen | `.rpl` | built in | reverse Polish Lumen with Lumen's indented blocks: `5 3 +`, `8 'x' =`, `« 'n' = ... » 'f' =`, `cond if` / `else`, `while cond`, `0 10 'i' for`, `dup drop swap over rot` |
 | Python | `.py` | built in | indentation with `:`, `elif`, `def`, `range()`, `str`, `arr.append(x)`, `s[i]` |
 | Rust | `.rs` | built in | braces, `let mut`, `fn main()`, `println!("{}", x)`, `v.len()`, `x.to_string()` |
-| PHP | `.php` | `langs/extras/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` |
+| PHP | `.php` | `langs/php.json` | braces, `$variables`, `<?php`, case-insensitive keywords, `strval`, `array_push` |
 | Ruby | `.rb` | `langs/extras/ruby.json` | keyword blocks closed by `end`, `elsif`, `def`, `puts`, `nil`, `x.to_s`, `s.length` |
 | Pascal | `.pas` | `langs/extras/pascal.json` | `begin`/`end`, `:=`, `<>`, `div`/`mod`, `function f(n: integer): integer;` with a `var` section, `f := ...` |
 | C | `.c` | `langs/extras/c.json` | braces, `int x = 0;`, `long fib(int n)`, `printf("%d\n", x)`, `puts`, `main` |
@@ -203,8 +203,9 @@ one scoping rule, and `/` yielding an exact rational in Lumen or a real
 where the language says so (`op.div.result`). Constructs the kernel lacks
 (maps, `foreach`, `echo`, C's pointers, Swift's optionals) are left out of
 their definitions rather than approximated. The built-in definitions are
-compiled into the binary; the ones in `langs/extras/` are read from disk
-with `--lang <path>`, which is also how a definition of your own is run.
+compiled into the binary; PHP and the ones in `langs/extras/` are read
+from disk with `--lang <path>`, which is also how a definition of your
+own is run.
 
 Every Lumen example is also written in every other language whose
 definition spells what it needs: `scripts/port_examples.py` reads
@@ -286,7 +287,7 @@ under whatever the language calls them, `$_GET`, `$_POST`, `$_COOKIE`,
 `$_SERVER` and `$_REQUEST` for PHP.
 
 ```bash
-lumen-lang --serve 8080 --lang langs/extras/php.json site.php
+lumen-lang --serve 8080 --lang langs/php.json site.php
 curl 'http://127.0.0.1:8080/hello?who=Ada'
 ```
 
@@ -322,6 +323,7 @@ shape, stack26 and microcode10, were retired at the same time.
 - [docs/LUMEN_KERNEL_STACK8.md](docs/LUMEN_KERNEL_STACK8.md) — the stack8 kernel: the fast stack machine, eight words
 - [docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) — the kernel lab: evolving both kernel shapes for speed, cycle by cycle
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
+- [docs/REFERENCE_SUITE_WORK.md](docs/REFERENCE_SUITE_WORK.md) — working on the reference test suite: what to run, where a label goes, and what goes wrong quietly
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference
 - [docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) — external function design

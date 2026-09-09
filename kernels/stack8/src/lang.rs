@@ -58,6 +58,10 @@ pub struct Lang {
     /// beyond the last character there is.
     pub codepoint_amiss: Option<String>,
     pub codepoint_beyond: Option<String>,
+    /// The letter that, after the escape mark, begins a character named
+    /// by its number in sixteens with no brackets about it: one digit
+    /// or two, and the character of that number stands there.
+    pub byte_letter: Option<char>,
     /// What a language says of a number it cannot read.
     pub number_amiss: Option<String>,
     pub prologue: Option<String>,
@@ -82,6 +86,13 @@ pub struct Lang {
     /// significant digits one shows when simply written out.
     pub real_bits: Option<usize>,
     pub real_digits: Option<usize>,
+    /// The names the run keeps its counts of figures under: how many a
+    /// real written plainly carries, and how many one shown with its
+    /// kind carries. The kernel makes each a cell of the run's own and
+    /// asks it afresh every time it writes a real out, so a count the
+    /// run writes there while it goes is the count that is followed.
+    pub figures_binding: Option<String>,
+    pub figures_shown_binding: Option<String>,
     pub unicode_names: bool,
     pub sigil: Option<char>,
     pub keywords_folded: bool,
@@ -168,6 +179,9 @@ pub struct Lang {
     /// The word this language calls a thing's kind by, where it has
     /// one: a thing is of no kind the core knows.
     pub object_kind: Option<String>,
+    /// The kind words that name no class of their own: what a value
+    /// written with one of them may be is not settled by the word.
+    pub loose_kinds: Vec<String>,
     /// Whether the kind of a value is given as text spelled by the
     /// `system.kind.*` names, rather than as a value of its own. Where
     /// it is, those names are not bound to anything.
@@ -186,6 +200,30 @@ pub struct Lang {
     /// warning is one where reading a binding never written is a
     /// complaint rather than a stop.
     pub complaint_words: Vec<(Complaint, String)>,
+    /// The name of the setting that asks for a complaint to be dressed
+    /// for a reader of markup, and the dressing itself. Where the
+    /// setting says no, the dressing is put by before the first word of
+    /// the program is read and the plain words stand.
+    pub markup_setting: Option<String>,
+    /// What stands before the break of line a complaint opens with,
+    /// what stands after that break and before the word naming the
+    /// kind, and what stands after that word.
+    pub markup_kind: Option<(String, String, String)>,
+    /// What stands before and after the file a complaint names, and
+    /// before and after the line, the kernel's own break of line coming
+    /// after the last of it either way.
+    pub markup_place: Option<(String, String)>,
+    pub markup_line: Option<(String, String)>,
+    /// What stands before the address of a word's page, between the
+    /// address and the page's name, and after the name.
+    pub markup_page: Option<(String, String, String)>,
+    /// The name of the setting holding where the language's own pages
+    /// are kept, the pieces standing before and after a word's name in
+    /// the name of its page, and a mark of a word's name with what
+    /// stands in its place in a page's.
+    pub pages_setting: Option<String>,
+    pub page_named: Option<(String, String)>,
+    pub page_mark: Option<(String, String)>,
     pub line_binding: Option<String>,
     /// The names a program calls the routine it is written in, the
     /// class that routine belongs to, and the two written together.
@@ -196,6 +234,9 @@ pub struct Lang {
     /// The class a fault of the kernel's own is raised as, where a
     /// language names one, so that a program may take it like any other.
     pub fault_class: Option<String>,
+    /// The class a fault over what was handed over to be walked is
+    /// raised as.
+    pub fault_walk: Option<String>,
     /// The class a fault of a kind is raised as, where a language names
     /// one: working with numbers, dividing by nought, and a value of a
     /// kind the work cannot take. Each stands in for the plain class
@@ -209,6 +250,16 @@ pub struct Lang {
     /// The words a language puts before naming what an arithmetic step
     /// was handed, where one of them can take no part in it.
     pub operand_fault: Option<String>,
+    /// The words for taking the remainder by nought, where a language
+    /// tells that apart from dividing by nought, and the words for
+    /// shifting bits by a number below nought. Where a language gives
+    /// neither, the kernel's own words stand.
+    pub fault_modulo: Option<String>,
+    pub fault_shift: Option<String>,
+    /// Whether the two shifts read each side for the number it is
+    /// worth, the way arithmetic reads one, rather than reading it
+    /// straight as bits.
+    pub shift_by_number: bool,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -240,6 +291,9 @@ pub struct Lang {
     /// A second prologue, opening a run of code whose value is written
     /// out where it stands: PHP's `<?=`.
     pub prologue_echo: Option<String>,
+    /// Whether the marker opening a run of code is found however it is
+    /// written: PHP's `<?php` is `<?PHP` just as well.
+    pub prologue_folded: bool,
     pub bare_calls: bool,
     /// Whether the writer is written as an operator and not as a call:
     /// brackets after it group what follows rather than holding its
@@ -248,6 +302,24 @@ pub struct Lang {
     pub increments: Vec<String>,
     pub decrements: Vec<String>,
     pub interpolating: Vec<char>,
+    /// The mark that opens a string written over lines, PHP's `<<<`.
+    /// A label follows it, and the body runs to the line that label
+    /// stands on again.
+    pub heredoc: Option<String>,
+    /// Whether a run of figures in eights after a backslash names a
+    /// character by its number: the reference's `\101`.
+    pub octal_escapes: bool,
+    /// A shorter marker that opens a run of code, and the name of the
+    /// setting that must be turned on before it does. Where the setting
+    /// is off the marker is taken away before a word of the program is
+    /// read, so that what stands after it is page and not program.
+    pub prologue_brief: Option<String>,
+    pub prologue_brief_setting: Option<String>,
+    /// Whether text is held as the bytes it was written in rather than
+    /// as the letters those bytes spell. Under this, every character of
+    /// a piece of text stands for one byte and is worth its number, so
+    /// that the length of a piece of text is the count of its bytes.
+    pub text_is_bytes: bool,
     pub concat: Option<String>,
     pub foreach_words: Vec<String>,
     pub foreach_as_words: Vec<String>,
@@ -275,6 +347,17 @@ pub struct Lang {
     /// bindings, so one written inside another is there for the whole
     /// run once the routine holding it has run.
     pub routines_outermost: bool,
+    /// Whether a name merely read inside a routine is given a place of
+    /// that routine's own, rather than meaning the outermost binding of
+    /// that name. The place holds nothing until something writes there,
+    /// and reading it while it does falls through to the outermost
+    /// binding as before, so this tells only where a write from text
+    /// read in while the run goes may land.
+    pub own_names: bool,
+    /// Whether a `static` written at the top of text read in while the
+    /// run goes stands for a plain write of the name in the scope that
+    /// read it, keeping nothing from one reading to the next.
+    pub static_read_in: bool,
     /// The binding holding what the host found amiss in the request
     /// before the program ran, as a list of pieces of text, and the
     /// words for each thing that may be amiss. The host says only which
@@ -303,6 +386,14 @@ pub struct Lang {
     /// by text is the number that text opens with. Text that may be read
     /// letter by letter is not always text with places in this sense.
     pub text_places: bool,
+    /// What a language says when more than one letter is handed to a
+    /// place in text, only the first of them going in. Nothing where a
+    /// language holds its peace about it.
+    pub text_place_first: Option<String>,
+    /// What a language says of a name given to its binder of constants
+    /// that spells one of a class's own values rather than a constant.
+    /// Nothing where a language takes such a name as it comes.
+    pub define_scoped: Option<String>,
     /// The words standing for all the outermost bindings taken as an
     /// array, so that a place in it is the binding whose name the place
     /// spells: how a language reaches a global from inside a routine.
@@ -339,6 +430,35 @@ pub struct Lang {
     pub terminator_only: bool,
     /// The word a language puts before a program it cannot read.
     pub reading_word: Option<String>,
+    /// The words a language puts before whatever stopped the reading.
+    pub reading_unexpected: Option<String>,
+    /// The words before a character named by its number, which is how a
+    /// character that cannot be shown is best named.
+    pub reading_character: Option<String>,
+    /// The words on either side of a bracket left open, the line it was
+    /// opened on where that is not the line the reading stopped on, the
+    /// bracket that answered it wrongly, and a bracket answering none.
+    /// A language that gives none of these is not weighed for balance
+    /// at all: a bracket amiss shows up later as whatever the reading
+    /// makes of it.
+    pub unclosed_words: Option<(String, String)>,
+    pub unclosed_line: Option<String>,
+    pub mismatch_words: Option<(String, String)>,
+    pub unmatched_words: Option<(String, String)>,
+    /// The class a program that cannot be read is raised under.
+    pub fault_reading: Option<String>,
+    /// The words on either side of the line the reading of text was
+    /// asked for on, which together name where that text stands.
+    pub eval_place: Option<(String, String)>,
+    /// The words for reading a file in that will not go on without it:
+    /// where the file is not there the run is stopped instead of
+    /// answering false. The words on either side of the file's name say
+    /// so; a language naming none reads every file in the same way.
+    pub include_demanded: Vec<String>,
+    pub include_demanded_missing: Option<(String, String)>,
+    /// What a language says of a key between the brackets of a name
+    /// woven into text where the shorter writing does not take it.
+    pub woven_index_words: Option<String>,
     /// Whether a flag becomes text as the number it stands for.
     pub flags_count: bool,
     /// What a language says when a builtin that reads what the running
@@ -404,12 +524,21 @@ pub struct Lang {
     /// the walk over.
     pub giver_class: Option<String>,
     pub walk_giver: Option<String>,
+    /// What is said of a thing that hands over, to be walked in its
+    /// stead, something that is no walk at all: the words before the
+    /// name of what handed it over, and the words after.
+    pub giver_unwalkable: Option<(String, String)>,
     /// The words for asking a thing that is its own walk to hand out
     /// the items' own cells, which it has none of.
     pub walk_no_cell: Option<String>,
     /// The words for marking the name a walk gives its keys to as taking
     /// a cell: a key is not a place and has no cell to hand out.
     pub walk_key_no_cell: Option<String>,
+    /// Whether a walk that hands out the items' own cells keeps its
+    /// place by the item it handed out rather than by counting: where
+    /// the body moves that item along the array, or takes it out, the
+    /// walk moves with it.
+    pub walk_alive: bool,
     /// Words that may stand before a member and say nothing this kernel reads.
     pub modifier_words: Vec<String>,
     /// The modifiers saying how far a member may be reached from: only
@@ -427,6 +556,19 @@ pub struct Lang {
     /// answers to one.
     /// `a ?? b`: a when it is something, else b.
     pub otherwise_mark: Option<String>,
+    /// A bag of members a class may take in as its own, the word that
+    /// takes it in, and the word that gives one of its members another
+    /// name in the class taking it.
+    pub trait_words: Vec<String>,
+    pub uses_words: Vec<String>,
+    /// The word a routine written where a value stands says, before the
+    /// names it carries away from around it.
+    pub carries_words: Vec<String>,
+    /// The word a routine written short says, and the mark standing
+    /// between its parameters and the one expression it is: `fn ($x) =>
+    /// $x + 1`. Such a routine takes with it every name around it.
+    pub short_function: Option<(String, String)>,
+    pub uses_alias: Vec<String>,
     pub interface_words: Vec<String>,
     pub implements_words: Vec<String>,
     pub parent_words: Vec<String>,
@@ -499,9 +641,9 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
-w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.stmt.for.c | b ext.op.assign.compound
-w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define
+w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
+w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.stmt.static | w ext.stmt.global | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
@@ -510,36 +652,46 @@ w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.
 w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
-w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
+w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
 w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right
+w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
+w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
+w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
+w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
-w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
+w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
+w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.class.beneath | b ext.builtin.write.operator
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries | w ext.stmt.function.short
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
-w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value
+w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
+w ext.system.fault.modulo | w ext.system.fault.shift | b ext.op.bit.shift.numbers
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
-b ext.op.member.by_value | b ext.op.index.text | w ext.system.globals
+b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
+w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
+w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
+w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.system.reading.unclosed.mismatch | w ext.system.reading.unmatched
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
+w ext.system.real.figures | w ext.system.real.figures.shown
+b ext.stmt.function.own_names | b ext.stmt.static.read_in
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -590,6 +742,32 @@ impl<'a> Reader<'a> {
 
     fn head(&self, key: &str) -> Result<Option<String>, String> {
         Ok(self.strings(key)?.into_iter().next())
+    }
+
+    /// A label whose words stand on either side of what the kernel puts
+    /// between them: the first word before it, the second after. One
+    /// word alone leaves the kernel nothing to close with, so it is
+    /// refused rather than half read.
+    fn around(&self, key: &str) -> Result<Option<(String, String)>, String> {
+        let mut said = self.strings(key)?.into_iter();
+        match (said.next(), said.next()) {
+            (Some(before), Some(after)) => Ok(Some((before, after))),
+            (Some(_), None) => Err(format!("label '{key}' wants a word on either side of what it names")),
+            _ => Ok(None),
+        }
+    }
+
+    /// A label whose words stand about two things the kernel puts
+    /// between them: a word before the first, a word between the two,
+    /// and a word after the second. Fewer than three leaves the kernel
+    /// short of a piece, so they are refused rather than half read.
+    fn about_two(&self, key: &str) -> Result<Option<(String, String, String)>, String> {
+        let mut said = self.strings(key)?.into_iter();
+        match (said.next(), said.next(), said.next()) {
+            (Some(first), Some(second), Some(third)) => Ok(Some((first, second, third))),
+            (Some(_), ..) => Err(format!("label '{key}' wants three words about the two things it names")),
+            _ => Ok(None),
+        }
     }
 
     fn letters(&self, key: &str) -> Result<Vec<char>, String> {
@@ -942,7 +1120,8 @@ impl Lang {
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
             ("ext.builtin.var_dump", Builtin::Dump), ("ext.builtin.array", Builtin::Pack),
-            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase), ("ext.builtin.isset", Builtin::Held), ("ext.builtin.empty", Builtin::Hollow),
+            ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase), ("ext.builtin.array.front", Builtin::Lead),
+            ("ext.builtin.isset", Builtin::Held), ("ext.builtin.empty", Builtin::Hollow),
             ("ext.builtin.exit", Builtin::Leave),
             ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
             ("ext.builtin.args.at", Builtin::GivenAt), ("ext.builtin.time_limit", Builtin::TimeLimit),
@@ -953,10 +1132,16 @@ impl Lang {
             ("ext.builtin.at_end", Builtin::WhenDone), ("ext.builtin.complaint.handler", Builtin::Complainer), ("ext.builtin.complaint.say", Builtin::Complain),
             ("ext.builtin.calls", Builtin::Calls),
             ("ext.builtin.uncaught", Builtin::Untaken),
-            ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound),
-            ("ext.builtin.class.beneath", Builtin::ClassBeneath),
+            ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
+            ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
+            ("ext.builtin.clock", Builtin::Clock),
+            ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
+            ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
             ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
             ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.remove", Builtin::FileGone),
+            ("ext.builtin.shell", Builtin::ShellSaid),
+            ("ext.builtin.net.ask", Builtin::NetAsk), ("ext.builtin.wait", Builtin::Waited),
+            ("ext.builtin.run.begin", Builtin::RunBegin), ("ext.builtin.run.end", Builtin::RunEnd),
         ] {
             for lex in r.strings(tag)? {
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
@@ -1023,6 +1208,7 @@ impl Lang {
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
             codepoint_amiss: r.head("ext.lexical.escape.codepoint.amiss")?,
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
+            byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
@@ -1035,6 +1221,8 @@ impl Lang {
             integer_bits: r.count("ext.system.integer.bits")?,
             real_bits: r.count("ext.system.real.bits")?,
             real_digits: r.count("ext.system.real.digits")?,
+            figures_binding: r.head("ext.system.real.figures")?,
+            figures_shown_binding: r.head("ext.system.real.figures.shown")?,
             unicode_names: unicode,
             sigil: var_prefix,
             keywords_folded: r.flag("lexical.keywords_case_insensitive")?,
@@ -1104,6 +1292,7 @@ impl Lang {
             sort_bindings: kind_names,
             brief_kinds: r.strings("ext.system.kind.brief")?,
             object_kind: r.head("ext.system.kind.object")?,
+            loose_kinds: r.strings("ext.system.kind.loose")?,
             kind_spelled: r.flag("ext.system.kind.spelled")?,
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
@@ -1124,6 +1313,14 @@ impl Lang {
                 }
                 found
             },
+            markup_setting: r.head("ext.system.complaint.markup.setting")?,
+            markup_kind: r.about_two("ext.system.complaint.markup.kind")?,
+            markup_place: r.around("ext.system.complaint.markup.place")?,
+            markup_line: r.around("ext.system.complaint.markup.line")?,
+            markup_page: r.about_two("ext.system.complaint.markup.reference")?,
+            pages_setting: r.head("ext.system.complaint.reference.setting")?,
+            page_named: r.around("ext.system.complaint.reference.page")?,
+            page_mark: r.around("ext.system.complaint.reference.mark")?,
             line_binding: r.head("ext.system.source.line")?,
             routine_binding: r.head("ext.system.source.routine")?,
             class_binding: r.head("ext.system.source.class")?,
@@ -1133,7 +1330,11 @@ impl Lang {
             fault_division: r.head("ext.system.fault.class.division")?,
             fault_kind: r.head("ext.system.fault.class.kind")?,
             fault_value: r.head("ext.system.fault.class.value")?,
+            fault_walk: r.head("ext.system.fault.class.walk")?,
             operand_fault: r.head("ext.system.fault.operands")?,
+            fault_modulo: r.head("ext.system.fault.modulo")?,
+            fault_shift: r.head("ext.system.fault.shift")?,
+            shift_by_number: r.flag("ext.op.bit.shift.numbers")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,
@@ -1152,11 +1353,17 @@ impl Lang {
             },
             epilogue: r.strings("ext.lexical.epilogue")?,
             prologue_echo: r.head("ext.lexical.prologue.echo")?,
+            prologue_folded: r.flag("ext.lexical.prologue.folded")?,
             bare_calls: r.flag("ext.syntax.call.bare")?,
             writes_as_operator: r.flag("ext.builtin.write.operator")?,
             increments: r.strings("ext.op.increment")?,
             decrements: r.strings("ext.op.decrement")?,
             interpolating: r.letters("ext.lexical.interpolating_quotes")?,
+            heredoc: r.head("ext.lexical.heredoc")?,
+            octal_escapes: r.flag("ext.lexical.escape.octal")?,
+            prologue_brief: r.head("ext.lexical.prologue.brief")?,
+            prologue_brief_setting: r.head("ext.lexical.prologue.brief.setting")?,
+            text_is_bytes: r.flag("ext.system.text.bytes")?,
             concat: r.head("op.concat")?,
             foreach_words: r.strings("stmt.foreach")?,
             foreach_as_words: r.strings("stmt.foreach.as")?,
@@ -1178,6 +1385,8 @@ impl Lang {
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
+            own_names: r.flag("ext.stmt.function.own_names")?,
+            static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
             amiss_binding: r.head("ext.system.request.amiss")?,
             amiss_words: {
@@ -1202,6 +1411,8 @@ impl Lang {
             casts_kinds: r.flag("ext.op.cast")?,
             members_by_value: r.flag("ext.op.member.by_value")?,
             text_places: r.flag("ext.op.index.text")?,
+            text_place_first: r.head("ext.op.index.text.first")?,
+            define_scoped: r.head("ext.builtin.define.class_constant")?,
             globals_words: r.strings("ext.system.globals")?,
             unshared_written: r.strings("ext.op.reference.unshared.written")?,
             unshared_given: r.strings("ext.op.reference.unshared.given")?,
@@ -1213,6 +1424,17 @@ impl Lang {
             classes_folded: r.flag("ext.system.class.folded")?,
             terminator_only: r.flag("ext.stmt.terminator.only")?,
             reading_word: r.head("ext.system.complaint.reading")?,
+            reading_unexpected: r.head("ext.system.reading.unexpected")?,
+            reading_character: r.head("ext.system.reading.unexpected.character")?,
+            unclosed_words: r.around("ext.system.reading.unclosed")?,
+            unclosed_line: r.head("ext.system.reading.unclosed.line")?,
+            mismatch_words: r.around("ext.system.reading.unclosed.mismatch")?,
+            unmatched_words: r.around("ext.system.reading.unmatched")?,
+            fault_reading: r.head("ext.system.fault.class.reading")?,
+            eval_place: r.around("ext.builtin.eval.place")?,
+            include_demanded: r.strings("ext.builtin.include.demanded")?,
+            include_demanded_missing: r.around("ext.builtin.include.demanded.missing")?,
+            woven_index_words: r.head("ext.lexical.interpolating.index.amiss")?,
             flags_count: r.flag("system.flag.counts")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,
             args_outside_count: r.head("ext.builtin.args.count.outside")?,
@@ -1244,8 +1466,14 @@ impl Lang {
             walk_onward: r.head("ext.op.walk.onward")?,
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
+            giver_unwalkable: match r.strings("ext.op.walk.giver.unwalkable")?.as_slice() {
+                [] => None,
+                [before, after] => Some((before.clone(), after.clone())),
+                _ => return Err("ext.op.walk.giver.unwalkable takes exactly two pieces, what is said before the name and what is said after".to_string()),
+            },
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
             walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
+            walk_alive: r.flag("ext.op.walk.live")?,
             modifier_words: r.strings("ext.stmt.class.modifier")?,
             hidden_words: r.strings("ext.stmt.class.hidden")?,
             guarded_words: r.strings("ext.stmt.class.guarded")?,
@@ -1254,6 +1482,15 @@ impl Lang {
             scope_mark: r.head("ext.op.scope")?,
             instanceof_words: r.strings("ext.op.instanceof")?,
             otherwise_mark: r.head("ext.op.otherwise")?,
+            trait_words: r.strings("ext.stmt.class.trait")?,
+            uses_words: r.strings("ext.stmt.class.uses")?,
+            carries_words: r.strings("ext.stmt.function.carries")?,
+            short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
+                [] => None,
+                [word, mark] => Some((word.clone(), mark.clone())),
+                _ => return Err("ext.stmt.function.short takes exactly two words, the one it opens with and the mark before its body".to_string()),
+            },
+            uses_alias: r.strings("ext.stmt.class.uses.alias")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
             implements_words: r.strings("ext.stmt.class.implements")?,
             parent_words: r.strings("ext.stmt.class.parent")?,
@@ -1409,6 +1646,27 @@ impl Lang {
         Lang::spells(&self.stmt_ends, lex)
     }
 
+    /// Whether a kind written before a parameter names a class: a word
+    /// the language has a kind of its own for does not, nor does one it
+    /// lists as naming none.
+    pub fn names_a_class(&self, word: &str) -> bool {
+        self.kind_of_word(word).is_none() && !Lang::spells(&self.loose_kinds, word)
+    }
+
+    /// The word this language names a value's kind by, the shorter one
+    /// where it has one.
+    pub fn kind_word(&self, v: &crate::value::Value) -> String {
+        use crate::value::Sort;
+        const IN_ORDER: [Sort; 7] =
+            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
+        let Some(kind) = v.sort() else { return "value".to_string() };
+        let at = IN_ORDER.iter().position(|k| *k == kind);
+        match at.and_then(|i| self.brief_kinds.get(i)).filter(|word| *word != "-") {
+            Some(word) => word.clone(),
+            None => self.sort_bindings.iter().find(|(_, k)| *k == kind).map_or("value".to_string(), |(n, _)| n.clone()),
+        }
+    }
+
     /// The kind a word names, by the word the language asks a value's
     /// kind with or by the shorter word it complains with. Nothing where
     /// the word names no kind of the language's.
@@ -1423,11 +1681,57 @@ impl Lang {
         IN_ORDER.get(at).copied()
     }
 
+    /// What a language says of a character it has no reading for. Where
+    /// it names such characters by their number, it is named that way:
+    /// a character there is no showing cannot be shown in a complaint
+    /// either. Otherwise the kernel says it in its own plainer words.
+    pub fn stopped_at_character(&self, c: char, line: usize, column: usize) -> String {
+        match (&self.reading_unexpected, &self.reading_character) {
+            (Some(opening), Some(named)) => format!("{opening} {named}{:02X}", c as u32),
+            _ => format!("Unexpected character '{c}' at {line}:{column}"),
+        }
+    }
+
+    /// What a language says of a key between the brackets of a name
+    /// woven into text where the shorter writing does not take it.
+    /// Nothing where the language says nothing, such a key then being
+    /// left to stand as the letters it is written with.
+    pub fn woven_index_amiss(&self) -> Option<String> {
+        let (opening, said) = (self.reading_unexpected.as_ref()?, self.woven_index_words.as_ref()?);
+        Some(format!("{opening} {said}"))
+    }
+
     pub fn begins_name(&self, c: char) -> bool {
+        if self.text_is_bytes {
+            // Where text is bytes, a name is spelled in bytes too, and
+            // every byte past the plain seven-bit ones may stand in one.
+            return c == '_' || c.is_ascii_alphabetic() || (self.unicode_names && c >= '\u{80}');
+        }
         c == '_' || if self.unicode_names { c.is_alphabetic() } else { c.is_ascii_alphabetic() }
     }
 
     pub fn extends_name(&self, c: char) -> bool {
+        if self.text_is_bytes {
+            return c == '_' || c.is_ascii_alphanumeric() || (self.unicode_names && c >= '\u{80}');
+        }
         c == '_' || if self.unicode_names { c.is_alphanumeric() } else { c.is_ascii_alphanumeric() }
+    }
+
+    /// The bytes a piece of text stands for. Where text is bytes each
+    /// character is one of them and is worth its own number; otherwise
+    /// the bytes are the ones the letters are spelled with.
+    pub fn bytes_of(&self, s: &str) -> Vec<u8> {
+        match self.text_is_bytes {
+            true => s.chars().map(|c| c as u32 as u8).collect(),
+            false => s.as_bytes().to_vec(),
+        }
+    }
+
+    /// The text a run of bytes stands for, which is the other way about.
+    pub fn text_of(&self, bytes: &[u8]) -> String {
+        match self.text_is_bytes {
+            true => bytes.iter().map(|b| char::from(*b)).collect(),
+            false => String::from_utf8_lossy(bytes).into_owned(),
+        }
     }
 }

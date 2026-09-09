@@ -42,7 +42,9 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
-            let lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
+            let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
+            settle_brief(&mut lang, request);
+            settle_markup(&mut lang, request);
             return go(&lang, source, program_args, request);
         }
     }
@@ -51,8 +53,66 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 
 /// Run `source` under a definition given as JSON text.
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    settle_brief(&mut lang, request);
+    settle_markup(&mut lang, request);
     go(&lang, source, program_args, request)
+}
+
+/// What a setting the run was started with stands at, with the quotes a
+/// setting may be written in taken off, the way the reference reads one
+/// written down for it.
+fn setting_said(request: &[(String, String, String, bool)], setting: &str) -> Option<String> {
+    let said = request.iter().find(|(from, key, ..)| from == "SETTINGS" && *key == setting)?;
+    let worth = said.2.trim();
+    let bare = worth.strip_prefix('"').and_then(|rest| rest.strip_suffix('"'));
+    Some(bare.unwrap_or(worth).to_string())
+}
+
+/// Whether a complaint is dressed for a reader of markup. The setting
+/// that says so is one the run is started with and cannot change while
+/// it goes, so it is settled once, before a word of the program is
+/// read. Where it is off the dressing is taken away and the plain words
+/// stand; where the language gives no dressing there is nothing to take.
+fn settle_markup(lang: &mut Lang, request: &[(String, String, String, bool)]) {
+    let Some(setting) = lang.markup_setting.clone() else { return };
+    let said = setting_said(request, &setting).map(|worth| worth.to_ascii_lowercase());
+    // A setting stands for yes unless it is one of the words for no,
+    // which is how the reference reads one written in a file.
+    let on = matches!(said.as_deref(), Some(worth) if !matches!(worth, "" | "0" | "off" | "false" | "no"));
+    if !on {
+        lang.markup_kind = None;
+        lang.markup_place = None;
+        lang.markup_line = None;
+        lang.markup_page = None;
+    }
+}
+
+/// Where the language's own pages are kept, as the run was started.
+/// Nothing where the run names nowhere, and then a complaint about a
+/// word of the language points at no page.
+fn pages_kept(lang: &Lang, request: &[(String, String, String, bool)]) -> Option<String> {
+    let setting = lang.pages_setting.as_ref()?;
+    setting_said(request, setting).filter(|where_at| !where_at.is_empty())
+}
+
+/// Whether the shorter marker opens a run of code at all. The setting
+/// that says so is one the run is started with and cannot change while
+/// it goes, so it is settled once, before a word of the program is
+/// read. Where it is off the marker is taken away, and what follows it
+/// is page like any other text.
+fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
+    let Some(setting) = lang.prologue_brief_setting.clone() else { return };
+    let said = request
+        .iter()
+        .find(|(from, key, ..)| from == "SETTINGS" && *key == setting)
+        .map(|(.., worth, _)| worth.trim().to_ascii_lowercase());
+    // A setting stands for yes unless it is one of the words for no,
+    // which is how the reference reads one written in a file.
+    let on = matches!(said.as_deref(), Some(worth) if !matches!(worth, "" | "0" | "off" | "false" | "no"));
+    if !on {
+        lang.prologue_brief = None;
+    }
 }
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
@@ -73,7 +133,7 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
     let line = (row as u32).saturating_sub(before);
-    print!("\n{}: {} in {} on line {}\n", word, said, file, line);
+    print!("{}{}", engine::complaint_opening(lang, word, said), engine::complaint_place(lang, &file, line));
     // The run ends straight after this, and ending does not empty what
     // is waiting to be written, so it is emptied here.
     use std::io::Write;
@@ -92,10 +152,12 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let before = lines_before(request);
     let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
-    let tokens = layout::layout(read?, lang)?;
+    let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
+    let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
-    let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding];
+    let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding,
+        &lang.figures_binding, &lang.figures_shown_binding];
     for name in system.into_iter().flatten() {
         registry.slot(name);
     }
@@ -185,6 +247,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.written_in(place);
     }
+    machine.pages_are_kept(pages_kept(lang, request));
     // Where the program is written, as the request carries it.
     for (part, name) in &lang.source_bindings {
         let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == part);
@@ -200,6 +263,30 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Some(name) = &lang.precision_binding {
         machine.define(name, engine::places_default());
     }
+    // How many figures a real is written with is the run's own to
+    // settle while it goes, so each count lives in a cell the run
+    // reaches by name and the kernel reads again every time it writes
+    // a real out. A count of nought or below asks for the fewest
+    // figures that read back as the same number, which is where a run
+    // showing a real with its kind starts.
+    let shared = |v: Value| std::rc::Rc::new(std::cell::RefCell::new(v));
+    let mut counts = (None, None);
+    if let Some(name) = &lang.figures_binding {
+        let cell = shared(Value::Small(lang.real_digits.map_or(-1, |n| n as i64)));
+        machine.define(name, Value::Bond(cell.clone()));
+        counts.0 = Some(cell);
+    }
+    if let Some(name) = &lang.figures_shown_binding {
+        let cell = shared(Value::Small(-1));
+        machine.define(name, Value::Bond(cell.clone()));
+        counts.1 = Some(cell);
+    }
+    value::figures_kept_in(counts.0, counts.1);
+    // The room counted against the program is counted from here: what
+    // went before was the host reading the program and setting up the
+    // machine that runs it, and belongs to the host rather than to the
+    // program that asks how much room it has taken.
+    lumen_room::mark();
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
     if let Err(fault) = machine.invoke(&program, Vec::new()) {

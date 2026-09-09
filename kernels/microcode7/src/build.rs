@@ -67,6 +67,13 @@ pub struct Builder<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    /// The slots the routine being built fills from what it carried
+    /// away with it, gathered while its names are read.
+    carrying: Vec<usize>,
+    /// Where each bag of members a class may take in begins, by name:
+    /// the token just past the mark that opens its body. Its members are
+    /// read again wherever a class takes them in.
+    bags: HashMap<String, usize>,
     /// Remarks the reading itself raised, which belong ahead of anything
     /// the program prints because they were noticed before it ran.
     noted_when_read: Vec<Form>,
@@ -75,6 +82,19 @@ pub struct Builder<'a> {
     tokens: &'a [Token],
     pos: usize,
     layers: Vec<Layer>,
+    /// Whether this text was handed over while the run was already
+    /// going, as text given to the word that reads text is and as a
+    /// file asked for part way through is. A whole program built this
+    /// way is a piece of a run in progress, not a run of its own.
+    read_in: bool,
+    /// How many layers stood open before a word of this text was read.
+    /// A statement is at the top of what was handed over when no more
+    /// than these are open, whatever stands around them elsewhere.
+    outer_layers: usize,
+    /// Which names a `static` at the top of text handed over has spoken
+    /// for. Nothing is bound there that would show a name said twice,
+    /// so they are gathered here and counted.
+    spoken_for: Vec<String>,
     gensyms: usize,
     pub presumed: HashMap<String, Signature>,
     pub seen: HashMap<String, Signature>,
@@ -142,7 +162,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_from(tokens, table, seeded, assumed, strict, before, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false)
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -150,14 +170,16 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, false)
         .map_err(|said| (said, at.get(), hard.get()))
 }
 
-/// The same, said besides which file the text came out of, where it was
-/// read as the run went.
+/// The same, said besides which file the text came out of. Nothing but
+/// text read in while the run was already going is built this way, so a
+/// statement that means one thing in a program of its own and another
+/// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -175,13 +197,34 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true)
+}
+
+/// `build_within` and `build_from`, each saying besides which row the
+/// reading had got to when it stopped: text read as the run goes is
+/// told of by the line of its own that would not be read.
+pub fn build_within_at(
+    tokens: &[Token],
+    table: &Table,
+    seeded: &[String],
+    inside: &[String],
+    knows: Knows,
+    before: u32,
+    within: Option<(String, Option<String>)>,
+) -> Result<Built, (String, u32)> {
+    let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within, true).map_err(|said| (said, at.get()))
+}
+
+pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
+    let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true).map_err(|said| (said, at.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
@@ -195,7 +238,8 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         gives_back.extend(backs.iter().cloned());
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
-    let mut r = Builder { within: standing_in, shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let outer_layers = layers.len();
+    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -265,7 +309,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, body };
+    let program = Routine { ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -343,9 +387,45 @@ fn shared_parameters(tokens: &[Token], table: &Table) -> (HashMap<String, Vec<bo
 // ---------- node builders
 
 
+/// What a class body gathers as it is read: its properties and how far
+/// each is reached from, the values it keeps for itself, its constants
+/// and its methods.
+struct Members {
+    fields: Vec<(String, Form)>,
+    shared: Vec<(String, Form)>,
+    constants: Vec<(String, Form)>,
+    methods: Vec<(String, Rc<Routine>)>,
+    reaches: Vec<Reach>,
+}
+
 /// What a routine written where a value stands is called, being
 /// bound to no name of its own.
 const ANONYMOUS: &str = "{closure}";
+
+/// Whether a kind written before a parameter names a class: a word the
+/// language has a kind of its own for does not, nor does one it lists as
+/// naming none.
+fn names_a_class(table: &Table, word: &str) -> bool {
+    kind_made(table, word).is_none() && !table.spells("ext.system.kind.loose", word)
+}
+
+/// The word this language names a value's kind by, the shorter one where
+/// it has one.
+fn kind_word(table: &Table, v: &Value) -> String {
+    use crate::data::Kind;
+    let order = [Kind::Whole, Kind::Fraction, Kind::Decimal, Kind::Chars, Kind::Truth, Kind::Vector, Kind::Nothing];
+    let Some(kind) = v.kind() else { return "value".to_string() };
+    let at = order.iter().position(|k| *k == kind);
+    match at.and_then(|i| table.strings("ext.system.kind.brief").get(i)).filter(|word| *word != "-") {
+        Some(word) => word.clone(),
+        None => crate::exec::KIND_LABELS
+            .iter()
+            .find(|(_, k)| *k == kind)
+            .and_then(|(label, _)| table.single(label))
+            .unwrap_or("value")
+            .to_string(),
+    }
+}
 
 fn constant(v: Value) -> Form {
     Form::Const(v)
@@ -510,6 +590,13 @@ fn sequence(mut items: Vec<Form>) -> Form {
     }
 }
 
+/// Whether an operation can take this side as it stands, wanting no
+/// holding place of its own for it: a name or a plain value is fetched
+/// by the operation itself, so nothing at all happens before it.
+fn as_it_stands(node: &Form) -> bool {
+    matches!(node, Form::Read(_)) || matches!(node, Form::Const(v) if !matches!(v, Value::Routine(_)))
+}
+
 fn inert(node: &Form) -> bool {
     match node {
         Form::Const(_) | Form::Read(_) => true,
@@ -518,7 +605,7 @@ fn inert(node: &Form) -> bool {
             _ => true,
         }),
         Form::Apply(Callee::Prim(op, _), args) => {
-            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Gather | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
+            !matches!(op, Prim::Echo | Prim::Say | Prim::Out | Prim::Tell | Prim::Dump | Prim::Define | Prim::Gather | Prim::Raise | Prim::External | Prim::Append | Prim::Replace | Prim::Front | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Choose | Prim::Both | Prim::Either | Prim::Seq)
                 && args.iter().all(inert)
         }
         _ => false,
@@ -675,12 +762,16 @@ impl<'a> Builder<'a> {
         let frameless = |holds: Holds| holds == Holds::Nothing;
         let mut depth = 0;
         let mut found: Option<(usize, usize, usize)> = None;
+        // Where the walk stops at a function, that function is where a
+        // name of its own would be kept, and how far up it stands.
+        let mut routine: Option<(usize, usize)> = None;
         for (i, scope) in self.layers.iter().enumerate().rev() {
             if let Some(index) = scope.idents.iter().rposition(|n| n == name).filter(|_| scope.holds != Holds::Nothing) {
                 found = Some((i, depth, index));
                 break;
             }
             if scope.holds == Holds::Every && i != 0 {
+                routine = Some((i, depth));
                 break;
             }
             if !frameless(scope.holds) {
@@ -688,6 +779,25 @@ impl<'a> Builder<'a> {
             }
         }
         let global = self.global_at(name);
+        // A variable a function does no more than read is kept among
+        // that function's own names all the same
+        // (ext.stmt.function.own_names). Nothing is ever written there
+        // by the function itself, and a name holding nothing is read
+        // from the outermost binding as before, so no program can tell
+        // the difference; what the room is for is text handed over
+        // while the run goes, which is a piece of the function that
+        // read it and needs somewhere in its frame to write. Only what
+        // the language marks as a variable is kept: a bare word names a
+        // constant or a class, and what the builder makes for itself is
+        // none of the program's business.
+        if let (None, Some((i, up))) = (found, routine) {
+            let wears_mark = self.table.letter("identifier.variable_prefix").map_or(true, |mark| name.starts_with(mark));
+            if wears_mark && self.table.flag("ext.stmt.function.own_names") {
+                let own = &mut self.layers[i].idents;
+                own.push(name.to_string());
+                return Address { ident: Rc::from(name), up, at: own.len() - 1, fallback: Some(global) };
+            }
+        }
         match found {
             Some((i, depth, index)) if i != 0 => Address { ident: Rc::from(name), up: depth, at: index, fallback: Some(global) },
             Some((_, depth, index)) => Address { ident: Rc::from(name), up: depth, at: index, fallback: None },
@@ -784,6 +894,9 @@ impl<'a> Builder<'a> {
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         let declared_on = self.declared_at;
+        // What the routine around this one carries is set aside while
+        // this one is built, so that each keeps only its own.
+        let around = std::mem::take(&mut self.carrying);
         self.naming.push(name.to_string());
         // The classes the parameters were written to take, gathered as
         // they were read. A method is handed the thing it is for before
@@ -798,7 +911,8 @@ impl<'a> Builder<'a> {
         let body = body(self)?;
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
-        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, body }))))
+        let carried = std::mem::replace(&mut self.carrying, around);
+        Ok(constant(Value::Routine(Rc::new(Routine { ident: name.to_string(), least, formals: params, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -815,7 +929,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, body };
+            let program = Routine { ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -1086,6 +1200,9 @@ impl<'a> Builder<'a> {
                 self.advance();
                 return Ok(constant(Value::Nil));
             }
+            if self.key("ext.stmt.class.trait") {
+                return self.bag_decl();
+            }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
                 return self.class_decl();
             }
@@ -1180,13 +1297,45 @@ impl<'a> Builder<'a> {
     /// every function there is no layer around this one, so the setting
     /// stands where it is written and is guarded: it happens the first
     /// time the statement is reached and no other time.
+    ///
+    /// Text handed over while the run goes is read afresh each time it
+    /// is reached, so a statement at the top of such text has no run of
+    /// calls to keep anything across. There the statement is nothing
+    /// but a write of the name where the text was read
+    /// (ext.stmt.static.read_in), and what it wrote stays as anything
+    /// else written to that name stays.
     fn static_names(&mut self) -> Res<Form> {
         self.advance();
         let alone = self.layers.len() < 2;
+        let handed_over = self.read_in && self.layers.len() == self.outer_layers && self.table.flag("ext.stmt.static.read_in");
         let sep = self.table.single("syntax.call.separator").map(str::to_string);
         let mut here = Vec::new();
         loop {
             let name = self.need_word("after the static keyword")?;
+            if handed_over {
+                // A name is bound once here as anywhere: nothing is
+                // left behind to show one said twice, so the names
+                // spoken for are gathered and counted on their own.
+                if self.spoken_for.iter().any(|n| *n == name) {
+                    self.stopped_fatally = true;
+                    return Err(format!("Duplicate declaration of static variable {}", name));
+                }
+                self.spoken_for.push(name.clone());
+                let value = if self.on_assign() {
+                    self.advance();
+                    self.expr(0)?
+                } else {
+                    constant(Value::Nil)
+                };
+                here.push(Form::Write(self.address_to_write(&name), Box::new(value)));
+                match &sep {
+                    Some(s) if self.sign(s) => {
+                        self.advance();
+                        continue;
+                    }
+                    _ => return Ok(sequence(here)),
+                }
+            }
             // One name kept between calls is one binding: saying so
             // twice in one program is a thing the language refuses.
             let owner = self.layers.iter().rev().find(|s| s.holds == Holds::Every).expect("the top layer");
@@ -1286,6 +1435,99 @@ impl<'a> Builder<'a> {
     /// A class and what it holds: properties, constants, values kept by
     /// the class, and methods. The class becomes a value under its own
     /// name, so `new C` and `C::X` are ordinary reads.
+    /// A bag of members a class may take in as its own. Nothing of it
+    /// runs and nothing is bound to its name: where its body begins is
+    /// written down, and every class taking it in reads that body again
+    /// as its own, so the members stand in the class and not in the bag.
+    fn bag_decl(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let name = self.need_word("as the name of the members to take in")?;
+        self.skip_lead_word();
+        self.skip_line_ends();
+        let opens = table.strings("block.open");
+        let k = opens
+            .iter()
+            .position(|o| self.lexeme_of(o))
+            .ok_or_else(|| format!("Expected '{}' to open the members, got '{}'", opens[0], self.look().lexeme))?;
+        self.advance();
+        self.bags.insert(name, self.pos);
+        // The body is stepped over, mark for mark, since it is read
+        // where it is taken in and nowhere else.
+        let (open, close) = (opens[k].clone(), table.strings("block.close")[k].clone());
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}' to close the members", close));
+            }
+            if self.lexeme_of(&open) {
+                deep += 1;
+            } else if self.lexeme_of(&close) {
+                deep -= 1;
+            }
+            self.advance();
+        }
+        Ok(constant(Value::Nil))
+    }
+
+    /// `use T, U { T::f as g; }`: the members of each bag named are read
+    /// again here, standing in the class that takes them in, and any of
+    /// them may be given another name in it as well.
+    fn take_in_members(&mut self, held: &mut Members) -> Res<()> {
+        let table = self.table;
+        self.advance();
+        let apart = table.single("syntax.call.separator").map(str::to_string);
+        let mut taken = Vec::new();
+        loop {
+            taken.push(self.need_word("as the members to take in")?);
+            match &apart {
+                Some(sep) if self.sign(sep) => self.advance(),
+                _ => break,
+            };
+        }
+        for named in &taken {
+            let Some(from) = self.bags.get(named).copied() else {
+                return Err(format!("No members named {} to take in", named));
+            };
+            let close = table.strings("block.close")[0].clone();
+            let stood = self.pos;
+            self.pos = from;
+            let read = self.class_members(&close, held);
+            self.pos = stood;
+            read?;
+        }
+        // What follows may name members of the bags and give each
+        // another name in this class.
+        let opens = table.strings("block.open");
+        let Some(k) = opens.iter().position(|o| self.lexeme_of(o)) else { return Ok(()) };
+        self.advance();
+        let close = table.strings("block.close")[k].clone();
+        self.skip_line_ends();
+        while !self.lexeme_of(&close) && !self.exhausted() {
+            let first = self.need_word("as the member to name again")?;
+            let member = match table.single("ext.op.scope").map_or(false, |m| self.sign(m)) {
+                true => {
+                    self.advance();
+                    self.need_word("as the member to name again")?
+                }
+                false => first,
+            };
+            if !self.key("ext.stmt.class.uses.alias") {
+                return Err(format!("Expected '{}' after the member to name again", table.single("ext.stmt.class.uses.alias").unwrap_or("as")));
+            }
+            self.advance();
+            let called = self.need_word("as the other name")?;
+            let found = held.methods.iter().find(|(n, _)| *n == member).map(|(_, p)| p.clone());
+            let Some(program) = found else {
+                return Err(format!("No member named {} among the ones taken in", member));
+            };
+            held.methods.push((called, program));
+            self.skip_line_ends();
+        }
+        self.need_lexeme(&close)?;
+        Ok(())
+    }
+
     fn class_decl(&mut self) -> Res<Form> {
         let table = self.table;
         let word = self.advance().lexeme;
@@ -1324,99 +1566,29 @@ impl<'a> Builder<'a> {
         let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the class, got '{}'", opens[0], self.look().lexeme))?;
         self.advance();
         let close = table.strings("block.close")[k].clone();
-        let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
-        let mut reaches: Vec<Reach> = Vec::new();
-        let mut methods = Vec::new();
+        let (fields, shared, constants) = (Vec::new(), Vec::new(), Vec::new());
+        let reaches: Vec<Reach> = Vec::new();
+        let methods = Vec::new();
         self.skip_line_ends();
         // What a method keeps between calls is set where the class is
         // declared, as a plain routine's own values are set where the
         // routine is defined.
         let statics_before = self.statics.len();
-        while !self.lexeme_of(&close) && !self.exhausted() {
-            let mut kept = false;
-            let mut reach = Reach::Everywhere;
-            while self.look().shape == Shape::Bare {
-                if self.key("ext.stmt.class.shared") {
-                    kept = true;
-                } else if self.key("ext.stmt.class.hidden") {
-                    reach = Reach::Alone;
-                } else if self.key("ext.stmt.class.guarded") {
-                    reach = Reach::Within;
-                } else if !self.key("ext.stmt.class.modifier") {
-                    break;
-                }
-                self.advance();
-            }
-            if self.key("ext.stmt.const") {
-                self.advance();
-                let member = self.need_word("as the constant name")?;
-                self.need_assign("after the constant name")?;
-                constants.push((member, self.expr(0)?));
-            } else if self.key("stmt.function") {
-                self.advance();
-                let gives_cell = self.skip_reference();
-                let member = self.need_word("as the method name")?;
-                self.giving_cells.push(gives_cell);
-                let program = self.method(&member);
-                self.giving_cells.pop();
-                methods.push((member, program?));
-                // A parameter of the maker that names a property makes
-                // the class carry that property too.
-                for named in std::mem::take(&mut self.also_property) {
-                    let bare = match table.letter("identifier.variable_prefix") {
-                        Some(sigil) => named.trim_start_matches(sigil).to_string(),
-                        None => named,
-                    };
-                    fields.push((bare, constant(Value::Nil)));
-                    reaches.push(Reach::Everywhere);
-                }
-            } else {
-                // A property, perhaps with a type word before its name.
-                if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
-                    self.advance();
-                }
-                // One declaration may name several properties, written
-                // apart the way a call's arguments are.
-                let apart = table.single("syntax.call.separator").map(str::to_string);
-                loop {
-                    let member = self.need_word("as the property name")?;
-                    let bare = match table.letter("identifier.variable_prefix") {
-                        Some(sigil) => member.trim_start_matches(sigil).to_string(),
-                        None => member.clone(),
-                    };
-                    let value = match self.on_assign() {
-                        true => {
-                            self.advance();
-                            self.expr(0)?
-                        }
-                        false => constant(Value::Nil),
-                    };
-                    if kept {
-                        shared.push((bare, value));
-                    } else {
-                        fields.push((bare, value));
-                        reaches.push(reach);
-                    }
-                    match &apart {
-                        Some(sep) if self.sign(sep) => self.advance(),
-                        _ => break,
-                    };
-                }
-            }
-            self.skip_line_ends();
-        }
+        let mut held = Members { fields, shared, constants, methods, reaches };
+        self.class_members(&close, &mut held)?;
+        let Members { fields, shared, constants, methods, reaches } = held;
         self.need_lexeme(&close)?;
         self.within = outer;
         // What it is built on first, then a value for each property, each
         // kept value and each constant, in the order the plan names them.
         let mut values = Vec::new();
-        if let Some(under) = &under {
-            let under = self.class_binding(under);
-            values.push(self.read(&under));
+        if let Some(under) = &under.clone() {
+            let bound = self.class_binding(under);
+            values.push(self.read_bound(under, &bound));
         }
-        for named in &answers {
-            let named = self.class_binding(named);
-            let read = self.read(&named);
+        for named in &answers.clone() {
+            let bound = self.class_binding(named);
+            let read = self.read_bound(named, &bound);
             values.push(read);
         }
         let names = |parts: Vec<(String, Form)>, values: &mut Vec<Form>| -> Vec<String> {
@@ -1445,6 +1617,90 @@ impl<'a> Builder<'a> {
         let mut items = vec![written];
         items.extend(kept);
         Ok(sequence(items))
+    }
+
+    /// The members a class or a bag declares, read one after another
+    /// until the mark that closes the body. A bag's members are read
+    /// again here, at the `use` that takes them in, so that they stand
+    /// in the class taking them and not in the bag.
+    fn class_members(&mut self, close: &str, held: &mut Members) -> Res<()> {
+        let table = self.table;
+        while !self.lexeme_of(close) && !self.exhausted() {
+            let mut kept = false;
+            let mut reach = Reach::Everywhere;
+            while self.look().shape == Shape::Bare {
+                if self.key("ext.stmt.class.shared") {
+                    kept = true;
+                } else if self.key("ext.stmt.class.hidden") {
+                    reach = Reach::Alone;
+                } else if self.key("ext.stmt.class.guarded") {
+                    reach = Reach::Within;
+                } else if !self.key("ext.stmt.class.modifier") {
+                    break;
+                }
+                self.advance();
+            }
+            if self.key("ext.stmt.class.uses") {
+                self.take_in_members(held)?;
+            } else if self.key("ext.stmt.const") {
+                self.advance();
+                let member = self.need_word("as the constant name")?;
+                self.need_assign("after the constant name")?;
+                held.constants.push((member, self.expr(0)?));
+            } else if self.key("stmt.function") {
+                self.advance();
+                let gives_cell = self.skip_reference();
+                let member = self.need_word("as the method name")?;
+                self.giving_cells.push(gives_cell);
+                let program = self.method(&member);
+                self.giving_cells.pop();
+                held.methods.push((member, program?));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.also_property) {
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => named.trim_start_matches(sigil).to_string(),
+                        None => named,
+                    };
+                    held.fields.push((bare, constant(Value::Nil)));
+                    held.reaches.push(Reach::Everywhere);
+                }
+            } else {
+                // A property, perhaps with a type word before its name.
+                if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
+                    self.advance();
+                }
+                // One declaration may name several properties, written
+                // apart the way a call's arguments are.
+                let apart = table.single("syntax.call.separator").map(str::to_string);
+                loop {
+                    let member = self.need_word("as the property name")?;
+                    let bare = match table.letter("identifier.variable_prefix") {
+                        Some(sigil) => member.trim_start_matches(sigil).to_string(),
+                        None => member.clone(),
+                    };
+                    let value = match self.on_assign() {
+                        true => {
+                            self.advance();
+                            self.expr(0)?
+                        }
+                        false => constant(Value::Nil),
+                    };
+                    if kept {
+                        held.shared.push((bare, value));
+                    } else {
+                        held.fields.push((bare, value));
+                        held.reaches.push(reach);
+                    }
+                    match &apart {
+                        Some(sep) if self.sign(sep) => self.advance(),
+                        _ => break,
+                    };
+                }
+            }
+            self.skip_line_ends();
+        }
+        Ok(())
     }
 
     /// A method: a program whose first parameter is the thing it is for,
@@ -1677,6 +1933,14 @@ impl<'a> Builder<'a> {
         let at = self.gensym("at");
         let at_name = at.ident.to_string();
         let start = Form::Write(at, Box::new(constant(Value::Small(0))));
+        // A language may have the walk keep its place by the item it
+        // handed out and not by counting. The cell of that item is tied
+        // to a name of the walk's own, which holds nothing at all until
+        // the first pass has handed one out.
+        let by_hand = shares.is_some() && self.table.flag("ext.op.walk.live");
+        let kept = by_hand.then(|| self.gensym("held"));
+        let kept_name = kept.as_ref().map(|k| k.ident.to_string());
+        let empty = kept.map(|k| Form::Write(k, Box::new(constant(Value::Nil))));
         if let Some(k) = &key {
             self.address_to_write(k);
         }
@@ -1692,6 +1956,7 @@ impl<'a> Builder<'a> {
         let (test_at, test_over) = (at_name.clone(), over.clone());
         let (walk, walk_at) = (over.clone(), at_name.clone());
         let (step_at, step_over) = (at_name, over);
+        let (body_kept, step_kept) = (kept_name.clone(), kept_name.clone());
         // Only a language with things to take members off need ask
         // whether the place a pass has reached still holds one.
         let things = self.table.single("ext.stmt.class").is_some();
@@ -1712,6 +1977,15 @@ impl<'a> Builder<'a> {
                         let held = r.address_to_read(named);
                         let tied = r.address_to_write(&item);
                         items.push(Form::Tie(tied, Box::new(Form::ShareItem(held, Box::new(at)))));
+                        // The walk's own name takes the same cell: a
+                        // place asked twice for its cell answers with
+                        // the one it was made into the first time.
+                        if let Some(mine) = &body_kept {
+                            let at = r.read(&walk_at);
+                            let held = r.address_to_read(named);
+                            let ours = r.address_to_write(mine);
+                            items.push(Form::Tie(ours, Box::new(Form::ShareItem(held, Box::new(at)))));
+                        }
                     }
                     None => {
                         let (bag, at) = (r.read(&walk), r.read(&walk_at));
@@ -1761,17 +2035,40 @@ impl<'a> Builder<'a> {
                 Ok(r.choose(there, pass, constant(Value::Nil)))
             },
             Some(move |r: &mut Self| {
-                let here = r.read(&step_at);
-                let next = prim_call(Prim::Plus, vec![here, constant(Value::Small(1))]);
+                let next = match &step_kept {
+                    // One past where the item handed out now lies: the
+                    // body may have carried it further along the array,
+                    // or taken it out from under the walk altogether.
+                    Some(mine) => {
+                        let (walking, here) = (r.read(&step_over), r.read(&step_at));
+                        let ours = r.address_to_write(mine);
+                        prim_call(Prim::PastHeld, vec![walking, here, Form::Share(ours)])
+                    }
+                    None => {
+                        let here = r.read(&step_at);
+                        prim_call(Prim::Plus, vec![here, constant(Value::Small(1))])
+                    }
+                };
                 let counted = r.write(&step_at, next);
                 let walking = r.read(&step_over);
                 Ok(sequence(vec![counted, prim_call(Prim::StepOn, vec![walking])]))
             }),
         )?;
-        Ok(match alone {
-            Some(asked) => sequence(vec![asked, hold, start, looped]),
-            None => sequence(vec![hold, start, looped]),
-        })
+        // Once the walk is over it lets its last item go, so that the
+        // place holding it counts as shared only while a name of the
+        // program's own still holds it.
+        let loosed = kept_name.map(|mine| {
+            let ours = self.address_to_write(&mine);
+            Form::Forget(ours)
+        });
+        let mut all = Vec::new();
+        all.extend(alone);
+        all.push(hold);
+        all.push(start);
+        all.extend(empty);
+        all.push(looped);
+        all.extend(loosed);
+        Ok(sequence(all))
     }
 
     /// `for (init; test; step) body`: the init, then a cycle whose step
@@ -1907,7 +2204,7 @@ impl<'a> Builder<'a> {
                 // what follows however it is written, so brackets after
                 // it group rather than hold what it is given.
                 Some(Prim::Out) if self.table.flag("ext.builtin.write.operator") => true,
-                Some(Prim::Append | Prim::Replace | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
+                Some(Prim::Append | Prim::Replace | Prim::Front | Prim::Define | Prim::Gather | Prim::Erase | Prim::Standing | Prim::Hollow) | None => false,
                 Some(_) => !bracketed,
             };
             if bare {
@@ -2168,6 +2465,22 @@ impl<'a> Builder<'a> {
                 // reference asks to be written out rather than left to
                 // be understood.
                 let nothing = matches!(spare, Form::Const(Value::Nil));
+                // A parameter written with a class's name takes a thing
+                // of that class, and nothing else may stand for what it
+                // falls back on. Only a value written out is told apart
+                // here, and the reading stops over it as a fault of the
+                // run.
+                if let (Some(kind), Form::Const(worth)) = (self.formal_kinds.last().and_then(Clone::clone), &spare) {
+                    if !nothing && names_a_class(table, &kind) {
+                        self.stopped_fatally = true;
+                        return Err(format!(
+                            "Cannot use {} as default value for parameter {} of type {}",
+                            kind_word(table, worth),
+                            params.last().map_or("", String::as_str),
+                            kind
+                        ));
+                    }
+                }
                 if nothing && !takes_nothing && kinded && self.tells_place {
                     let whose = match &self.within {
                         Some((class, _)) => format!("{}::{}", class, named),
@@ -2252,9 +2565,20 @@ impl<'a> Builder<'a> {
             self.skip_nothing_mark();
             self.need_word("as a return type")?;
         }
+        // A routine written where a value stands may take names from
+        // around it away with it: the names around it are gone by the
+        // time anybody calls it.
+        let carried = self.carried_names()?;
+        let taken = carried.clone();
         let declared = self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme);
         let statics_before = self.statics.len();
         let program = self.routine(&name, Holds::Every, Traps::Yields, params, least, |r| {
+            // The names taken away sit in the slots after the
+            // parameters, filled from what was taken when it is called.
+            for (named, _) in &taken {
+                let slot = r.address_to_write(named);
+                r.carrying.push(slot.at);
+            }
             let mut items = r.spare_values(spares, &formals)?;
             if declared {
                 loop {
@@ -2273,6 +2597,24 @@ impl<'a> Builder<'a> {
         items.extend(self.statics.drain(statics_before..));
         // A routine written where a value stands is bound to no name and
         // stands for itself; one written out is bound to its name.
+        // What is taken away is read where the routine stands, and the
+        // routine carries it off.
+        let program = match carried.is_empty() {
+            true => program,
+            false => {
+                let mut given = vec![program];
+                for (named, by_cell) in &carried {
+                    given.push(match by_cell {
+                        true => {
+                            let shared = self.address_to_write(named);
+                            Form::Share(shared)
+                        }
+                        false => self.read(named),
+                    });
+                }
+                prim_call(Prim::Carry, given)
+            }
+        };
         items.push(match bound {
             false => program,
             // A language may bind every routine among the outermost
@@ -2287,6 +2629,125 @@ impl<'a> Builder<'a> {
             },
         });
         Ok(sequence(items))
+    }
+
+    /// A routine written short: its parameters, the mark, and the one
+    /// expression it answers with. Every name standing around it goes
+    /// with it as it stands, since a routine written this short has
+    /// nowhere to say which of them it wants.
+    fn short_func(&mut self) -> Res<Form> {
+        let table = self.table;
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
+        self.need_sign(open, "after the word for a short routine")?;
+        let (params, spares, _, said) = self.parameters(ANONYMOUS)?;
+        let least = params.len() - spares.len();
+        let formals = params.clone();
+        let returns_here = self.look().shape == Shape::Sign
+            && (table.spells("stmt.function.returns", &self.look().lexeme) || table.spells("ext.stmt.function.returns", &self.look().lexeme));
+        if returns_here {
+            self.advance();
+            self.skip_nothing_mark();
+            self.need_word("as a return type")?;
+        }
+        let mark = table.strings("ext.stmt.function.short").get(1).cloned().ok_or_else(|| "A short routine needs a mark before its body".to_string())?;
+        self.need_sign(&mark, "before the body of a short routine")?;
+        // The names standing around it, save the ones it names itself
+        // and the ones the kernel keeps for its own working.
+        // A routine written this short has nowhere to say which names it
+        // wants, so its body is read once to find out: it is read
+        // through, the names it writes are noted, what came of it is
+        // thrown away, and it is read again for the routine itself.
+        let began = self.pos;
+        let statics_here = self.statics.len();
+        let wanted = {
+            let taking = params.clone();
+            let over = spares.clone();
+            let named_here = formals.clone();
+            self.routine(ANONYMOUS, Holds::Every, Traps::Yields, taking, least, |r| {
+                let mut items = r.spare_values(over, &named_here)?;
+                items.push(r.expr(0)?);
+                Ok(sequence(items))
+            })?;
+            let ended = self.pos;
+            let sigil = table.letter("identifier.variable_prefix");
+            let mut names = std::collections::BTreeSet::new();
+            for tok in &self.tokens[began..ended] {
+                let a_binding = tok.shape == Shape::Bare && sigil.map_or(false, |m| tok.lexeme.starts_with(m));
+                if a_binding && !formals.contains(&tok.lexeme) {
+                    names.insert(tok.lexeme.clone());
+                }
+            }
+            names
+        };
+        self.statics.truncate(statics_here);
+        self.pos = began;
+        let carried: Vec<(String, bool)> = wanted.into_iter().map(|named| (named, false)).collect();
+        let taken = carried.clone();
+        let program = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, params, least, |r| {
+            for (named, _) in &taken {
+                let slot = r.address_to_write(named);
+                r.carrying.push(slot.at);
+            }
+            let mut items = r.spare_values(spares, &formals)?;
+            // The one expression stands where it is written, so whatever
+            // is said while it runs names that line and not the line the
+            // call was made from.
+            let row = (r.look().row as u32).saturating_sub(r.before);
+            let body = r.expr(0)?;
+            items.push(Form::OnLine(row, Box::new(body)));
+            Ok(sequence(items))
+        })?;
+        let program = match carried.is_empty() {
+            true => program,
+            false => {
+                let mut given = vec![program];
+                for (named, _) in &carried {
+                    // A name never written to goes with it as nothing at
+                    // all: the routine was never told to want it, so the
+                    // taking says nothing of it, and reading it inside is
+                    // what says it was never written.
+                    let slot = self.address_to_read(named);
+                    given.push(Form::Glance(slot));
+                }
+                prim_call(Prim::Carry, given)
+            }
+        };
+        let mut items: Vec<Form> = said;
+        items.push(program);
+        Ok(sequence(items))
+    }
+
+    /// `use ($a, &$b)` after a routine written where a value stands: the
+    /// names it takes away with it, and whether each is taken as it
+    /// stands or as the cell it shares with the name it came from.
+    fn carried_names(&mut self) -> Res<Vec<(String, bool)>> {
+        let table = self.table;
+        let words = table.strings("ext.stmt.function.carries");
+        if words.is_empty() || !(self.look().shape == Shape::Bare && words.iter().any(|w| *w == self.look().lexeme)) {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
+        let close = table.single("syntax.call.close").ok_or_else(|| "This language has no call syntax".to_string())?;
+        let between = table.single("syntax.call.separator").map(str::to_string);
+        self.need_sign(open, "after the word for what a routine takes away")?;
+        let mut names = Vec::new();
+        while !self.sign(close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            let by_cell = self.skip_reference();
+            let named = self.need_word("as a name to take away")?;
+            names.push((named, by_cell));
+            if let Some(sep) = &between {
+                if self.sign(sep) {
+                    self.advance();
+                }
+            }
+        }
+        self.need_sign(close, "after what a routine takes away")?;
+        Ok(names)
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
@@ -2411,6 +2872,25 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => self.expr(0)?,
         };
+        // Where a language writes into text, a place there holds one
+        // letter and no more, so a write into a single named place is
+        // worth the letter that went in and not the whole of what was
+        // handed over. Only what is written into can say whether this
+        // is text, so it is read once, quietly, after the value: a name
+        // holding nothing has nothing to answer for here.
+        if plain && shared_value.is_none() && self.table.flag("ext.op.index.text") {
+            let named = match &expr {
+                Form::Apply(Callee::Prim(Prim::At, _), args) if args.len() == 2 => match args.first() {
+                    Some(Form::Read(slot)) => Some(slot.ident.to_string()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(named) = named {
+                let into = Form::Muted(Box::new(self.read(&named)));
+                value = prim_call(Prim::Letter, vec![value, into]);
+            }
+        }
         let keep = (gives_back && plain).then(|| {
             self.gensyms += 1;
             format!("#written{}", self.gensyms)
@@ -2826,7 +3306,16 @@ impl<'a> Builder<'a> {
             if self.look().shape == Shape::Bare && table.spells("ext.op.instanceof", &text) {
                 self.advance();
                 let named = self.need_word("as the class to test against")?;
-                left = prim_call(Prim::Akin, vec![left, constant(Value::text(&named))]);
+                // A class is usually written out where one is tested
+                // against. Where a binding is written there instead, it
+                // is read: what it holds spells the class, or is a thing
+                // whose own class is the one meant.
+                let a_binding = table.letter("identifier.variable_prefix").map_or(false, |mark| named.starts_with(mark));
+                let against = match a_binding {
+                    true => self.read(&named),
+                    false => constant(Value::text(&named)),
+                };
+                left = prim_call(Prim::Akin, vec![left, against]);
                 continue;
             }
             let Some(op) = table.dyadic.get(&text).copied() else {
@@ -2855,7 +3344,30 @@ impl<'a> Builder<'a> {
                 }
                 other => {
                     let right = self.expr(floor_right)?;
-                    prim_call(other, vec![left, right])
+                    // A bare name is fetched when the operator falls,
+                    // not when it stands, so a write on the far side is
+                    // seen by it. Nothing else is fetched that late: a
+                    // property, a class's own value, a place in an
+                    // array or what a call gave back is set down where
+                    // it stands, out of a later write's reach. So the
+                    // far side is set down first and the name looked at
+                    // after it, both operands then being addresses the
+                    // operation reads for itself.
+                    let late = match &left {
+                        Form::Read(slot) if !as_it_stands(&right) => Some(slot.ident.clone()),
+                        _ => None,
+                    };
+                    match late {
+                        Some(named) => {
+                            let by = self.gensym("side");
+                            let set = Form::Write(by.clone(), Box::new(right));
+                            // Where the name is looked for again, since
+                            // the far side may be what first bound it.
+                            let now = self.read(&named);
+                            sequence(vec![set, prim_call(other, vec![now, Form::Read(by)])])
+                        }
+                        None => prim_call(other, vec![left, right]),
+                    }
                 }
             };
         }
@@ -3018,6 +3530,14 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
+                } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
+                    && table.single("syntax.call.open").map_or(false, |o| self.sign(o))
+                {
+                    // A routine written short is one expression, and
+                    // takes with it every name standing around it: it
+                    // has nowhere to say which of them it wants.
+                    let built = self.short_func()?;
+                    return self.subscript(built);
                 } else if table.spells("stmt.function", &t.lexeme)
                     && table.single("syntax.call.open").map_or(false, |o| {
                         self.sign(o)
@@ -3055,9 +3575,21 @@ impl<'a> Builder<'a> {
                         let (Some(Form::Const(Value::Text(name))), 2) = (args.first(), args.len()) else {
                             return Err(format!("{}() needs a quoted name and a value", t.lexeme));
                         };
-                        let slot = self.global_address(&name.to_string());
+                        let name = name.to_string();
                         let value = args.pop().unwrap();
-                        sequence(vec![Form::Write(slot, Box::new(value)), constant(Value::Flag(true))])
+                        // A name carrying the scope mark spells one of a
+                        // class's own values and no constant at all. A
+                        // language with words for that turns the name
+                        // down, saying them where the run reaches the
+                        // call, so a program may take it as any fault.
+                        let scoped = table.single("ext.op.scope").map_or(false, |m| name.contains(m));
+                        match (scoped, table.single("ext.builtin.define.class_constant")) {
+                            (true, Some(said)) => sequence(vec![value, prim_call(Prim::Raise, vec![constant(Value::text(said))])]),
+                            _ => {
+                                let slot = self.global_address(&name);
+                                sequence(vec![Form::Write(slot, Box::new(value)), constant(Value::Flag(true))])
+                            }
+                        }
                     } else {
                         self.named_call(&t.lexeme, args)?
                     }
@@ -3094,7 +3626,7 @@ impl<'a> Builder<'a> {
                     self.advance();
                     let inner = self.expr(0)?;
                     self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
-                    inner
+                    self.called_on_value(inner)?
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {
                     self.advance();
                     let items = self.elements("syntax.array.close", "syntax.array.separator")?;
@@ -3104,7 +3636,13 @@ impl<'a> Builder<'a> {
                     let items = self.elements("syntax.map.close", "syntax.map.separator")?;
                     prim_call(Prim::MakeMap, items)
                 } else {
-                    return Err(format!("Unexpected token: {}", t.lexeme));
+                    // A language with words of its own for what stopped
+                    // the reading puts them first; the kernel's plainer
+                    // ones serve where the definition gives none.
+                    return Err(match table.single("ext.system.reading.unexpected") {
+                        Some(opening) => format!("{} {}", opening, t.lexeme),
+                        None => format!("Unexpected token: {}", t.lexeme),
+                    });
                 }
             }
             _ => return Err("Expected an expression".to_string()),
@@ -3542,11 +4080,14 @@ impl<'a> Builder<'a> {
         // bindings are told apart by how they are written; only a
         // class's own name is bound however it is written.
         let sigil = self.table.letter("identifier.variable_prefix");
-        let a_binding = sigil.map_or(false, |mark| name.starts_with(mark));
-        match self.table.flag("ext.system.class.folded") && !a_binding {
+        if sigil.map_or(false, |mark| name.starts_with(mark)) {
+            return name.to_string();
+        }
+        let folded = match self.table.flag("ext.system.class.folded") {
             true => name.to_lowercase(),
             false => name.to_string(),
-        }
+        };
+        format!("{}{}", folded, crate::form::OF_A_CLASS)
     }
 
     /// What is left of a class named by a value: a property of a thing,
@@ -3578,17 +4119,25 @@ impl<'a> Builder<'a> {
         let table = self.table;
         if table.spells("ext.stmt.class.self", name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
-            let here = self.class_binding(&here);
-            return Ok(self.read(&here));
+            let bound = self.class_binding(&here);
+            return Ok(self.read_bound(&here, &bound));
         }
         if table.spells("ext.stmt.class.parent", name) {
             let (here, under) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let under = under.ok_or_else(|| format!("Class {} is built on nothing", here))?;
-            let under = self.class_binding(&under);
-            return Ok(self.read(&under));
+            let bound = self.class_binding(&under);
+            return Ok(self.read_bound(&under, &bound));
         }
         let bound = self.class_binding(name);
-        Ok(self.read(&bound))
+        Ok(self.read_bound(name, &bound))
+    }
+
+    /// Reads what a class is bound as, under the name it was written
+    /// with: what a class is bound as is the kernel's own doing, so a
+    /// fault speaks of the name and never of the binding behind it.
+    fn read_bound(&mut self, written: &str, bound: &str) -> Form {
+        let slot = self.address_to_read(bound);
+        Form::Read(Address { ident: Rc::from(written), ..slot })
     }
 
     /// `thing->member` and `class::member`, in a chain.
@@ -3670,6 +4219,20 @@ impl<'a> Builder<'a> {
                 (true, true) => prim_call(Prim::Bid, given),
             };
         }
+    }
+
+    /// A value standing in a group may be called straight off: `(f)(x)`,
+    /// and one call after another, `(f)(x)(y)`.
+    fn called_on_value(&mut self, mut node: Form) -> Res<Form> {
+        let Some(open) = self.table.single("syntax.call.open").map(str::to_string) else {
+            return Ok(node);
+        };
+        while self.sign(&open) {
+            self.advance();
+            let given = self.args("syntax.call.close", "syntax.call.separator")?;
+            node = Form::Apply(Callee::Code(Box::new(node)), given);
+        }
+        Ok(node)
     }
 
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
@@ -3798,6 +4361,11 @@ impl<'a> Builder<'a> {
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         match self.table.prims.get(name).copied() {
+            // What is put in front of may be a name standing for a
+            // shared cell, since the library of a language may spell it
+            // as a routine taking one, so the place it names is looked
+            // for while the run goes and not here.
+            Some(Prim::Front) => Ok(Form::Apply(Callee::Prim(Prim::Front, Rc::from(name)), args)),
             Some(op @ (Prim::Append | Prim::Replace)) => {
                 if !matches!(args.first(), Some(Form::Read(_))) {
                     return Err(format!("First argument to {}() must be an array variable name", name));
@@ -4226,7 +4794,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, body: sequence(s) };
+            let program = Routine { ident: name, least: 0, formals: params, formal_kinds: Vec::new(), formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

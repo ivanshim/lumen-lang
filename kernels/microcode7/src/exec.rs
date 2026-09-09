@@ -23,6 +23,11 @@ use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
 use crate::data::{Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
+/// Which shell the host keeps, and the switch by which it is handed a
+/// command spelled out instead of a file holding one.
+const THE_HOSTS_SHELL: &str = "/bin/sh";
+const A_COMMAND_FOLLOWS: &str = "-c";
+
 /// The label under which a language spells each kind of complaint.
 pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
     ("warning", "ext.system.complaint.warning"),
@@ -70,6 +75,13 @@ struct Called {
     from: Rc<str>,
     on: u32,
     handed_at: Option<usize>,
+    /// Whether what was called belongs to the language's own library,
+    /// standing before the program's own text, and whether the call was
+    /// made from within it. A call the library made has no line of the
+    /// program's to name, and one it made of its own is no business of
+    /// the program's at all.
+    of_library: bool,
+    from_library: bool,
 }
 
 /// How a place is being read: plainly, while a value is being taken
@@ -113,6 +125,10 @@ pub struct Machine<'a> {
     row: u32,
     raised_on: u32,
     written_in: Rc<str>,
+    /// Where the language keeps its own pages, as the run was
+    /// started. Nothing where the run was started naming nowhere,
+    /// and then a complaint about a word points at no page of it.
+    pages_at: Option<String>,
     /// The calls under way, innermost last: what each called, where the
     /// call itself was written, and where among the arguments kept the
     /// ones it was handed stand.
@@ -125,13 +141,20 @@ pub struct Machine<'a> {
     /// Where the program a fault was raised on the way into is written.
     /// Such a fault belongs there and not where the call stood, which
     /// is worth saying only where nothing takes it.
-    entering: Option<(Rc<str>, u32)>,
+    entering: Option<(Rc<str>, u32, bool)>,
     /// The words this language has for the kinds of complaint.
     complaint_words: Vec<(&'static str, String)>,
     /// How many seconds the run may take and when the count began;
     /// nought is no limit at all.
     allowed: usize,
+    /// Every run raised alongside this one, filed under the
+    /// number it was raised with so it may be laid to rest.
+    alongside: HashMap<i64, std::process::Child>,
     started: Option<std::time::Instant>,
+    /// How many bytes of room the run may take; nought is no mark at
+    /// all. What it has taken is not written down here — that tally is
+    /// the allocator's, kept for the whole process, and only read.
+    ceiling: usize,
     /// How many pieces now being found asked to be quiet. Counted, not
     /// flagged, because a quiet piece may hold another.
     quieted: usize,
@@ -158,6 +181,12 @@ pub struct Machine<'a> {
     /// value or a note, so a throw or an ending is kept here and let
     /// go again where the reading stood.
     got_away: Option<Escape>,
+    /// Text read in that would not be read: the words said of it, the
+    /// place it counts as standing in, and the line of its own that the
+    /// reading stopped on. The reading answers with a plain note, so
+    /// this is set aside for the end of the run to name, and is trusted
+    /// only for the very words it was set aside with.
+    would_not_read: Option<(String, Rc<str>, u32)>,
     /// What the program already read declared about cells: which
     /// parameters take one and which routines hand one back. Text read
     /// while the run goes is a piece of the same program and is built
@@ -229,8 +258,11 @@ impl<'a> Machine<'a> {
             row: 0,
             raised_on: 0,
             allowed: 0,
+            alongside: HashMap::new(),
             started: None,
+            ceiling: 0,
             written_in: Rc::from(""),
+            pages_at: None,
             calls: Vec::new(),
             under: None,
             entering: None,
@@ -242,6 +274,7 @@ impl<'a> Machine<'a> {
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
+            would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             hearer: RefCell::new(None),
@@ -271,6 +304,11 @@ impl<'a> Machine<'a> {
         self.written_in = Rc::from(place);
     }
 
+    /// Where the language keeps its own pages, as the run was started.
+    pub fn pages_lie_at(&mut self, held: Option<String>) {
+        self.pages_at = held;
+    }
+
     /// Say a complaint of this kind in the language's own word for it
     /// and carry on. A language with no word for the kind says nothing.
     /// The places of an array with their keys, a place's number standing
@@ -298,6 +336,12 @@ impl<'a> Machine<'a> {
         // Two numbers are set against each other at the width the
         // language holds them in, as they are worked at it.
         let plainly = |x: &Value, y: &Value| -> Result<bool, String> {
+            // The worth nothing is equal to comes before nothing and
+            // after nothing, so it is out of the question before the
+            // two are brought to the width at all.
+            if math::no_order(x, y) {
+                return Ok(false);
+            }
             let (x, y) = match self.holds_reals_to_width() && (self.a_real(x) || self.a_real(y)) {
                 true => (self.at_width(self.as_wide_real(x)), self.at_width(self.as_wide_real(y))),
                 false => (x.clone(), y.clone()),
@@ -392,14 +436,27 @@ impl<'a> Machine<'a> {
             Prim::Walked => {
                 n(1)?;
                 let mut walking = v[0].clone();
-                while let Some(further) = self.walk_handed(&walking)? {
+                // Asking a thing what it hands over runs a piece of the
+                // program standing elsewhere. The walk is written where
+                // it is written, and is spoken of as standing there, so
+                // the row is put back after the asking.
+                let row = self.row;
+                let mut handed_by = None;
+                while let Some((giver, further)) = self.walk_handed(&walking)? {
+                    handed_by = Some(giver);
                     walking = further;
                 }
+                self.row = row;
                 match self.walks_itself(&walking) {
                     Some(_) => {
                         self.walk_asked(&walking, self.table.single("ext.op.walk.rewind").map(str::to_string))?;
                     }
-                    None => self.can_be_walked(&walking)?,
+                    // What one thing hands over for another to walk has
+                    // to be a walk in its own right.
+                    None => match handed_by.as_deref().and_then(|giver| self.handed_no_walk(giver)) {
+                        Some(said) => return Err(said.into()),
+                        None => self.can_be_walked(&walking)?,
+                    },
                 }
                 walking
             }
@@ -443,6 +500,25 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 self.walk_asked(&v[0], self.table.single("ext.op.walk.onward").map(str::to_string))?;
                 Value::Nil
+            }
+            // Where the item handed out has got to, and one place past
+            // it. A thing keeps its members where they are while it is
+            // walked, so a walk over one goes on counting.
+            Prim::PastHeld => {
+                n(3)?;
+                let stood = as_index(&v[1])?;
+                let gone_on = match (&v[0], &v[2]) {
+                    (Value::Thing(_), _) => stood + 1,
+                    (walked, Value::Shared(cell)) => match found_at(walked, cell, stood) {
+                        Some(now) => now + 1,
+                        // The item is out of the array, so what came
+                        // after it stands where it stood, and that is
+                        // where the walk takes up.
+                        None => stood,
+                    },
+                    _ => stood + 1,
+                };
+                Value::Small(gone_on as i64)
             }
             _ => return Err(Escape::Error(format!("{}() is no step of a walk", name))),
         })
@@ -535,7 +611,7 @@ impl<'a> Machine<'a> {
 
     /// What a thing hands over to be walked for it, where it is a thing
     /// that hands one over and what comes back is not the thing itself.
-    fn walk_handed(&mut self, x: &Value) -> Result<Option<Value>, Escape> {
+    fn walk_handed(&mut self, x: &Value) -> Result<Option<(String, Value)>, Escape> {
         let (Some(class), Some(gives)) = (self.table.single("ext.op.walk.giver.class"), self.table.single("ext.op.walk.giver")) else {
             return Ok(None);
         };
@@ -548,8 +624,20 @@ impl<'a> Machine<'a> {
         let itself = matches!((&handed, x), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b));
         Ok(match itself {
             true => None,
-            false => Some(handed),
+            false => Some((thing.of.name.clone(), handed)),
         })
+    }
+
+    /// What is said where a thing hands over, to be walked for it,
+    /// something that is no walk. Nothing where the definition has no
+    /// words for it, and the value is walked as best it may be.
+    fn handed_no_walk(&self, giver: &str) -> Option<String> {
+        let said = self.table.strings("ext.op.walk.giver.unwalkable");
+        let gives = self.table.single("ext.op.walk.giver")?;
+        match said {
+            [before, after] => Some(format!("{} {}::{}() {}", before, giver, gives, after)),
+            _ => None,
+        }
     }
 
     /// Ask a thing that is its own walk one of the walk's questions.
@@ -585,21 +673,35 @@ impl<'a> Machine<'a> {
         if !self.spelled_stands {
             return v;
         }
-        match self.class_bound(name) {
-            Some(found @ (Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..))) => found.clone(),
-            _ => v,
+        // A routine and a class may go by one name. Standing where
+        // either would do, the routine is meant: a class named by a
+        // value stands where only a class will do, and is sought there.
+        match self.lookup(name) {
+            Some(found @ (Value::Routine(_) | Value::Bound(..))) => found,
+            _ => self.class_bound(name).unwrap_or(v),
         }
     }
 
-    /// The outermost binding of that name. Where classes go by their
-    /// names however the names are written, a name nothing stands
-    /// under is asked for again with its letters written small.
+    /// The same, where only a class will do: `new $c`, `$c::m()` and the
+    /// rest, which a routine of that name is no answer to.
+    fn class_it_spells(&self, v: Value) -> Value {
+        let Value::Text(name) = &v else { return v };
+        if !self.spelled_stands {
+            return v;
+        }
+        self.class_bound(name).unwrap_or(v)
+    }
+
+    /// The class of that name. Where classes go by their names however
+    /// the names are written, a name nothing stands under is asked for
+    /// again with its letters written small.
     fn class_bound(&self, name: &str) -> Option<Value> {
-        if let found @ Some(_) = self.lookup(name) {
+        let filed = format!("{}{}", name, crate::form::OF_A_CLASS);
+        if let found @ Some(_) = self.lookup(&filed) {
             return found;
         }
         match self.classes_either_way {
-            true => self.lookup(&name.to_lowercase()),
+            true => self.lookup(&format!("{}{}", name.to_lowercase(), crate::form::OF_A_CLASS)),
             false => None,
         }
     }
@@ -650,7 +752,25 @@ impl<'a> Machine<'a> {
                 if !text.is_empty() {
                     self.written_out.set(true);
                 }
-                print!("{}", text);
+                self.put_out(text);
+            }
+        }
+    }
+
+    /// Text sent where the run puts what it writes. A language holding
+    /// text as bytes means every character of it stands for a byte, and
+    /// what goes out is those bytes and no encoding of them; otherwise
+    /// the letters go out spelled as letters are.
+    fn put_out(&self, text: &str) {
+        match self.table.flag("ext.system.text.bytes") {
+            false => print!("{}", text),
+            true => {
+                use std::io::Write as _;
+                let raw = text.chars().fold(Vec::with_capacity(text.len()), |mut so_far, c| {
+                    so_far.push(c as u32 as u8);
+                    so_far
+                });
+                let _ = std::io::stdout().lock().write_all(&raw);
             }
         }
     }
@@ -684,7 +804,8 @@ impl<'a> Machine<'a> {
                         Escape::Error(m) => m,
                         Escape::Stopped(told) => {
                             if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
-                                self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.written_in, self.row));
+                                let head = complaint_head(&self.table, word, &told);
+                                self.utter(&format!("{head}{}", complaint_tail(&self.table, &self.written_in, self.row)));
                             }
                             told
                         }
@@ -751,7 +872,24 @@ impl<'a> Machine<'a> {
 
     fn said_plainly(&self, kind: &str, about: &str, row: u32) {
         let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        self.utter(&format!("\n{}: {} in {} on line {}\n", word, about, self.written_in, row));
+        let head = complaint_head(&self.table, word, about);
+        self.utter(&format!("{head}{}", complaint_tail(&self.table, &self.written_in, row)));
+    }
+
+    /// Where a word of the language has its page, written into a
+    /// complaint about that word. Nothing at all where the run knows
+    /// nowhere the pages are kept, or where it is not dressing its
+    /// complaints for a reader with any way of following an address.
+    fn word_page(&self, word: &str) -> String {
+        let Some(kept) = self.pages_at.as_deref() else { return String::new() };
+        let [opens, joins, closes, ..] = self.table.strings("ext.system.complaint.markup.reference") else { return String::new() };
+        let Some((ahead, behind)) = self.table.around("ext.system.complaint.reference.page") else { return String::new() };
+        let spelled = match self.table.around("ext.system.complaint.reference.mark") {
+            Some((mark, instead)) => word.replace(mark, instead),
+            None => word.to_string(),
+        };
+        let page = format!("{ahead}{spelled}{behind}");
+        format!("{opens}{kept}{page}{joins}{page}{closes}")
     }
 
     /// The complaints still waiting go to the routine the program put in
@@ -864,6 +1002,7 @@ impl<'a> Machine<'a> {
             },
             within_word: self.table.single("ext.stmt.class.guarded"),
             alone_word: self.table.single("ext.stmt.class.hidden"),
+            kept_as_bytes: self.table.flag("ext.system.text.bytes"),
         }
     }
 
@@ -880,8 +1019,16 @@ impl<'a> Machine<'a> {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if told_of("ext.builtin.args.at.below") || told_of("ext.builtin.args.at.beyond") => Some("ext.system.fault.class.value"),
+            // So too the words for a name spelling one of a class's own
+            // values where the name of a constant was wanted.
+            _ if told_of("ext.builtin.define.class_constant") => Some("ext.system.fault.class.value"),
+            // Words a definition gave for the remainder by nought and
+            // for a shift below nought are known by being those very
+            // words, each a fault of the kind the kernel words itself.
+            _ if told_of("ext.system.fault.modulo") => Some("ext.system.fault.class.division"),
+            _ if told_of("ext.system.fault.shift") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Division by zero") => Some("ext.system.fault.class.division"),
-            _ if told.starts_with("Bit shift by") => Some("ext.system.fault.class.arithmetic"),
+            _ if told.starts_with("Bit shift by") || told_of("ext.system.fault.shift") => Some("ext.system.fault.class.arithmetic"),
             _ if told.starts_with("Cannot coerce") => Some("ext.system.fault.class.kind"),
             // An argument that is not of the class its parameter takes.
             _ if told.contains(" must be of type ") => Some("ext.system.fault.class.kind"),
@@ -890,6 +1037,13 @@ impl<'a> Machine<'a> {
             _ if self.table.single("ext.system.fault.operands").map_or(false, |w| told.starts_with(w)) => {
                 Some("ext.system.fault.class.kind")
             }
+            // So too the words for what was handed over to be walked.
+            _ if self.table.strings("ext.op.walk.giver.unwalkable").first().map_or(false, |w| told.starts_with(w.as_str())) => {
+                Some("ext.system.fault.class.walk")
+            }
+            // A program that would not be read is known the same way:
+            // by the reading opening with words the definition gave.
+            _ if self.would_not_read_words(told) => Some("ext.system.fault.class.reading"),
             _ => None,
         };
         by_kind
@@ -898,14 +1052,33 @@ impl<'a> Machine<'a> {
             .map(str::to_string)
     }
 
+    /// Whether these words are a reading that stopped: they open with
+    /// one of the three openings the definition gives for one.
+    fn would_not_read_words(&self, told: &str) -> bool {
+        let opening = |key: &str| self.table.around(key).map(|(head, _)| head);
+        [self.table.single("ext.system.reading.unexpected"), opening("ext.system.reading.unclosed"), opening("ext.system.reading.unmatched")]
+            .into_iter()
+            .flatten()
+            .any(|head| told.starts_with(head))
+    }
+
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
-        match holds.iter_mut().find(|(k, _)| k == "message") {
-            Some(place) => place.1 = Value::text(told),
-            None => holds.push(("message".to_string(), Value::text(told))),
+        // A fault of the kernel's own carries the words said and the
+        // place in the program they were said of.
+        let carried = [
+            ("message", Value::text(told)),
+            ("file", Value::text(&self.written_in)),
+            ("line", Value::Small(self.row as i64)),
+        ];
+        for (key, value) in carried {
+            match holds.iter_mut().find(|(k, _)| k == key) {
+                Some(place) => place.1 = value,
+                None => holds.push((key.to_string(), value)),
+            }
         }
         Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -968,6 +1141,32 @@ impl<'a> Machine<'a> {
         Some(Escape::Stopped(format!("Maximum execution time of {} {} exceeded", self.allowed, ending)))
     }
 
+    /// Whether the run has taken more of the host's room than the
+    /// language allowed it. The allocator's tally is right to the byte
+    /// at every moment, but it is looked at where the clock is looked
+    /// at, since looking costs more than the work between two looks.
+    /// A run may therefore stand a little past the mark before it is
+    /// stopped, and one value swollen past the mark in a single step
+    /// is not caught until that step has finished.
+    fn past_its_room(&mut self) -> Option<Escape> {
+        if self.ceiling == 0 {
+            return None;
+        }
+        let held = lumen_room::used();
+        if held <= self.ceiling {
+            return None;
+        }
+        let mark = self.ceiling;
+        // Nothing may go on being kept back: there is no room to keep
+        // it in, nor to write it out with, and the words ending the run
+        // would fall into the keeping and come out behind all of it.
+        self.holding.borrow_mut().clear();
+        // The mark goes now that it has been passed, so that the ending
+        // can be told and whatever was named for the end can run.
+        self.ceiling = 0;
+        Some(Escape::Stopped(format!("Allowed memory size of {} bytes exhausted ({} bytes were taken)", mark, held)))
+    }
+
     /// How a run ended, told the way a language with a word for the end
     /// of one tells it: what stopped it, where, and how the run stood.
     /// Nothing is written where a language has no word for it.
@@ -976,11 +1175,17 @@ impl<'a> Machine<'a> {
         // A fault raised on the way into a program belongs where that
         // program is written, and says as much.
         let (said, place, at) = match &self.entering {
-            Some((place, on)) => (format!("{} and defined", said), place.clone(), *on),
+            // Where the words named where the call stood, the place
+            // that follows is where the program itself is written, and
+            // is said to be.
+            Some((place, on, defined)) => match defined {
+                true => (format!("{} and defined", said), place.clone(), *on),
+                false => (said.to_string(), place.clone(), *on),
+            },
             None => (said.to_string(), self.written_in.clone(), self.raised_on),
         };
-        self.utter(&format!("\n{}: {} in {}:{}\n", word, said, place, at));
-        self.utter(&format!("{}  thrown in {} on line {}\n", self.calls_under(), place, at));
+        self.utter(&format!("{} in {}:{}\n", complaint_head(&self.table, word, &said), place, at));
+        self.utter(&format!("{}  thrown{}", self.calls_under(), complaint_tail(&self.table, &place, at)));
     }
 
     /// Build source against the globals this run already has and run it
@@ -994,8 +1199,7 @@ impl<'a> Machine<'a> {
     /// and what it writes to one of them the routine sees afterwards.
     /// Names it makes itself go on the end of that routine's frame.
     fn run_text_within(&mut self, source: &str, frame: &Rc<Env>) -> Result<Value, Escape> {
-        let tokens = crate::scan::scan(source, self.table).map_err(Escape::Error)?;
-        let tokens = crate::indent::indent(tokens, self.table).map_err(Escape::Error)?;
+        let tokens = self.text_scanned(source).map_err(Escape::Error)?;
         let held: Vec<String> = self.frames_named.last().map_or_else(Vec::new, |p| p.idents.clone());
         let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
         // Text read inside a method is read as standing in that
@@ -1009,7 +1213,10 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = crate::build::build_within(&tokens, self.table, &self.idents, &held, knows, 0, within).map_err(Escape::Error)?;
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within) {
+            Ok(built) => built,
+            Err((said, row)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
+        };
         self.idents = built.globals;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         frame.cells.borrow_mut().resize(built.program.idents.len().max(held.len()), Value::Unset);
@@ -1020,10 +1227,57 @@ impl<'a> Machine<'a> {
         })
     }
 
+    /// How many lines a text carries ahead of the program written in
+    /// it. Only the mark that opens code puts any there, and it one.
+    fn lines_ahead(&self) -> u32 {
+        u32::from(self.table.single("lexical.prologue").is_some())
+    }
+
+    /// Where text read while the run goes counts as standing: the file
+    /// the reading was asked for in and the line that asking is written
+    /// on, set about by the words the language has for marking it text
+    /// read in rather than a file of its own.
+    fn place_of_text(&self) -> Rc<str> {
+        match self.table.around("ext.builtin.eval.place") {
+            Some((head, tail)) => Rc::from(format!("{}{head}{}{tail}", self.written_in, self.row).as_str()),
+            None => self.written_in.clone(),
+        }
+    }
+
+    /// Text that would not be read, its place set aside so that the end
+    /// of the run may name where it stood.
+    fn text_would_not_read(&mut self, said: String, row: u32) -> String {
+        let place = self.place_of_text();
+        self.would_not_read = Some((said.clone(), place, row.saturating_sub(self.lines_ahead()).max(1)));
+        said
+    }
+
+    /// The tokens of text read while the run goes, or the words for why
+    /// there are none, counting its lines from the program's own first.
+    fn text_scanned(&mut self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
+        let ahead = self.lines_ahead();
+        match crate::scan::scan_at(source, self.table).and_then(|read| crate::indent::indent(read, self.table, ahead)) {
+            Ok(tokens) => Ok(tokens),
+            Err((said, row)) => Err(self.text_would_not_read(said, row)),
+        }
+    }
+
     fn run_source(&mut self, source: &str, came_out_of: Option<String>) -> Result<Value, String> {
-        let tokens = crate::scan::scan(source, self.table)?;
-        let tokens = crate::indent::indent(tokens, self.table)?;
-        let built = crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?;
+        // Text handed over outright counts as standing where the call
+        // to read it stands; a file stands as itself and is read from
+        // its own first line.
+        let reading_text = came_out_of.is_none();
+        let tokens = match reading_text {
+            true => self.text_scanned(source)?,
+            false => crate::indent::indent(crate::scan::scan(source, self.table)?, self.table, 0).map_err(|(said, _)| said)?,
+        };
+        let built = match reading_text {
+            true => match crate::build::build_from_at(&tokens, self.table, &self.idents, HashMap::new(), true, 0) {
+                Ok(built) => built,
+                Err((said, row)) => return Err(self.text_would_not_read(said, row)),
+            },
+            false => crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?,
+        };
         self.idents = built.globals;
         // Names the new source brought with it want room to stand in.
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
@@ -1105,12 +1359,26 @@ impl<'a> Machine<'a> {
             // A limit passed is told plainly, since nothing was raised.
             Err(Escape::Stopped(told)) => {
                 if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
-                    self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.written_in, self.row));
+                    let head = complaint_head(&self.table, word, &told);
+                    self.utter(&format!("{head}{}", complaint_tail(&self.table, &self.written_in, self.row)));
                 }
                 Err(told)
             }
             // A fault of the kernel's own is told under the class the
             // language names for one, where it names any.
+            // A program that would not be read is told as a reading
+            // that stopped rather than as a fault nobody took: nothing
+            // was ever running there for a fault to leave.
+            Err(Escape::Error(e)) if self.would_not_read_words(&e) && self.table.single("ext.system.complaint.reading").is_some() => {
+                let word = self.table.single("ext.system.complaint.reading").expect("a word for a reading that stopped");
+                let (place, at) = match &self.would_not_read {
+                    Some((said, place, on)) if *said == e => (place.clone(), *on),
+                    _ => (self.written_in.clone(), self.row),
+                };
+                let head = complaint_head(&self.table, word, &e);
+                self.utter(&format!("{head}{}", complaint_tail(&self.table, &place, at)));
+                Err(e)
+            }
             Err(Escape::Error(e)) => {
                 if let Some(named) = self.class_of_fault(&e) {
                     if self.complaint_words.iter().any(|(k, _)| *k == "fatal") {
@@ -1233,6 +1501,18 @@ impl<'a> Machine<'a> {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
             Form::Const(v) => Ok(v.clone()),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
+            Form::Glance(slot) => {
+                let f = ascend(frame, slot.up);
+                let held = f.cells.borrow()[slot.at].clone();
+                let held = match (&held, slot.fallback) {
+                    (Value::Unset, Some(g)) => self.outermost.cells.borrow()[g].clone(),
+                    _ => held,
+                };
+                Ok(match held {
+                    Value::Shared(cell) => cell.borrow().clone(),
+                    other => other,
+                })
+            }
             Form::Bump { slot, by } => {
                 let v = self.fetch(slot, frame)?;
                 // A step down subtracts, so a string of digits counts
@@ -1562,6 +1842,9 @@ impl<'a> Machine<'a> {
                 if let Some(over) = self.past_its_time() {
                     return Err(over);
                 }
+                if let Some(over) = self.past_its_room() {
+                    return Err(over);
+                }
                 self.value_of(inner, frame)
             }
             Form::Missing(slot) => {
@@ -1664,6 +1947,9 @@ impl<'a> Machine<'a> {
                     if let Some(over) = self.past_its_time() {
                         return Err(over);
                     }
+                    if let Some(over) = self.past_its_room() {
+                        return Err(over);
+                    }
                     // The test is worked out where it is looked at and
                     // nowhere else: a test that changes something as it
                     // is read must change it once a pass, not twice.
@@ -1703,6 +1989,9 @@ impl<'a> Machine<'a> {
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return done;
                 }
+                if let Some(done) = self.word_it_spells(&stands, args, frame) {
+                    return done;
+                }
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
                 self.drive(p, callee)
@@ -1711,6 +2000,12 @@ impl<'a> Machine<'a> {
                 Prim::Seq => {
                     let mut last = Value::Nil;
                     for a in args {
+                        // What the statement before came to is let go
+                        // before the next is worked out and not after
+                        // it: a program asking how much room it holds
+                        // must not be told of a value it has already
+                        // finished with.
+                        drop(std::mem::replace(&mut last, Value::Nil));
                         last = self.value_of(a, frame)?;
                     }
                     Ok(last)
@@ -1719,7 +2014,7 @@ impl<'a> Machine<'a> {
                     let (p, env) = self.pick(args, frame)?;
                     self.invoke(p, env, Vec::new())
                 }
-                Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
+                Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                     let v = self.value_list(args, frame)?;
                     self.walking(op, name, &v)
                 }
@@ -1789,12 +2084,33 @@ impl<'a> Machine<'a> {
                     self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }
+                // A routine written where a value stands takes names
+                // from around it away with it: it is bound to a frame of
+                // its own holding them, and the frame of a call is
+                // filled from that one.
+                Prim::Carry => {
+                    let mut values = self.value_list(args, frame)?;
+                    if values.is_empty() {
+                        return Err("Nothing was given to take away".to_string().into());
+                    }
+                    let Value::Bound(program, env) = values.remove(0) else {
+                        return Err("Only a routine can take names away with it".to_string().into());
+                    };
+                    let took = Env::make(program.idents.len(), Some(env));
+                    {
+                        let mut cells = took.cells.borrow_mut();
+                        for (slot, held) in program.carried.iter().zip(values) {
+                            cells[*slot] = held;
+                        }
+                    }
+                    Ok(Value::Bound(program, took))
+                }
                 Prim::Spawn => {
                     let mut values = self.value_list(args, frame)?;
                     if values.is_empty() {
                         return Err("Nothing was given to make".to_string().into());
                     }
-                    let stands = self.what_it_spells(values.remove(0));
+                    let stands = self.class_it_spells(values.remove(0));
                     let Value::Blueprint(class) = stands else {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
@@ -1850,7 +2166,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a class and a method name", name).into());
                     }
                     let subject = values.remove(0);
-                    let holder = self.what_it_spells(values.remove(0));
+                    let holder = self.class_it_spells(values.remove(0));
                     let called = values.remove(0).bare();
                     let Value::Blueprint(class) = holder else {
                         let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
@@ -1883,14 +2199,66 @@ impl<'a> Machine<'a> {
                         Value::Shared(cell) => Some(cell.clone()),
                         _ => None,
                     };
-                    if let Some(cell) = shared {
-                        let mut held = cell.borrow_mut();
-                        written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?;
-                        return Ok(Value::Nil);
+                    let over = match shared {
+                        Some(cell) => {
+                            let mut held = cell.borrow_mut();
+                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?
+                        }
+                        None => {
+                            let mut slots = f.cells.borrow_mut();
+                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?
+                        }
+                    };
+                    // More letters handed to a place in text than it has
+                    // room for: the first went in and the language says so.
+                    if over {
+                        if let Some(said) = self.table.single("ext.op.index.text.first") {
+                            self.grumble("warning", said);
+                        }
                     }
-                    let mut slots = f.cells.borrow_mut();
-                    written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?;
                     Ok(Value::Nil)
+                }
+                // Values put before everything the named array holds.
+                // The array is worked on where it lives, so a place
+                // handed out to a walk is still the place it was.
+                Prim::Front => {
+                    let Some(first) = args.first() else {
+                        return Err(format!("First argument to {}() must be an array variable name", name).into());
+                    };
+                    // A name handed over as a cell is worked on through
+                    // that cell, wherever the array behind it lives.
+                    let through = match first {
+                        Form::Read(_) => None,
+                        other => match self.value_list(std::slice::from_ref(other), frame)?.pop() {
+                            Some(Value::Shared(cell)) => Some(cell),
+                            _ => return Err(format!("First argument to {}() must be an array variable name", name).into()),
+                        },
+                    };
+                    let coming = self.value_list(&args[1..], frame)?;
+                    if coming.is_empty() {
+                        return Err(format!("{}() expects an array and a value at least", name).into());
+                    }
+                    if let Some(cell) = through {
+                        let mut inside = cell.borrow_mut();
+                        return Ok(Value::Small(put_before(&mut inside, coming, name)? as i64));
+                    }
+                    let Form::Read(slot) = first else { unreachable!("a name read in place") };
+                    let (f, i) = self.locate(slot, frame)?;
+                    let shared = match &f.cells.borrow()[i] {
+                        Value::Shared(cell) => Some(cell.clone()),
+                        _ => None,
+                    };
+                    let many = match shared {
+                        Some(cell) => {
+                            let mut held = cell.borrow_mut();
+                            put_before(&mut held, coming, name)?
+                        }
+                        None => {
+                            let mut slots = f.cells.borrow_mut();
+                            put_before(&mut slots[i], coming, name)?
+                        }
+                    };
+                    Ok(Value::Small(many as i64))
                 }
                 // A language may say the run is over where it stands.
                 // Text given is written out first; a number is not.
@@ -2005,6 +2373,29 @@ impl<'a> Machine<'a> {
         self.routine_of(stands, node)
     }
 
+    /// A word of the language's own reached through a value that spells
+    /// it, run as though the word itself had been written there. Only
+    /// the words that work on the values handed to them can be reached
+    /// this way: the ones that hold on to the pieces they are written
+    /// with have nothing to work on when there are none.
+    fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
+        let Value::Text(word) = stands else { return None };
+        let op = self.table.prims.get(word.as_ref()).copied()?;
+        let name = word.to_string();
+        Some((|| {
+            let values = self.value_list(args, frame)?;
+            let made = self.prim(op, &name, &values);
+            if let Some(away) = self.got_away.take() {
+                return Err(away);
+            }
+            let made = made?;
+            if self.any_unheard.get() {
+                self.hand_over_unheard()?;
+            }
+            Ok(made)
+        })())
+    }
+
     fn routine_of(&mut self, stands: Value, node: &Form) -> Res<(Rc<Routine>, Rc<Env>)> {
         match stands {
             Value::Bound(p, env) => Ok((p, env)),
@@ -2042,7 +2433,7 @@ impl<'a> Machine<'a> {
             Value::Shared(cell) => cell.borrow().clone(),
             held => held.clone(),
         };
-        let subject = self.what_it_spells(first_of);
+        let subject = self.class_it_spells(first_of);
         let given = match self.value_list(args, frame) {
             Ok(given) => given,
             Err(e) => return Some(Err(e)),
@@ -2076,6 +2467,9 @@ impl<'a> Machine<'a> {
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return Ok(Next::Value(done?));
                 }
+                if let Some(done) = self.word_it_spells(&stands, args, frame) {
+                    return Ok(Next::Value(done?));
+                }
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
                 Ok(Next::Jump(p, callee))
@@ -2106,6 +2500,27 @@ impl<'a> Machine<'a> {
         self.bound(&args[if test { 1 } else { 2 }], frame)
     }
 
+    /// The frame a call runs in. A routine that took names away with it
+    /// is bound to a frame of its own holding them: the call runs in a
+    /// fresh frame filled from that one and standing where it stands, so
+    /// that a name reached further out is reached from the same place
+    /// whether the routine took anything away or not.
+    fn frame_for(&self, program: &Rc<Routine>, env: &Rc<Env>) -> Rc<Env> {
+        if program.carried.is_empty() {
+            return Env::make(program.idents.len(), Some(env.clone()));
+        }
+        let frame = Env::make(program.idents.len(), env.outer.clone());
+        let took = env.cells.borrow();
+        let mut cells = frame.cells.borrow_mut();
+        for slot in &program.carried {
+            if let Some(held) = took.get(*slot) {
+                cells[*slot] = held.clone();
+            }
+        }
+        drop(cells);
+        frame
+    }
+
     fn env_for(&mut self, program: &Rc<Routine>, env: Rc<Env>, args: &[Form], caller: &Rc<Env>) -> Res<Rc<Env>> {
         let most = if self.reads_handed { usize::MAX } else { program.formals.len() };
         if args.len() > most || args.len() < program.least {
@@ -2120,7 +2535,7 @@ impl<'a> Machine<'a> {
             for at in 0..all.len() {
                 self.of_the_class_written(program, at, &all)?;
             }
-            let frame = if program.frameless { env } else { Env::make(program.idents.len(), Some(env)) };
+            let frame = if program.frameless { env.clone() } else { self.frame_for(program, &env) };
             if !program.frameless {
                 let mut cells = frame.cells.borrow_mut();
                 for (i, v) in program.formal_slots.iter().zip(all.iter()) {
@@ -2133,7 +2548,7 @@ impl<'a> Machine<'a> {
         if program.frameless {
             return Ok(env);
         }
-        let frame = Env::make(program.idents.len(), Some(env));
+        let frame = self.frame_for(program, &env);
         let mut so_far = Vec::with_capacity(args.len());
         for (at, (i, a)) in program.formal_slots.iter().zip(args).enumerate() {
             let v = self.value_of(a, caller)?;
@@ -2177,43 +2592,74 @@ impl<'a> Machine<'a> {
         // program is written is kept aside: a trap taking it wants the
         // words alone, and only a run ended by it says as much. The
         // call being entered stands in the trace all the same.
-        let told = format!(
-            "{}(): Argument #{} ({}) must be of type {}, {} given, called in {} on line {}",
+        let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
+        let head = format!(
+            "{}(): Argument #{} ({}) must be of type {}, {} given",
             program.ident,
             at + 1,
             program.formals.get(at).map_or("", String::as_str),
             written,
-            handed,
-            self.written_in,
-            self.row
+            handed
         );
+        // Where the call was made from inside the language itself there
+        // is no line of the program's to name, so the words say only
+        // what was given and where the routine stands.
+        let told = match from_library {
+            true => head,
+            false => format!("{}, called in {} on line {}", head, self.written_in, self.row),
+        };
         if self.under.is_none() {
-            self.under = Some(self.calls_told_entering(program, given));
+            self.under = Some(self.calls_told_entering(program, given, from_library));
         }
         let place = program.written_in.clone().unwrap_or_else(|| self.written_in.clone());
-        self.entering = Some((place, program.declared_on));
+        self.entering = Some((place, program.declared_on, !from_library));
         Err(Escape::Error(told))
     }
 
     /// The same, with one more call about to be entered: a fault raised
     /// on the way in stands inside it, though it never began to run.
-    fn calls_told_entering(&self, program: &Rc<Routine>, given: &[Value]) -> String {
+    fn calls_told_entering(&self, program: &Rc<Routine>, given: &[Value], entered: bool) -> String {
         let named = match &program.within {
             Some(class) => format!("{}::{}", class, program.ident),
             None => program.ident.clone(),
         };
         let handed = given.iter().map(|v| self.handed_told(v)).collect::<Vec<_>>().join(", ");
-        let mut out = format!("Stack trace:\n#0 {}({}): {}({})\n", self.written_in, self.row, named, handed);
-        for (at, call) in self.calls.iter().rev().enumerate() {
-            out.push_str(&format!("#{} {}({}): {}({})\n", at + 1, call.from, call.on, self.call_named(call), self.call_handed(call)));
+        let stood = match entered {
+            true => "[internal function]".to_string(),
+            false => format!("{}({})", self.written_in, self.row),
+        };
+        let mut out = format!("Stack trace:\n#0 {}: {}({})\n", stood, named, handed);
+        let mut at = 1;
+        for call in self.calls.iter().rev() {
+            if self.stands_for_the_run(&call.named) || self.library_alone(call) {
+                continue;
+            }
+            out.push_str(&format!("#{} {}: {}({})\n", at, self.call_stood(call), self.call_named(call), self.call_handed(call)));
+            at += 1;
         }
-        out.push_str(&format!("#{} {{main}}\n", self.calls.len() + 1));
+        out.push_str(&format!("#{} {{main}}\n", at));
         out
     }
 
     /// Whether a call stands for the run and not for the program: the
     /// routine the run hands its complaints to is the run's own doing,
     /// so a trace looks past it to whatever raised the complaint.
+    /// Whether a call is the library's own doing from end to end: what
+    /// the language's own library does among itself is no part of the
+    /// program's calls and stands in no trace of them.
+    fn library_alone(&self, call: &Called) -> bool {
+        call.of_library && call.from_library
+    }
+
+    /// Where a call stands, as a trace tells it: a call the library made
+    /// has no line of the program's to name.
+    fn call_stood(&self, call: &Called) -> String {
+        match call.from_library {
+            true => "[internal function]".to_string(),
+            false => format!("{}({})", call.from, call.on),
+        }
+    }
+
     fn stands_for_the_run(&self, named: &str) -> bool {
         match self.hearer.borrow().as_ref() {
             Some(Value::Bound(p, _)) => p.ident == named,
@@ -2229,10 +2675,10 @@ impl<'a> Machine<'a> {
         let mut out = String::from("Stack trace:\n");
         let mut at = 0;
         for call in self.calls.iter().rev() {
-            if self.stands_for_the_run(&call.named) {
+            if self.stands_for_the_run(&call.named) || self.library_alone(call) {
                 continue;
             }
-            out.push_str(&format!("#{} {}({}): {}({})\n", at, call.from, call.on, self.call_named(call), self.call_handed(call)));
+            out.push_str(&format!("#{} {}: {}({})\n", at, self.call_stood(call), self.call_named(call), self.call_handed(call)));
             at += 1;
         }
         out.push_str(&format!("#{} {{main}}\n", at));
@@ -2307,7 +2753,7 @@ impl<'a> Machine<'a> {
         let frame = if program.frameless {
             env
         } else {
-            let frame = Env::make(program.idents.len(), Some(env));
+            let frame = self.frame_for(&program, &env);
             {
                 let mut slots = frame.cells.borrow_mut();
                 for (i, a) in program.formal_slots.iter().zip(args) {
@@ -2334,8 +2780,11 @@ impl<'a> Machine<'a> {
         }
         // What this call was handed is kept while it runs. A call in
         // tail position takes the place of this one, so what it was
-        // handed takes the place of this call's too.
-        let watching = self.reads_handed;
+        // handed takes the place of this call's too. A piece with no
+        // names of its own -- an arm of a branch -- is no call of
+        // anybody's and was handed nothing, so nothing is kept for it
+        // and what the call around it was handed still stands.
+        let mut watching = self.reads_handed && !program.frameless;
         if watching {
             let mine = std::mem::take(&mut self.pending);
             self.handed.push(mine);
@@ -2359,7 +2808,7 @@ impl<'a> Machine<'a> {
         // A program holding no names of its own runs in the frame around
         // it, and inside the class around it: an arm of a branch is such
         // a one, and the class it stands in is the class it stands in.
-        let mine = !program.frameless;
+        let mut mine = !program.frameless;
         if mine {
             self.frames_named.push(program.clone());
             self.inside.push(program.within.clone());
@@ -2369,14 +2818,17 @@ impl<'a> Machine<'a> {
         // A program holding no names of its own is a piece of the one
         // around it — an arm of a branch — and no call of anybody's, so
         // it is not written down as one.
-        let noted = !program.frameless;
+        let mut noted = !program.frameless;
         if noted {
+            let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
             self.calls.push(Called {
                 named: Rc::from(program.ident.as_str()),
                 within: program.within.clone(),
                 from: was_written_in.clone(),
                 on: was_on_row,
                 handed_at: watching.then(|| self.handed.len() - 1),
+                of_library: program.declared_on == 0,
+                from_library,
             });
         }
         let outcome: Res = loop {
@@ -2408,7 +2860,21 @@ impl<'a> Machine<'a> {
                     // take the place of what is running, however it was
                     // reached.
                     let stands_alone = !program.frameless;
-                    if mine && stands_alone {
+                    // A piece with no names of its own may step into a
+                    // program that has them: the run stands inside that
+                    // one from here, so its names and its call are put
+                    // down now rather than taking the place of any.
+                    let just_entered = stands_alone && !mine;
+                    if just_entered {
+                        self.frames_named.push(program.clone());
+                        self.inside.push(program.within.clone());
+                        mine = true;
+                        if self.reads_handed {
+                            let taken = std::mem::take(&mut self.pending);
+                            self.handed.push(taken);
+                            watching = true;
+                        }
+                    } else if stands_alone {
                         if let Some(top) = self.frames_named.last_mut() {
                             *top = program.clone();
                         }
@@ -2416,13 +2882,29 @@ impl<'a> Machine<'a> {
                             *here = program.within.clone();
                         }
                     }
-                    if noted && stands_alone {
+                    if stands_alone && !noted {
+                        let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
+                        self.calls.push(Called {
+                            named: Rc::from(program.ident.as_str()),
+                            within: program.within.clone(),
+                            from: was_written_in.clone(),
+                            on: was_on_row,
+                            handed_at: watching.then(|| self.handed.len() - 1),
+                            of_library: program.declared_on == 0,
+                            from_library,
+                        });
+                        noted = true;
+                    } else if stands_alone {
                         if let Some(top) = self.calls.last_mut() {
                             top.named = Rc::from(program.ident.as_str());
                             top.within = program.within.clone();
                         }
                     }
-                    if watching {
+                    // Where the call this one takes the place of was
+                    // written down, what it was handed is written over
+                    // too. Where it was just now put down, it holds
+                    // what this call was handed already.
+                    if watching && !just_entered {
                         let next = std::mem::take(&mut self.pending);
                         if let Some(top) = self.handed.last_mut() {
                             *top = next;
@@ -2447,8 +2929,11 @@ impl<'a> Machine<'a> {
         }
         // Where a fault leaves the call and none has been written down
         // yet, the calls go down as they stand: the moment after this
-        // they are gone.
-        if outcome.is_err() && self.under.is_none() {
+        // they are gone. Leaving a loop or going round it again leaves
+        // a call the same way and is no fault at all, so nothing of the
+        // sort is written down for it.
+        let a_fault = matches!(outcome, Err(Escape::Error(_) | Escape::Thrown(_) | Escape::Stopped(_)));
+        if a_fault && self.under.is_none() {
             self.under = Some(self.calls_told());
         }
         if watching {
@@ -2551,9 +3036,32 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            // A place in text has room for one letter, so a write there
+            // is worth that letter and not the whole of what was handed
+            // over. Where more was handed over the language says so, and
+            // where nothing was there is nothing to put.
+            Prim::Letter => {
+                n(2)?;
+                match &v[1] {
+                    Value::Text(_) if self.letter_places => {
+                        let handed = v[0].render(w);
+                        let mut spelling = handed.chars();
+                        let Some(first) = spelling.next() else {
+                            return Err("Cannot write nothing into a place in text".to_string());
+                        };
+                        if spelling.next().is_some() {
+                            if let Some(said) = self.table.single("ext.op.index.text.first") {
+                                self.grumble("warning", said);
+                            }
+                        }
+                        Value::text(&first.to_string())
+                    }
+                    _ => v[0].clone(),
+                }
+            }
             // The steps of a walk that a thing may answer for itself are
             // worked out where a call can be made, not here.
-            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn => {
+            Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
                 return Err(format!("{}() is worked out where a call can be made", name))
             }
             Prim::Kept => {
@@ -2644,7 +3152,7 @@ impl<'a> Machine<'a> {
             Prim::Within => {
                 n(2)?;
                 let called = v[1].bare();
-                let stands = self.what_it_spells(v[0].clone());
+                let stands = self.class_it_spells(v[0].clone());
                 match &stands {
                     Value::Blueprint(class) => match class.constant(&called) {
                         Some(x) => x.clone(),
@@ -2668,7 +3176,7 @@ impl<'a> Machine<'a> {
             Prim::Into => {
                 n(3)?;
                 let called = v[1].bare();
-                let stands = self.what_it_spells(v[0].clone());
+                let stands = self.class_it_spells(v[0].clone());
                 match &stands {
                     Value::Blueprint(class) => {
                         let keeper = class.keeper(&called).unwrap_or(class);
@@ -2684,8 +3192,13 @@ impl<'a> Machine<'a> {
             }
             Prim::Akin => {
                 n(2)?;
+                let against = match &v[1] {
+                    Value::Thing(thing) => thing.of.name.clone(),
+                    Value::Blueprint(class) => class.name.clone(),
+                    other => other.bare(),
+                };
                 match &v[0] {
-                    Value::Thing(thing) => Value::Flag(thing.of.goes_by(&v[1].bare(), self.classes_either_way)),
+                    Value::Thing(thing) => Value::Flag(thing.of.goes_by(&against, self.classes_either_way)),
                     _ => Value::Flag(false),
                 }
             }
@@ -2726,7 +3239,15 @@ impl<'a> Machine<'a> {
             Prim::Placed => {
                 n(3)?;
                 match &v[0] {
-                    Value::Text(had) if self.letter_places => letter_put(had, &v[1], &v[2].render(w))?,
+                    Value::Text(had) if self.letter_places => {
+                        let (made, over) = letter_put(had, &v[1], &v[2].render(w))?;
+                        if over {
+                            if let Some(said) = self.table.single("ext.op.index.text.first") {
+                                self.grumble("warning", said);
+                            }
+                        }
+                        made
+                    }
                     Value::Vector(items) if as_index(&v[1]).map_or(false, |at| at < items.len()) => {
                         let mut all = items.as_ref().clone();
                         all[as_index(&v[1])?] = v[2].clone();
@@ -2754,12 +3275,15 @@ impl<'a> Machine<'a> {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
                 // names the reading among the calls it stood under.
+                let from_library = self.calls.last().map_or(false, |c| c.of_library && !self.stands_for_the_run(&c.named));
                 self.calls.push(Called {
                     named: Rc::from(name),
                     within: None,
                     from: self.written_in.clone(),
                     on: self.row,
                     handed_at: None,
+                    of_library: false,
+                    from_library,
                 });
                 let done = self.read_in(op, name, v);
                 // A complaint the reading raised is handed over while
@@ -2788,7 +3312,7 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 let w = self.wording();
                 let (place, what) = (v[0].render(w), v[1].render(w));
-                match std::fs::write(place, what.as_bytes()) {
+                match std::fs::write(place, self.table.raw_of(&what)) {
                     Ok(()) => Value::Small(what.len() as i64),
                     Err(_) => Value::Flag(false),
                 }
@@ -2803,10 +3327,156 @@ impl<'a> Machine<'a> {
                 let w = self.wording();
                 Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
             }
+            // The host's shell, handed a command and asked afterwards
+            // for all it put where a run puts what it writes. Both ways
+            // the words travel as the bytes their text stands for: the
+            // command as it goes out, the answer as it is read back in,
+            // with whatever break of line ended it left where it fell.
+            // Anything the shell said in complaint goes out beside this
+            // run's own complaints and is not gathered. Where the shell
+            // put out nothing whatever the answer is nothing; where no
+            // shell could be started the answer is false.
+            Prim::Shelled => {
+                n(1)?;
+                let w = self.wording();
+                let order = self.table.raw_of(&v[0].render(w));
+                // Whatever this run has written already is let go first,
+                // so the shell's words fall after it and not before.
+                {
+                    use std::io::Write as _;
+                    let _ = std::io::stdout().flush();
+                }
+                let spelled = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&order);
+                let mut shell = std::process::Command::new(THE_HOSTS_SHELL);
+                shell.args([std::ffi::OsStr::new(A_COMMAND_FOLLOWS), spelled]);
+                shell.stderr(std::process::Stdio::inherit());
+                match shell.output() {
+                    Ok(said) if !said.stdout.is_empty() => Value::text(&self.table.said_of(&said.stdout)),
+                    Ok(_) => Value::Nil,
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            // Reaching another host: the connection is made, what was
+            // handed over goes on it whole, and what comes back is read
+            // until the far end shuts it. A request that asks for the
+            // connection to be shut wants no more than that.
+            // Biding a while, counted in millionths of a second. Without
+            // it a run watching for something to come ready spins as
+            // fast as it can and takes the first no for the last one.
+            Prim::Bided => {
+                n(1)?;
+                let tiny = as_index(&v[0])?;
+                std::thread::sleep(std::time::Duration::from_micros(tiny as u64));
+                Value::Nil
+            }
+            Prim::Reached => {
+                n(4)?;
+                use std::io::{Read as _, Write as _};
+                let w = self.wording();
+                let (host, port) = (v[0].render(w), as_index(&v[1])?);
+                let carried = self.table.raw_of(&v[2].render(w));
+                let patience = match as_index(&v[3])? {
+                    0 => None,
+                    wait => Some(std::time::Duration::from_secs(wait as u64)),
+                };
+                let door = format!("{}:{}", host, port);
+                let opened = match patience {
+                    None => std::net::TcpStream::connect(&door),
+                    Some(waiting) => match std::net::ToSocketAddrs::to_socket_addrs(&door) {
+                        Err(e) => Err(e),
+                        Ok(mut every) => match every.next() {
+                            None => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "nowhere")),
+                            Some(one) => std::net::TcpStream::connect_timeout(&one, waiting),
+                        },
+                    },
+                };
+                let spoken = |mut line: std::net::TcpStream| -> std::io::Result<Vec<u8>> {
+                    line.set_write_timeout(patience)?;
+                    line.set_read_timeout(patience)?;
+                    line.write_all(&carried)?;
+                    line.flush()?;
+                    let mut back = Vec::new();
+                    line.read_to_end(&mut back)?;
+                    Ok(back)
+                };
+                match opened.and_then(spoken) {
+                    Err(_) => Value::Flag(false),
+                    Ok(back) => Value::text(&self.table.said_of(&back)),
+                }
+            }
+            // A program raised alongside this one. Nothing it writes is
+            // kept: it is raised to answer on a connection, and what it
+            // would otherwise say is let fall.
+            Prim::Raised => {
+                n(3)?;
+                use std::os::unix::ffi::OsStrExt as _;
+                let w = self.wording();
+                let named = self.table.raw_of(&v[0].render(w));
+                let mut raising = std::process::Command::new(std::ffi::OsStr::from_bytes(&named));
+                if let Value::Vector(words) = &v[1] {
+                    for word in words.iter() {
+                        let word = self.table.raw_of(&word.render(w));
+                        raising.arg(std::ffi::OsStr::from_bytes(&word));
+                    }
+                }
+                if let Value::Dict(pairs) = &v[2] {
+                    for (called, worth) in pairs.iter() {
+                        let called = self.table.raw_of(&called.render(w));
+                        let worth = self.table.raw_of(&worth.render(w));
+                        raising.env(std::ffi::OsStr::from_bytes(&called), std::ffi::OsStr::from_bytes(&worth));
+                    }
+                }
+                raising.stdin(std::process::Stdio::null());
+                raising.stdout(std::process::Stdio::null());
+                raising.stderr(std::process::Stdio::null());
+                match raising.spawn() {
+                    Err(_) => Value::Flag(false),
+                    Ok(begun) => {
+                        let mark = begun.id() as i64;
+                        self.alongside.insert(mark, begun);
+                        Value::Small(mark)
+                    }
+                }
+            }
+            Prim::Laid => {
+                n(1)?;
+                let mark = as_index(&v[0])? as i64;
+                match self.alongside.remove(&mark) {
+                    None => Value::Flag(false),
+                    Some(mut begun) => {
+                        let _ = begun.kill();
+                        let _ = begun.wait();
+                        Value::Flag(true)
+                    }
+                }
+            }
             Prim::Clock => {
                 n(1)?;
                 self.allowed = as_index(&v[0])?;
                 self.started = Some(std::time::Instant::now());
+                Value::Flag(true)
+            }
+            // What the run has taken of the host's room, as the tally
+            // beside the allocator has it: what stands taken now, the
+            // highest it ever stood at, and that highest reading thrown
+            // away so it is gathered again from this moment on.
+            Prim::RoomHeld => {
+                n(0)?;
+                Value::Small(lumen_room::used() as i64)
+            }
+            Prim::RoomHighest => {
+                n(0)?;
+                Value::Small(lumen_room::most() as i64)
+            }
+            Prim::RoomAnew => {
+                n(0)?;
+                lumen_room::forget_most();
+                Value::Nil
+            }
+            // How much room the run may take from here on.
+            Prim::RoomMark => {
+                n(1)?;
+                self.ceiling = as_index(&v[0])?;
                 Value::Flag(true)
             }
             // Words said as a complaint of a kind the language names,
@@ -2818,14 +3488,17 @@ impl<'a> Machine<'a> {
                 n(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
-                    if self.stands_for_the_run(&call.named) {
+                    if self.stands_for_the_run(&call.named) || self.library_alone(call) {
                         continue;
                     }
-                    let mut pairs = vec![
-                        (Value::text("file"), Value::text(&call.from)),
-                        (Value::text("line"), Value::Small(call.on as i64)),
-                        (Value::text("function"), Value::text(&call.named)),
-                    ];
+                    // A call the library made stands nowhere the program
+                    // was written, so it is told without a place.
+                    let mut pairs = Vec::new();
+                    if !call.from_library {
+                        pairs.push((Value::text("file"), Value::text(&call.from)));
+                        pairs.push((Value::text("line"), Value::Small(call.on as i64)));
+                    }
+                    pairs.push((Value::text("function"), Value::text(&call.named)));
                     if let Some(class) = &call.within {
                         pairs.push((Value::text("class"), Value::text(class)));
                     }
@@ -2861,18 +3534,56 @@ impl<'a> Machine<'a> {
                         _ => matches!(held, Value::Bound(..) | Value::Routine(_)),
                     };
                     if wanted {
+                        // A class is filed under more than its name, so
+                        // what it is filed under is taken off again.
                         if let Some(name) = self.idents.get(at) {
-                            named.push(Value::text(name));
+                            named.push(Value::text(name.trim_end_matches(crate::form::OF_A_CLASS)));
                         }
                     }
                 }
                 Value::Vector(Rc::new(named))
             }
+            // The words the language has of its own, by name: what a
+            // program may call though nobody wrote them.
+            Prim::Carry => return Err("A routine takes names away where it is written and nowhere else".to_string()),
+            Prim::WordsSpelled => {
+                n(0)?;
+                let mut words: Vec<String> = self.table.prims.keys().cloned().collect();
+                words.sort();
+                Value::Vector(Rc::new(words.iter().map(|w| Value::text(w)).collect()))
+            }
+            // What a class answers to, by name: the methods written in
+            // it, or the properties its things carry, its own coming
+            // before those of the class it is built on. A thing is asked
+            // of the class that made it.
+            Prim::ClassMethods | Prim::ClassProperties => {
+                n(1)?;
+                let of = match self.class_it_spells(v[0].clone()) {
+                    Value::Thing(thing) => Some(thing.of.clone()),
+                    Value::Blueprint(class) => Some(class),
+                    _ => None,
+                };
+                let mut gathered: Vec<String> = Vec::new();
+                let mut here = of;
+                while let Some(class) = here {
+                    let names: Vec<String> = match op {
+                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).collect(),
+                        _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
+                    };
+                    for called in names {
+                        if !gathered.iter().any(|held| *held == called) {
+                            gathered.push(called);
+                        }
+                    }
+                    here = class.under.clone();
+                }
+                Value::Vector(Rc::new(gathered.iter().map(|called| Value::text(called)).collect()))
+            }
             // The class a class stands on, by name: a thing is asked of
             // the class it is of. Nothing where it stands on none.
             Prim::ClassBeneath => {
                 n(1)?;
-                let of = match self.what_it_spells(v[0].clone()) {
+                let of = match self.class_it_spells(v[0].clone()) {
                     Value::Thing(thing) => Some(thing.of.clone()),
                     Value::Blueprint(class) => Some(class),
                     _ => None,
@@ -2880,6 +3591,51 @@ impl<'a> Machine<'a> {
                 match of.and_then(|c| c.under.clone()) {
                     Some(under) => Value::text(&under.name),
                     None => Value::Nil,
+                }
+            }
+            // How far the clock the system keeps has come since the
+            // year it counts from. A clock that will not answer counts
+            // as standing at the start of it.
+            Prim::SinceEpoch => {
+                n(0)?;
+                let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+                Value::Small(gone.map_or(0, |since| since.as_secs() as i64))
+            }
+            // The roots, the curves and the angles, worked over the
+            // reals of the width and named by the first worth handed
+            // over. They are worked at the width and nowhere else: a
+            // root is hardly ever a ratio, and holding one exactly
+            // would mean choosing beforehand how many figures to keep.
+            Prim::Reckon => {
+                let Some(working) = v.first().map(|x| x.render(w)) else {
+                    return Err(format!("{}() wants the name of a working first of all", name));
+                };
+                let takes = math::worked_takes(&working);
+                if v.len() != takes + 1 {
+                    return Err(format!("{}('{}') expects {} argument(s) after the name, got {}", name, working, takes, v.len() - 1));
+                }
+                let width = |at: usize| -> f64 {
+                    let worth = self.worth_of(&v[at]);
+                    // A nought under nought is a nought of its own at
+                    // the width, and some of these workings answer
+                    // differently for it, so the minus is put back.
+                    if let Value::Frac(e) = &worth {
+                        if e.under && num_traits::Zero::is_zero(&e.above) {
+                            return -0.0;
+                        }
+                    }
+                    match math::ratio_of(&worth) {
+                        Some(r) => crate::data::nearest_binary(&r.above, &r.beneath),
+                        None => f64::NAN,
+                    }
+                };
+                let two = match takes {
+                    2 => width(2),
+                    _ => 0.0,
+                };
+                match math::worked(&working, width(1), two) {
+                    Some(got) => crate::data::worth_of_binary(got, self.real_figures()),
+                    None => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 }
             }
             Prim::OutBegun => {
@@ -3022,7 +3778,10 @@ impl<'a> Machine<'a> {
             // Turning text over works letter by letter; anything else is
             // read as a whole number of sixty-four bits first.
             Prim::BitsOver => match &v[0] {
-                Value::Text(s) => Value::text(&letters_turned(s)),
+                Value::Text(s) => {
+                    let over: Vec<u8> = self.table.raw_of(s).iter().map(|b| !b).collect();
+                    Value::text(&self.table.said_of(&over))
+                }
                 other => Value::Small(!self.bits_told(other)?),
             },
             // Two pieces of text meet letter by letter. The shorter one
@@ -3032,7 +3791,8 @@ impl<'a> Machine<'a> {
                 if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
             {
                 let (left, right) = (v[0].bare(), v[1].bare());
-                let (left, right) = (left.as_bytes(), right.as_bytes());
+                let (left, right) = (self.table.raw_of(&left), self.table.raw_of(&right));
+                let (left, right) = (&left[..], &right[..]);
                 let far = if op == Prim::BitsEither { left.len().max(right.len()) } else { left.len().min(right.len()) };
                 let mut letters: Vec<u8> = Vec::with_capacity(far);
                 for at in 0..far {
@@ -3052,20 +3812,6 @@ impl<'a> Machine<'a> {
                     Prim::BitsBoth => left & right,
                     Prim::BitsEither => left | right,
                     _ => left ^ right,
-                })
-            }
-            Prim::BitsUp | Prim::BitsDown => {
-                let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
-                if by < 0 {
-                    return Err("Bit shift by a negative number".to_string());
-                }
-                // Past sixty-four places nothing of the number is left,
-                // save the sign when the bits go down.
-                let far = by.min(64) as u32;
-                Value::Small(if op == Prim::BitsUp {
-                    bits.checked_shl(far).unwrap_or(0)
-                } else {
-                    bits.checked_shr(far).unwrap_or(if bits < 0 { -1 } else { 0 })
                 })
             }
             // Text turned about is text taken times minus one, the way a
@@ -3094,6 +3840,11 @@ impl<'a> Machine<'a> {
                     _ => self.at_width(turned),
                 }
             }
+            // Nothing stands in any order beside the worth nothing is
+            // equal to, so each of the four is answered no, whichever
+            // way round it is put: the wider three are asked here and
+            // not deeper down, being the narrow one turned about.
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if v.len() == 2 && math::no_order(&v[0], &v[1]) => Value::Flag(false),
             // Which of two comes first is asked just as loosely, so an
             // array, a flag, nothing and text spelling no number are
             // each set against the other the way such a language sets
@@ -3120,6 +3871,12 @@ impl<'a> Machine<'a> {
                 let (left, right) = (&v[0], &v[1]);
                 let alike = match (left, right) {
                     (Value::Flag(_), _) | (_, Value::Flag(_)) => self.stands_true(left) == self.stands_true(right),
+                    // Nothing whatever is equal to the worth nothing is
+                    // equal to, itself least of all, and text spelling
+                    // its name no more than anything else. A flag is
+                    // asked first, since a flag turns the question into
+                    // whether the other side is true, and it is.
+                    (x, y) if math::no_order(x, y) => false,
                     (one, other) | (other, one) if empty(one) && counts(other) => !self.stands_true(other),
                     (one, Value::Text(s)) | (Value::Text(s), one) if empty(one) => s.is_empty(),
                     (one, Value::Vector(items)) | (Value::Vector(items), one) if empty(one) => items.is_empty(),
@@ -3175,8 +3932,8 @@ impl<'a> Machine<'a> {
             },
             Prim::AsWhole => {
                 let worth = self.worth_of(&v[0]);
-                let r = math::ratio_of(&worth).unwrap_or(crate::data::Ratio { above: BigInt::from(0), beneath: BigInt::from(1), places: None, under: false });
-                self.at_width(Value::from_big(&r.above / &r.beneath))
+                let whole = math::whole_part(&worth).unwrap_or_else(|| BigInt::from(0));
+                self.at_width(Value::from_big(whole))
             }
             Prim::AsDecimal => {
                 let worth = self.worth_of(&v[0]);
@@ -3209,10 +3966,13 @@ impl<'a> Machine<'a> {
             // spells none is worth nothing; a language with a word for a
             // warning hears of both instead of being stopped.
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
-            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsUp | Prim::BitsDown
                 // Only where every piece of text will give up a number,
-                // so that what is worked out below is never text again.
+                // so that what is worked out below is never text again,
+                // and, for the two shifts, only where the language has
+                // them read each side for a number at all.
                 if (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)))
+                    && (!matches!(op, Prim::BitsUp | Prim::BitsDown) || self.table.flag("ext.op.bit.shift.numbers"))
                     && [&v[0], &v[1]].iter().all(|x| {
                         !matches!(x, Value::Text(_))
                             || number_spelled_in(x).is_some()
@@ -3252,6 +4012,21 @@ impl<'a> Machine<'a> {
                 };
                 let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
+            }
+            // Carrying the bits along. Each side is read as a whole
+            // number of sixty-four bits, sign and all, save where the
+            // reading above has already made numbers of them.
+            Prim::BitsUp | Prim::BitsDown => {
+                let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
+                match math::carried_bits(bits, by, op == Prim::BitsUp) {
+                    Some(carried) => Value::Small(carried),
+                    // Carrying by a count under nought is no carrying,
+                    // and a language may have its own words for that.
+                    None => match self.table.single("ext.system.fault.shift") {
+                        Some(words) => return Err(words.to_string()),
+                        None => return Err("Bit shift by a negative number".to_string()),
+                    },
+                }
             }
             // A language whose remainder is taken between whole numbers
             // brings what it is given to one first, the way it brings a
@@ -3297,6 +4072,14 @@ impl<'a> Machine<'a> {
                     false => (v[0].clone(), v[1].clone()),
                 };
                 let worked = match math::compute(sum, &left, &right) {
+                    // A language may tell the remainder by nought apart
+                    // from the division by it and word that its own
+                    // way. The kind of fault is the same for both, so
+                    // it is the wording alone that is stood in.
+                    Some(Err(told)) if sum == Calc::Remainder && told == "Division by zero" => {
+                        let its_own = self.table.single("ext.system.fault.modulo");
+                        return Err(its_own.map_or(told, str::to_string));
+                    }
                     Some(r) => r?,
                     None => match sum {
                         Calc::Plus => Value::from_big(left.as_big()? + right.as_big()?),
@@ -3385,8 +4168,8 @@ impl<'a> Machine<'a> {
             }
             Prim::AsInt => {
                 n(1)?;
-                let e = math::ratio_of(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
-                Value::from_big(e.above / e.beneath)
+                let whole = math::whole_part(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::from_big(whole)
             }
             Prim::AsReal => {
                 n(1)?;
@@ -3510,7 +4293,7 @@ impl<'a> Machine<'a> {
                 x.clone()
             }
             Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
+            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise => unreachable!("handled in eval"),
         })
     }
 
@@ -3560,12 +4343,19 @@ impl<'a> Machine<'a> {
                         match held {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                             // A file that will not be read is not there
-                            // as far as the run can tell: it says so
-                            // twice, of the file and of the reading in,
-                            // and answers false.
+                            // as far as the run can tell. It says so of
+                            // the file; then a word that will not go on
+                            // without it stops the run, and one that
+                            // will says so of the reading in besides and
+                            // answers false.
                             Err(_) => {
-                                self.grumble("warning", &format!("{}(): Failed to open stream: No such file or directory", name));
-                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                let page = self.word_page(name);
+                                self.grumble("warning", &format!("{}(){}: Failed to open stream: No such file or directory", name, page));
+                                let insisted = self.table.strings("ext.builtin.include.demanded").iter().any(|word| word == name);
+                                if let (true, Some((opens, closes))) = (insisted, self.table.around("ext.builtin.include.demanded.missing")) {
+                                    return Err(format!("{opens}{given}{closes}"));
+                                }
+                                let told = format!("{}(){}: Failed opening '{}' for inclusion (include_path='.')", name, page, given);
                                 self.grumble("warning", &told);
                                 return Ok(Value::Flag(false));
                             }
@@ -3730,6 +4520,30 @@ fn written_reach(of: &Blueprint, filed: &str, w: Names) -> String {
     }
 }
 
+/// The head of a complaint: the break of line one opens with, the word
+/// naming the kind, and what the complaint says. Where the language
+/// gives words for dressing a complaint for a reader of markup the word
+/// is wrapped in them; where it gives none the bare words go out.
+pub fn complaint_head(table: &Table, word: &str, about: &str) -> String {
+    match table.strings("ext.system.complaint.markup.kind") {
+        [ahead, opens, closes, ..] => format!("{ahead}\n{opens}{word}{closes}{about}"),
+        _ => format!("\n{word}: {about}"),
+    }
+}
+
+/// The tail of a complaint: where it was raised and on what line, each
+/// wrapped as the language would have it, and the break of line that
+/// ends a complaint after the two.
+pub fn complaint_tail(table: &Table, place: &str, row: u32) -> String {
+    let wrapped = |label: &str, held: String| match table.around(label) {
+        Some((opens, closes)) => format!("{opens}{held}{closes}"),
+        None => held,
+    };
+    let file = wrapped("ext.system.complaint.markup.place", place.to_string());
+    let at = wrapped("ext.system.complaint.markup.line", row.to_string());
+    format!(" in {file} on line {at}\n")
+}
+
 /// Whether a thing still keeps a member at a place. Taking one off
 /// empties its place and leaves it there, so that a walk already under
 /// way finds the rest of the members where it left them.
@@ -3757,7 +4571,13 @@ fn with_kind(v: &Value, level: usize, binary_reals: bool, w: Names) -> String {
         Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "float(-0)".to_string(),
         Value::Frac(e) if binary_reals => format!("float({})", crate::data::figured(crate::data::nearest_binary(&e.above, &e.beneath), None)),
         Value::Frac(_) => format!("float({})", v.bare()),
-        Value::Text(s) => format!("string({}) \"{}\"", s.len(), s),
+        Value::Text(s) => {
+            // Kept as bytes, a character is a byte and the width is the
+            // count of them; kept as letters, it is what they are
+            // spelled with that is counted.
+            let wide = if w.kept_as_bytes { s.chars().count() } else { s.len() };
+            format!("string({}) \"{}\"", wide, s)
+        }
         Value::Flag(b) => format!("bool({})", b),
         Value::Vector(items) => {
             let entries: Vec<String> = items.iter().enumerate().map(|(i, x)| format!("{lead}  [{i}]=>\n{lead}  {}{}\n", tied(x), with_kind(x, level + 1, binary_reals, w))).collect();
@@ -3878,10 +4698,14 @@ fn over_lines(v: &Value, along: usize, w: Names) -> String {
 /// text a language lets a program write into. Only the first letter of
 /// what is handed over is put there; a place beyond the end is reached
 /// over spaces, and one counted from the end reaches back from it.
-fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
-    let Some(letter) = put.chars().next() else {
+fn letter_put(had: &str, at: &Value, put: &str) -> Result<(Value, bool), String> {
+    let mut spelling = put.chars();
+    let Some(letter) = spelling.next() else {
         return Err("Cannot write nothing into a place in text".to_string());
     };
+    // Whether more was handed over than the place has room for, which
+    // the caller is the one placed to say anything about.
+    let over = spelling.next().is_some();
     let mut letters: Vec<char> = had.chars().collect();
     // Text standing for a place counts as the number it opens with,
     // the way text counts as a number anywhere else.
@@ -3903,15 +4727,66 @@ fn letter_put(had: &str, at: &Value, put: &str) -> Result<Value, String> {
         letters.resize(step + 1, ' ');
     }
     letters[step] = letter;
-    Ok(Value::text(&letters.into_iter().collect::<String>()))
+    Ok((Value::text(&letters.into_iter().collect::<String>()), over))
 }
 
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<(), String> {
+/// Where the cell a walk handed out is to be found in the array now.
+/// The place it was handed out at is tried first, since the body will
+/// mostly have left it there; nothing is answered where the item is no
+/// longer in the array at all.
+fn found_at(walked: &Value, cell: &Rc<RefCell<Value>>, stood: usize) -> Option<usize> {
+    let itself = |x: &Value| matches!(x, Value::Shared(other) if Rc::ptr_eq(other, cell));
+    match walked {
+        Value::Vector(items) => match items.get(stood).map_or(false, &itself) {
+            true => Some(stood),
+            false => items.iter().position(itself),
+        },
+        Value::Dict(entries) => match entries.get(stood).map_or(false, |(_, x)| itself(x)) {
+            true => Some(stood),
+            false => entries.iter().position(|(_, x)| itself(x)),
+        },
+        _ => None,
+    }
+}
+
+/// Values put before everything an array holds, in the order given.
+/// The places keep their words where they are named by words, and are
+/// numbered afresh from nought where they are named by numbers, the
+/// newcomers taking the first numbers. The answer is how many places
+/// there are afterwards.
+fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize, String> {
+    let mut numbered = 0i64;
+    let mut afresh = |k: Option<&Value>| match k {
+        Some(Value::Text(word)) => Value::Text(word.clone()),
+        _ => {
+            numbered += 1;
+            Value::Small(numbered - 1)
+        }
+    };
+    let mut all: Vec<(Value, Value)> = coming.into_iter().map(|x| (afresh(None), x)).collect();
+    match &*held {
+        Value::Vector(items) => all.extend(items.iter().map(|x| (afresh(None), x.clone()))),
+        Value::Dict(entries) => all.extend(entries.iter().map(|(k, x)| (afresh(Some(k)), x.clone()))),
+        other => return Err(format!("{}() cannot put a value in front of {}", name, other.bare())),
+    }
+    let many = all.len();
+    // Where the places run nought, one, two and so on, the array is
+    // the plain one it looks like and is given back as such.
+    let plain = all.iter().enumerate().all(|(at, (k, _))| matches!(k, Value::Small(n) if *n == at as i64));
+    *held = match plain {
+        true => Value::Vector(Rc::new(all.into_iter().map(|(_, x)| x).collect())),
+        false => Value::Dict(Rc::new(all)),
+    };
+    Ok(many)
+}
+
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<bool, String> {
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
-        *held = letter_put(had, at, put)?;
-        return Ok(());
+        let (made, over) = letter_put(had, at, put)?;
+        *held = made;
+        return Ok(over);
     }
     if builds && matches!(held, Value::Nil | Value::Unset) {
         *held = Value::Vector(Rc::new(Vec::new()));
@@ -3927,7 +4802,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
         if let Some(k) = &key {
             if let Some(Value::Shared(cell)) = items.get(as_index(k)?) {
                 *cell.borrow_mut() = value;
-                return Ok(());
+                return Ok(false);
             }
         }
         let items = Rc::make_mut(items);
@@ -3935,7 +4810,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
             Some(k) => items[as_index(&k)?] = value,
             None => items.push(value),
         }
-        return Ok(());
+        return Ok(false);
     }
     if let Value::Vector(items) = &*held {
         let spread = items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
@@ -3949,7 +4824,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
     let entries = Rc::make_mut(entries);
     let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
     set_key(entries, key, value);
-    Ok(())
+    Ok(false)
 }
 
 /// The place an array holds, made a shared cell, so that a name tied to
@@ -4135,11 +5010,6 @@ fn number_spelled_in(v: &Value) -> Option<Value> {
     Some(math::make_number((above * &scale + below) * sign, scale, Some(digits_told)))
 }
 
-/// Every letter of a piece of text with its bits turned over.
-fn letters_turned(s: &str) -> String {
-    let letters: Vec<u8> = s.as_bytes().iter().map(|c| !c).collect();
-    String::from_utf8_lossy(&letters).into_owned()
-}
 
 /// A value as a whole number of sixty-four bits. Text spelling a number
 /// stands for it and text spelling none stands for nothing; what lies
@@ -4156,12 +5026,12 @@ fn sixty_four(v: &Value) -> Result<i64, String> {
         },
         other => other.clone(),
     };
-    match math::ratio_of(&number) {
+    match math::whole_part(&number) {
         // Dividing whole numbers cuts towards nothing, which is what
         // dropping what lies past the point comes to. A number too wide
         // for the bits at all comes to the lowest of them, as it does on
         // a machine that holds numbers to a width.
-        Some(r) => Ok((&r.above / &r.beneath).to_i64().unwrap_or(i64::MIN)),
+        Some(n) => Ok(n.to_i64().unwrap_or(i64::MIN)),
         None => Err("Working on bits needs a whole number".to_string()),
     }
 }

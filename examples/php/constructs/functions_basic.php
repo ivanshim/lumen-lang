@@ -4,7 +4,7 @@ function square($x) {
     return $x * $x;
 }
 
-function add($a, $b) {
+function add_($a, $b) {
     return $a + $b;
 }
 
@@ -14,7 +14,7 @@ function greet($name) {
 
 print("Test: Basic Functions\n");
 print(square(5) . "\n");
-print(add(10, 20) . "\n");
+print(add_(10, 20) . "\n");
 print(greet("Lumen") . "\n");
 function get_constant() {
     return 42;

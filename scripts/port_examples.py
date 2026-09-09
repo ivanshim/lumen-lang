@@ -776,7 +776,7 @@ class Emitter:
         return self.d[label][0]
 
     def collect_reserved(self):
-        words = set()
+        words = set(self.native_names())
         for label, value in self.d.items():
             if label.startswith("$comment") or not isinstance(value, list) or label == "op.precedence":
                 continue
@@ -786,6 +786,24 @@ class Emitter:
                 for s in value:
                     if isinstance(s, str) and re.fullmatch(r"[^\W\d]\w*", s):
                         words.add(s)
+        return words
+
+    def native_names(self):
+        """The routines the language's own hand-written library already
+        spells. A Lumen name that is one of them is renamed, so that the
+        library the language brought with it keeps its own words: PHP's
+        `array_slice` is PHP's, whatever Lumen means by the name."""
+        ext = self.d["extensions"][0]
+        native = ROOT / "langs" / f"lib_{self.name}" / "native"
+        if not native.is_dir():
+            return set()
+        words = set()
+        for word in self.d["stmt.function"]:
+            if not re.fullmatch(r"[^\W\d]\w*", word):
+                continue
+            pattern = re.compile(rf"(?:^|\s){re.escape(word)}\s+&?([^\W\d]\w*)\s*\(")
+            for file in sorted(native.glob(f"*.{ext}")):
+                words.update(pattern.findall(file.read_text(encoding="utf-8")))
         return words
 
     def binary_tier(self, lexeme):
@@ -1803,6 +1821,16 @@ def write_mirror(lang, d, files, reasons):
     # for what it has and Lumen has not: PHP's exception classes. The
     # porter never writes there; it only puts those files first.
     native = sorted(q.name for q in (out / "native").glob(f"*.{ext}")) if (out / "native").is_dir() else []
+    # A name written twice in the language's own library is a name one
+    # file quietly takes from another, so it is refused outright.
+    seen = {}
+    for name in native:
+        # Only a routine written out on its own: one written inside a
+        # class is that class's own and clashes with nothing.
+        for called in re.findall(r"(?m)^function\s+&?([^\W\d]\w*)\s*\(", (out / "native" / name).read_text(encoding="utf-8")):
+            if called in seen:
+                raise SystemExit(f"lib_{lang}/native: {called}() is written in both {seen[called]} and {name}")
+            seen[called] = name
     comment = d["lexical.comment_line"][0] if d["lexical.comment_line"] else None
     written = []
     for name in LIB_FILES:

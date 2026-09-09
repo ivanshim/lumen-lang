@@ -38,6 +38,17 @@ impl Exact {
         self.q.is_one() && self.places.is_none()
     }
 
+    /// Whether this stands outside the numbers, which only a real of a
+    /// width ever does: nought beneath says so.
+    fn outside(&self) -> bool {
+        self.q.is_zero()
+    }
+
+    /// Whether it is the one no number answers to.
+    fn no_number(&self) -> bool {
+        self.q.is_zero() && self.p.is_zero()
+    }
+
     fn cmp_exact(&self, other: &Exact) -> Ordering {
         (&self.p * &other.q).cmp(&(&other.p * &self.q))
     }
@@ -52,6 +63,14 @@ pub fn shape_number(p: BigInt, q: BigInt, places: Option<usize>) -> Value {
 /// The same, told besides whether a nought came of working with a
 /// number below nought, which a real of a width keeps.
 pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) -> Value {
+    // Nought beneath marks what stands outside the numbers. There is
+    // nothing to bring to lowest terms there, and the top is held to
+    // its sign alone so that two of them made different ways are the
+    // one value.
+    if q.is_zero() {
+        let places = places.unwrap_or(DEFAULT_PLACES);
+        return Value::Real(Rc::new(Real { p: p.signum(), q, places, below: false }));
+    }
     if p.is_zero() {
         return match places {
             Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places, below })),
@@ -107,6 +126,27 @@ pub fn calculate(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, 
 
 fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
     let places = a.places.or(b.places);
+    // Where either side stands outside the numbers the whole working is
+    // done at the width: there is nothing exact left to keep hold of,
+    // and what the width itself gives is what such a language answers.
+    if a.outside() || b.outside() {
+        // A division by nought is a division by nought still, and is
+        // stopped as one, whatever stands on the other side of it.
+        if matches!(calc, Operation::Over | Operation::OverReal | Operation::Floor) && !b.outside() && b.p.is_zero() {
+            return Err("Division by zero".to_string());
+        }
+        let (x, y) = (crate::value::as_binary(&a.p, &a.q), crate::value::as_binary(&b.p, &b.q));
+        let got = match calc {
+            Operation::Plus => x + y,
+            Operation::Minus => x - y,
+            Operation::Times => x * y,
+            Operation::Over | Operation::OverReal => x / y,
+            Operation::Floor => (x / y).trunc(),
+            Operation::Remainder => x % y,
+            Operation::Raise => x.powf(y),
+        };
+        return Ok(crate::value::real_of(got, places.unwrap_or(DEFAULT_PLACES)));
+    }
     let cross = |sign: i32| &a.p * &b.q + sign * (&b.p * &a.q);
     if a.is_whole() && b.is_whole() {
         match calc {
@@ -136,8 +176,12 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
             precise(Operation::Minus, a, &bq)?
         }
         Operation::Raise => {
-            // By squaring, on the exponent's integer part.
-            let mut n = (&b.p / &b.q).to_u64().ok_or_else(|| "Exponent too large".to_string())?;
+            // By squaring, on the exponent's integer part. An exponent
+            // below nought raises by as much and gives one over what
+            // came of that, which a ratio holds exactly.
+            let whole = &b.p / &b.q;
+            let beneath = whole.is_negative();
+            let mut n = whole.abs().to_u64().ok_or_else(|| "Exponent too large".to_string())?;
             let mut base = a.clone();
             let mut acc = Exact { p: BigInt::one(), q: BigInt::one(), places: a.places };
             while n > 0 {
@@ -149,8 +193,31 @@ fn precise(calc: Operation, a: &Exact, b: &Exact) -> Result<Value, String> {
                     base = Exact::from_value(&precise(Operation::Times, &base, &base)?).expect("a number");
                 }
             }
-            shape_number(acc.p, acc.q, acc.places)
+            if beneath && acc.p.is_zero() {
+                return Err("Division by zero".to_string());
+            }
+            match beneath {
+                true => shape_number(acc.q, acc.p, acc.places),
+                false => shape_number(acc.p, acc.q, acc.places),
+            }
         }
+    })
+}
+
+/// The bits of a whole number moved along, up or down, by so many
+/// places. A count below nought is no move at all and answers with
+/// nothing, for the language to say what it says of such a shift.
+/// Sixty-four places or more leave nothing of the number behind, save
+/// that moving down keeps the sign, so one below nought falls to -1
+/// rather than to 0.
+pub fn moved_bits(up: bool, bits: i64, by: i64) -> Option<i64> {
+    if by < 0 {
+        return None;
+    }
+    let places = by.min(64) as u32;
+    Some(match up {
+        true => bits.checked_shl(places).unwrap_or(0),
+        false => bits.checked_shr(places).unwrap_or(if bits < 0 { -1 } else { 0 }),
     })
 }
 
@@ -159,11 +226,41 @@ pub fn order_values(a: &Value, b: &Value) -> Option<Ordering> {
     if let (Value::Small(x), Value::Small(y)) = (a, b) {
         return Some(x.cmp(y));
     }
-    Some(Exact::from_value(a)?.cmp_exact(&Exact::from_value(b)?))
+    let (a, b) = (Exact::from_value(a)?, Exact::from_value(b)?);
+    if a.outside() || b.outside() {
+        // Nothing at all stands in an order beside the one no number
+        // answers to, so there is no order to give back.
+        if a.no_number() || b.no_number() {
+            return None;
+        }
+        // What lies past every number stands above or below all the
+        // rest by its side, and beside another of its own side.
+        let side = |e: &Exact| match e.outside() {
+            true => e.p.signum().to_i64().unwrap_or(0),
+            false => 0,
+        };
+        return Some(side(&a).cmp(&side(&b)));
+    }
+    Some(a.cmp_exact(&b))
 }
 
-/// Numerator and denominator; an integer is over one.
+/// Numerator and denominator; an integer is over one. What stands
+/// outside the numbers has neither.
 pub fn parts(v: &Value) -> Option<(BigInt, BigInt)> {
     let f = Exact::from_value(v)?;
-    Some((f.p, f.q))
+    match f.outside() {
+        true => None,
+        false => Some((f.p, f.q)),
+    }
+}
+
+/// What lies before the point, dropped towards nothing. What stands
+/// outside the numbers has nothing there and comes to nought, which is
+/// what a language holding reals to a width makes of it.
+pub fn whole_of(v: &Value) -> Option<BigInt> {
+    let f = Exact::from_value(v)?;
+    Some(match f.outside() {
+        true => BigInt::zero(),
+        false => f.p / f.q,
+    })
 }

@@ -15,13 +15,23 @@ define("PHP_MAJOR_VERSION", 8);
 define("PHP_MINOR_VERSION", 4);
 define("PHP_OS", "Linux");
 define("PHP_BUILD_DATE", "Sep  8 2026 00:00:00");
-define("INF", 1.0e400);
+// What lies past every number, and what no number answers to, both got
+// by dividing at the width, which is the one division that answers with
+// them instead of stopping the run.
+define("INF", __math("fdiv", 1, 0));
+define("NAN", __math("fdiv", 0, 0));
 define("PHP_OS_FAMILY", "Linux");
 define("PHP_ZTS", 0);
 define("PHP_DEBUG", 0);
 define("DIRECTORY_SEPARATOR", "/");
 define("M_PI", 3.14159265358979323846);
 define("M_E", 2.71828182845904523536);
+define("M_SQRT2", 1.41421356237309504880);
+// The step between one real of the width and the next above one, and
+// the smallest and largest the width holds with all their figures.
+define("PHP_FLOAT_EPSILON", 2.220446049250313E-16);
+define("PHP_FLOAT_MIN", 2.2250738585072014E-308);
+define("PHP_FLOAT_MAX", 1.7976931348623157E+308);
 define("E_ERROR", 1);
 define("E_WARNING", 2);
 define("E_PARSE", 4);
@@ -113,6 +123,13 @@ function __hook_as_needed() {
 // is kept beside them and answered from there afterwards.
 $__settings = array();
 __room_at_start();
+// How many figures a real is written with is a setting like any other,
+// and the kernel keeps the two counts in cells of the run's own. What
+// the kernel starts them at is what the settings stand at where the run
+// was started with nothing said about them.
+$__figures_at_start = $__real_figures;
+$__figures_shown_at_start = $__real_figures_shown;
+__figures_follow();
 // What a setting stands at where the run was started with nothing said
 // about it. A name not among these has no value at all until one is set.
 function __ini_default($name) {
@@ -120,7 +137,71 @@ function __ini_default($name) {
     if ($name === "input_encoding") { return ""; }
     if ($name === "internal_encoding") { return ""; }
     if ($name === "output_encoding") { return ""; }
+    if ($name === "mbstring.encoding_translation") { return "0"; }
+    if ($name === "error_log") { return ""; }
+    if ($name === "error_log_mode") { return "0644"; }
+    if ($name === "session.name") { return "PHPSESSID"; }
+    if ($name === "session.save_path") { return ""; }
+    if ($name === "session.save_handler") { return "files"; }
+    if ($name === "session.auto_start") { return "0"; }
+    if ($name === "allow_url_fopen") { return "1"; }
+    if ($name === "enable_post_data_reading") { return "1"; }
+    if ($name === "precision") { global $__figures_at_start; return (string)$__figures_at_start; }
+    if ($name === "serialize_precision") { global $__figures_shown_at_start; return (string)$__figures_shown_at_start; }
     return false;
+}
+// A setting's worth as a count of significant figures. Nought asks for
+// one figure, since writing a number to no figures at all would say
+// nothing of it; below nought asks for the fewest figures that read
+// back as the same number.
+function __figures_wanted($said) {
+    $count = whole_of($said);
+    if ($count == 0) { return 1; }
+    return $count;
+}
+// The counts the kernel writes reals by, brought into step with the
+// settings. Done once at the start and again whenever either setting
+// is written, so a real written out afterwards follows the new count.
+function __figures_follow() {
+    global $__real_figures, $__real_figures_shown;
+    $__real_figures = __figures_wanted(ini_get("precision"));
+    $__real_figures_shown = __figures_wanted(ini_get("serialize_precision"));
+    return null;
+}
+// A real written as it is shown with its kind rather than as it is
+// written out plainly. The two differ in nothing but the count of
+// figures, which is a setting of its own.
+function __real_shown($value) {
+    global $__real_figures, $__real_figures_shown;
+    $was = $__real_figures;
+    $__real_figures = $__real_figures_shown;
+    $shown = strval($value);
+    $__real_figures = $was;
+    return $shown;
+}
+// A real as it is written out for keeping. It follows the same setting
+// as one shown with its kind, but takes the setting as it stands: a
+// count of nought there asks for one figure with the power of ten
+// spelled out from the very first, which showing one does not.
+function __real_kept($value) {
+    global $__real_figures;
+    $was = $__real_figures;
+    $__real_figures = whole_of(ini_get("serialize_precision"));
+    $kept = strval($value);
+    $__real_figures = $was;
+    return $kept;
+}
+// A setting the run was started with is written down as the reader of
+// an ini file leaves it, and not as the words it was given in: the words
+// for yes become 1, the words for no become nothing at all, and anything
+// else stands as it was written. A setting written while the run goes is
+// not read this way and keeps the very words it was handed.
+function __ini_started_word($said) {
+    if (!is_string($said)) { return $said; }
+    $plain = strtolower(trim($said));
+    if ($plain === "on" || $plain === "yes" || $plain === "true") { return "1"; }
+    if ($plain === "off" || $plain === "no" || $plain === "none" || $plain === "false" || $plain === "") { return ""; }
+    return $said;
 }
 function ini_get($name) {
     global $__settings;
@@ -131,7 +212,7 @@ function ini_get($name) {
         // A setting counted in kinds of complaint is written as an
         // expression over their words, and answers as the number.
         if ($name === "error_reporting") { return (string)__ini_number($held); }
-        return $held;
+        return __ini_started_word($held);
     }
     return __ini_default($name);
 }
@@ -140,16 +221,22 @@ function ini_get($name) {
 // are the ones this definition knows.
 function ini_set($name, $value) {
     global $__settings;
-    $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
+    $known = array('precision', 'serialize_precision', 'memory_limit', 'max_execution_time', 'error_reporting', 'display_errors', 'log_errors', 'error_log', 'error_log_mode', 'default_charset', 'internal_encoding', 'input_encoding', 'output_encoding', 'include_path', 'date.timezone', 'output_buffering', 'zend.assertions', 'assert.exception');
     if (!in_array($name, $known)) { return false; }
     $was = ini_get($name);
     if ($name === 'memory_limit') {
         $held = __room_allowed((string)$value);
         if ($held[1]) { __complaint_say(__complaint_word(E_WARNING), __room_said((string)$value, $held[0])); }
         $__settings[$name] = $held[0];
+        // The run is told the mark as well as the setting, so that going
+        // past it stops the run rather than merely being written down.
+        // A setting at nought or below asks for no mark at all.
+        $mark = ini_parse_quantity($held[0]);
+        __room_limit($mark > 0 ? $mark : 0);
         return $was;
     }
     $__settings[$name] = (string)$value;
+    if ($name === 'precision' || $name === 'serialize_precision') { __figures_follow(); }
     return $was;
 }
 // ini_alter is ini_set under its older name; ini_restore drops what was
@@ -159,6 +246,7 @@ function ini_alter($name, $value) { return ini_set($name, $value); }
 function ini_restore($name) {
     global $__settings;
     unset($__settings[$name]);
+    if ($name === 'precision' || $name === 'serialize_precision') { __figures_follow(); }
     return null;
 }
 
@@ -309,14 +397,22 @@ function restore_exception_handler() {
     __uncaught_handler(null);
     return true;
 }
-// A message put where the run keeps them. Sending one on as mail is not
-// something a run of this kind does, so saying to send one with nowhere
-// to send it to is turned down.
-function error_log($message, $sort = 0, $where = null, $headers = null) {
-    if ($sort == 1) { return $where !== null; }
-    return true;
+// What this run carries beyond the language itself. Each name here
+// answers to a body of work written in PHP under the library, so a
+// program asking after one is told the truth: the words it would then
+// go on to use are there. Anything not named is not carried, however
+// ordinary it may be elsewhere. The reference does not mind how a name
+// is spelled, so neither does this.
+function __carried() {
+    return array("core", "standard", "date", "json", "pcre", "session", "hash", "random", "mbstring");
 }
-function extension_loaded($name) { return false; }
+function extension_loaded($name) {
+    return in_array(strtolower($name), __carried(), true);
+}
+function get_loaded_extensions($zend_extensions = false) {
+    if ($zend_extensions) { return array(); }
+    return __carried();
+}
 // The classes this run has bound, and the routines. Everything this PHP
 // has of its own is written in PHP, so there are no functions from
 // outside the language to list beside them.
@@ -332,11 +428,32 @@ function get_defined_functions($exclude_disabled = true) {
     if (func_num_args() > 0) {
         __complaint_say(__complaint_word(E_DEPRECATED), 'get_defined_functions(): The $exclude_disabled parameter has no effect since PHP 8.0');
     }
-    return array("internal" => array(), "user" => __routines_bound());
+    return array("internal" => __words_spelled(), "user" => __routines_bound());
 }
-function function_exists($name) { return false; }
+// Whether a routine of that name is there to be called: one the
+// language spells of its own, or one the program or this library has
+// written. A name is told apart however it is written, as a call is.
+function function_exists($name) {
+    $wanted = strtolower($name);
+    foreach (__words_spelled() as $word) {
+        if (strtolower($word) === $wanted) { return true; }
+    }
+    foreach (__routines_bound() as $bound) {
+        if (strtolower($bound) === $wanted) { return true; }
+    }
+    return false;
+}
 function gc_collect_cycles() { return 0; }
-function memory_get_usage($real = false) { return 0; }
+// The room the run has taken, in bytes, as the host has counted it. It
+// is not the same number the reference implementation gives: that one is
+// the room of its own arena, while this is the bytes the run has asked
+// the system for and not yet given back, counted from the moment the
+// program itself began. Asking for the room truly set aside rather than
+// the room asked for is answered with the same number, there being only
+// the one tally.
+function memory_get_usage($real = false) { return __room_used(); }
+function memory_get_peak_usage($real = false) { return __room_most(); }
+function memory_reset_peak_usage() { __room_most_forget(); return null; }
 
 // A key is taken as the array takes one, so 7 and "7" name one place.
 // Nothing standing where a key should is still read as the empty piece
@@ -351,6 +468,16 @@ function array_key_exists($key, $array) {
     return false;
 }
 
+// Every place of an array handed to a routine, with its key beside it
+// and whatever else was given after that. The value is handed over as a
+// cell, so a routine taking one writes the array in place.
+function array_walk(&$array, $what, $given = null) {
+    $handed = func_num_args() > 2;
+    foreach ($array as $key => &$value) {
+        if ($handed) { $what($value, $key, $given); } else { $what($value, $key); }
+    }
+    return true;
+}
 function in_array($needle, $haystack, $strict = false) {
     foreach ($haystack as $v) {
         if ($v == $needle) { return true; }
@@ -383,10 +510,16 @@ function array_values($array) {
     return $out;
 }
 
-function array_merge($first, $second) {
+// Arrays laid one after another. A key that is text keeps its place and
+// the last value written under it stands; a key that is a number is
+// counted afresh, so nothing is ever written over by its number.
+function array_merge() {
     $out = array();
-    foreach ($first as $v) { $out[] = $v; }
-    foreach ($second as $v) { $out[] = $v; }
+    foreach (func_get_args() as $array) {
+        foreach ($array as $k => $v) {
+            if (is_string($k)) { $out[$k] = $v; } else { $out[] = $v; }
+        }
+    }
     return $out;
 }
 
@@ -555,7 +688,6 @@ function real_of($value) {
     return 0.0;
 }
 function is_object($value) { return gettype($value) === "object"; }
-function is_callable($value) { return false; }
 
 // What a run from a command line has nothing to answer with, and the
 // few library functions that only need what is already here.
@@ -654,14 +786,19 @@ function __forget_handler() {
     array_pop($__handlers);
     array_pop($__started);
 }
+// Letting a keeping go without writing it out. The handler is told the
+// keeping is being emptied and let go for good, as the reference tells
+// it, and what it answers with is thrown away with the rest.
 function ob_end_clean() {
     if (__output_depth() == 0) { return false; }
+    __run_handler(__output_held(), true, PHP_OUTPUT_HANDLER_CLEAN | PHP_OUTPUT_HANDLER_FINAL);
     __forget_handler();
     return __output_drop();
 }
 function ob_get_clean() {
     if (__output_depth() == 0) { return false; }
     $held = __output_held();
+    __run_handler($held, true, PHP_OUTPUT_HANDLER_CLEAN | PHP_OUTPUT_HANDLER_FINAL);
     __forget_handler();
     __output_drop();
     return $held;
@@ -698,8 +835,16 @@ function ob_clean() {
     return true;
 }
 function flush() { return null; }
-function usleep($micro) { return null; }
-function sleep($seconds) { return 0; }
+// Standing still. Where the kernel has no word for waiting these can
+// only answer at once, which is what they used to do always.
+function usleep($micro) {
+    if (function_exists("__wait") && $micro > 0) { __wait((int) $micro); }
+    return null;
+}
+function sleep($seconds) {
+    if (function_exists("__wait") && $seconds > 0) { __wait((int) ($seconds * 1000000)); }
+    return 0;
+}
 
 function getenv($name = null) {
     if ($name === null) { return $_ENV; }
@@ -723,11 +868,55 @@ function str_ends_with($haystack, $needle) { return ends_with($haystack, $needle
 function strrev($text) { return reverse_characters($text); }
 function ucfirst($text) { return capitalize_first_word($text); }
 function ucwords($text) { return capitalize_words($text); }
-function ltrim($text) { return trim_start($text); }
-function rtrim($text) { return trim_end($text); }
+// The roots, the curves and the angles. Each is the kernel's one word
+// for working at the width, asked for by the name of the working; what
+// is written here is how PHP spells them and what PHP asks of them
+// before it works. None of them stops the run: an argument out of reach
+// answers with the value no number answers to, as PHP's own do.
+
+function sqrt($num) { return __math("sqrt", $num); }
+function exp($num) { return __math("exp", $num); }
+function expm1($num) { return __math("expm1", $num); }
+function log1p($num) { return __math("log1p", $num); }
+function log10($num) { return __math("log10", $num); }
+function log2($num) { return __math("log2", $num); }
+function sin($num) { return __math("sin", $num); }
+function cos($num) { return __math("cos", $num); }
+function tan($num) { return __math("tan", $num); }
+function asin($num) { return __math("asin", $num); }
+function acos($num) { return __math("acos", $num); }
+function atan($num) { return __math("atan", $num); }
+function sinh($num) { return __math("sinh", $num); }
+function cosh($num) { return __math("cosh", $num); }
+function tanh($num) { return __math("tanh", $num); }
+function asinh($num) { return __math("asinh", $num); }
+function acosh($num) { return __math("acosh", $num); }
+function atanh($num) { return __math("atanh", $num); }
+function atan2($y, $x) { return __math("atan2", $y, $x); }
+function hypot($x, $y) { return __math("hypot", $x, $y); }
+function fdiv($num1, $num2) { return __math("fdiv", $num1, $num2); }
+function pi() { return M_PI; }
+
+// A log to a base of its own is worked as PHP works it: ten and two
+// have their own workings, since going by way of the natural log would
+// answer with figures a shade off theirs.
+function log($num, $base = M_E) {
+    if ($base == 10) { return __math("log10", $num); }
+    if ($base == 2) { return __math("log2", $num); }
+    if ($base <= 0) { throw new ValueError("log(): Argument #2 (\$base) must be greater than 0"); }
+    if ($base == 1) { return NAN; }
+    if ($base == M_E) { return __math("log", $num); }
+    return __math("log", $num) / __math("log", $base);
+}
+
+// Nothing is equal to the value no number answers to, itself least of
+// all, which is the whole of what asking after it comes to. What lies
+// past every number is what stands outside the largest the width holds.
+function is_nan($num) { return $num != $num; }
+function is_infinite($num) { return $num > PHP_FLOAT_MAX || $num < -PHP_FLOAT_MAX; }
+function is_finite($num) { return !is_nan($num) && !is_infinite($num); }
+
 function abs($n) { if ($n < 0) { return 0 - $n; } return $n; }
-function max($a, $b) { if ($a > $b) { return $a; } return $b; }
-function min($a, $b) { if ($a < $b) { return $a; } return $b; }
 function intdiv($a, $b) { return intval($a / $b); }
 
 // Text taken apart and put back together, the way PHP's own library
@@ -883,8 +1072,200 @@ function zend_version() { return "4.0.0"; }
 function php_sapi_name() { return "cli"; }
 function php_uname($mode = "a") { return PHP_OS; }
 function setlocale($category, $locale) { return false; }
-function date_default_timezone_set($zone) { return true; }
-function date_default_timezone_get() { return "UTC"; }
+function date_default_timezone_set($timezoneId) { __zone_named($timezoneId); return true; }
+function date_default_timezone_get() { return __zone_named(null); }
+// The clock and the calendar. The kernel is asked only how far the clock
+// has come since the start of 1970; turning that into a date, and a date
+// back into it, is arithmetic and belongs here. Everything is reckoned
+// in UTC, which is the one zone this run keeps.
+function time() { return __clock(); }
+function microtime($as_float = false) {
+    $now = __clock();
+    if ($as_float) { return $now + 0.0; }
+    return "0.00000000 " . $now;
+}
+function hrtime($as_number = false) {
+    $now = __clock();
+    if ($as_number) { return $now * 1000000000; }
+    return array($now, 0);
+}
+// Dividing where what is left over is never below nought, so that dates
+// before 1970 count back the way dates after it count on.
+function __floor_div($a, $b) {
+    $whole = intdiv($a, $b);
+    if ($a % $b != 0 && ($a < 0) != ($b < 0)) { $whole = $whole - 1; }
+    return $whole;
+}
+function __floor_rem($a, $b) { return $a - __floor_div($a, $b) * $b; }
+// The day a date stands on, counting from the first of January 1970.
+// Howard Hinnant's reckoning: the year is turned about so that a leap
+// day falls at the end of it, and the four-hundred-year turn of the
+// calendar is counted out whole.
+function __days_of_date($year, $month, $day) {
+    $y = $month <= 2 ? $year - 1 : $year;
+    $era = __floor_div($y, 400);
+    $of_era = $y - $era * 400;
+    $of_year = intdiv(153 * ($month + ($month > 2 ? -3 : 9)) + 2, 5) + $day - 1;
+    $of_era_days = $of_era * 365 + intdiv($of_era, 4) - intdiv($of_era, 100) + $of_year;
+    return $era * 146097 + $of_era_days - 719468;
+}
+// The date a day stands on, the same reckoning read backwards.
+function __date_of_days($days) {
+    $days = $days + 719468;
+    $era = __floor_div($days, 146097);
+    $of_era = $days - $era * 146097;
+    $of_era_year = intdiv($of_era - intdiv($of_era, 1460) + intdiv($of_era, 36524) - intdiv($of_era, 146096), 365);
+    $year = $of_era_year + $era * 400;
+    $of_year = $of_era - (365 * $of_era_year + intdiv($of_era_year, 4) - intdiv($of_era_year, 100));
+    $mp = intdiv(5 * $of_year + 2, 153);
+    $day = $of_year - intdiv(153 * $mp + 2, 5) + 1;
+    $month = $mp + ($mp < 10 ? 3 : -9);
+    if ($month <= 2) { $year = $year + 1; }
+    return array($year, $month, $day);
+}
+function __is_leap_year($year) {
+    if ($year % 4 != 0) { return false; }
+    if ($year % 100 != 0) { return true; }
+    return $year % 400 == 0;
+}
+function __days_in_month($month, $year) {
+    $lengths = array(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31);
+    if ($month == 2 && __is_leap_year($year)) { return 29; }
+    return $lengths[$month - 1];
+}
+// Everything a moment is made of, which the readers below share.
+function __moment($when) {
+    $days = __floor_div($when, 86400);
+    $of_day = __floor_rem($when, 86400);
+    $ymd = __date_of_days($days);
+    $year = $ymd[0];
+    $month = $ymd[1];
+    $day = $ymd[2];
+    return array(
+        "seconds" => __floor_rem($of_day, 60),
+        "minutes" => __floor_rem(intdiv($of_day, 60), 60),
+        "hours" => intdiv($of_day, 3600),
+        "mday" => $day,
+        "wday" => __floor_rem($days + 4, 7),
+        "mon" => $month,
+        "year" => $year,
+        "yday" => $days - __days_of_date($year, 1, 1),
+        "weekday" => __weekday_name(__floor_rem($days + 4, 7)),
+        "month" => __month_name($month),
+        0 => $when,
+    );
+}
+function __weekday_name($wday) {
+    $names = array("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday");
+    return $names[$wday];
+}
+function __month_name($month) {
+    $names = array("January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November", "December");
+    return $names[$month - 1];
+}
+function getdate($when = null) {
+    if ($when === null) { $when = __clock(); }
+    return __moment($when);
+}
+// A date written out as the clock counts it. A part left out is taken
+// from the moment the clock stands at now, as the reference takes it.
+function mktime($hour = null, $minute = null, $second = null, $month = null, $day = null, $year = null) {
+    $now = __moment(__clock());
+    if ($hour === null) { $hour = $now["hours"]; }
+    if ($minute === null) { $minute = $now["minutes"]; }
+    if ($second === null) { $second = $now["seconds"]; }
+    if ($month === null) { $month = $now["mon"]; }
+    if ($day === null) { $day = $now["mday"]; }
+    if ($year === null) { $year = $now["year"]; }
+    // A month or a day past its own bounds counts on into the next, as
+    // the reference lets it.
+    $year = $year + __floor_div($month - 1, 12);
+    $month = __floor_rem($month - 1, 12) + 1;
+    return __days_of_date($year, $month, $day) * 86400 + $hour * 3600 + $minute * 60 + $second;
+}
+function gmmktime($hour = null, $minute = null, $second = null, $month = null, $day = null, $year = null) {
+    return mktime($hour, $minute, $second, $month, $day, $year);
+}
+function checkdate($month, $day, $year) {
+    if ($month < 1 || $month > 12 || $day < 1 || $year < 1 || $year > 32767) { return false; }
+    return $day <= __days_in_month($month, $year);
+}
+// A number written out with noughts before it so that it fills the width.
+function __padded($n, $width) {
+    $out = (string) $n;
+    while (strlen($out) < $width) { $out = "0" . $out; }
+    return $out;
+}
+function __ordinal_suffix($day) {
+    if ($day % 100 >= 11 && $day % 100 <= 13) { return "th"; }
+    $last = $day % 10;
+    if ($last == 1) { return "st"; }
+    if ($last == 2) { return "nd"; }
+    if ($last == 3) { return "rd"; }
+    return "th";
+}
+// A moment written out letter by letter, as the reference writes it. A
+// letter with a backslash before it stands for itself.
+function date($pattern, $when = null) {
+    if ($when === null) { $when = __clock(); }
+    $m = __moment($when);
+    $out = "";
+    $at = 0;
+    $reach = strlen($pattern);
+    while ($at < $reach) {
+        $c = $pattern[$at];
+        if ($c === "\\") {
+            $at = $at + 1;
+            if ($at < $reach) { $out = $out . $pattern[$at]; }
+            $at = $at + 1;
+            continue;
+        }
+        $out = $out . __date_letter($c, $m, $when);
+        $at = $at + 1;
+    }
+    return $out;
+}
+function gmdate($pattern, $when = null) { return date($pattern, $when); }
+function __date_letter($c, $m, $when) {
+    if ($c === "d") { return __padded($m["mday"], 2); }
+    if ($c === "j") { return (string) $m["mday"]; }
+    if ($c === "S") { return __ordinal_suffix($m["mday"]); }
+    if ($c === "D") { return substr($m["weekday"], 0, 3); }
+    if ($c === "l") { return $m["weekday"]; }
+    if ($c === "N") { return (string) ($m["wday"] == 0 ? 7 : $m["wday"]); }
+    if ($c === "w") { return (string) $m["wday"]; }
+    if ($c === "z") { return (string) $m["yday"]; }
+    if ($c === "m") { return __padded($m["mon"], 2); }
+    if ($c === "n") { return (string) $m["mon"]; }
+    if ($c === "M") { return substr($m["month"], 0, 3); }
+    if ($c === "F") { return $m["month"]; }
+    if ($c === "t") { return (string) __days_in_month($m["mon"], $m["year"]); }
+    if ($c === "L") { return __is_leap_year($m["year"]) ? "1" : "0"; }
+    if ($c === "Y") { return (string) $m["year"]; }
+    if ($c === "y") { return __padded($m["year"] % 100, 2); }
+    if ($c === "H") { return __padded($m["hours"], 2); }
+    if ($c === "G") { return (string) $m["hours"]; }
+    if ($c === "h") { return __padded(__twelve_hour($m["hours"]), 2); }
+    if ($c === "g") { return (string) __twelve_hour($m["hours"]); }
+    if ($c === "i") { return __padded($m["minutes"], 2); }
+    if ($c === "s") { return __padded($m["seconds"], 2); }
+    if ($c === "a") { return $m["hours"] < 12 ? "am" : "pm"; }
+    if ($c === "A") { return $m["hours"] < 12 ? "AM" : "PM"; }
+    if ($c === "U") { return (string) $when; }
+    if ($c === "e" || $c === "T") { return "UTC"; }
+    if ($c === "P") { return "+00:00"; }
+    if ($c === "O") { return "+0000"; }
+    if ($c === "Z") { return "0"; }
+    if ($c === "u") { return "000000"; }
+    if ($c === "v") { return "000"; }
+    return $c;
+}
+function __twelve_hour($hours) {
+    $twelve = $hours % 12;
+    return $twelve == 0 ? 12 : $twelve;
+}
+
 function register_shutdown_function($work, $a = null, $b = null, $c = null) {
     if ($c !== null) { return __at_end($work, $a, $b, $c); }
     if ($b !== null) { return __at_end($work, $a, $b); }
@@ -906,23 +1287,55 @@ function trigger_error($message, $level = 1024) {
     return __complaint_say(__complaint_word($level), $message);
 }
 function user_error($message, $level = 1024) { return trigger_error($message, $level); }
-// What a file holds. The body of the request the run was started with
-// is a file a program may name, and reads the same however often it is
-// read, since it is held as it came rather than drawn from.
-function file_get_contents($path) {
+// What a file holds, or as much of it as was asked for. The body of the
+// request the run was started with is a file a program may name, and
+// reads the same however often it is read, since it is held as it came
+// rather than drawn from. A context may be handed along with the name
+// and is looked at, to say so where it is not one, and then let be: no
+// wrapper a run of this kind has is told anything by one. Reading may
+// begin somewhere other than the beginning, counted from the end where
+// the place asked for is below nothing, and a place before the beginning
+// of the file is nowhere to read from at all.
+function file_get_contents($path, $use_include_path = false, $context = null, $offset = 0, $length = null) {
     global $__request_body;
-    if ($path === "php://input") {
-        if (!is_string($__request_body)) { return ""; }
-        return $__request_body;
+    __context_given("file_get_contents", "context", 3, $context);
+    if ($length !== null && $length < 0) {
+        throw new ValueError('file_get_contents(): Argument #5 ($length) must be greater than or equal to 0');
     }
-    return __file_read($path);
+    if ($path === "php://input") {
+        $held = is_string($__request_body) ? $__request_body : "";
+    } elseif (__http_named($path)) {
+        // A name that is a web address is not a file to be read but a
+        // request to be made, and what the host answers stands where the
+        // file's contents would have stood.
+        $answered = __http_fetched("file_get_contents", $path, $context);
+        if ($answered === false) { return false; }
+        $held = $answered[1];
+    } else {
+        $held = __file_read($path);
+        if ($held === false) { return false; }
+    }
+    if ($offset != 0 || $length !== null) {
+        $at = $offset;
+        if ($at < 0) {
+            $at = strlen($held) + $at;
+            if ($at < 0) {
+                __complaint_say(__complaint_word(E_WARNING), "file_get_contents(): Failed to seek to position " . $offset . " in the stream");
+                return false;
+            }
+        }
+        if ($at >= strlen($held)) { return ""; }
+        $held = $length === null ? substr($held, $at) : substr($held, $at, $length);
+    }
+    return $held;
 }
 function realpath($path) { return $path; }
 // Moving a file: what it held is written where it is going and taken
 // from where it was. A file that is not there to move is said so and
 // answered with false, as every other reading of one that is not there
 // is answered.
-function rename($from, $to) {
+function rename($from, $to, $context = null) {
+    __context_given("rename", "context", 3, $context);
     $held = __file_read($from);
     if ($held === false) {
         __complaint_say(__complaint_word(E_WARNING), "rename(" . $from . "," . $to . "): No such file or directory");
@@ -943,7 +1356,22 @@ function defined($name) {
     }
     return true;
 }
+// A name may spell one of a class's own values rather than a constant
+// standing on its own: what comes before the last scope mark names the
+// class, and a class nowhere to be found is said so outright, since
+// there is nothing there to look in.
 function constant($name) {
+    $at = -1;
+    $from = 0;
+    while (true) {
+        $found = strpos($name, '::', $from);
+        if ($found === false) { break; }
+        $at = $found;
+        $from = $found + 1;
+    }
+    if ($at >= 0 && !class_exists(substr($name, 0, $at))) {
+        throw new Error('Class "' . substr($name, 0, $at) . '" not found');
+    }
     return eval("return " . $name . ";");
 }
 // A claim a program makes about itself. Where the run is set to let
@@ -964,7 +1392,10 @@ function __frame_told($frame) {
     foreach ($frame['args'] as $given) {
         $pieces[] = __argument_told($given);
     }
-    return $frame['file'] . '(' . $frame['line'] . '): ' . $named . '(' . implode(', ', $pieces) . ')';
+    // A call made from inside the language itself stands nowhere the
+    // program was written, and is written down as standing nowhere.
+    $stood = isset($frame['file']) ? $frame['file'] . '(' . $frame['line'] . ')' : '[internal function]';
+    return $stood . ': ' . $named . '(' . implode(', ', $pieces) . ')';
 }
 function __argument_told($given) {
     if (is_string($given)) {
@@ -1062,8 +1493,13 @@ function var_export_string($value, $indent) {
         return $out . $pad . ")";
     }
     if ($kind === "double") {
-        $shown = strval($value);
-        if (!str_contains($shown, ".") && !str_contains($shown, "E") && !str_contains($shown, "e")) {
+        // A real is exported as it is shown with its kind, and with a
+        // nought after the point where it has none of its own, so that
+        // reading the export back gives a real again. A number that is
+        // past them all, or none of them, has no point to give.
+        $shown = __real_shown($value);
+        $bounded = $shown !== "INF" && $shown !== "-INF" && $shown !== "NAN";
+        if ($bounded && !str_contains($shown, ".") && !str_contains($shown, "E")) {
             return $shown . ".0";
         }
         return $shown;
@@ -1101,17 +1537,106 @@ function rounded_string($number, $places) {
     return $shown;
 }
 
+// A real written to a count of significant figures, whatever the run's
+// own settings say. The count is a setting the kernel keeps, so it is
+// lent the wanted one for the writing and given back its own after.
+function __real_figured($value, $count) {
+    global $__real_figures;
+    $was = $__real_figures;
+    $__real_figures = $count;
+    $shown = strval(real_of($value));
+    $__real_figures = $was;
+    return $shown;
+}
+// The significant figures of a real, and the power of ten the first of
+// them stands at, read back out of the run's own writing of it: the
+// sign first, then the figures, then the power.
+function __figures_of_real($value, $count) {
+    $shown = __real_figured($value, $count);
+    $sign = "";
+    if (starts_with($shown, "-")) { $sign = "-"; $shown = substr($shown, 1); }
+    $power = 0;
+    $spelled = index_of($shown, "E");
+    if ($spelled >= 0) {
+        $power = whole_of(substr($shown, $spelled + 1));
+        $shown = substr($shown, 0, $spelled);
+    }
+    $point = index_of($shown, ".");
+    if ($point < 0) { $point = strlen($shown); }
+    else { $shown = substr($shown, 0, $point) . substr($shown, $point + 1); }
+    // The point belongs after the first figure, so what it stood at
+    // goes into the power; the leading noughts are none of the figures
+    // and come off, each one lowering the power again.
+    $power = $power + $point - 1;
+    while (strlen($shown) > 1 && $shown[0] === "0") {
+        $shown = substr($shown, 1);
+        $power = $power - 1;
+    }
+    if ($shown === "0") { $power = 0; }
+    return array($sign, $shown, $power);
+}
+// A number that is past every real, or none of them, has no figures to
+// write and is said in words instead.
+function __beyond_reals($shown) {
+    if ($shown === "NAN") { return "NaN"; }
+    if ($shown === "INF" || $shown === "-INF") { return $shown; }
+    return null;
+}
 function one_conversion($letter, $value, $places) {
     if ($letter === "d" || $letter === "i") { return strval(whole_of($value)); }
     if ($letter === "u") { $n = whole_of($value); if ($n < 0) { $n = $n + 18446744073709551616; } return strval($n); }
     if ($letter === "s") { if ($places === null) { return strval($value); } return substr(strval($value), 0, $places); }
-    if ($letter === "f" || $letter === "F") { if ($places === null) { $places = 6; } return rounded_string(real_of($value), $places); }
+    if ($letter === "f" || $letter === "F") {
+        $words = __beyond_reals(strval(real_of($value)));
+        if ($words !== null) { return $words; }
+        if ($places === null) { $places = 6; }
+        return rounded_string(real_of($value), $places);
+    }
     if ($letter === "x") { return dechex(whole_of($value)); }
     if ($letter === "X") { return strtoupper(dechex(whole_of($value))); }
     if ($letter === "o") { return decoct(whole_of($value)); }
     if ($letter === "b") { return decbin(whole_of($value)); }
     if ($letter === "c") { return chr(whole_of($value)); }
+    if ($letter === "e" || $letter === "E" || $letter === "g" || $letter === "G") {
+        $beyond = __beyond_reals(strval(real_of($value)));
+        if ($beyond !== null) { return $beyond; }
+        if ($letter === "e" || $letter === "E") { return __in_powers(real_of($value), $places, $letter === "E"); }
+        return __shortest_of($value, $places, $letter === "G");
+    }
     return strval($value);
+}
+
+// A real written as one figure, a point, so many more, and the power of
+// ten it stands at. The figures are the run's own writing of the
+// number, read back: dividing a power of ten out of it would come to
+// nothing at all for the smallest reals of the width, whose power no
+// real of the width holds.
+function __in_powers($x, $places, $capital) {
+    if ($places === null) { $places = 6; }
+    $got = __figures_of_real($x, $places + 1);
+    // The writing drops the figures it does not need, so any that are
+    // wanted beyond them are noughts.
+    $run = pad_to($got[1], $places + 1, "0", true);
+    $body = substr($run, 0, 1);
+    if ($places > 0) { $body = $body . "." . substr($run, 1, $places); }
+    $mark = $capital ? "E" : "e";
+    $sign = $got[2] < 0 ? "-" : "+";
+    return $got[0] . $body . $mark . $sign . strval(abs($got[2]));
+}
+
+// The shorter of the two ways of writing a real: plainly where the power
+// of ten it stands at is small, and with the power spelled out
+// otherwise. Figures of nought at the end count for nothing either way.
+// Which of the two ways it is, and where the figures stop, the run's own
+// writing settles; only the case of the letter is this conversion's own.
+// A count of nought asks for one figure, since none at all would say
+// nothing of the number.
+function __shortest_of($value, $places, $capital) {
+    if ($places === null) { $places = 6; }
+    if ($places < 1) { $places = 1; }
+    $held = __real_figured($value, $places);
+    if ($capital) { return strtoupper($held); }
+    return strtolower($held);
 }
 
 function sprintf_over($pattern, $values) {
@@ -1162,7 +1687,11 @@ function sprintf_over($pattern, $values) {
         $taken = $taken + 1;
         $shown = one_conversion($letter, $value, $places);
         if ($signed && $letter !== "s" && !starts_with($shown, "-")) { $shown = "+" . $shown; }
-        $out = $out . pad_to($shown, $width, $filler, $to_the_left);
+        // Where a real has no figures to write and is said in words, the
+        // width asked for is left unfilled, as the reference leaves it.
+        $in_words = strpos("eEfFgG", $letter) !== false
+            && ($shown === "NaN" || $shown === "INF" || $shown === "-INF");
+        $out = $out . ($in_words ? $shown : pad_to($shown, $width, $filler, $to_the_left));
     }
     return $out;
 }

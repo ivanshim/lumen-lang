@@ -50,6 +50,10 @@ pub struct Registry {
     /// about what it does. They are found while reading and said before
     /// the run, since that is when the reference says them.
     pub said_while_reading: Vec<(Complaint, String, u32)>,
+    /// Where each bag of members a class may take in begins, by name:
+    /// the token just past the mark that opens its body. Its members are
+    /// read again wherever a class takes them in.
+    pub bags: std::collections::HashMap<String, usize>,
     /// Which parameters of which routines take a cell rather than a
     /// value, and which routines give a cell back. Kept here because
     /// text read while the run goes is a piece of the same program and
@@ -127,6 +131,9 @@ pub struct Compiler<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    /// The slots the routine being put together fills from what it
+    /// carried away, while its parameters are being read.
+    carrying: Vec<usize>,
     /// How many lines stand before the program's own text.
     before: u32,
     /// Where each key of the index chain just read begins, so that a
@@ -136,6 +143,16 @@ pub struct Compiler<'a> {
     /// The file this text came out of, where it was read while the run
     /// was going, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
+    /// Whether this text was read in while the run was already going,
+    /// as text handed to the word that reads text is, and a file asked
+    /// for part way through. The whole of a program read that way is a
+    /// piece of a run in progress, which a `static` written at the top
+    /// of it is told by.
+    read_in: bool,
+    /// The names a `static` at the top of text read in has already
+    /// spoken for. Such a statement binds nothing that would show a
+    /// name said twice, so the names are kept here to be counted.
+    read_statics: Vec<String>,
     /// Where the value a store is to write is already waiting, which a
     /// taking-apart sets before each of its places.
     waiting: Option<String>,
@@ -171,6 +188,17 @@ enum Span {
 
 const RESULT_CELL: &str = "#result";
 const TEMP_CELL: &str = "#t";
+/// What a class body gathers as it is read: its properties and how far
+/// each may be reached from, the values it keeps for itself, its
+/// constants and its methods.
+struct Members {
+    fields: Vec<(String, Vec<Instr>)>,
+    shared: Vec<(String, Vec<Instr>)>,
+    constants: Vec<(String, Vec<Instr>)>,
+    methods: Vec<(String, Rc<Routine>)>,
+    reaches: Vec<Reach>,
+}
+
 /// What a routine written where a value stands is called, since it
 /// is bound to no name of its own.
 const ANONYMOUS: &str = "{closure}";
@@ -180,13 +208,14 @@ const SPARE_CELLS: [&str; 3] = ["#a", "#b", "#c"];
 /// `before` is how many lines were put before the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn compile(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32) -> Res<Rc<Routine>> {
-    compile_from(tokens, lang, table, before, None)
+    compile_within(tokens, lang, table, before, None, None, None, false)
 }
 
-/// The same, told besides which file the text came out of, where it was
-/// read while the run was going.
+/// The same, told besides which file the text came out of. Only text
+/// read in while the run was already going is assembled this way, so a
+/// statement whose meaning turns on that may see it.
 pub fn compile_from(tokens: &[Token], lang: &Lang, table: &mut Registry, before: u32, written_in: Option<Rc<str>>) -> Res<Rc<Routine>> {
-    compile_within(tokens, lang, table, before, written_in, None, None)
+    compile_within(tokens, lang, table, before, written_in, None, None, true)
 }
 
 /// The same, save that the text may be read as standing inside a
@@ -201,6 +230,7 @@ pub fn compile_within(
     written_in: Option<Rc<str>>,
     inside: Option<Vec<String>>,
     within: Option<(String, Option<String>)>,
+    read_in: bool,
 ) -> Res<Rc<Routine>> {
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
@@ -230,7 +260,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -299,7 +329,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, instrs: peephole(unit.instrs) }))
+    Ok(Rc::new(Routine { ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -566,13 +596,39 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
+        self.own_place(name);
         let slot = self.cell_to_read(name, false);
         self.put(Instr::Read(slot));
     }
 
     fn read_taking(&mut self, name: &str) {
+        self.own_place(name);
         let slot = self.cell_to_read(name, true);
         self.put(Instr::Read(slot));
+    }
+
+    /// A variable a routine only ever reads is given a place of the
+    /// routine's own all the same (ext.stmt.function.own_names). The
+    /// place holds nothing, and reading a place holding nothing falls
+    /// through to the outermost binding as it always did, so nothing
+    /// the program can see is changed by the place being there. What it
+    /// is for is text read in while the run goes: such text is a piece
+    /// of the routine that read it, and a write it makes to one of that
+    /// routine's names needs a place in that routine's frame to land
+    /// in. Only names the language marks as variables are given one:
+    /// what wears no mark names a constant or a class, and the places
+    /// the assembler makes for itself are none of the program's.
+    fn own_place(&mut self, name: &str) {
+        if !self.lang.own_names {
+            return;
+        }
+        let marked = self.lang.sigil.map_or(true, |mark| name.starts_with(mark));
+        let unit = self.pieces.last_mut().expect("a unit");
+        if unit.outermost || !marked || unit.idents.iter().any(|n| n == name) {
+            return;
+        }
+        unit.idents.push(name.to_string());
+        unit.declared.push(false);
     }
 
     /// The name of an array about to be written into, addressed as the
@@ -621,9 +677,13 @@ impl<'a> Compiler<'a> {
         format!("#{}{}", purpose, self.counter)
     }
 
-    /// Discard the top of the stack.
+    /// Discard the top of the stack. What is discarded is let go at
+    /// once rather than put in a spare slot: a slot would hold the value
+    /// alive until the next statement wrote over it, and a program
+    /// asking how much room it holds would be told of a value it had
+    /// already finished with.
     fn discard(&mut self) {
-        self.write(SPARE_CELLS[0]);
+        self.put(Instr::Shed);
     }
 
     fn enter_cycle(&mut self, again: Option<usize>) {
@@ -691,6 +751,9 @@ impl<'a> Compiler<'a> {
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let declared_on = self.declared_at;
+        // What the routine around this one carries is put aside while
+        // this one is put together, so that each keeps its own.
+        let around = std::mem::take(&mut self.carrying);
         // The classes the parameters were declared to take, gathered as
         // they were read. A method is given the object it is for before
         // them, so the list is brought level with the names.
@@ -732,7 +795,8 @@ impl<'a> Compiler<'a> {
         let unit = self.pieces.pop().expect("the unit");
         let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
-        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, instrs: peephole(instrs) }))
+        let carried = std::mem::replace(&mut self.carrying, around);
+        Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -871,6 +935,9 @@ impl<'a> Compiler<'a> {
                 self.take();
                 return Ok(());
             }
+            if Lang::spells(&lang.trait_words, &w) {
+                return self.bag_decl();
+            }
             let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
             if names_class(&w) {
                 return self.class_decl();
@@ -934,7 +1001,7 @@ impl<'a> Compiler<'a> {
                 // what follows however it is written, so brackets after
                 // it group rather than hold what it is given.
                 Some(Builtin::Out) if lang.writes_as_operator => return self.bare_call(w),
-                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | None => {}
+                Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Define) | Some(Builtin::Pack) | Some(Builtin::Erase) | Some(Builtin::Lead) | None => {}
                 Some(_) if !bracketed => return self.bare_call(w),
                 Some(_) => {}
             }
@@ -1005,6 +1072,13 @@ impl<'a> Compiler<'a> {
     /// runs. Outside every function there is no unit around this one, so
     /// the setting stands here and is guarded: it happens the first time
     /// this statement is reached and no other time.
+    ///
+    /// Text read in while the run is already going is read afresh every
+    /// time it is reached, so there is no from-call-to-call for such a
+    /// statement written at the top of it to keep a value across. There
+    /// it is a plain write of the name in the scope that read the text
+    /// (ext.stmt.static.read_in), and the scope keeps what was written
+    /// as it keeps anything else written to a name of its own.
     fn static_stmt(&mut self) -> Res<()> {
         self.take();
         let sep = self.lang.calling.as_ref().and_then(|c| c.between.clone());
@@ -1015,6 +1089,31 @@ impl<'a> Compiler<'a> {
             if self.piece().globals.iter().any(|(n, _)| *n == name) {
                 self.registry.stopped_fatally = true;
                 return Err(format!("Duplicate declaration of static variable {}", name));
+            }
+            if self.read_in && self.lang.static_read_in && self.pieces.len() == 1 {
+                // One name is still one binding, though this one binds
+                // nothing that would show it: the names spoken for are
+                // counted apart so that saying one twice is refused
+                // here as it is anywhere else.
+                if self.read_statics.iter().any(|n| *n == name) {
+                    self.registry.stopped_fatally = true;
+                    return Err(format!("Duplicate declaration of static variable {}", name));
+                }
+                self.read_statics.push(name.clone());
+                if self.on_assign() {
+                    self.take();
+                    self.expr(0)?;
+                } else {
+                    self.constant(Value::Null);
+                }
+                self.write(&name);
+                match &sep {
+                    Some(s) if self.at_symbol(s) => {
+                        self.take();
+                        continue;
+                    }
+                    _ => return Ok(()),
+                }
             }
             let hidden = self.gensym("static");
             let inner = self.pieces.pop().expect("the unit");
@@ -1263,6 +1362,15 @@ impl<'a> Compiler<'a> {
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
+        // Where the language keeps a walk's place by the item it handed
+        // out, the cell of that item is kept here too, so that the pass
+        // after can ask where the item has got to. It holds nothing
+        // until the first item is handed out.
+        let held = (shared && lang.walk_alive).then(|| self.gensym("held"));
+        if let Some(held) = &held {
+            self.constant(Value::Null);
+            self.write(held);
+        }
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
@@ -1288,10 +1396,20 @@ impl<'a> Compiler<'a> {
         if shared {
             // The name is fastened to the item's own cell.
             self.read(&at);
-            let held = self.cell_to_read(bag, false);
-            self.put(Instr::BondItem(held));
+            let from = self.cell_to_read(bag, false);
+            self.put(Instr::BondItem(from));
             let name = self.cell_to_write(value);
             self.put(Instr::Fasten(name));
+            // The walk's own name is fastened to it as well: asking the
+            // place for its cell a second time answers with the very
+            // same one, since a place already shared is shared already.
+            if let Some(held) = &held {
+                self.read(&at);
+                let again = self.cell_to_read(bag, false);
+                self.put(Instr::BondItem(again));
+                let keep = self.cell_to_write(held);
+                self.put(Instr::Fasten(keep));
+            }
         } else {
             self.read(&over);
             self.read(&at);
@@ -1319,10 +1437,26 @@ impl<'a> Compiler<'a> {
         }
         self.body()?;
         let again = self.mark();
-        self.read(&at);
-        self.constant(Value::Small(1));
-        self.act(Action::Add, 2);
-        self.write(&at);
+        match &held {
+            // The place the walk goes on from is the one past where the
+            // item it handed out now lies, which is not where it lay
+            // before if the body has moved it along or shortened the
+            // array in front of it.
+            Some(held) => {
+                self.read(&over);
+                self.read(&at);
+                let keep = self.cell_to_write(held);
+                self.put(Instr::Bond(keep));
+                self.act(Action::WalkPast, 3);
+                self.write(&at);
+            }
+            None => {
+                self.read(&at);
+                self.constant(Value::Small(1));
+                self.act(Action::Add, 2);
+                self.write(&at);
+            }
+        }
         self.read(&over);
         self.act(Action::WalkOnward, 1);
         self.put_away();
@@ -1332,6 +1466,13 @@ impl<'a> Compiler<'a> {
         self.act(Action::WalkMore, 2);
         self.loop_back(top);
         self.leave_cycle(again);
+        // The walk lets its last item go once it is over, so that the
+        // place holding it is a place two names share only while some
+        // name of the program's own still holds it.
+        if let Some(held) = &held {
+            let keep = self.cell_to_write(held);
+            self.put(Instr::Forget(keep));
+        }
         Ok(())
     }
 
@@ -1970,6 +2111,99 @@ impl<'a> Compiler<'a> {
         None
     }
 
+    /// A bag of members a class may take in as its own. Nothing of it
+    /// runs and nothing is bound to its name: where its body begins is
+    /// written down, and every class taking it in reads that body again
+    /// as its own, so the members stand in the class and not in the bag.
+    fn bag_decl(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let name = self.want_name("as the name of the members to take in")?;
+        self.skip_intro();
+        self.skip_seps();
+        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
+        let Some(i) = which else {
+            return Err(format!("Expected '{}' to open the members, got '{}'", lang.block_opens[0], self.look().lexeme));
+        };
+        self.take();
+        self.registry.bags.insert(name, self.pos);
+        // The body is stepped over, mark for mark, since it is read
+        // where it is taken in and nowhere else.
+        let (open, close) = (lang.block_opens[i].clone(), lang.block_closes[i].clone());
+        let mut deep = 1usize;
+        while deep > 0 {
+            if self.exhausted() {
+                return Err(format!("Expected '{}' to close the members", close));
+            }
+            if self.at_lexeme(&open) {
+                deep += 1;
+            } else if self.at_lexeme(&close) {
+                deep -= 1;
+            }
+            self.take();
+        }
+        Ok(())
+    }
+
+    /// `use T, U { T::f as g; }`: the members of each bag named are read
+    /// again here, standing in the class that takes them in, and any of
+    /// them may be given another name in it as well.
+    fn take_in_members(&mut self, held: &mut Members) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+        let mut taken = Vec::new();
+        loop {
+            let named = self.want_name("as the members to take in")?;
+            taken.push(named);
+            match &apart {
+                Some(sep) if self.at_symbol(sep) => self.take(),
+                _ => break,
+            };
+        }
+        for named in &taken {
+            let Some(from) = self.registry.bags.get(named).copied() else {
+                return Err(format!("No members named {} to take in", named));
+            };
+            let close = lang.block_closes[0].clone();
+            let held_at = self.pos;
+            self.pos = from;
+            let read = self.class_members(&close, held);
+            self.pos = held_at;
+            read?;
+        }
+        // What follows may name members of the bags and give each
+        // another name in this class.
+        let which = lang.block_opens.iter().position(|o| self.at_lexeme(o));
+        let Some(i) = which else { return Ok(()) };
+        self.take();
+        let close = lang.block_closes[i].clone();
+        self.skip_seps();
+        while !self.at_lexeme(&close) && !self.exhausted() {
+            let first = self.want_name("as the member to name again")?;
+            let member = match lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
+                true => {
+                    self.take();
+                    self.want_name("as the member to name again")?
+                }
+                false => first,
+            };
+            if !self.on_keyword(&lang.uses_alias) {
+                return Err(format!("Expected '{}' after the member to name again", lang.uses_alias.first().map_or("as", String::as_str)));
+            }
+            self.take();
+            let called = self.want_name("as the other name")?;
+            let found = held.methods.iter().find(|(n, _)| *n == member).map(|(_, p)| p.clone());
+            let Some(program) = found else {
+                return Err(format!("No member named {} among the ones taken in", member));
+            };
+            held.methods.push((called, program));
+            self.skip_seps();
+        }
+        self.want_lexeme(&close)?;
+        Ok(())
+    }
+
     /// A class and its members: properties, constants, the values it
     /// keeps for itself, and its methods. The class becomes a value
     /// bound to its name, so `new C` and `C::X` are ordinary reads.
@@ -2007,9 +2241,9 @@ impl<'a> Compiler<'a> {
         }
         // Every member's value is read into its own run of instrs, so
         // that they can be laid out in the order the plan names them.
-        let (mut fields, mut shared, mut constants) = (Vec::new(), Vec::new(), Vec::new());
-        let mut reaches: Vec<Reach> = Vec::new();
-        let mut methods = Vec::new();
+        let (fields, shared, constants) = (Vec::new(), Vec::new(), Vec::new());
+        let reaches: Vec<Reach> = Vec::new();
+        let methods = Vec::new();
         let outer = self.within.replace((name.clone(), base.clone()));
         // The body may open on a line of its own, as every other block may.
         self.skip_intro();
@@ -2025,74 +2259,9 @@ impl<'a> Compiler<'a> {
         // declared, and is set after the class is bound, since what it
         // is set to may name the class itself.
         let settings = self.mark();
-        while !self.at_lexeme(&close) && !self.exhausted() {
-            let mut own = false;
-            let mut reach = Reach::Open;
-            while self.look().shape == Shape::Instr {
-                let w = self.look().lexeme.clone();
-                if Lang::spells(&lang.shared_words, &w) {
-                    own = true;
-                } else if Lang::spells(&lang.hidden_words, &w) {
-                    reach = Reach::Hidden;
-                } else if Lang::spells(&lang.guarded_words, &w) {
-                    reach = Reach::Guarded;
-                } else if !Lang::spells(&lang.modifier_words, &w) {
-                    break;
-                }
-                self.take();
-            }
-            if self.on_keyword(&lang.const_words) {
-                self.take();
-                let member = self.want_name("as the constant name")?;
-                self.expect_assign("after the constant name")?;
-                constants.push((member, self.member_value()?));
-            } else if self.on_keyword(&lang.function_words) {
-                self.take();
-                let gives_cell = self.skip_reference();
-                let member = self.want_name("as the method name")?;
-                self.giving_cells.push(gives_cell);
-                let built = self.method(&member);
-                self.giving_cells.pop();
-                methods.push((member.clone(), built?));
-                // A parameter of the maker that names a property makes
-                // the class carry that property too.
-                for named in std::mem::take(&mut self.promoted) {
-                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
-                    fields.push((bare, vec![Instr::Const(Value::Null)]));
-                    reaches.push(Reach::Open);
-                }
-            } else {
-                // A property, perhaps with a type word before its name.
-                // One declaration may name several, written apart the
-                // way a call's arguments are.
-                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
-                    self.take();
-                }
-                let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
-                loop {
-                    let member = self.want_name("as the property name")?;
-                    let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
-                    let value = match self.on_assign() {
-                        true => {
-                            self.take();
-                            self.member_value()?
-                        }
-                        false => vec![Instr::Const(Value::Null)],
-                    };
-                    if own {
-                        shared.push((bare, value));
-                    } else {
-                        fields.push((bare, value));
-                        reaches.push(reach);
-                    }
-                    match &apart {
-                        Some(sep) if self.at_symbol(sep) => self.take(),
-                        _ => break,
-                    };
-                }
-            }
-            self.skip_seps();
-        }
+        let mut held = Members { fields, shared, constants, methods, reaches };
+        self.class_members(&close, &mut held)?;
+        let Members { fields, shared, constants, methods, reaches } = held;
         self.want_lexeme(&close)?;
         self.within = outer;
         let kept: Vec<Instr> = self.piece().instrs.drain(settings..).collect();
@@ -2100,13 +2269,13 @@ impl<'a> Compiler<'a> {
         // every value of its own and every constant, in that order.
         let mut argc = 0;
         if let Some(base) = &base {
-            let base = self.class_key(base);
-            self.read(&base);
+            let filed = self.class_key(base);
+            self.read_filed(&base.clone(), &filed);
             argc += 1;
         }
-        for named in &answers {
-            let named = self.class_key(named);
-            self.read(&named);
+        for named in &answers.clone() {
+            let filed = self.class_key(named);
+            self.read_filed(named, &filed);
             argc += 1;
         }
         let names = |parts: Vec<(String, Vec<Instr>)>, a: &mut Self, argc: &mut usize| {
@@ -2132,6 +2301,85 @@ impl<'a> Compiler<'a> {
         let at = self.mark();
         for w in relocated(kept, at as i64 - settings as i64) {
             self.put(w);
+        }
+        Ok(())
+    }
+
+    /// The members a class or a trait declares, read one after
+    /// another until the mark that closes the body. A trait's members
+    /// are read again here, at the `use` that takes them in, so that
+    /// they stand in the class taking them and not in the trait.
+    fn class_members(&mut self, close: &str, held: &mut Members) -> Res<()> {
+        let lang = self.lang;
+        while !self.at_lexeme(close) && !self.exhausted() {
+            let mut own = false;
+            let mut reach = Reach::Open;
+            while self.look().shape == Shape::Instr {
+                let w = self.look().lexeme.clone();
+                if Lang::spells(&lang.shared_words, &w) {
+                    own = true;
+                } else if Lang::spells(&lang.hidden_words, &w) {
+                    reach = Reach::Hidden;
+                } else if Lang::spells(&lang.guarded_words, &w) {
+                    reach = Reach::Guarded;
+                } else if !Lang::spells(&lang.modifier_words, &w) {
+                    break;
+                }
+                self.take();
+            }
+            if self.on_keyword(&lang.uses_words) {
+                self.take_in_members(held)?;
+            } else if self.on_keyword(&lang.const_words) {
+                self.take();
+                let member = self.want_name("as the constant name")?;
+                self.expect_assign("after the constant name")?;
+                held.constants.push((member, self.member_value()?));
+            } else if self.on_keyword(&lang.function_words) {
+                self.take();
+                let gives_cell = self.skip_reference();
+                let member = self.want_name("as the method name")?;
+                self.giving_cells.push(gives_cell);
+                let built = self.method(&member);
+                self.giving_cells.pop();
+                held.methods.push((member.clone(), built?));
+                // A parameter of the maker that names a property makes
+                // the class carry that property too.
+                for named in std::mem::take(&mut self.promoted) {
+                    let bare = lang.sigil.map_or(named.clone(), |s| named.trim_start_matches(s).to_string());
+                    held.fields.push((bare, vec![Instr::Const(Value::Null)]));
+                    held.reaches.push(Reach::Open);
+                }
+            } else {
+                // A property, perhaps with a type word before its name.
+                // One declaration may name several, written apart the
+                // way a call's arguments are.
+                if self.look().shape == Shape::Instr && self.look_ahead(1).shape == Shape::Instr {
+                    self.take();
+                }
+                let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+                loop {
+                    let member = self.want_name("as the property name")?;
+                    let bare = lang.sigil.map_or(member.clone(), |s| member.trim_start_matches(s).to_string());
+                    let value = match self.on_assign() {
+                        true => {
+                            self.take();
+                            self.member_value()?
+                        }
+                        false => vec![Instr::Const(Value::Null)],
+                    };
+                    if own {
+                        held.shared.push((bare, value));
+                    } else {
+                        held.fields.push((bare, value));
+                        held.reaches.push(reach);
+                    }
+                    match &apart {
+                        Some(sep) if self.at_symbol(sep) => self.take(),
+                        _ => break,
+                    };
+                }
+            }
+            self.skip_seps();
         }
         Ok(())
     }
@@ -2261,6 +2509,23 @@ impl<'a> Compiler<'a> {
                 // the reference asks to be written out rather than left
                 // to be understood.
                 let nothing = matches!(spare.as_slice(), [Instr::Const(Value::Null)]);
+                // A parameter written with a class's name takes a thing
+                // of that class and nothing else may stand for what it
+                // falls back on. Only a value written out can be told
+                // apart here, and the reading stops over it as a fault
+                // of the run.
+                if let (Some(kind), [Instr::Const(worth)]) = (kinded.last().and_then(Clone::clone), spare.as_slice()) {
+                    if !nothing && lang.names_a_class(&kind) {
+                        self.registry.stopped_fatally = true;
+                        let told = format!(
+                            "Cannot use {} as default value for parameter {} of type {}",
+                            lang.kind_word(worth),
+                            formals.last().map_or("", String::as_str),
+                            kind
+                        );
+                        return Err(told);
+                    }
+                }
                 if nothing && !takes_nothing && kinded.last().map_or(false, Option::is_some) && lang.tells_place {
                     let whose = match &self.within {
                         Some((class, _)) => format!("{}::{}", class, named),
@@ -2343,6 +2608,11 @@ impl<'a> Compiler<'a> {
         let (formals, spares, _) = self.parameters(&name, &call)?;
         let least = formals.len() - spares.len();
         let given = formals.clone();
+        // A routine written where a value stands may carry names from
+        // around it away with it, since the names around it are gone by
+        // the time it is called.
+        let carried = self.carried_names(&call)?;
+        let taken = carried.clone();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
             self.skip_nothing_mark();
@@ -2350,6 +2620,13 @@ impl<'a> Compiler<'a> {
         }
         let declarations = self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme);
         let program = self.routine(name, formals, least, true, |a| {
+            // The names carried away take the slots after the
+            // parameters, and are filled from what was carried when the
+            // routine is called.
+            for (named, _) in &taken {
+                let cell = a.cell_to_write(named);
+                a.carrying.push(cell.near[0]);
+            }
             a.spare_values(&spares, &given)?;
             if declarations {
                 loop {
@@ -2363,8 +2640,131 @@ impl<'a> Compiler<'a> {
             }
             a.body()
         })?;
+        // What is carried is read where the routine is written, and the
+        // routine takes it away with it.
+        for (named, by_cell) in &carried {
+            match by_cell {
+                true => {
+                    let cell = self.cell_to_read(named, false);
+                    self.put(Instr::Bond(cell));
+                }
+                false => self.read(named),
+            }
+        }
         self.constant(Value::Routine(program));
+        if !carried.is_empty() {
+            self.act(Action::Close, carried.len() + 1);
+        }
         Ok(())
+    }
+
+    /// A routine written short: its parameters, the mark, and the one
+    /// expression it gives back. Every name standing around it is taken
+    /// away with it as it stands, since a routine written this short has
+    /// nowhere to say which of them it wants.
+    fn short_value(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let (_, mark) = lang.short_function.clone().expect("a word for a short routine");
+        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        self.want_sign(&call.open, "after the word for a short routine")?;
+        let (formals, spares, _) = self.parameters(ANONYMOUS, &call)?;
+        let least = formals.len() - spares.len();
+        let given = formals.clone();
+        if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
+            self.take();
+            self.skip_nothing_mark();
+            self.want_name("as a return type")?;
+        }
+        self.want_sign(&mark, "before the body of a short routine")?;
+        // Which names the body wants cannot be said in a routine written
+        // this short, so the body is read once to find out: it is read
+        // through, the names it writes are noted, what was put together
+        // is thrown away, and it is read again for the routine itself.
+        let began = self.pos;
+        let held = self.mark();
+        let wanted = {
+            let spares = spares.clone();
+            let given = given.clone();
+            let named_here = formals.clone();
+            self.routine(ANONYMOUS, formals.clone(), least, true, |a| {
+                a.spare_values(&spares, &given)?;
+                a.expr(0)?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            })?;
+            let ended = self.pos;
+            let mut names = std::collections::BTreeSet::new();
+            for tok in &self.tokens[began..ended] {
+                let a_binding = tok.shape == Shape::Instr && lang.sigil.map_or(false, |m| tok.lexeme.starts_with(m));
+                if a_binding && !named_here.contains(&tok.lexeme) {
+                    names.insert(tok.lexeme.clone());
+                }
+            }
+            names
+        };
+        self.piece().instrs.truncate(held);
+        self.pos = began;
+        let carried: Vec<(String, bool)> = wanted.into_iter().map(|named| (named, false)).collect();
+        let taken = carried.clone();
+        let program = self.routine(ANONYMOUS, formals, least, true, |a| {
+            for (named, _) in &taken {
+                let cell = a.cell_to_write(named);
+                a.carrying.push(cell.near[0]);
+            }
+            a.spare_values(&spares, &given)?;
+            // The one expression stands where it is written, so anything
+            // said while it runs names that line and not the one the
+            // call was made from.
+            let row = (a.look().row as u32).saturating_sub(a.before);
+            a.put(Instr::Line(row));
+            a.expr(0)?;
+            a.piece().result_touched = true;
+            a.write(RESULT_CELL);
+            Ok(())
+        })?;
+        // A name never written to goes with it as nothing at all: the
+        // routine was never told to want it, so the taking says nothing
+        // of it, and reading it inside is what says it was never
+        // written, as reading it here would have been.
+        for (named, _) in &carried {
+            let cell = self.cell_to_read(named, false);
+            self.put(Instr::Glance(cell));
+        }
+        self.constant(Value::Routine(program));
+        if !carried.is_empty() {
+            self.act(Action::Close, carried.len() + 1);
+        }
+        Ok(())
+    }
+
+    /// `use ($a, &$b)` after a routine written where a value stands: the
+    /// names it carries away with it, and whether each is carried as it
+    /// stands or as the cell it shares with the name it was read from.
+    fn carried_names(&mut self, call: &Brackets) -> Res<Vec<(String, bool)>> {
+        let lang = self.lang;
+        if lang.carries_words.is_empty() || !self.on_keyword(&lang.carries_words) {
+            return Ok(Vec::new());
+        }
+        self.take();
+        self.want_sign(&call.open, "after the word for what a routine carries")?;
+        let mut names = Vec::new();
+        while !self.at_symbol(&call.close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", call.close));
+            }
+            let by_cell = self.skip_reference();
+            let named = self.want_name("as a name to carry")?;
+            names.push((named, by_cell));
+            if let Some(sep) = &call.between {
+                if self.at_symbol(sep) {
+                    self.take();
+                }
+            }
+        }
+        self.want_sign(&call.close, "after what a routine carries")?;
+        Ok(names)
     }
 
     fn function_body(&mut self, name: String) -> Res<()> {
@@ -2381,14 +2781,33 @@ impl<'a> Compiler<'a> {
 
     /// An assignment, an indexed assignment, or an expression statement.
     fn assign_or_expr(&mut self) -> Res<()> {
+        // The running result is emptied before the statement is worked
+        // out rather than written over after it. A slot still holding
+        // what the statement before came to keeps that value alive for
+        // the whole of this one, and a program asking how much room it
+        // holds would be told of a value it had already finished with.
+        let running = self.cell_to_write(RESULT_CELL);
+        let emptied = self.put(Instr::Emptied(running));
         let from = self.mark();
         self.expr_at(0, false)?;
-        if !self.on_writing() {
+        let done = if self.on_writing() {
+            self.assignment(from, None)
+        } else {
             self.piece().result_touched = true;
             self.write(RESULT_CELL);
-            return Ok(());
+            Ok(())
+        };
+        // A statement that never calls out of itself has no need of the
+        // emptying: nothing within it can ask the run how much room it
+        // holds, and what the statement before came to is let go where
+        // the running result is written over anyway. The word is left
+        // standing but made to do nothing, so that everything already
+        // written down as an index into these words still points where
+        // it did; the peephole takes it out at the end.
+        if self.piece().instrs[from..].iter().all(word_alone) {
+            self.piece().instrs[emptied] = Instr::Nothing;
         }
-        self.assignment(from, None)
+        done
     }
 
     /// Whether a sign that writes stands here: the assignment sign, or
@@ -2912,8 +3331,25 @@ impl<'a> Compiler<'a> {
                 for w in relocated(index.to_vec(), -1) {
                     self.put(w);
                 }
-                self.value_written(keep)?;
-                self.read_to_rewrite(&name);
+                // Where a language writes into text, only the thing
+                // written into can say whether this place holds a
+                // letter, so it is read before the value is put away:
+                // what such a write is worth is the letter that went
+                // in and not the whole of what was handed over.
+                if self.lang.text_places {
+                    self.value_written(None)?;
+                    self.read_to_rewrite(&name);
+                    self.act(Action::Fitted, 1);
+                    if keep.is_some() {
+                        let aside = self.gensym("into");
+                        self.write(&aside);
+                        self.kept(keep);
+                        self.read_to_rewrite(&aside);
+                    }
+                } else {
+                    self.value_written(keep)?;
+                    self.read_to_rewrite(&name);
+                }
                 self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                 self.rewritten(&name);
                 Ok(())
@@ -2933,6 +3369,14 @@ impl<'a> Compiler<'a> {
 
     fn expr(&mut self, floor: u32) -> Res<()> {
         self.expr_at(floor, true)
+    }
+
+    /// Whether all that has been laid down from here is one word an
+    /// operation can read for itself: a name or a number wants no
+    /// holding place, so nothing stands between it and the operation.
+    fn lone_operand(&mut self, from: usize) -> bool {
+        let instrs = &self.piece().instrs;
+        instrs.len() == from + 1 && operand_of(&instrs[from]).is_some()
     }
 
     /// An expression. Where a language counts an assignment as one, a
@@ -2989,6 +3433,15 @@ impl<'a> Compiler<'a> {
             if self.on_keyword(&lang.instanceof_words) {
                 self.take();
                 let named = self.want_name("as the class to test against")?;
+                // The class to test against is usually written out. A
+                // binding written there stands for a class as the run
+                // reaches it: the class it spells, or the class of the
+                // thing it holds.
+                if lang.sigil.map_or(false, |mark| named.starts_with(mark)) {
+                    self.read(&named);
+                    self.act(Action::KindredTo, 2);
+                    continue;
+                }
                 self.act(Action::Kindred(Rc::from(named.as_str())), 1);
                 continue;
             }
@@ -3020,7 +3473,39 @@ impl<'a> Compiler<'a> {
                     self.act(Action::AsBool, 1);
                 }
                 op => {
+                    // A lone name is read where the operator falls and
+                    // not where it stands, so a write on the other side
+                    // is seen by it. Only a name is fetched that late: a
+                    // property, a class's own value, a place in an array
+                    // or what a call gave back is put in a holding place
+                    // as it stands, and a write cannot reach it there.
+                    let named = match self.piece().instrs[from..] {
+                        [Instr::Read(ref cell)] if !cell.moving => Some(cell.clone()),
+                        _ => None,
+                    };
+                    if named.is_some() {
+                        self.piece().instrs.truncate(from);
+                    }
                     self.expr(right_floor)?;
+                    match named {
+                        // Where the other side is itself a name or a
+                        // number the reading was late already: the
+                        // peephole takes both straight from the word.
+                        Some(cell) if self.lone_operand(from) => {
+                            self.piece().instrs.insert(from, Instr::Read(cell));
+                        }
+                        // Otherwise what the other side came to is
+                        // stowed and the name read after it, the two
+                        // reads folding back into the operation. The
+                        // name is looked for again there, since the
+                        // other side may be what first bound it.
+                        Some(cell) => {
+                            self.write(TEMP_CELL);
+                            self.read(&cell.ident);
+                            self.read(TEMP_CELL);
+                        }
+                        None => {}
+                    }
                     self.act(op, 2);
                 }
             }
@@ -3230,6 +3715,14 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
+                } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
+                    && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
+                {
+                    // A routine written short is one expression, and
+                    // takes with it every name standing around it: what
+                    // it wants of them cannot be said, so it takes them
+                    // all as they stand.
+                    self.short_value()?;
                 } else if Lang::spells(&lang.function_words, &tok.lexeme)
                     && lang
                         .calling
@@ -3263,6 +3756,20 @@ impl<'a> Compiler<'a> {
                                 }
                                 let argc = self.arguments(&call)?;
                                 self.mutation(&tok.lexeme, &target, argc + 1)?;
+                            } else if native == Some(Builtin::Lead) {
+                                // The array put in front of is named, as
+                                // the one pushed onto is.
+                                let target = match self.look().shape {
+                                    Shape::Instr => self.take().lexeme,
+                                    _ => return Err(format!("First argument to {}() must be an array variable name", tok.lexeme)),
+                                };
+                                if let Some(sep) = &call.between {
+                                    if self.at_symbol(sep) {
+                                        self.take();
+                                    }
+                                }
+                                let argc = self.arguments(&call)?;
+                                self.leading(&tok.lexeme, &target, argc)?;
                             } else if native == Some(Builtin::Erase) {
                                 self.forget(&call)?;
                             } else if native == Some(Builtin::Held) {
@@ -3285,8 +3792,24 @@ impl<'a> Compiler<'a> {
                                 for w in relocated(given[1..].to_vec(), -1) {
                                     self.put(w);
                                 }
-                                self.write_global(&name);
-                                self.constant(Value::Flag(true));
+                                // A name carrying the scope mark spells
+                                // one of a class's own values and no
+                                // constant at all. A language with words
+                                // for that refuses the name, saying them
+                                // where the run reaches the call, so the
+                                // program may take the fault as any other.
+                                let scoped = self.lang.scope_mark.as_ref().map_or(false, |m| name.contains(m.as_str()));
+                                match (scoped, self.lang.define_scoped.clone()) {
+                                    (true, Some(said)) => {
+                                        self.put_away();
+                                        self.constant(Value::text(&said));
+                                        self.act(Action::Builtin(Builtin::Raise, tok.lexeme.as_str().into()), 1);
+                                    }
+                                    _ => {
+                                        self.write_global(&name);
+                                        self.constant(Value::Flag(true));
+                                    }
+                                }
                             } else {
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 self.call(&tok.lexeme, argc)?;
@@ -3332,6 +3855,7 @@ impl<'a> Compiler<'a> {
                         self.take();
                         self.expr(0)?;
                         self.want_sign(&group.close, "to close a group")?;
+                        self.called_on_value()?;
                         return self.indexing(from);
                     }
                 }
@@ -3351,7 +3875,13 @@ impl<'a> Compiler<'a> {
                         return self.indexing(from);
                     }
                 }
-                return Err(format!("Unexpected token: {}", tok.lexeme));
+                // The words a language puts before whatever stopped the
+                // reading are its own; the kernel's plainer ones stand
+                // where a definition gives none.
+                return Err(match &self.lang.reading_unexpected {
+                    Some(opening) => format!("{} {}", opening, tok.lexeme),
+                    None => format!("Unexpected token: {}", tok.lexeme),
+                });
             }
             _ => return Err("Expected an expression".to_string()),
         }
@@ -3366,10 +3896,14 @@ impl<'a> Compiler<'a> {
         // and bindings are told apart by how they are written; only a
         // class's own name is filed however it is written.
         let a_binding = self.lang.sigil.map_or(false, |mark| name.starts_with(mark));
-        match self.lang.classes_folded && !a_binding {
+        if a_binding {
+            return name.to_string();
+        }
+        let folded = match self.lang.classes_folded {
             true => name.to_lowercase(),
             false => name.to_string(),
-        }
+        };
+        format!("{}{}", folded, crate::code::OF_A_CLASS)
     }
 
     /// What is left of a class named by a value: a property of a thing,
@@ -3402,20 +3936,28 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if Lang::spells(&lang.self_words, name) {
             let (here, _) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
-            let here = self.class_key(&here);
-            self.read(&here);
+            let filed = self.class_key(&here);
+            self.read_filed(&here, &filed);
             return Ok(());
         }
         if Lang::spells(&lang.parent_words, name) {
             let (here, base) = self.within.clone().ok_or_else(|| format!("'{}' belongs inside a class", name))?;
             let base = base.ok_or_else(|| format!("Class {} stands on nothing", here))?;
-            let base = self.class_key(&base);
-            self.read(&base);
+            let filed = self.class_key(&base);
+            self.read_filed(&base, &filed);
             return Ok(());
         }
         let named = self.class_key(name);
-        self.read(&named);
+        self.read_filed(name, &named);
         Ok(())
+    }
+
+    /// Reads what a class is filed under, while the name a fault speaks
+    /// of stays the one the reader wrote: what a class is filed under is
+    /// the kernel's own making and is never anybody else's to read.
+    fn read_filed(&mut self, written: &str, filed: &str) {
+        let slot = self.cell_to_read(filed, false);
+        self.put(Instr::Read(Cell { ident: Rc::from(written), ..slot }));
     }
 
     /// `unset(a, b[k])`: each name is left as though nothing were ever
@@ -3938,6 +4480,23 @@ impl<'a> Compiler<'a> {
     }
 
     /// `expr[i]`, `expr->member` and `expr::member`, repeatable.
+    /// A value standing in a group may be called outright: `(f)(x)`,
+    /// and one call after another, `(f)(x)(y)`. What is called is held
+    /// aside while the arguments are worked out, since a call wants what
+    /// it calls above them.
+    fn called_on_value(&mut self) -> Res<()> {
+        let Some(call) = self.lang.calling.clone() else { return Ok(()) };
+        while self.at_symbol(&call.open) {
+            let callee = self.gensym("callee");
+            self.write(&callee);
+            self.take();
+            let argc = self.arguments(&call)?;
+            self.read(&callee);
+            self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
+        }
+        Ok(())
+    }
+
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
         loop {
@@ -4190,7 +4749,7 @@ impl<'a> Compiler<'a> {
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
         match self.lang.builtins.get(name).copied() {
-            Some(Builtin::Append) | Some(Builtin::Replace) => {
+            Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }
             Some(Builtin::Pack) => Err(format!("{}() is a literal, not a call", name)),
@@ -4218,6 +4777,22 @@ impl<'a> Compiler<'a> {
         self.act(Action::Builtin(native, Rc::from(name)), argc);
         self.restore(target);
         self.constant(Value::Null);
+        Ok(())
+    }
+
+    /// Putting values at the head of a named array: the values first,
+    /// then the array itself, taken out of its slot and put back with
+    /// them in front. How many places it holds afterwards is the answer,
+    /// so the array is read once more for its extent.
+    fn leading(&mut self, name: &str, target: &str, argc: usize) -> Res<()> {
+        if argc == 0 {
+            return Err(format!("{}() expects an array and a value at least", name));
+        }
+        self.read_taking(target);
+        self.act(Action::Builtin(Builtin::Lead, Rc::from(name)), argc + 1);
+        self.restore(target);
+        self.read(target);
+        self.act(Action::Extent, 1);
         Ok(())
     }
 
@@ -4626,6 +5201,14 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
                 }
             }
         }
+        // A word that does nothing is taken out here, where the map
+        // that follows moves every jump that pointed at it onto the
+        // word that took its place.
+        if matches!(instrs[i], Instr::Nothing) {
+            map[i] = out.len();
+            i += 1;
+            continue;
+        }
         match group {
             Some(w) => {
                 for j in i..i + width {
@@ -4649,6 +5232,30 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
         }
     }
     out
+}
+
+/// Whether a word keeps to itself: it works on the stack and on cells
+/// and calls nothing, so nothing within it can ask the run anything or
+/// take room that is not let go again straight away. An operation is
+/// counted as calling out unless it is plain arithmetic over numbers,
+/// since joining text and reaching into a value are both ways a class
+/// of the program's own can be called without saying so.
+fn word_alone(w: &Instr) -> bool {
+    let quiet = |op: &Action| {
+        matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv
+            | Action::Mod | Action::Power | Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt
+            | Action::Ge | Action::And | Action::Or | Action::Not | Action::Negate | Action::AsBool
+            | Action::Same | Action::Unsame | Action::Rank | Action::Extent | Action::Nothing
+            | Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitTurn | Action::BitUp | Action::BitDown)
+    };
+    match w {
+        Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Forget(_)
+        | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
+        Instr::Act(op, _) => quiet(op),
+        Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),
+        _ => false,
+    }
 }
 
 /// Words moved by `delta`, their jump targets moved with them.

@@ -1,5 +1,5 @@
 {
-  "$comment": "PHP: brace blocks, sigil-prefixed variables, case-insensitive keywords, dot concatenation, division yielding a real. print writes without a newline, as in PHP, so a line is print($x . \"\\n\"). Loaded at run time from langs/extras/. Array literals as maps, foreach and echo are omitted until the kernel supports them; everything listed is PHP.",
+  "$comment": "PHP: brace blocks, sigil-prefixed variables, case-insensitive keywords, dot concatenation, division yielding a real. print writes without a newline, as in PHP, so a line is print($x . \"\\n\"). Loaded at run time from langs/, not compiled in. Array literals as maps, foreach and echo are omitted until the kernel supports them; everything listed is PHP.",
   "format_version": 1,
   "language": "php",
   "extensions": [
@@ -48,9 +48,13 @@
   "ext.lexical.escape.codepoint.beyond": [
     "Invalid UTF-8 codepoint escape sequence: Codepoint too large"
   ],
+  "ext.lexical.escape.byte": [
+    "x"
+  ],
   "lexical.prologue": [
     "<?php"
   ],
+  "ext.lexical.prologue.folded": true,
   "ext.lexical.prologue.echo": [
     "<?="
   ],
@@ -336,9 +340,7 @@
   ],
   "builtin.error": [],
   "builtin.extern": [],
-  "builtin.range": [
-    "range"
-  ],
+  "builtin.range": [],
   "builtin.real": [],
   "builtin.num": [],
   "builtin.den": [],
@@ -402,6 +404,20 @@
   "ext.lexical.interpolating_quotes": [
     "\""
   ],
+  "ext.lexical.heredoc": [
+    "<<<"
+  ],
+  "ext.lexical.escape.octal": true,
+  "ext.system.text.bytes": true,
+  "ext.lexical.prologue.brief": [
+    "<?"
+  ],
+  "ext.lexical.prologue.brief.setting": [
+    "short_open_tag"
+  ],
+  "ext.lexical.interpolating.index.amiss": [
+    "string content, expecting \"-\" or identifier or variable or number"
+  ],
   "ext.stmt.for.c": [
     "for"
   ],
@@ -417,6 +433,9 @@
   ],
   "ext.builtin.define": [
     "define"
+  ],
+  "ext.builtin.define.class_constant": [
+    "define(): Argument #1 ($constant_name) cannot be a class constant"
   ],
   "ext.builtin.var_dump": [
     "var_dump"
@@ -456,6 +475,9 @@
   "ext.op.index.append": true,
   "ext.op.index.makes": true,
   "ext.op.index.text": true,
+  "ext.op.index.text.first": [
+    "Only the first byte will be assigned to the string offset"
+  ],
   "ext.op.spelled": true,
   "ext.system.class.folded": true,
   "ext.builtin.output.hold": [
@@ -588,11 +610,22 @@
   "ext.op.walk.giver": [
     "getIterator"
   ],
+  "ext.op.walk.giver.unwalkable": [
+    "Objects returned by",
+    "must be traversable or implement interface Iterator"
+  ],
+  "ext.system.fault.class.walk": [
+    "Exception"
+  ],
   "ext.op.walk.no_cell": [
     "An iterator cannot be used with foreach by reference"
   ],
   "ext.op.walk.key.no_cell": [
     "Key element cannot be a reference"
+  ],
+  "ext.op.walk.live": true,
+  "ext.builtin.array.front": [
+    "array_unshift"
   ],
   "ext.stmt.class.modifier": [
     "public",
@@ -670,6 +703,22 @@
     "$_REQUEST"
   ],
   "ext.op.index.absent": true,
+  "ext.stmt.class.trait": [
+    "trait"
+  ],
+  "ext.stmt.function.short": [
+    "fn",
+    "=>"
+  ],
+  "ext.stmt.function.carries": [
+    "use"
+  ],
+  "ext.stmt.class.uses": [
+    "use"
+  ],
+  "ext.stmt.class.uses.alias": [
+    "as"
+  ],
   "ext.stmt.class.interface": [
     "interface"
   ],
@@ -692,6 +741,8 @@
     "do"
   ],
   "ext.stmt.function.outermost": true,
+  "ext.stmt.function.own_names": true,
+  "ext.stmt.static.read_in": true,
   "ext.system.request.amiss": [
     "$__request_amiss"
   ],
@@ -735,6 +786,7 @@
   "ext.op.bit.right": [
     ">>"
   ],
+  "ext.op.bit.shift.numbers": true,
   "ext.op.hush": ["@"],
   "ext.op.name_by_value": [
     "$"
@@ -792,6 +844,38 @@
   "ext.system.complaint.deprecated": [
     "Deprecated"
   ],
+  "ext.system.complaint.markup.setting": [
+    "html_errors"
+  ],
+  "ext.system.complaint.markup.kind": [
+    "<br />",
+    "<b>",
+    "</b>:  "
+  ],
+  "ext.system.complaint.markup.place": [
+    "<b>",
+    "</b>"
+  ],
+  "ext.system.complaint.markup.line": [
+    "<b>",
+    "</b><br />"
+  ],
+  "ext.system.complaint.markup.reference": [
+    " [<a href='",
+    "'>",
+    "</a>]"
+  ],
+  "ext.system.complaint.reference.setting": [
+    "docref_root"
+  ],
+  "ext.system.complaint.reference.page": [
+    "function.",
+    ".html"
+  ],
+  "ext.system.complaint.reference.mark": [
+    "_",
+    "-"
+  ],
   "ext.lexical.number.binary_prefix": [
     "0b",
     "0B"
@@ -807,8 +891,35 @@
   "ext.system.integer.bits": 64,
   "ext.system.real.bits": 64,
   "ext.system.real.digits": 14,
+  "ext.system.real.figures": [
+    "$__real_figures"
+  ],
+  "ext.system.real.figures.shown": [
+    "$__real_figures_shown"
+  ],
   "ext.system.complaint.reading": [
     "Parse error"
+  ],
+  "ext.system.reading.unexpected": [
+    "syntax error, unexpected"
+  ],
+  "ext.system.reading.unexpected.character": [
+    "character 0x"
+  ],
+  "ext.system.reading.unclosed": [
+    "Unclosed '",
+    "'"
+  ],
+  "ext.system.reading.unclosed.line": [
+    "on line"
+  ],
+  "ext.system.reading.unclosed.mismatch": [
+    "does not match '",
+    "'"
+  ],
+  "ext.system.reading.unmatched": [
+    "Unmatched '",
+    "'"
   ],
   "ext.system.complaint.fatal": [
     "Fatal error"
@@ -840,8 +951,24 @@
   "ext.system.fault.class.kind": [
     "TypeError"
   ],
+  "ext.system.fault.class.reading": [
+    "ParseError"
+  ],
   "ext.builtin.time_limit": [
     "set_time_limit"
+  ],
+  "ext.system.kind.loose": [
+    "mixed",
+    "callable",
+    "iterable",
+    "object",
+    "self",
+    "static",
+    "parent",
+    "void",
+    "never",
+    "false",
+    "true"
   ],
   "ext.system.kind.brief": [
     "int",
@@ -864,8 +991,27 @@
   "ext.builtin.file.remove": [
     "unlink"
   ],
+  "ext.builtin.shell": [
+    "shell_exec"
+  ],
+  "ext.builtin.wait": [
+    "__wait"
+  ],
+  "ext.builtin.net.ask": [
+    "__net_ask"
+  ],
+  "ext.builtin.run.begin": [
+    "__run_begin"
+  ],
+  "ext.builtin.run.end": [
+    "__run_end"
+  ],
   "ext.builtin.eval": [
     "eval"
+  ],
+  "ext.builtin.eval.place": [
+    "(",
+    ") : eval()'d code"
   ],
   "ext.builtin.include": [
     "include",
@@ -874,6 +1020,14 @@
   "ext.builtin.include.once": [
     "include_once",
     "require_once"
+  ],
+  "ext.builtin.include.demanded": [
+    "require",
+    "require_once"
+  ],
+  "ext.builtin.include.demanded.missing": [
+    "Failed opening required '",
+    "' (include_path='.')"
   ],
   "ext.builtin.calls": [
     "__calls"
@@ -887,10 +1041,43 @@
   "ext.builtin.classes": [
     "__classes_bound"
   ],
+  "ext.builtin.spelled": [
+    "__words_spelled"
+  ],
   "ext.builtin.routines": [
     "__routines_bound"
   ],
+  "ext.builtin.class.methods": [
+    "__class_methods"
+  ],
+  "ext.builtin.class.properties": [
+    "__class_properties"
+  ],
   "ext.builtin.class.beneath": [
     "__class_beneath"
+  ],
+  "ext.builtin.clock": [
+    "__clock"
+  ],
+  "ext.builtin.math": [
+    "__math"
+  ],
+  "ext.builtin.room.used": [
+    "__room_used"
+  ],
+  "ext.builtin.room.most": [
+    "__room_most"
+  ],
+  "ext.builtin.room.most.forget": [
+    "__room_most_forget"
+  ],
+  "ext.builtin.room.limit": [
+    "__room_limit"
+  ],
+  "ext.system.fault.modulo": [
+    "Modulo by zero"
+  ],
+  "ext.system.fault.shift": [
+    "Bit shift by negative number"
   ]
 }

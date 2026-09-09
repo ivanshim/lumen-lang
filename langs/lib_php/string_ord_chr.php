@@ -126,7 +126,7 @@ function trim_end($s) {
     return substring($s, 0, $i + 1);
 }
 
-function trim($s) {
+function trim_($s) {
     return trim_start(trim_end($s));
 }
 

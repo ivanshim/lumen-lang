@@ -18,7 +18,9 @@ pub mod table;
 pub mod form;
 pub mod data;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use table::Table;
 use data::Value;
@@ -48,7 +50,9 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 }
 
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    let mut table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    brief_settled(&mut table, request);
+    markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| format!("{}: {}", prefix, e))
 }
@@ -89,12 +93,68 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
     let Some(word) = table.single(key) else { return said.to_string() };
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
-    print!("\n{}: {} in {} on line {}\n", word, said, file, row.saturating_sub(before));
+    let head = exec::complaint_head(table, word, said);
+    print!("{head}{}", exec::complaint_tail(table, &file, row.saturating_sub(before)));
     // The run ends straight after this, and ending does not empty what
     // waits to be written, so it is emptied here.
     use std::io::Write;
     let _ = std::io::stdout().flush();
     said.to_string()
+}
+
+/// Whether the shortest marker opens a run of code. What says so is a
+/// setting the run was started with, not anything in the definition,
+/// and it cannot change while the run goes; so it is looked at once,
+/// before the first word is read, and where it says no the marker is
+/// put by and what follows it stays page.
+fn brief_settled(table: &mut Table, request: &[(String, String, String, bool)]) {
+    let Some(setting) = table.single("ext.lexical.prologue.brief.setting").map(str::to_string) else { return };
+    let told = request
+        .iter()
+        .find(|(from, key, ..)| from == "SETTINGS" && *key == setting)
+        .map(|(.., worth, _)| worth.trim().to_ascii_lowercase());
+    // Anything but the words for no counts as yes, the way the
+    // reference reads a setting written down for it.
+    let no = ["", "0", "off", "false", "no"];
+    if !matches!(told.as_deref(), Some(worth) if !no.contains(&worth)) {
+        table.put_by("ext.lexical.prologue.brief");
+    }
+}
+
+/// What a setting the run began with stands at, without the quotes one
+/// may be written in, since the reference takes those off too.
+fn setting_at(request: &[(String, String, String, bool)], setting: &str) -> Option<String> {
+    let held = request.iter().find(|(from, key, ..)| from == "SETTINGS" && *key == setting)?;
+    let worth = held.2.trim();
+    match worth.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')) {
+        Some(bare) => Some(bare.to_string()),
+        None => Some(worth.to_string()),
+    }
+}
+
+/// Whether complaints are dressed for a reader of markup. A setting the
+/// run began with says so and cannot change while it goes, so it is
+/// looked at once, before the first word is read; where it says no the
+/// dressing is put by and the bare words stand.
+fn markup_settled(table: &mut Table, request: &[(String, String, String, bool)]) {
+    let Some(setting) = table.single("ext.system.complaint.markup.setting").map(str::to_string) else { return };
+    let held = setting_at(request, &setting).map(|worth| worth.to_ascii_lowercase());
+    let no = ["", "0", "off", "false", "no"];
+    if matches!(held.as_deref(), Some(worth) if !no.contains(&worth)) {
+        return;
+    }
+    for label in ["ext.system.complaint.markup.kind", "ext.system.complaint.markup.place",
+                  "ext.system.complaint.markup.line", "ext.system.complaint.markup.reference"] {
+        table.put_by(label);
+    }
+}
+
+/// Where the language keeps its own pages, as the run began. Nothing
+/// where the run names nowhere, and a complaint about a word of the
+/// language then points at no page of it.
+fn pages_lie_at(table: &Table, request: &[(String, String, String, bool)]) -> Option<String> {
+    let setting = table.single("ext.system.complaint.reference.setting")?;
+    setting_at(request, setting).filter(|held| !held.is_empty())
 }
 
 fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
@@ -108,9 +168,11 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let ahead = lines_before(request);
     let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
-    let tokens = indent::indent(read?, table)?;
+    let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
+    let tokens = shaped?;
     let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
-        "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null"];
+        "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null",
+        "ext.system.real.figures", "ext.system.real.figures.shown"];
     let mut seeded: Vec<String> = system.iter().filter_map(|k| table.single(k).map(str::to_string)).collect();
     seeded.extend(REQUEST_PARTS.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.request.amiss").map(str::to_string));
@@ -204,6 +266,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.found_in(place);
     }
+    machine.pages_lie_at(pages_lie_at(table, request));
     // Where the program is written, as the request carries it.
     for (part, key) in OWN_PLACE {
         let Some(name) = table.single(key) else { continue };
@@ -221,6 +284,31 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if let Some(n) = table.single("system.real_default_precision") {
         machine.define(n, Value::Small(math::DEFAULT_PLACES as i64));
     }
+    // A count of figures belongs to the run and not to the definition:
+    // the run may write another at any moment, so each count is held in
+    // a cell the run reaches by name and the kernel looks into afresh
+    // whenever it writes a real out. Nought or under asks for the
+    // fewest figures that read back the same, where a run showing a
+    // real with its kind begins.
+    let mut plainly = None;
+    let mut by_kind = None;
+    if let Some(n) = table.single("ext.system.real.figures") {
+        let cell = Rc::new(RefCell::new(Value::Small(table.count("ext.system.real.digits").map_or(-1, |d| d as i64))));
+        machine.define(n, Value::Shared(Rc::clone(&cell)));
+        plainly = Some(cell);
+    }
+    if let Some(n) = table.single("ext.system.real.figures.shown") {
+        let cell = Rc::new(RefCell::new(Value::Small(-1)));
+        machine.define(n, Value::Shared(Rc::clone(&cell)));
+        by_kind = Some(cell);
+    }
+    data::counts_kept_in(plainly, by_kind);
+    // Everything up to here was the reading of the program and the
+    // building of the machine to run it, which is the host's own doing.
+    // The tally of room starts afresh at this line, so that a program
+    // asked how much room it has taken answers for what it has taken
+    // itself and not for what it cost to be made ready.
+    lumen_room::mark();
     if let Err(told) = machine.run_main(&reduced.program.body) {
         let _ = machine.run_afterward();
         machine.let_things_go();

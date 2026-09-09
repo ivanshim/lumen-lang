@@ -22,7 +22,7 @@ declare -A DIRS=(
 declare -A EXT=([lumen]=lm [rplumen]=rpl [python]=py [rust]=rs [php]=php [ruby]=rb [pascal]=pas [c]=c [javascript]=js [swift]=swift)
 declare -A DISPLAY=([lumen]=Lumen [rplumen]=RPLumen [python]=Python [rust]=Rust [php]=PHP [ruby]=Ruby [pascal]=Pascal [c]=C [javascript]=JavaScript [swift]=Swift)
 declare -A FLAG=(
-    [php]="--lang langs/extras/php.json" [ruby]="--lang langs/extras/ruby.json"
+    [php]="--lang langs/php.json" [ruby]="--lang langs/extras/ruby.json"
     [pascal]="--lang langs/extras/pascal.json"
     [c]="--lang langs/extras/c.json" [javascript]="--lang langs/extras/javascript.json"
     [swift]="--lang langs/extras/swift.json"

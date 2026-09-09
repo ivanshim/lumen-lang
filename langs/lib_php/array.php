@@ -15,7 +15,7 @@ function array_concat($a, $b) {
     return $out;
 }
 
-function array_slice($a, $start, $stop) {
+function array_slice_($a, $start, $stop) {
     $out = [];
     $i = $start;
     while ($i < $stop) {
@@ -40,7 +40,7 @@ function array_contains($a, $x) {
     return array_index_of($a, $x) >= 0;
 }
 
-function array_reverse($a) {
+function array_reverse_($a) {
     $out = [];
     $i = count($a);
     while ($i > 0) {

@@ -37,10 +37,25 @@ impl Token {
     }
 }
 
+/// Where a marker stands in some text, found however it is written
+/// where the language says its markers are known that way. Markers are
+/// written in letters that have a case, so lowering them leaves every
+/// place in the text where it was.
+fn marker_at(text: &str, marker: &str, folded: bool) -> Option<usize> {
+    match folded {
+        true => text.to_ascii_lowercase().find(&marker.to_ascii_lowercase()),
+        false => text.find(marker),
+    }
+}
+
 fn drop_prologue<'a>(source: &'a str, lang: &Lang) -> &'a str {
     let Some(prologue) = &lang.prologue else { return source };
     let lead = source.len() - source.trim_start().len();
-    if !source[..lead].contains('\n') && source[lead..].starts_with(prologue.as_str()) {
+    let opens = match lang.prologue_folded {
+        true => source[lead..].to_ascii_lowercase().starts_with(&prologue.to_ascii_lowercase()),
+        false => source[lead..].starts_with(prologue.as_str()),
+    };
+    if !source[..lead].contains('\n') && opens {
         &source[lead + prologue.len()..]
     } else {
         source
@@ -80,6 +95,15 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                 }
                 ahead = &ahead[w..];
             }
+            None if lang.heredoc.as_deref().map_or(false, |mark| ahead.starts_with(mark)) => {
+                // A string written over lines says what it spells,
+                // comment marks and quote marks and all, so the whole
+                // of it is carried over untouched. One left unclosed is
+                // carried over whole too, for the scanner to speak of.
+                let over = heredoc_at(ahead, lang).map_or(ahead.len(), |here| here.done);
+                kept.push_str(&ahead[..over]);
+                ahead = &ahead[over..];
+            }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
                 kept.push(c);
@@ -101,6 +125,83 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
         }
     }
     kept
+}
+
+/// What a backslash may do in a run of text: the letters that stand for
+/// characters of their own, the mark that closes the run — which may
+/// always be written escaped — whether a character may be named by its
+/// number, and whether an escaped sigil is a sigil and opens no name.
+struct Escapes<'a> {
+    letters: &'a [char],
+    quote: Option<char>,
+    numbered: bool,
+    woven: bool,
+}
+
+/// Where the parts of a string written over lines lie, counted in bytes
+/// from the mark that opened it: the body, the place the body ends,
+/// which is before the line end the closing label's line begins after,
+/// and the place past that label, where the reading goes on.
+struct Heredoc {
+    raw: bool,
+    indent: usize,
+    body: usize,
+    ended: usize,
+    done: usize,
+}
+
+/// The string a mark opens where this text begins, if one is opened and
+/// its label stands alone again further down. The label is a name, or a
+/// name in quotes; quotes the language calls raw make a body that says
+/// what it spells and no more.
+fn heredoc_at(text: &str, lang: &Lang) -> Option<Heredoc> {
+    let blank = |s: &str| s.len() - s.trim_start_matches([' ', '\t']).len();
+    let mark = lang.heredoc.as_deref()?;
+    if !text.starts_with(mark) {
+        return None;
+    }
+    let mut at = mark.len() + blank(&text[mark.len()..]);
+    let quote = text[at..].chars().next().filter(|c| lang.quotes.contains(c));
+    at += quote.map_or(0, char::len_utf8);
+    let from = at;
+    for (step, c) in text[from..].char_indices() {
+        let fits = match step {
+            0 => lang.begins_name(c),
+            _ => lang.extends_name(c),
+        };
+        if !fits {
+            break;
+        }
+        at = from + step + c.len_utf8();
+    }
+    let label = &text[from..at];
+    if label.is_empty() {
+        return None;
+    }
+    if let Some(q) = quote {
+        if !text[at..].starts_with(q) {
+            return None;
+        }
+        at += q.len_utf8();
+    }
+    at += blank(&text[at..]);
+    let after = text[at..].strip_prefix("\r\n").or_else(|| text[at..].strip_prefix('\n'))?;
+    let body = text.len() - after.len();
+    let mut line = body;
+    loop {
+        let indent = blank(&text[line..]);
+        let word = &text[line + indent..];
+        // The label ends the body where nothing goes on from it: a
+        // longer word that merely begins with it is a word of the body.
+        if word.starts_with(label) && word[label.len()..].chars().next().map_or(true, |c| !lang.extends_name(c)) {
+            let over = &text[body..line];
+            let ended = over.strip_suffix('\n').map_or(over, |cut| cut.strip_suffix('\r').unwrap_or(cut));
+            let done = line + indent + label.len();
+            let raw = quote.map_or(false, |q| lang.raw_quotes.contains(&q));
+            return Some(Heredoc { raw, indent, body, ended: body + ended.len(), done });
+        }
+        line += text[line..].find('\n')? + 1;
+    }
 }
 
 struct Cursor<'a> {
@@ -164,6 +265,25 @@ impl<'a> Cursor<'a> {
         false
     }
 
+    /// The character named by the bare number after the escape letter,
+    /// read in sixteens, two digits at most. Nothing at all where no
+    /// digit follows, since then the letter names no character and is
+    /// kept as written.
+    fn numbered_bare(&mut self) -> Option<char> {
+        let mut number = 0u32;
+        let mut digits = 0;
+        while digits < 2 {
+            let Some(c) = self.look(0).filter(char::is_ascii_hexdigit) else { break };
+            number = number * 16 + c.to_digit(16).expect("a digit in sixteens");
+            digits += 1;
+            self.step();
+        }
+        match digits {
+            0 => None,
+            _ => char::from_u32(number),
+        }
+    }
+
     /// The character an escape names by its number: the opening
     /// bracket is where this begins, the number is written in sixteens,
     /// and the closing bracket ends it. Nothing where the number names
@@ -171,7 +291,7 @@ impl<'a> Cursor<'a> {
     /// character between them is a number without a character, and a
     /// kernel whose text is made of characters cannot hold it, so the
     /// escape is left as it was written.
-    fn codepoint(&mut self) -> Result<(Option<char>, String), String> {
+    fn codepoint(&mut self) -> Result<(u32, Option<char>, String), String> {
         let amiss = || self.lang.codepoint_amiss.clone().unwrap_or_else(|| "Bad character number".to_string());
         let open = self.lang.codepoint_open.expect("the escape has brackets");
         let close = self.lang.codepoint_close.ok_or_else(amiss)?;
@@ -206,7 +326,97 @@ impl<'a> Cursor<'a> {
         if number > 0x10FFFF {
             return Err(beyond());
         }
-        Ok((char::from_u32(number), written))
+        Ok((number, char::from_u32(number), written))
+    }
+
+    /// One escape, from the backslash to the end of what it names: the
+    /// character it stands for goes into the text and the reading goes
+    /// on after it. A letter the language says nothing of keeps its
+    /// backslash, since text nobody spoke for is text as it was written.
+    fn escape(&mut self, how: &Escapes, s: &mut String, shielded: &mut Vec<usize>) -> Result<(), String> {
+        self.step();
+        let next = self.step();
+        if how.woven && Some(next) == self.lang.sigil {
+            // An escaped sigil is just the sigil.
+            shielded.push(s.chars().count());
+            s.push(next);
+            return Ok(());
+        }
+        // A character named by its number: the letter, the number
+        // written in sixteens between its brackets, and the character
+        // of that number in its place.
+        if how.numbered && Some(next) == self.lang.codepoint_letter && self.look(0) == self.lang.codepoint_open {
+            let (number, made, written) = self.codepoint()?;
+            // Where text is bytes, what the number names is written out
+            // in the bytes that spell it, and a number naming half of a
+            // pair is spelled the same way as any other, since the text
+            // is bytes and no letter need answer to it.
+            if self.lang.text_is_bytes {
+                for byte in spelled_bytes(number) {
+                    shielded.push(s.chars().count());
+                    s.push(char::from(byte));
+                }
+                return Ok(());
+            }
+            match made {
+                Some(made) => {
+                    shielded.push(s.chars().count());
+                    s.push(made);
+                }
+                None => {
+                    s.push('\\');
+                    s.push(next);
+                    s.push_str(&written);
+                }
+            }
+            return Ok(());
+        }
+        // A character named by a run of figures in eights, up to
+        // three of them, the backslash itself beginning the run. A
+        // number past the widest a character of one byte holds is
+        // taken by its low eight bits, as the reference takes it.
+        if how.numbered && self.lang.octal_escapes && next.is_digit(8) {
+            let mut number = next.to_digit(8).expect("a figure in eights");
+            let mut figures = 1;
+            while figures < 3 {
+                let Some(c) = self.look(0).and_then(|c| c.to_digit(8)) else { break };
+                number = number * 8 + c;
+                figures += 1;
+                self.step();
+            }
+            shielded.push(s.chars().count());
+            s.push(char::from_u32(number & 0xFF).expect("a character of one byte"));
+            return Ok(());
+        }
+        // The same by number, but written bare: one figure in sixteens
+        // or two, with no brackets about them. A letter with no figure
+        // after it names no character and stands for itself.
+        if how.numbered && Some(next) == self.lang.byte_letter {
+            match self.numbered_bare() {
+                Some(made) => {
+                    shielded.push(s.chars().count());
+                    s.push(made);
+                }
+                None => {
+                    s.push('\\');
+                    s.push(next);
+                }
+            }
+            return Ok(());
+        }
+        if next == '\\' || Some(next) == how.quote || how.letters.contains(&next) {
+            s.push(match next {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '0' => '\0',
+                c => c,
+            });
+        } else {
+            s.push('\\');
+            s.push(next);
+        }
+        Ok(())
     }
 
     fn string(&mut self, quote: char) -> Result<(), String> {
@@ -214,53 +424,23 @@ impl<'a> Cursor<'a> {
         self.step();
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
+        let how = Escapes {
+            letters: match raw {
+                true => &[],
+                false => &self.lang.escape_letters,
+            },
+            quote: Some(quote),
+            numbered: !raw,
+            woven,
+        };
         let mut s = String::new();
         // Char positions in s that came escaped: text, never code.
         let mut shielded: Vec<usize> = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
-            if c == '\\' {
-                if let Some(next) = self.look(1) {
-                    self.step();
-                    self.step();
-                    if woven && Some(next) == self.lang.sigil {
-                        // An escaped sigil is just the sigil.
-                        shielded.push(s.chars().count());
-                        s.push(next);
-                        continue;
-                    }
-                    // A character named by its number: the letter, the
-                    // number written in sixteens between its brackets,
-                    // and the character of that number in its place.
-                    if !raw && Some(next) == self.lang.codepoint_letter && self.look(0) == self.lang.codepoint_open {
-                        let (made, written) = self.codepoint()?;
-                        match made {
-                            Some(made) => {
-                                shielded.push(s.chars().count());
-                                s.push(made);
-                            }
-                            None => {
-                                s.push('\\');
-                                s.push(next);
-                                s.push_str(&written);
-                            }
-                        }
-                        continue;
-                    }
-                    if next == '\\' || next == quote || (!raw && self.lang.escape_letters.contains(&next)) {
-                        s.push(match next {
-                            'n' => '\n',
-                            't' => '\t',
-                            'r' => '\r',
-                            '0' => '\0',
-                            c => c,
-                        });
-                    } else {
-                        s.push('\\');
-                        s.push(next);
-                    }
-                    continue;
-                }
+            if c == '\\' && self.look(1).is_some() {
+                self.escape(&how, &mut s, &mut shielded)?;
+                continue;
             }
             self.step();
             if c == quote {
@@ -273,6 +453,63 @@ impl<'a> Cursor<'a> {
         }
         self.push(Shape::Quote, s, 0, line, col);
         Ok(())
+    }
+
+    /// A string written over lines (ext.lexical.heredoc): the mark, a
+    /// label, and a body running to the line that label stands on
+    /// again. What the closing label is written in front of is written
+    /// in front of every line of the body and belongs to none of them,
+    /// so it comes off. A label in raw quotes makes a body that stands
+    /// as it is written, weaving nothing in and reading no escapes.
+    fn heredoc(&mut self) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        let tail: String = self.text[self.at..].iter().collect();
+        let Some(here) = heredoc_at(&tail, self.lang) else {
+            return Err("Unterminated string over lines".to_string());
+        };
+        let far = |bytes: usize| self.at + tail[..bytes].chars().count();
+        let (from, to, done) = (far(here.body), far(here.ended), far(here.done));
+        while self.at < from {
+            self.step();
+        }
+        // The quote marks are no escapes here: the body is ended by its
+        // label and not by a mark, so a mark in it stands for itself.
+        let letters: Vec<char> =
+            self.lang.escape_letters.iter().copied().filter(|c| !self.lang.quotes.contains(c)).collect();
+        let how = Escapes { letters: &letters, quote: None, numbered: true, woven: true };
+        let mut s = String::new();
+        let mut shielded: Vec<usize> = Vec::new();
+        let mut fresh = true;
+        while self.at < to {
+            if fresh {
+                fresh = false;
+                let mut wide = here.indent;
+                while wide > 0 && self.at < to && matches!(self.look(0), Some(' ') | Some('\t')) {
+                    self.step();
+                    wide -= 1;
+                }
+                continue;
+            }
+            let c = self.look(0).expect("the body ends where the closing label begins");
+            // A backslash at the end of a line says nothing: the line
+            // end after it opens a line like any other, and that line
+            // gives up its indentation with the rest.
+            if !here.raw && c == '\\' && self.at + 1 < to && self.look(1).map_or(false, |n| n != '\n') {
+                self.escape(&how, &mut s, &mut shielded)?;
+                continue;
+            }
+            self.step();
+            s.push(c);
+            fresh = c == '\n';
+        }
+        while self.at < done {
+            self.step();
+        }
+        if here.raw {
+            self.push(Shape::Quote, s, 0, line, col);
+            return Ok(());
+        }
+        self.woven(s, &shielded, line, col)
     }
 
     /// A string that weaves values in (ext.lexical.interpolating_quotes):
@@ -330,9 +567,17 @@ impl<'a> Cursor<'a> {
                         if let Some(end) = word_at(&chars, from, &index.close) {
                             let inside: String = chars[from..end].iter().collect();
                             let opens = |f: fn(&Lang, char) -> bool| inside.chars().next().map_or(false, |c| f(lang, c));
-                            let digits = !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit());
+                            let counted = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit());
+                            let digits = counted(&inside) || inside.strip_prefix('-').map_or(false, counted);
                             let binding = inside.chars().next().map_or(false, |c| Some(c) == lang.sigil);
                             let bare = opens(Lang::begins_name) && inside.chars().all(|c| lang.extends_name(c));
+                            // A key of any other making is more than the
+                            // shorter writing takes, and a language that
+                            // says so stops rather than leave the
+                            // brackets standing as letters.
+                            if let (false, Some(said)) = (digits || binding || bare, lang.woven_index_amiss()) {
+                                return Err(said);
+                            }
                             let past = end + index.close.chars().count();
                             if digits || binding {
                                 j = past;
@@ -526,7 +771,7 @@ impl<'a> Cursor<'a> {
         let (line, col) = (self.row, self.column);
         let window: String = self.text[self.at..].iter().take(8).collect();
         let Some(sym) = self.lang.symbols.iter().find(|s| window.starts_with(s.as_str())).cloned() else {
-            return Err(format!("Unexpected character '{}' at {}:{}", self.text[self.at], line, col));
+            return Err(self.lang.stopped_at_character(self.text[self.at], line, col));
         };
         for _ in sym.chars() {
             self.step();
@@ -555,6 +800,8 @@ impl<'a> Cursor<'a> {
                 at_line_start = true;
             } else if c == ' ' || c == '\t' || c == '\r' {
                 self.step();
+            } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
+                self.heredoc()?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
             } else if c.is_ascii_digit() {
@@ -603,6 +850,94 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 /// stands between the prologue and the epilogue is read as code, and
 /// everything else is written out as it stands, as though the program
 /// had said so itself.
+/// The bytes that spell a character's number, by the rule that spells
+/// every one of them: a number under a hundred and twenty-eight stands
+/// alone, and each wider band is written with one leading byte saying
+/// how many follow. Half of a pair standing for one character between
+/// them is spelled here like any other number, the reference spelling
+/// it so where text is bytes.
+fn spelled_bytes(number: u32) -> Vec<u8> {
+    match number {
+        n if n < 0x80 => vec![n as u8],
+        n if n < 0x800 => vec![0xC0 | (n >> 6) as u8, 0x80 | (n & 0x3F) as u8],
+        n if n < 0x10000 => vec![
+            0xE0 | (n >> 12) as u8,
+            0x80 | ((n >> 6) & 0x3F) as u8,
+            0x80 | (n & 0x3F) as u8,
+        ],
+        n => vec![
+            0xF0 | (n >> 18) as u8,
+            0x80 | ((n >> 12) & 0x3F) as u8,
+            0x80 | ((n >> 6) & 0x3F) as u8,
+            0x80 | (n & 0x3F) as u8,
+        ],
+    }
+}
+
+/// Where a run of code ends: the first closing marker that is not
+/// standing inside something spelling it out. One written between
+/// quotes, or in a string laid over lines, is part of what that string
+/// says and ends nothing, so the run cannot simply be looked through
+/// for the marker. A block comment shields it in the same way.
+///
+/// A comment running to the end of its line does not shield it: the
+/// reference ends the run at a marker written in one, and only the
+/// line end saves what follows. That is why such a comment is read up
+/// to whichever comes first.
+fn code_ends_at(after: &str, closing: &str, lang: &Lang) -> Option<usize> {
+    let mut at = 0;
+    while at < after.len() {
+        let rest = &after[at..];
+        if rest.starts_with(closing) {
+            return Some(at);
+        }
+        if lang.heredoc.as_deref().map_or(false, |mark| rest.starts_with(mark)) {
+            if let Some(held) = heredoc_at(rest, lang) {
+                at += held.done;
+                continue;
+            }
+        }
+        if let Some((open, close)) = lang.block_comments.iter().find(|(o, _)| rest.starts_with(o.as_str())) {
+            let body = &rest[open.len()..];
+            at += open.len() + body.find(close.as_str()).map_or(body.len(), |p| p + close.len());
+            continue;
+        }
+        if lang.line_comments.iter().any(|m| rest.starts_with(m.as_str())) {
+            let line = &rest[..rest.find('\n').map_or(rest.len(), |p| p + 1)];
+            match line.find(closing) {
+                Some(p) => return Some(at + p),
+                None => at += line.len(),
+            }
+            continue;
+        }
+        let c = rest.chars().next().expect("a character");
+        if lang.quotes.contains(&c) {
+            at += quoted_width(rest, c);
+            continue;
+        }
+        at += c.len_utf8();
+    }
+    None
+}
+
+/// How far a string written between marks reaches, counted from the
+/// mark that opened it: a mark shielded by a backslash is a mark no
+/// longer, and one never closed reaches to the end of what there is.
+fn quoted_width(text: &str, quote: char) -> usize {
+    let mut at = quote.len_utf8();
+    while at < text.len() {
+        let c = text[at..].chars().next().expect("a character");
+        at += c.len_utf8();
+        if c == quote {
+            return at;
+        }
+        if c == '\\' {
+            at += text[at..].chars().next().map_or(0, char::len_utf8);
+        }
+    }
+    text.len()
+}
+
 fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> {
     let opening = lang.prologue.clone().ok_or_else(|| ("A template needs lexical.prologue".to_string(), 0))?;
     let closing = lang.epilogue.first().cloned();
@@ -628,18 +963,31 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         // Either marker may open a run of code, whichever stands first.
         // The short one says the run is a thing to be written out, and
         // the word that writes it is put before it.
-        let plainly = rest.find(opening.as_str());
-        let briefly = lang.prologue_echo.as_ref().and_then(|mark| rest.find(mark.as_str()));
-        let (at, mark, writes) = match (plainly, briefly) {
-            (Some(a), Some(b)) if b < a => (b, lang.prologue_echo.clone().expect("the short marker"), true),
-            (Some(a), _) => (a, opening.clone(), false),
-            (None, Some(b)) => (b, lang.prologue_echo.clone().expect("the short marker"), true),
-            (None, None) => break,
-        };
+        // Whichever marker stands first opens the run. Where two stand
+        // in the same place, the longer of them is the one meant: a
+        // marker that is the opening of another says nothing on its own.
+        let mut found: Option<(usize, String, bool)> = None;
+        let markers = [
+            (Some(opening.clone()), false),
+            (lang.prologue_echo.clone(), true),
+            (lang.prologue_brief.clone(), false),
+        ];
+        for (mark, writes) in markers.into_iter() {
+            let Some(mark) = mark else { continue };
+            let Some(at) = marker_at(rest, &mark, lang.prologue_folded) else { continue };
+            let better = match &found {
+                None => true,
+                Some((was, seen, _)) => at < *was || (at == *was && mark.len() > seen.len()),
+            };
+            if better {
+                found = Some((at, mark, writes));
+            }
+        }
+        let Some((at, mark, writes)) = found else { break };
         told(&rest[..at], &mut out);
         row += rest[..at].matches('\n').count();
         let after = &rest[at + mark.len()..];
-        let (code, tail) = match closing.as_ref().and_then(|e| after.find(e.as_str())) {
+        let (code, tail) = match closing.as_ref().and_then(|e| code_ends_at(after, e, lang)) {
             Some(end) => (&after[..end], &after[end + closing.as_ref().map_or(0, String::len)..]),
             None => (after, ""),
         };

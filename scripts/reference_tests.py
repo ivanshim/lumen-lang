@@ -20,6 +20,7 @@ microcode7, and the report shows them side by side.
 """
 import json
 import re
+import shlex
 import os
 import subprocess
 import sys
@@ -56,30 +57,73 @@ def spelled(definition):
     return words
 
 
+# A test taken from the reference implementation was written to be run
+# from that implementation's own root, where a path written plainly from
+# there — `./tests/basic/` — names the directory the test itself sits in.
+# Ours sit one level further down, under `tests/php/`, so a run started
+# from this root would find nothing where such a test looks. The runs are
+# therefore made from a place where `tests/` names our own tree of them,
+# which gives back exactly the standing the tests were written against.
+def where_tests_stand():
+    made = Path(tempfile.mkdtemp(prefix="lumen-tests-"))
+    named = made / "tests"
+    if not named.exists():
+        named.symlink_to(ROOT / "tests" / "php")
+    return made
+
+
+RUN_FROM = where_tests_stand()
+
+
 def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     # php-src's run-tests.php writes the program next to the .phpt it came
     # from, so a test naming a file beside itself finds it. Where a test
     # says where it belongs, put it there; otherwise anywhere will do.
     if beside is not None and not beside.with_suffix(suffix).exists():
         path = str(beside.with_suffix(suffix))
-        Path(path).write_text(source, encoding="utf-8")
+        Path(path).write_text(source, encoding=BYTEWISE)
     else:
-        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding=BYTEWISE) as f:
             f.write(source)
             path = f.name
     # php-src's own run-tests.php tells a test where the binary under
     # test stands, and a few tests ask the run to name itself and
     # compare the two.
-    setting = {**os.environ, "TEST_PHP_EXECUTABLE": str(BINARY), **(request or {}).get("env", {})}
+    # The reference's own runner tells a test where the binary under test
+    # stands, both plainly and quoted so that it may be put straight into
+    # a command line, and a few tests ask the run to name itself and
+    # compare the two.
+    setting = {**os.environ, "TEST_PHP_EXECUTABLE": str(BINARY),
+               "TEST_PHP_EXECUTABLE_ESCAPED": shlex.quote(str(BINARY)),
+               "TEST_PHP_ARGS": "--lang " + shlex.quote(str(ROOT / "langs" / "php.json")),
+               **(request or {}).get("env", {})}
     body = (request or {}).get("body", "")
     try:
         p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path] + list(given), input=body, capture_output=True,
-                           text=True, timeout=TIMEOUT, errors="replace", env=setting)
+                           encoding=BYTEWISE, timeout=TIMEOUT, env=bytewise_env(setting), cwd=RUN_FROM)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+BYTEWISE = "latin-1"
+
+
+def bytewise_env(setting):
+    """The run's surroundings as the host wants them, in bytes. A worth
+    a test gave is written in the characters its bytes stood for, so it
+    is turned back into those bytes; a worth this program was started
+    among is already what the host handed over, and goes back the way
+    it came."""
+    out = {}
+    for name, worth in setting.items():
+        try:
+            out[name.encode(BYTEWISE)] = worth.encode(BYTEWISE)
+        except UnicodeEncodeError:
+            out[name.encode("utf-8", "surrogateescape")] = worth.encode("utf-8", "surrogateescape")
+    return out
 
 
 def normalise(message, banner):
@@ -92,6 +136,11 @@ def normalise(message, banner):
     # Where a language names the file and line a fault happened in, the
     # file is a fresh temporary each run, so the shape stands for it.
     m = re.sub(r"\s+in\s+\S+?\.php(:\d+| on line \d+)", " in <file>", m)
+    # A file named by a whole path from the root names where this
+    # checkout happens to sit, which differs from one to the next, so
+    # the shape stands for it and the report reads the same anywhere.
+    m = m.replace(str(ROOT), "<root>")
+    m = re.sub(r"'/[^']*'", "'<path>'", m)
     m = re.sub(r"'\$[A-Za-z_][A-Za-z0-9_]*'", "'$name'", m)
     m = re.sub(r"'\d+(\.\d+)?'", "'<number>'", m)
     m = re.sub(r'"[^"]*"', '"..."', m)
@@ -120,7 +169,14 @@ def phpt_sections(text):
             sections[name] = []
         elif name:
             sections[name].append(line)
-    return {k: "\n".join(v).rstrip("\n") for k, v in sections.items()}
+    said = {k: "\n".join(v).rstrip("\n") for k, v in sections.items()}
+    # A test may give its program under a name saying that the line end
+    # at the very end of it is no part of the program. Every section is
+    # already taken without the line ends that close it, so the two come
+    # to the same thing here, and one stands for the other.
+    if "FILEEOF" in said:
+        said.setdefault("FILE", said["FILEEOF"])
+    return said
 
 
 def expectf_pattern(expected):
@@ -181,7 +237,7 @@ def web_request(sections):
 
 
 def run_phpt(path, kernel):
-    s = phpt_sections(path.read_text(encoding="utf-8", errors="replace"))
+    s = phpt_sections(path.read_text(encoding=BYTEWISE))
     if "FILE" not in s:
         return "skipped", "no --FILE-- section"
     # run-tests.php runs a test's SKIPIF section and passes the test over
@@ -189,7 +245,7 @@ def run_phpt(path, kernel):
     # cannot run says nothing either way, and the test runs, since a test
     # that shows what is missing is worth more than one passed over.
     if "SKIPIF" in s:
-        code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["SKIPIF"], ".skip.php", beside=path)
+        code, out, err = run(kernel, ["--lang", str(ROOT / "langs" / "php.json")], s["SKIPIF"], ".skip.php", beside=path)
         if code == 0 and out.strip().lower().startswith("skip"):
             return "skipped", out.strip()[:80]
     expected = s.get("EXPECT", s.get("EXPECTF", s.get("EXPECTREGEX")))
@@ -198,7 +254,7 @@ def run_phpt(path, kernel):
     # run-tests.php hands the words of an --ARGS-- section to the program
     # as its own arguments, so a test that reads them reads them here too.
     given = s.get("ARGS", "").split()
-    code, out, err = run(kernel, ["--lang", "langs/extras/php.json"], s["FILE"], ".php", web_request(s), beside=path, given=given)
+    code, out, err = run(kernel, ["--lang", str(ROOT / "langs" / "php.json")], s["FILE"], ".php", web_request(s), beside=path, given=given)
     # php-src's own run-tests.php trims both ends before comparing, and
     # a complaint is written with a blank line before it, so the same
     # trim is what the reference expects.
@@ -208,7 +264,7 @@ def run_phpt(path, kernel):
     # whatever the test left beside itself. What it prints is nobody's
     # business and whether it worked changes nothing.
     if "CLEAN" in s:
-        run(kernel, ["--lang", "langs/extras/php.json"], s["CLEAN"], ".clean.php", beside=path)
+        run(kernel, ["--lang", str(ROOT / "langs" / "php.json")], s["CLEAN"], ".clean.php", beside=path)
     # run-tests.php compares what was written and does not look at the
     # exit status at all, save where a test asks for one outright. PHP
     # itself leaves with 255 on a fatal error, so a test whose expected
@@ -226,7 +282,7 @@ def run_phpt(path, kernel):
 # ---------------------------------------------------------------- python
 
 def run_python(path, kernel):
-    source = path.read_text(encoding="utf-8", errors="replace")
+    source = path.read_text(encoding=BYTEWISE)
     code, out, err = run(kernel, [], source, ".py")
     if code == 0:
         return "differs", "ran to the end without asserting anything"
@@ -250,7 +306,7 @@ def main():
     if "--kernel" in sys.argv:
         kernels = [sys.argv[sys.argv.index("--kernel") + 1]]
     subprocess.run(["cargo", "build", "--release", "--quiet"], cwd=ROOT, check=True)
-    php_def = json.loads((ROOT / "langs" / "extras" / "php.json").read_text())
+    php_def = json.loads((ROOT / "langs" / "php.json").read_text())
     py_def = json.loads((ROOT / "langs" / "python.json").read_text())
     php_have, py_have = spelled(php_def), spelled(py_def)
 
@@ -272,11 +328,11 @@ def main():
 
     php_calls = Counter()
     for f in php_files:
-        s = phpt_sections(f.read_text(encoding="utf-8", errors="replace"))
+        s = phpt_sections(f.read_text(encoding=BYTEWISE))
         php_calls.update(calls_in(s.get("FILE", ""), PHP_RESERVED))
     py_calls = Counter()
     for f in py_files:
-        py_calls.update(calls_in(f.read_text(encoding="utf-8", errors="replace"), PYTHON_KEYWORDS))
+        py_calls.update(calls_in(f.read_text(encoding=BYTEWISE), PYTHON_KEYWORDS))
 
     def totals(kernel, files):
         return Counter(results[kernel][f][0] for f in files)

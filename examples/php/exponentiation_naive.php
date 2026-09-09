@@ -1,14 +1,14 @@
 <?php
 // Ported from examples/lumen/exponentiation_naive.lm by scripts/port_examples.py; edit the Lumen original, not this file.
 $base = 7;
-$exp = 100;
+$exp_ = 100;
 $mod = 1000000007;
 $iterations = 100;
 print("Naive exponentiation benchmark\n");
 print("base = ");
 print($base . "\n");
 print("exp  = ");
-print($exp . "\n");
+print($exp_ . "\n");
 print("mod  = ");
 print($mod . "\n");
 print("iterations = ");
@@ -20,7 +20,7 @@ $i = 0;
 while ($i < $iterations) {
     $result = 1;
     $j = 0;
-    while ($j < $exp) {
+    while ($j < $exp_) {
         $result = $result * $base % $mod;
         $j = $j + 1;
     }
