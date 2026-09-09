@@ -34,6 +34,14 @@ after. It also takes the file out of the staging area, so if the report was
 staged earlier it must be staged again before committing. A commit carrying a
 stale report is easy to make and hard to see.
 
+**Never throw away what the reference run says on its way out.** Running it as
+`python3 scripts/reference_tests.py >/dev/null 2>&1` looks tidy and is a trap:
+where the run stops before it begins — a path that moved, a definition that
+will not parse — it writes no report at all, the diff after it is empty, and
+an empty diff is exactly what success looks like. That has already happened
+here, and two changes were called verified when nothing had been run. Let it
+speak, and read the last lines it prints.
+
 ## The reference implementation is the arbiter, not the test file
 
 `/usr/bin/php` is the reference. Every wording, every edge, every complaint
@@ -46,12 +54,12 @@ sh dp.sh somefile.php
 ```
 
 Some tests cannot pass here however good the implementation, because they were
-written to run from the reference implementation's own source tree. Two in this
-suite ask for files under `sapi/` that this repository does not carry, and one
-resolves a relative path against the harness's working directory. Run such a
-test's body through `/usr/bin/php` from *this* directory before treating it as a
-defect: where the reference fails it too, the test is asking for a layout, not
-for behaviour.
+written to run from the reference implementation's own source tree. One in this
+suite asks for a file under `sapi/` that this repository does not carry, and one
+resolves a relative path against the working directory, which lands elsewhere in
+our tree than in theirs. Run such a test's body through `/usr/bin/php` from
+*this* directory before treating it as a defect: where the reference fails it
+too, the test is asking for a layout, not for behaviour.
 
 ## Where a new word has to be written down
 
@@ -64,7 +72,8 @@ A new label has to be written down in five places. Missing one of them fails
 quietly — usually as a label that reads as empty, so the behaviour simply never
 happens.
 
-1. `langs/extras/<language>.json` — the words themselves.
+1. The language's definition — `langs/php.json`, or `langs/extras/<name>.json`
+   for the others — the words themselves.
 2. `kernels/stack8/src/lang.rs` — the `EXT_LABELS` roster, and the builtin
    table besides if the label names a builtin, and a field on `Lang` with the
    line that reads it.
@@ -146,19 +155,30 @@ which files a piece of work owns and which it must not touch.
 
 ## What is left, and why
 
-At the time of writing 381 of the 397 runnable PHP tests pass on both kernels.
-Of what remains:
+At the time of writing 392 of the 397 runnable PHP tests pass on both kernels.
+What remains is listed here so that nobody spends a day rediscovering it. Each
+was checked by running the test's own body through `/usr/bin/php` from this
+directory, not reasoned about from the expectations.
 
-- Four want text held as bytes rather than as characters. `~"0"` in the
-  reference is the single byte `0xCF`; here text is a run of characters, so the
-  complement is the character of that number and is written back out as two
-  bytes. This reaches `Value::Text` itself, the reading of source, the writing
-  of output, and `scripts/reference_tests.py`, which reads a test's expectations
-  with unreadable bytes replaced before either kernel sees them.
-- Two want the run to count the room it takes. Nothing does.
-- Two are asking for the reference implementation's own directory layout.
-- One wants the short opening marker, which cannot be settled until a setting
-  has been read, and settings are read after the source has been broken into
-  words.
-- One wants a word for running a command on the host, which is a kernel builtin
-  and a question about what the kernels are allowed to do, not about PHP.
+- **Two are asking for the reference implementation's own directory layout.**
+  One wants a file under `sapi/` that this repository does not carry; the other
+  resolves a session path against the working directory, which lands where the
+  reference's tree puts it and not where ours does. Run from here, the
+  reference fails both in the same way we do.
+- **One shells out to the binary under test** with switches for an extension
+  system this implementation does not have, and searches the output for the
+  words that system would say. Matching it would mean writing a diagnostic for
+  machinery that is not there.
+- **One wants the run to stop when it has taken more room than it was
+  allowed**, which needs the run to count the room it takes.
+- **One wants text converted between two ways of writing Japanese** on its way
+  in from a request, which needs that body of work in the library.
+
+A note on the last two, and on any test that seems to want a whole extension:
+the suite has a `--EXTENSIONS--` section naming what a test needs, and the
+reference's own runner passes such a test over where the extension is absent.
+Reading that section here would turn one honest failure into a skip — and would
+also pass over a test that names an extension it never uses and that we
+presently pass. That trades one true pass for one hidden failure and moves
+nothing forward, which is why it has not been done. The report says a test
+fails because it fails.
