@@ -322,6 +322,8 @@ pub enum Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Repr,
+    Iter,
+    Next,
     Sum,
     List,
     Any,

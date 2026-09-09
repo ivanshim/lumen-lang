@@ -1,0 +1,5 @@
+function finally
+caught across call
+outer finally
+reraised again
+else

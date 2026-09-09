@@ -1574,6 +1574,12 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.class.name`: the member naming a class itself. Where the
   native exception classes are furnished, the kind builtin returns an
   object's class, so this member can name it.
+- `ext.builtin.iter` and `ext.builtin.next`: a walk over a sequence, text,
+  a counted range or the keys of a map, and its next value. A second
+  argument to the latter stands when the walk ends; without one the
+  class named by `ext.system.fault.class.stop` is raised. Other walkers
+  heed `ext.builtin.exceptions.unready`, as do exception constructors
+  whose own initializer replaces the native one.
 - `ext.builtin.repr`: a builtin showing text within quotes and exceptions
   as their class followed by their arguments within parentheses.
 - `ext.system.fault.class.index`, `.key`, `.name`, `.attribute` and `.stop`:
@@ -2124,9 +2130,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
+| `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
+| `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |

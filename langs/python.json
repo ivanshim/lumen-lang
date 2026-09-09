@@ -365,8 +365,14 @@
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
   ],
+  "ext.builtin.iter": [
+    "iter"
+  ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.next": [
+    "next"
   ],
   "ext.builtin.print.end": [
     "end"

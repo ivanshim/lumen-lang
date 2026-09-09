@@ -196,8 +196,7 @@ impl Value {
                 out
             }
             Value::Object(o) => {
-                let fields = o.fields.borrow();
-                if let Some((_, Value::Tuple(args))) = fields.iter().find(|(n, _)| n == "\0arguments") {
+                if let Some(args) = self.raised_arguments() {
                     return format!("{}({})", o.class.name, args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "));
                 }
                 self.display(sp)
@@ -208,10 +207,17 @@ impl Value {
         }
     }
 
+    fn raised_arguments(&self) -> Option<Vec<Value>> {
+        let Value::Object(object) = self else { return None };
+        if !object.class.all_fields().iter().any(|(n, _)| n == "\0exception") { return None; }
+        let fields = object.fields.borrow();
+        if let Some((_, Value::Tuple(args))) = fields.iter().find(|(n, _)| n == "\0arguments") { return Some(args.as_ref().clone()); }
+        Some(fields.iter().filter(|(n, _)| n == "message").map(|(_, v)| v.clone()).collect())
+    }
+
     pub fn exception_message(&self, sp: &Wording) -> Option<String> {
+        let args = self.raised_arguments()?;
         let Value::Object(o) = self else { return None };
-        let held = o.fields.borrow();
-        let (_, Value::Tuple(args)) = held.iter().find(|(n, _)| n == "\0arguments")? else { return None };
         Some(match args.as_slice() {
             [] => String::new(),
             [one] if o.class.all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),
@@ -219,7 +225,6 @@ impl Value {
             many => Self::tuple_text(many, sp),
         })
     }
-
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -320,6 +325,7 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();

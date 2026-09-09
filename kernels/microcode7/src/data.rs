@@ -195,14 +195,10 @@ impl Value {
         }
         match self {
             Value::Arguments(row) => Self::argument_text(row, words),
-            Value::Thing(thing) => {
-                let holds = thing.holds.borrow();
-                match holds.iter().find(|(key, _)| key == "\0raised-values") {
-                    Some((_, Value::Arguments(row))) => format!("{}({})", thing.of.name,
-                        row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
-                    _ => self.render(words),
-                }
-            }
+            Value::Thing(thing) => match self.arguments_held() {
+                Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                None => self.render(words),
+            },
             Value::Vector(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
             _ => self.render(words),
         }
@@ -213,17 +209,26 @@ impl Value {
         if row.len() == 1 { format!("({contents},)") } else { format!("({contents})") }
     }
 
-    pub fn raised_words(&self, words: Names) -> Option<String> {
+    fn arguments_held(&self) -> Option<Vec<Value>> {
         if let Value::Thing(thing) = self {
-            let holds = thing.holds.borrow();
-            if let Some((_, Value::Arguments(row))) = holds.iter().find(|(key, _)| key == "\0raised-values") {
-                return Some(if row.is_empty() { String::new() }
-                    else if row.len() > 1 { Self::argument_text(row, words) }
-                    else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
-                    else { row[0].render(words) });
+            if thing.of.every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+                let holds = thing.holds.borrow();
+                return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
+                    Some((_, Value::Arguments(row))) => row.to_vec(),
+                    _ => holds.iter().filter(|(key, value)| key == "message" && !matches!(value, Value::Text(s) if s.is_empty())).map(|(_, value)| value.clone()).collect(),
+                });
             }
         }
         None
+    }
+
+    pub fn raised_words(&self, words: Names) -> Option<String> {
+        let row = self.arguments_held()?;
+        let Value::Thing(thing) = self else { return None };
+        Some(if row.is_empty() { String::new() }
+            else if row.len() > 1 { Self::argument_text(&row, words) }
+            else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else { row[0].render(words) })
     }
 
     pub fn from_big(n: BigInt) -> Value {
@@ -305,6 +310,7 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
