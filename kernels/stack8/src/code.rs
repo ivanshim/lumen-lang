@@ -110,7 +110,7 @@ impl Pattern {
         Ok(names)
     }
 
-    pub fn fit(&self, subject: &Value, bound: &mut Vec<(String, Value)>) -> Result<bool, ()> {
+    pub fn fit(&self, subject: &Value, bound: &mut Vec<(String, Value)>, tuple: bool) -> Result<bool, ()> {
         match self {
             Self::Any => Ok(true),
             Self::Literal(value) => Ok(match value {
@@ -120,9 +120,10 @@ impl Pattern {
                     _ => value.equals(subject),
                 },
             }),
+            Self::Capture(_) | Self::Bound(_, _) if tuple => Err(()),
             Self::Capture(name) => { bound.push((name.clone(), subject.clone())); Ok(true) }
             Self::Bound(inner, name) => {
-                if !inner.fit(subject, bound)? { return Ok(false); }
+                if !inner.fit(subject, bound, tuple)? { return Ok(false); }
                 bound.push((name.clone(), subject.clone()));
                 Ok(true)
             }
@@ -130,7 +131,7 @@ impl Pattern {
             Self::Alternatives(choices) => {
                 for choice in choices {
                     let mut attempt = Vec::new();
-                    if choice.fit(subject, &mut attempt)? { bound.extend(attempt); return Ok(true); }
+                    if choice.fit(subject, &mut attempt, tuple)? { bound.extend(attempt); return Ok(true); }
                 }
                 Ok(false)
             }
@@ -146,7 +147,7 @@ impl Pattern {
                         let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
                         items[at].clone()
                     };
-                    if !part.fit(&held, bound)? { return Ok(false); }
+                    if !part.fit(&held, bound, false)? { return Ok(false); }
                 }
                 Ok(true)
             }
@@ -157,7 +158,9 @@ impl Pattern {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
-    Match(Rc<Pattern>, Vec<String>),
+    /// A pattern and its binding order; the flag marks a tuple subject,
+    /// whose members may be taken but whose whole has no value here.
+    Match(Rc<Pattern>, Vec<String>, bool),
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.

@@ -400,7 +400,9 @@ impl CaseTest {
 
 #[derive(Debug)]
 pub enum Form {
-    Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)> },
+    /// A case test which writes its names only upon success. A tuple
+    /// may give up its members, but cannot yet be kept whole.
+    Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)>, tuple: bool },
     Const(Value),
     Read(Address),
     /// The same, read as it stands and with nothing said about it: a

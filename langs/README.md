@@ -506,7 +506,10 @@ only. The extension labels so far, all from PHP:
   are made. A failed pattern writes no bindings.
 - `ext.stmt.match.unready` gives the words said on reaching a mapping,
   class or named-value pattern whose running is not yet furnished.
-  Such patterns are read whole. `ext.stmt.match.invalid` gives the words
+  Such patterns are read whole. A tuple subject may be taken apart, but
+  keeping that tuple whole says these words too: the kernels have no
+  tuple value to hand over, and must not hand over a mutable array in
+  its stead. `ext.stmt.match.invalid` gives the words
   for a pattern written amiss, including repeated bindings and alternatives
   which do not bind the same names. Both labels take lists of words,
   whose first entry is the whole complaint.

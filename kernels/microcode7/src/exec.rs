@@ -1854,9 +1854,9 @@ impl<'a> Machine<'a> {
                 let empty = matches!(f.cells.borrow()[slot.at], Value::Unset);
                 Ok(Value::Flag(empty))
             }
-            Form::Fits { value, test, slots } => {
+            Form::Fits { value, test, slots, tuple } => {
                 let subject = self.value_of(value, frame)?;
-                let result = fit_case(test, &subject).map_err(|()| self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned())?;
+                let result = fit_case(test, &subject, *tuple).map_err(|()| self.table.single("ext.stmt.match.unready").unwrap_or_default().to_owned())?;
                 if let Some(captures) = result {
                     for (name, address) in slots {
                         self.store(address, frame, captures.get(name).expect("a captured name").clone())?;
@@ -5415,9 +5415,10 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
 }
 
 /// Try a case without touching any cell until all its parts have agreed.
-fn fit_case(test: &crate::form::CaseTest, value: &Value) -> Result<Option<HashMap<String, Value>>, ()> {
+fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<Option<HashMap<String, Value>>, ()> {
     use crate::form::CaseTest;
     let mut gathered = HashMap::new();
+    if tuple && matches!(test, CaseTest::Keep(_) | CaseTest::Also { .. }) { return Err(()); }
     match test {
         CaseTest::Ignore => {}
         CaseTest::Keep(name) => { gathered.insert(name.clone(), value.clone()); }
@@ -5432,13 +5433,13 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value) -> Result<Option<HashMa
         CaseTest::Pending(_) => return Err(()),
         CaseTest::AnyOf(choices) => {
             for next in choices {
-                let answer = fit_case(next, value)?;
+                let answer = fit_case(next, value, tuple)?;
                 if answer.is_some() { return Ok(answer); }
             }
             return Ok(None);
         }
         CaseTest::Also { test: within, name } => {
-            let Some(found) = fit_case(within, value)? else { return Ok(None); };
+            let Some(found) = fit_case(within, value, tuple)? else { return Ok(None); };
             gathered = found;
             gathered.insert(name.clone(), value.clone());
         }
@@ -5462,7 +5463,7 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value) -> Result<Option<HashMa
                         portion
                     }
                 };
-                match fit_case(member, &next)? {
+                match fit_case(member, &next, false)? {
                     None => return Ok(None),
                     Some(found) => gathered.extend(found),
                 }

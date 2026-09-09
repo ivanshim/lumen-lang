@@ -1749,7 +1749,7 @@ impl<'a> Compiler<'a> {
     /// Cases keep their subject once and leave after the first body taken.
     fn matching(&mut self) -> Res<()> {
         self.take();
-        self.match_subject()?;
+        let tuple = self.match_subject()?;
         let subject = self.gensym("subject");
         self.write(&subject);
         if !self.on_any(&self.lang.block_intros) { return Err(self.pattern_fault()); }
@@ -1766,7 +1766,7 @@ impl<'a> Compiler<'a> {
             let pattern = self.case_pattern()?;
             let names = pattern.bindings().map_err(|_| self.pattern_fault())?;
             self.read(&subject);
-            self.act(Action::Match(Rc::new(pattern), names.clone()), 1);
+            self.act(Action::Match(Rc::new(pattern), names.clone(), tuple), 1);
             let found = self.gensym("fitted");
             self.write(&found);
             self.read(&found);
@@ -1805,7 +1805,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// A tuple subject needs only the grouping marks already spelled.
-    fn match_subject(&mut self) -> Res<()> {
+    fn match_subject(&mut self) -> Res<bool> {
         let group = self.lang.grouping.clone();
         let mut tuple = false;
         if let Some(g) = &group {
@@ -1837,7 +1837,7 @@ impl<'a> Compiler<'a> {
         }
         if tuple { self.want_sign(&group.unwrap().close, "after the subject")?; }
         if tuple || comma { self.act(Action::MakeArray, count); }
-        Ok(())
+        Ok(tuple || comma)
     }
 
     fn case_pattern(&mut self) -> Res<crate::code::Pattern> {

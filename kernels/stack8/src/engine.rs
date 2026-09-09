@@ -2029,10 +2029,10 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
-            Action::Match(pattern, names) => {
+            Action::Match(pattern, names, tuple) => {
                 let subject = self.drop_top()?;
                 let mut bindings = Vec::new();
-                match pattern.fit(&subject, &mut bindings) {
+                match pattern.fit(&subject, &mut bindings, *tuple) {
                     Err(()) => return Err(self.lang.match_unready.first().cloned().unwrap_or_default().into()),
                     Ok(false) => Value::Null,
                     Ok(true) => Value::Array(Rc::new(names.iter().map(|name| {

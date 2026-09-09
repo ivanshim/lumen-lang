@@ -2337,7 +2337,7 @@ impl<'a> Builder<'a> {
 
     fn match_stmt(&mut self) -> Res<Form> {
         self.advance();
-        let value = self.subject_of_match()?;
+        let (value, tuple) = self.subject_of_match()?;
         let held = self.gensym("matched");
         let save = Form::Write(held.clone(), Box::new(value));
         if !self.on_any("block.intro") { return Err(self.bad_case()); }
@@ -2374,7 +2374,7 @@ impl<'a> Builder<'a> {
                 let address = self.address_to_write(&name);
                 (name, address)
             }).collect();
-            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots };
+            let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple };
             if self.key("ext.stmt.match.guard") {
                 self.advance();
                 let guard = self.expr(0)?;
@@ -2398,7 +2398,7 @@ impl<'a> Builder<'a> {
         Ok(sequence(vec![save, tail]))
     }
 
-    fn subject_of_match(&mut self) -> Res<Form> {
+    fn subject_of_match(&mut self) -> Res<(Form, bool)> {
         let table = self.table;
         let mut grouped = false;
         if self.on_any("syntax.group.open") {
@@ -2434,7 +2434,9 @@ impl<'a> Builder<'a> {
             }
         }
         if grouped { self.need_sign(table.single("syntax.group.close").unwrap_or_default(), "after the subject")?; }
-        Ok(if grouped || comma { prim_call(Prim::MakeArray, parts) } else { parts.pop().unwrap() })
+        let tuple = grouped || comma;
+        let value = if tuple { prim_call(Prim::MakeArray, parts) } else { parts.pop().unwrap() };
+        Ok((value, tuple))
     }
 
     fn pattern_name(&mut self) -> Res<crate::form::CaseTest> {
