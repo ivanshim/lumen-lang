@@ -58,6 +58,7 @@ impl Attempt {
 /// local, or the global when there is none.
 #[derive(Debug, Clone)]
 pub struct Cell {
+    pub free: bool,
     pub ident: Rc<str>,
     pub near: Vec<usize>,
     pub far: usize,
@@ -621,6 +622,9 @@ pub struct Routine {
     /// slots. Empty for every routine written out under a name, which
     /// carries nothing.
     pub held: Vec<crate::value::Value>,
+    /// Cells fetched where this routine is made, kept apart from defaults.
+    pub enclosing: Vec<(usize, Cell)>,
+    pub enclosed: Vec<(usize, Value)>,
     pub instrs: Rc<Vec<Instr>>,
 }
 

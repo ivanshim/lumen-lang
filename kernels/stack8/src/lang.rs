@@ -404,6 +404,10 @@ pub struct Lang {
     /// and reading it while it does falls through to the outermost
     /// binding as before, so this tells only where a write from text
     /// read in while the run goes may land.
+    pub closes_over: bool,
+    pub local_unbound: Vec<String>,
+    pub free_unbound: Vec<String>,
+    pub nonlocal_amiss: Vec<String>,
     pub own_names: bool,
     /// Whether a `static` written at the top of text read in while the
     /// run goes stands for a plain write of the name in the scope that
@@ -815,7 +819,7 @@ w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.syste
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
-b ext.stmt.function.own_names | b ext.stmt.static.read_in
+b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | b ext.stmt.function.own_names | b ext.stmt.static.read_in
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1560,6 +1564,10 @@ impl Lang {
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
+            closes_over: r.flag("ext.stmt.function.closes_over")?,
+            local_unbound: r.strings("ext.stmt.function.local.unbound")?,
+            free_unbound: r.strings("ext.stmt.function.free.unbound")?,
+            nonlocal_amiss: r.strings("ext.stmt.nonlocal.amiss")?,
             own_names: r.flag("ext.stmt.function.own_names")?,
             static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,

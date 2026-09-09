@@ -481,9 +481,6 @@
   "ext.op.lambda": [
     "lambda"
   ],
-  "ext.op.lambda.enclosing": [
-    "Lambda cannot read an enclosing function variable"
-  ],
   "ext.op.lambda.unsupported": [
     "Lambda keyword parameters are not supported"
   ],
@@ -579,11 +576,20 @@
   "ext.stmt.function.carries.pairs": [
     "**"
   ],
+  "ext.stmt.function.closes_over": true,
   "ext.stmt.function.defaults.amiss": [
     "TypeError: mutable parameter defaults are not supported"
   ],
+  "ext.stmt.function.free.unbound": [
+    "NameError: cannot access free variable '",
+    "' where it is not associated with a value in enclosing scope"
+  ],
   "ext.stmt.function.keyword_only": [
     "*"
+  ],
+  "ext.stmt.function.local.unbound": [
+    "UnboundLocalError: cannot access local variable '",
+    "' where it is not associated with a value"
   ],
   "ext.stmt.function.parameters.amiss": [
     "SyntaxError: invalid parameter list"
@@ -610,8 +616,9 @@
   "ext.stmt.nonlocal": [
     "nonlocal"
   ],
-  "ext.stmt.nonlocal.unrun": [
-    "Nonlocal bindings cannot be run without enclosing function cells"
+  "ext.stmt.nonlocal.amiss": [
+    "SyntaxError: no binding for nonlocal '",
+    "' found"
   ],
   "ext.stmt.terminator": [
     ";"

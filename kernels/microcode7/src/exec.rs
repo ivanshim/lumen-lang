@@ -1492,9 +1492,15 @@ impl<'a> Machine<'a> {
 
     fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
-        let v = f.cells.borrow()[slot.at].clone();
-        if let Value::Shared(cell) = v {
-            return Ok(cell.borrow().clone());
+        let mut v = f.cells.borrow()[slot.at].clone();
+        if let Value::Shared(cell) = &v {
+            let held = cell.borrow().clone();
+            if !self.table.flag("ext.stmt.function.closes_over") { return Ok(held); }
+            v = held;
+        }
+        if matches!(v, Value::Unset) && self.table.flag("ext.stmt.function.closes_over") && !Rc::ptr_eq(&f, &self.outermost) {
+            let label = if slot.up == 0 { "ext.stmt.function.local.unbound" } else { "ext.stmt.function.free.unbound" };
+            return Err(self.argument_fault(label, Some(&slot.ident)));
         }
         if !matches!(v, Value::Unset) {
             return Ok(v);

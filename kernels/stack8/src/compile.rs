@@ -85,7 +85,16 @@ struct Cycle {
 }
 
 /// The program being assembled.
+#[derive(Clone, Default)]
+struct BindingPlan {
+    names: Vec<String>,
+    globals: Vec<(String, String)>,
+    nonlocals: Vec<String>,
+}
+
 struct Piece {
+    nonlocals: Vec<String>,
+    enclosed: Vec<(usize, Cell)>,
     outermost: bool,
     ident: String,
     idents: Vec<String>,
@@ -112,6 +121,8 @@ struct Piece {
 }
 
 pub struct Compiler<'a> {
+    plans: HashMap<usize, BindingPlan>,
+    discovering: bool,
     lang: &'a Lang,
     tokens: &'a [Token],
     pos: usize,
@@ -240,9 +251,29 @@ pub fn compile_within(
     within: Option<(String, Option<String>)>,
     read_in: bool,
 ) -> Res<Rc<Routine>> {
+    let mut plans = HashMap::new();
+    if lang.closes_over {
+        let mut survey = Registry::default();
+        compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true)?;
+    }
+    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false)
+}
+
+fn compile_pass(
+    tokens: &[Token],
+    lang: &Lang,
+    table: &mut Registry,
+    before: u32,
+    written_in: Option<Rc<str>>,
+    inside: Option<Vec<String>>,
+    within: Option<(String, Option<String>)>,
+    read_in: bool,
+    plans: &mut HashMap<usize, BindingPlan>,
+    discovering: bool,
+) -> Res<Rc<Routine>> {
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let top = Piece {
+    let top = Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -269,7 +300,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { plans: plans.clone(), discovering, yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -325,7 +356,7 @@ pub fn compile_within(
     let said = std::mem::take(&mut a.registry.said_while_reading);
     if !said.is_empty() {
         let mut head: Vec<Instr> = Vec::new();
-        let spare = Cell { ident: Rc::from(SPARE_CELLS[0]), near: Vec::new(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
+        let spare = Cell { free: false, ident: Rc::from(SPARE_CELLS[0]), near: Vec::new(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
         for (kind, words, row) in said {
             head.push(Instr::Line(row));
             head.push(Instr::Act(Action::Remark(kind, Rc::from(words.as_str())), 0));
@@ -337,8 +368,9 @@ pub fn compile_within(
         let shifted = relocated(rest, moved);
         a.piece().instrs.extend(shifted);
     }
+    plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -541,7 +573,22 @@ impl<'a> Compiler<'a> {
     fn global_cell(&mut self, name: &str) -> Option<Cell> {
         let unit = self.pieces.last().expect("a unit");
         let target = unit.globals.iter().rev().find(|(n, _)| n == name)?.1.clone();
-        Some(Cell { ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(&target), moving: false })
+        Some(Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(&target), moving: false })
+    }
+
+    fn enclosing_cell(&mut self, depth: usize, name: &str) -> Option<Cell> {
+        if depth == 0 || self.pieces[depth].globals.iter().any(|(n, _)| n == name) { return None; }
+        let far = self.registry.slot(name);
+        if let Some(at) = Self::unblocked(&self.pieces[depth], name) {
+            return Some(Cell { free: self.pieces[depth].enclosed.iter().any(|(s, _)| *s == at), ident: Rc::from(name), near: vec![at], far, moving: false });
+        }
+        let source = self.enclosing_cell(depth - 1, name)?;
+        let unit = &mut self.pieces[depth];
+        let at = unit.idents.len();
+        unit.idents.push(name.to_string());
+        unit.declared.push(false);
+        unit.enclosed.push((at, source));
+        Some(Cell { free: true, ident: Rc::from(name), near: vec![at], far, moving: false })
     }
 
     fn cell_to_read(&mut self, name: &str, moving: bool) -> Cell {
@@ -550,6 +597,9 @@ impl<'a> Compiler<'a> {
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
+        if self.lang.closes_over && !self.discovering {
+            if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return Cell { moving, ..cell }; }
+        }
         let global = self.registry.slot(name);
         let unit = self.pieces.last().expect("a unit");
         let mut locals = Vec::new();
@@ -557,7 +607,7 @@ impl<'a> Compiler<'a> {
             locals.extend(block.iter().rev().filter(|&&s| unit.idents[s] == name).copied());
         }
         locals.extend(Self::unblocked(unit, name));
-        Cell { ident: Rc::from(name), near: locals, far: global, moving }
+        Cell { free: false, ident: Rc::from(name), near: locals, far: global, moving }
     }
 
     /// Where a name is written: the innermost slot of that name in the
@@ -570,10 +620,13 @@ impl<'a> Compiler<'a> {
         if let Some(cell) = self.global_cell(name) {
             return cell;
         }
+        if self.lang.closes_over && !self.discovering && self.piece().nonlocals.iter().any(|n| n == name) {
+            if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return cell; }
+        }
         let global = self.registry.slot(name);
         let unit = self.pieces.last_mut().expect("a unit");
         if unit.outermost && unit.scopes.is_empty() {
-            return Cell { ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
+            return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
             Some(block) => block.iter().rev().find(|&&s| unit.idents[s] == name).copied(),
@@ -588,11 +641,11 @@ impl<'a> Compiler<'a> {
             }
             s
         });
-        Cell { ident: Rc::from(name), near: vec![slot], far: global, moving: false }
+        Cell { free: false, ident: Rc::from(name), near: vec![slot], far: global, moving: false }
     }
 
     fn refuse_uncarried(&mut self, name: &str) -> bool {
-        if !self.uncarried.iter().any(|n| n == name) || !self.cell_to_read(name, false).near.is_empty() {
+        if self.lang.closes_over || !self.uncarried.iter().any(|n| n == name) || !self.cell_to_read(name, false).near.is_empty() {
             return false;
         }
         if let Some(told) = self.lang.lambda_enclosing.clone() {
@@ -807,6 +860,7 @@ impl<'a> Compiler<'a> {
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let source = self.pos;
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
@@ -820,7 +874,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        self.pieces.push(Piece {
+        self.pieces.push(Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -835,11 +889,27 @@ impl<'a> Compiler<'a> {
             line: 0,
             instrs: Vec::new(),
         });
+        if self.lang.closes_over && !self.discovering {
+            if let Some(plan) = self.plans.get(&source).cloned() {
+                let unit = self.piece();
+                for name in plan.names {
+                    if !unit.idents.contains(&name) { unit.idents.push(name); unit.declared.push(false); }
+                }
+                unit.globals = plan.globals;
+                unit.nonlocals = plan.nonlocals;
+            }
+        }
+        let surrounding_names = self.comprehension_names.clone();
+        if self.lang.closes_over {
+            let own = self.piece().idents.clone();
+            self.comprehension_names.retain(|(name, _)| !own.contains(name));
+        }
         if returns_value {
             self.constant(Value::Null);
             self.write(RESULT_CELL);
         }
         body(self)?;
+        self.comprehension_names = surrounding_names;
         // A function whose value only ever comes from a return
         // drops the result slot: its prologue goes, and a fall off the
         // end leaves nothing, which the machine reads as null.
@@ -852,6 +922,10 @@ impl<'a> Compiler<'a> {
             self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
+        if self.discovering {
+            let names = unit.idents.iter().filter(|n| !unit.nonlocals.contains(n) && !unit.globals.iter().any(|(g, _)| g == *n)).cloned().collect();
+            self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone() });
+        }
         let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
         if unit.generator {
             instrs = vec![Instr::Const(Value::text(self.lang.yield_unrun.first().map_or("", String::as_str))),
@@ -859,7 +933,7 @@ impl<'a> Compiler<'a> {
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -1051,10 +1125,15 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.nonlocal_words, &w) {
                 self.take();
                 loop {
-                    self.want_name("after the nonlocal keyword")?;
+                    let name = self.want_name("after the nonlocal keyword")?;
+                    self.piece().nonlocals.push(name.clone());
+                    if lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
+                        return Err(format!("{}{}{}", lang.nonlocal_amiss.first().map_or("", String::as_str), name, lang.nonlocal_amiss.get(1).map_or("", String::as_str)));
+                    }
                     if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                     self.take();
                 }
+                if lang.closes_over { return Ok(()); }
                 self.constant(Value::text(lang.nonlocal_unrun.first().map_or("", String::as_str)));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 return Ok(());
@@ -1407,7 +1486,7 @@ impl<'a> Compiler<'a> {
 
     /// A store into the global of the name, from anywhere.
     fn write_global(&mut self, name: &str) {
-        let slot = Cell { ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
+        let slot = Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
         self.put(Instr::Write(slot));
     }
 
@@ -1440,7 +1519,7 @@ impl<'a> Compiler<'a> {
         self.function(name.clone(), gives_cell)?;
         for decorator in held.into_iter().rev() {
             let bound = if lang.routines_outermost {
-                Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
+                Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
             } else {
                 self.cell_to_write(&name)
             };
@@ -1571,7 +1650,7 @@ impl<'a> Compiler<'a> {
             // not anything was ever written to it, so the global is made
             // to hold nothing where it held nothing at all: reading it
             // is then reading a name written to.
-            let cell = Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
+            let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
             self.put(Instr::Ready(cell));
             self.piece().globals.push((name.clone(), name));
             match &sep {
@@ -2205,7 +2284,7 @@ impl<'a> Compiler<'a> {
         for s in bound {
             let name = self.piece().idents[s].clone();
             let global = self.registry.slot(&name);
-            let slot = Cell { ident: Rc::from(name.as_str()), near: vec![s], far: global, moving: false };
+            let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: vec![s], far: global, moving: false };
             self.constant(Value::Blank);
             self.put(Instr::Write(slot));
         }

@@ -1145,11 +1145,18 @@ impl<'a> Engine<'a> {
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Bond(shared) = &frame[s] {
-                return Ok(shared.borrow().clone());
+                let value = shared.borrow().clone();
+                if self.lang.closes_over && matches!(value, Value::Blank) {
+                    return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
+                }
+                return Ok(value);
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
             }
+        }
+        if self.lang.closes_over && !slot.near.is_empty() {
+            return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(shared.borrow().clone());
@@ -1194,7 +1201,7 @@ impl<'a> Engine<'a> {
         // so where nothing has been written to it anywhere the cell is
         // made in the unit's own place and not the outermost one.
         if let Some(&s) = slot.near.first() {
-            let shared = Rc::new(RefCell::new(Value::Null));
+            let shared = Rc::new(RefCell::new(if self.lang.closes_over { Value::Blank } else { Value::Null }));
             frame[s] = Value::Bond(shared.clone());
             return Ok(shared);
         }
@@ -1527,6 +1534,7 @@ impl<'a> Engine<'a> {
         frame.resize(program.idents.len(), Value::Blank);
         // A routine written where a value stands carried names away
         // from around it: each fills the slot it was given here.
+        for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
         for (slot, held) in program.carried.iter().zip(program.held.iter()) {
             if program.parameter_rules.is_none() || *slot >= program.formals.len() || matches!(frame[*slot], Value::Blank) {
                 frame[*slot] = held.clone();
@@ -1759,6 +1767,14 @@ impl<'a> Engine<'a> {
                 }
             }
             match &instrs[pc] {
+                Instr::Const(Value::Routine(program)) if self.lang.closes_over && !program.enclosing.is_empty() => {
+                    let mut closed = (**program).clone();
+                    for (at, source) in &program.enclosing {
+                        let shared = self.share_cell(source, frame)?;
+                        closed.enclosed.push((*at, Value::Bond(shared)));
+                    }
+                    self.data.push(Value::Routine(Rc::new(closed)));
+                }
                 Instr::Const(v) => self.data.push(v.clone()),
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
                     Ok(v) => self.data.push(v),
