@@ -428,6 +428,10 @@ impl<'a> Machine<'a> {
     /// asked of the thing where it is one, and counted through as an
     /// array is where it is not.
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
+        if self.table.flag("ext.syntax.call.bind_names") && v.iter().any(|x| matches!(x, Value::Shared(_))) {
+            let items: Vec<Value> = v.iter().map(collection_read).collect();
+            return self.walking(op, name, &items);
+        }
         let n = |want: usize| match v.len() == want {
             true => Ok(()),
             false => Err(Escape::Error(format!("{}() expects {} argument(s), got {}", name, want, v.len()))),
@@ -1399,7 +1403,7 @@ impl<'a> Machine<'a> {
         let f = ascend(frame, slot.up);
         let v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = v {
-            return Ok(cell.borrow().clone());
+            return Ok(if self.table.flag("ext.syntax.call.bind_names") { Value::Shared(cell) } else { cell.borrow().clone() });
         }
         if !matches!(v, Value::Unset) {
             return Ok(v);
@@ -1425,6 +1429,10 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        if self.table.flag("ext.syntax.call.bind_names") {
+            ascend(frame, slot.up).cells.borrow_mut()[slot.at] = self.collection_cell(value);
+            return Ok(());
+        }
         // A cell becomes a name's own only by being tied to it. A plain
         // write of one writes what it holds, so a routine giving back a
         // cell, called without the mark that shares one, hands over a
@@ -1501,7 +1509,7 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
-            Form::Const(v) => Ok(v.clone()),
+            Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
@@ -1511,7 +1519,7 @@ impl<'a> Machine<'a> {
                     _ => held,
                 };
                 Ok(match held {
-                    Value::Shared(cell) => cell.borrow().clone(),
+                    Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
                     other => other,
                 })
             }
@@ -2144,10 +2152,6 @@ impl<'a> Machine<'a> {
                     {
                         let mut cells = took.cells.borrow_mut();
                         for (slot, held) in program.carried.iter().zip(values) {
-                            if program.taking.is_some() && program.formal_slots.contains(slot)
-                                && matches!(held, Value::Vector(_) | Value::Dict(_) | Value::Thing(_)) {
-                                return Err(self.argument_fault("ext.stmt.function.defaults.amiss", None).into());
-                            }
                             cells[*slot] = held;
                         }
                     }
@@ -2613,7 +2617,7 @@ impl<'a> Machine<'a> {
                 Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
                 Value::Flag(true) => {
                     let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
-                    if let Value::Dict(entries) = &pair.1 {
+                    if let Value::Dict(entries) = collection_read(&pair.1) {
                         for (k, v) in entries.iter() {
                             match k {
                                 Value::Text(text) => names.push((text.to_string(), v.clone())),
@@ -2623,7 +2627,7 @@ impl<'a> Machine<'a> {
                     } else { return Err(fault().into()); }
                 }
                 Value::Flag(false) => {
-                    match &pair.1 {
+                    match &collection_read(&pair.1) {
                         Value::Vector(values) => positions.extend(values.iter().cloned()),
                         Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
                         Value::Text(text) => {
@@ -3131,7 +3135,30 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn collection_cell(&self, value: Value) -> Value {
+        match value {
+            Value::Vector(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
+                Value::Shared(Rc::new(RefCell::new(value))),
+            _ => value,
+        }
+    }
+
+    /// Literal members keep their cells. Other operations ask the
+    /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.table.flag("ext.syntax.call.bind_names") {
+            let result = if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple) {
+                self.prim_values(op, name, v)?
+            } else {
+                let unwrapped: Vec<Value> = v.iter().map(collection_read).collect();
+                self.prim_values(op, name, &unwrapped)?
+            };
+            return Ok(self.collection_cell(result));
+        }
+        self.prim_values(op, name, v)
+    }
+
+    fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -4571,7 +4598,7 @@ impl<'a> Machine<'a> {
         // cell holds: the sharing lies between the names, not in the
         // value itself.
         return self.element_within(target, at, how).map(|found| match found {
-            Value::Shared(cell) => cell.borrow().clone(),
+            Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
             held => held,
         });
     }
@@ -5401,5 +5428,13 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
     match number_spelled_in(&Value::text(&text[..end])) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+fn collection_read(held: &Value) -> Value {
+    if let Value::Shared(inside) = held {
+        inside.borrow().clone()
+    } else {
+        held.clone()
     }
 }
