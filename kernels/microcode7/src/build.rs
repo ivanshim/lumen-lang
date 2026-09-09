@@ -2627,6 +2627,21 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn nested_loop_name(&mut self) -> Res<()> {
+        if !self.on_any("syntax.group.open") {
+            self.need_word("as a loop target")?;
+            return Ok(());
+        }
+        self.advance();
+        while !self.on_any("syntax.group.close") {
+            self.nested_loop_name()?;
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+        }
+        let end = self.table.single("syntax.group.close").ok_or("Loop targets need an end")?;
+        self.need_sign(end, "after loop targets")
+    }
+
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
@@ -2636,7 +2651,7 @@ impl<'a> Builder<'a> {
             unpacked = true;
             self.advance();
             if self.key("stmt.for.in") { break; }
-            self.need_word("as a loop target")?;
+            self.nested_loop_name()?;
         }
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));

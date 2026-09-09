@@ -519,7 +519,8 @@ only. The extension labels so far, all from PHP:
   may name several targets or a comma-joined source, and a tuple target
   may hold a starred name spelled by `ext.syntax.array.spread`. Their
   present run says `ext.system.scope.unready`; witnesses are
-  `scratch/file-float/7.py`, `9.py` and `12.py`. The class bases named by
+  `scratch/file-float/7.py`, `9.py`, `12.py` and the nested target in
+  `13.py`. The class bases named by
   `ext.stmt.class.bases.open` may carry keyword arguments, and
   `ext.stmt.decorator` may stand before a class. These still say
   `ext.stmt.class.unready`; `8.py` and `11.py` witness them. A pipe's
@@ -532,7 +533,9 @@ only. The extension labels so far, all from PHP:
   value; reaching this numeral says the plain words of
   `ext.lexical.number.imaginary.unready`. An uncalled body may hold one
   without complaint. `scratch/file-float/3.py` reads such bodies and
-  `scratch/file-float/4.py` reaches the complaint.
+  `scratch/file-float/4.py` reaches the complaint; `15.py` carries an
+  exponent beyond the ordinary float range. `14.py` witnesses the
+  complex suite's reading.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real. Python spells both
   letters; `scratch/file-float/2.py` witnesses both signs and points.

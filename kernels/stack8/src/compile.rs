@@ -2185,6 +2185,24 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A nested loop target is read before the tuple piece can bind it.
+    fn loop_target(&mut self) -> Res<()> {
+        if let Some(group) = self.lang.grouping.clone().filter(|g| self.at_symbol(&g.open)) {
+            self.take();
+            if !self.at_symbol(&group.close) {
+                self.loop_target()?;
+                while self.on_any(&self.lang.tuple_marks) {
+                    self.take();
+                    if self.at_symbol(&group.close) { break; }
+                    self.loop_target()?;
+                }
+            }
+            self.want_sign(&group.close, "after loop targets")
+        } else {
+            self.want_name("as a loop target").map(|_| ())
+        }
+    }
+
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
@@ -2195,7 +2213,7 @@ impl<'a> Compiler<'a> {
         while self.on_any(&lang.tuple_marks) {
             self.take();
             if self.on_keyword(&lang.in_words) { break; }
-            self.want_name("as a loop target")?;
+            self.loop_target()?;
         }
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
