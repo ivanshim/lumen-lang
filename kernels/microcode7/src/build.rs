@@ -35,6 +35,7 @@ struct ScopeWords {
 }
 
 struct Layer {
+    comprehension: bool,
     borrowed: Vec<String>,
     holds: Holds,
     idents: Vec<String>,
@@ -250,7 +251,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
 }
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool) -> Res<Built> {
-    let top = Layer { borrowed: Vec::new(), holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let top = Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -261,7 +262,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { borrowed: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
     let mut r = Builder { surveyed: words.clone(), survey, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
@@ -866,6 +867,22 @@ impl<'a> Builder<'a> {
     fn address_to_write(&mut self, name: &str) -> Address {
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
+        if self.table.flag("ext.stmt.function.closes_over") && !name.starts_with('#') {
+            let here = self.layers.iter().rposition(|l| l.holds == Holds::Every).unwrap_or(0);
+            if self.layers[here].comprehension {
+                let owner = (0..here).rev().find(|&i| self.layers[i].holds == Holds::Every && !self.layers[i].comprehension).unwrap_or(0);
+                let target = self.layers[owner].aliases.iter().find(|pair| pair.0 == name).map(|pair| pair.1.clone());
+                match target {
+                    Some(global) => self.layers[here].aliases.push((name.to_string(), global)),
+                    None if owner == 0 => self.layers[here].aliases.push((name.to_string(), name.to_string())),
+                    None => {
+                        let layer = &mut self.layers[owner];
+                        if !layer.borrowed.iter().any(|n| n == name) && !layer.idents.iter().any(|n| n == name) { layer.idents.push(name.to_string()); }
+                        self.layers[here].borrowed.push(name.to_string());
+                    }
+                }
+            }
+        }
         if let Some(slot) = self.aliased(name) {
             return slot;
         }
@@ -977,7 +994,7 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { borrowed: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        self.layers.push(Layer { comprehension: name == "<gathering>", borrowed: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
                 if known.borrowed.iter().any(|word| params.contains(word)) {
@@ -3629,7 +3646,10 @@ impl<'a> Builder<'a> {
             return self.written(place, false);
         }
         Ok(match place {
-            Form::Read(_) => constant(Value::Nil),
+            Form::Read(slot) => {
+                if table.flag("ext.stmt.function.closes_over") { self.address_to_write(&slot.ident); }
+                constant(Value::Nil)
+            }
             Form::Apply(Callee::Prim(Prim::At, _), parts) => sequence(parts),
             Form::Apply(Callee::Prim(Prim::Of, _), mut parts) => parts.remove(0),
             _ => unreachable!("the annotation target was read above"),
@@ -5495,6 +5515,15 @@ impl<'a> Builder<'a> {
     }
 
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
+        if self.table.flag("ext.stmt.function.closes_over") {
+            let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, Vec::new(), 0,
+                |reader| reader.gather_in_scope(first_for, end, dictionary))?;
+            return Ok(Form::Apply(Callee::Code(Box::new(routine)), Vec::new()));
+        }
+        self.gather_in_scope(first_for, end, dictionary)
+    }
+
+    fn gather_in_scope(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
         let expression_at = self.pos;
         self.pos = first_for;
         let old_names = self.gather_names.len();
@@ -6141,7 +6170,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { borrowed: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {

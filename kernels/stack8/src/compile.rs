@@ -617,6 +617,22 @@ impl<'a> Compiler<'a> {
     fn cell_to_write(&mut self, name: &str) -> Cell {
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
+        // A named write in a comprehension belongs to the function
+        // around its walks; only the walk's hidden names belong here.
+        if self.lang.closes_over && self.piece().ident == "<comprehension>" && !name.starts_with('#') {
+            let owner = (0..self.pieces.len() - 1).rev().find(|&i| self.pieces[i].ident != "<comprehension>").unwrap_or(0);
+            let alias = self.pieces[owner].globals.iter().find(|(n, _)| n == name).map(|(_, to)| to.clone());
+            if self.pieces[owner].outermost || alias.is_some() {
+                self.piece().globals.push((name.to_string(), alias.unwrap_or_else(|| name.to_string())));
+            } else {
+                let parent = &mut self.pieces[owner];
+                if !parent.idents.iter().any(|n| n == name) && !parent.nonlocals.iter().any(|n| n == name) {
+                    parent.idents.push(name.to_string());
+                    parent.declared.push(false);
+                }
+                self.piece().nonlocals.push(name.to_string());
+            }
+        }
         if let Some(cell) = self.global_cell(name) {
             return cell;
         }
@@ -3739,6 +3755,12 @@ impl<'a> Compiler<'a> {
         } else if self.on_assign() {
             self.assignment(from, None)?;
         } else if name {
+            if lang.closes_over {
+                if let Instr::Read(cell) = &self.piece().instrs[from] {
+                    let named = cell.ident.to_string();
+                    self.cell_to_write(&named);
+                }
+            }
             self.piece().instrs.truncate(from);
         } else {
             self.piece().instrs.pop();
@@ -6034,6 +6056,21 @@ impl<'a> Compiler<'a> {
     }
 
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
+        if self.lang.closes_over {
+            let program = self.routine("<comprehension>", Vec::new(), 0, true, |a| {
+                a.comprehension_body(pair, clause, map)?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            })?;
+            self.constant(Value::Routine(program));
+            self.act(Action::Invoke(Rc::from("<comprehension>")), 1);
+            return Ok(());
+        }
+        self.comprehension_body(pair, clause, map)
+    }
+
+    fn comprehension_body(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
         let head = self.pos;
         let bindings = self.comprehension_names.len();
         let result = self.gensym("comprehension");

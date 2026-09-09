@@ -400,7 +400,12 @@ only. The extension labels so far, all from PHP:
   of the enclosing functions whose names it reads. The cells outlive
   their calls, and a later write is seen by every routine sharing one.
   Each function's whole body is read first to find its own bindings:
-  assignment makes a local unless a declaration says otherwise.
+  assignment makes a local unless a declaration says otherwise. A bare
+  annotation declares a local too, though it fills no cell. Each running
+  of a comprehension has its own enclosing cells; its lambdas share the
+  walk's last binding, without changing an earlier running's cells.
+  A named assignment expression in a comprehension still belongs to
+  the function around it.
   `ext.stmt.global` reaches the outermost binding even within an inner
   routine; `ext.stmt.nonlocal` instead writes an enclosing cell.
   `ext.stmt.function.local.unbound` and `ext.stmt.function.free.unbound`
