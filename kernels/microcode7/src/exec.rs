@@ -2333,6 +2333,11 @@ impl<'a> Machine<'a> {
                     }
                     Err(Escape::Done)
                 }
+                Prim::Dictionary => {
+                    let supplied = self.value_list(args, frame)?;
+                    let (positional, keywords) = self.open_arguments(supplied)?;
+                    Ok(self.dictionary(&positional, keywords)?)
+                }
                 op => {
                     let mut values = self.value_list(args, frame)?;
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
@@ -3155,12 +3160,49 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn dictionary(&self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        if positional.len() > 1 {
+            return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or("A map takes at most one source").to_string());
+        }
+        let mut result: Vec<(Value, Value)> = Vec::new();
+        let source_pairs = match positional.first() {
+            None => Vec::new(),
+            Some(Value::Dict(entries)) => entries.to_vec(),
+            Some(value) => {
+                let mut pairs = Vec::new();
+                for item in self.gathered_members(value)? {
+                    let members = self.gathered_members(&item)?;
+                    if members.len() != 2 {
+                        return Err(self.table.single("ext.builtin.map.pair.amiss").unwrap_or("A map item needs two values").to_string());
+                    }
+                    pairs.push((members[0].clone(), members[1].clone()));
+                }
+                pairs
+            }
+        };
+        let mut new_names = std::collections::HashSet::new();
+        let mut additions = source_pairs;
+        for (name, value) in keywords {
+            if !new_names.insert(name.clone()) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&name))); }
+            additions.push((Value::text(&name), value));
+        }
+        for (key, value) in additions {
+            if let Some((_, previous)) = result.iter_mut().find(|(known, _)| known.equals(&key)) {
+                *previous = value;
+            } else {
+                result.push((key, value));
+            }
+        }
+        Ok(Value::Dict(Rc::new(result)))
+    }
+
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::Dictionary => self.dictionary(v, Vec::new())?,
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

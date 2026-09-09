@@ -2980,6 +2980,13 @@ impl<'a> Engine<'a> {
                 let mut args = std::mem::take(&mut self.buffer);
                 args.clear();
                 args.extend(self.data.drain(at..));
+                if matches!(builtin, Builtin::MapFrom) {
+                    let items = self.call_items(std::mem::take(&mut args))?;
+                    let made = self.map_from(items)?;
+                    self.buffer = args;
+                    self.data.push(made);
+                    return Ok(());
+                }
                 if self.lang.bind_names {
                     let items = self.call_items(std::mem::take(&mut args))?;
                     let formatted = matches!(builtin, Builtin::Say) && self.lang.print_separator.is_some()
@@ -3852,6 +3859,36 @@ impl<'a> Engine<'a> {
         values.iter().map(|v| v.display(&sp)).collect::<Vec<_>>().join(" ")
     }
 
+    fn map_from(&self, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        let positional: Vec<&Value> = items.iter().filter_map(|(name, value)| name.is_none().then_some(value)).collect();
+        if positional.len() > 1 {
+            return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| "A map takes at most one source".into()));
+        }
+        let mut pairs = Vec::new();
+        if let Some(source) = positional.first() {
+            match source {
+                Value::Map(prior) => pairs = prior.as_ref().clone(),
+                other => {
+                    for item in self.comprehension_items(other)? {
+                        let pair = self.comprehension_items(&item)?;
+                        if pair.len() != 2 {
+                            return Err(self.lang.map_pair_amiss.clone().unwrap_or_else(|| "A map item needs two values".into()));
+                        }
+                        put_key(&mut pairs, pair[0].clone(), pair[1].clone());
+                    }
+                }
+            }
+        }
+        let mut named = std::collections::HashSet::new();
+        for (key, value) in items {
+            if let Some(key) = key {
+                if !named.insert(key.clone()) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+                put_key(&mut pairs, Value::text(&key), value);
+            }
+        }
+        Ok(Value::Map(Rc::new(pairs)))
+    }
+
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
@@ -3861,6 +3898,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

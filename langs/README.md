@@ -1153,6 +1153,12 @@ only. The extension labels so far, all from PHP:
   lines within their call brackets; a routine's body may also be one
   statement on the line of its header. Without this switch labels retain their
   former meaning, and defaults are worked out when the call begins.
+- `ext.builtin.map`: a map constructor accepting zero or one positional
+  source, either a map or an iterable of pairs, followed by keyword pairs.
+  Later values replace earlier values while preserving key order. The
+  `.arguments.amiss` and `.pair.amiss` labels supply errors for too many
+  sources and an item with the wrong number of values. Object mapping and
+  iterator protocols are not provided by this constructor yet.
 - `ext.builtin.print.separator` and `ext.builtin.print.end`: keyword names
   selecting the text between printed values and after the last value. A
   null option keeps the usual space or newline. `ext.builtin.print.option.type`
@@ -1779,6 +1785,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.map` | - | - | `dict` | - | - | - | - | - | - | - |
+| `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
+| `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |

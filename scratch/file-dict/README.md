@@ -68,3 +68,9 @@ expected a refusal of every builtin keyword argument. The replacement
 `15.out` contains exactly the byte `1`, without a newline, because this
 supported print option must behave as it does in CPython. Other unsupported
 builtin keyword arguments still use the existing refusal.
+
+`10.py` calls the dictionary constructor forms from `test_dict.py`: empty,
+keyword, map copy and iterable pairs. Later pairs replace earlier ones;
+keyword pairs replace those in the positional source, while duplicate
+keyword arguments remain an error. The constructor walks the existing
+collection values; user-defined mapping and iterator protocols remain open.
