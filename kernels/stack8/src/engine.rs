@@ -12,7 +12,7 @@ use num_traits::ToPrimitive;
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
+use crate::value::{Class, Instance, Reach, Sort, Value, Wording, Generator};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -1532,6 +1532,11 @@ impl<'a> Engine<'a> {
                 frame[*slot] = held.clone();
             }
         }
+        if program.generator && self.lang.yield_suspends {
+            self.left_the_call(false, watching, noted);
+            self.data.push(Value::Generator(Rc::new(RefCell::new(Generator::new(Some(program.clone()), frame, Vec::new())))));
+            return Ok(());
+        }
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
         // a complaint names that file, and a file the routine asks for
@@ -1723,8 +1728,67 @@ impl<'a> Engine<'a> {
         ending
     }
 
+    fn close_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
+        let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+        if let Some(Value::Generator(inner)) = state.delegate.take() { self.close_generator(&inner)?; }
+        state.closed = true;
+        state.current = None;
+        state.frame.clear();
+        state.stack.clear();
+        state.items.clear();
+        Ok(())
+    }
+
+    fn iterator(&mut self, source: Value) -> Flow<Value> {
+        if matches!(source, Value::Generator(_)) { return Ok(source); }
+        let items = self.comprehension_items(&source)?;
+        Ok(Value::Generator(Rc::new(RefCell::new(Generator::new(None, Vec::new(), items)))))
+    }
+
+    fn resume_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value) -> Flow<Option<Value>> {
+        let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+        if kept.closed { return Ok(None); }
+        if !kept.started && !matches!(sent, Value::Null) {
+            return Err(self.lang.yield_unstarted[0].clone().into());
+        }
+        if let Some(item) = kept.current.take() { return Ok(Some(item)); }
+        kept.started = true;
+        let Some(program) = kept.program.clone() else {
+            let item = kept.items.get(kept.pc).cloned();
+            kept.pc += usize::from(item.is_some());
+            kept.closed = item.is_none();
+            return Ok(item);
+        };
+        let outer = std::mem::replace(&mut self.data, std::mem::take(&mut kept.stack));
+        let mut locals = std::mem::take(&mut kept.frame);
+        if kept.waiting { self.data.push(sent.clone()); kept.waiting = false; }
+        kept.sent = sent;
+        let source = self.source.clone();
+        let line = self.line;
+        if let Some(place) = &program.written_in { self.source = place.clone(); }
+        self.inside.push(program.within.clone());
+        let result = self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept));
+        self.inside.pop();
+        self.source = source;
+        self.line = line;
+        kept.frame = locals;
+        kept.stack = std::mem::replace(&mut self.data, outer);
+        if kept.handed.is_none() || result.is_err() {
+            kept.closed = true;
+            kept.returned = kept.stack.pop().unwrap_or(Value::Null);
+            kept.stack.clear();
+            kept.frame.clear();
+        }
+        result?;
+        Ok(kept.handed.take())
+    }
+
     fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
-        let mut pc = span.0;
+        self.run_portion(program, frame, instrs, span, None)
+    }
+
+    fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), mut suspended: Option<&mut Generator>) -> Flow<Passage> {
+        let mut pc = suspended.as_ref().map_or(span.0, |g| g.pc);
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
@@ -1786,6 +1850,30 @@ impl<'a> Engine<'a> {
                     let v = self.drop_top()?;
                     self.store_cell(slot, frame, v)?;
                 }
+                Instr::Act(Action::Suspend | Action::Delegate, _) => {
+                    let kept = suspended.as_deref_mut().ok_or_else(|| self.lang.yield_unsupported[0].clone())?;
+                    if matches!(&instrs[pc], Instr::Act(Action::Suspend, _)) {
+                        kept.handed = Some(self.drop_top()?);
+                        kept.pc = pc + 1;
+                        kept.waiting = true;
+                    } else {
+                        if kept.delegate.is_none() {
+                            let source = self.drop_top()?;
+                            kept.delegate = Some(self.iterator(source)?);
+                        }
+                        let Value::Generator(inner) = kept.delegate.as_ref().expect("delegated walk").clone() else { unreachable!() };
+                        match self.resume_generator(&inner, std::mem::replace(&mut kept.sent, Value::Null))? {
+                            Some(item) => { kept.handed = Some(item); kept.pc = pc; }
+                            None => {
+                                self.data.push(inner.borrow().returned.clone());
+                                kept.delegate = None;
+                                pc += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    return Ok(Passage::Along(pc));
+                }
                 Instr::Act(op, argc) => {
                     // Text read while the run goes is read where it
                     // stands: inside a routine it sees that routine's
@@ -1827,6 +1915,9 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Attempt(plan) => {
+                    if suspended.is_some() && instrs[plan.body.0..plan.after].iter().any(|i| matches!(i, Instr::Act(Action::Suspend | Action::Delegate, _))) {
+                        return Err(self.lang.yield_unsupported[0].clone().into());
+                    }
                     match self.run_attempt(program, frame, instrs, plan)? {
                         Passage::Along(at) => pc = at,
                         end @ Passage::Leaves { to, cycle } => {
@@ -2384,6 +2475,8 @@ impl<'a> Engine<'a> {
                     Value::array(items)
                 }
             }
+            Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
+            Action::MakeTuple => Value::Tuple(Rc::new(self.drop_many(argc)?)),
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
@@ -2671,7 +2764,22 @@ impl<'a> Engine<'a> {
             }
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
-                let Value::Object(o) = args.remove(0) else {
+                let receiver = args.remove(0);
+                if let Value::Generator(held) = receiver {
+                    let result = if Lang::spells(&self.lang.yield_close, name) && args.is_empty() {
+                        self.close_generator(&held)?;
+                        Value::Null
+                    } else if Lang::spells(&self.lang.yield_send, name) && args.len() == 1 {
+                        self.resume_generator(&held, args.remove(0))?.ok_or_else(|| self.lang.yield_exhausted[0].clone())?
+                    } else if Lang::spells(&self.lang.yield_throw, name) {
+                        return Err(self.lang.yield_throw_unavailable[0].clone().into());
+                    } else {
+                        return Err(self.lang.yield_unsupported[0].clone().into());
+                    };
+                    self.data.push(result);
+                    return Ok(());
+                }
+                let Value::Object(o) = receiver else {
                     return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
                 };
                 let method = o.class.method(&name).cloned();
@@ -2870,6 +2978,11 @@ impl<'a> Engine<'a> {
             // be walked in its stead. Either way the walk begins here.
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if self.lang.yield_suspends && !matches!(handed, Value::Object(_)) {
+                    let walk = self.iterator(handed)?;
+                    self.data.push(walk);
+                    return Ok(());
+                }
                 // One thing may hand over another that hands over a
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that
@@ -2933,6 +3046,13 @@ impl<'a> Engine<'a> {
             }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
+                if let Value::Generator(held) = &pair[0] {
+                    let item = self.resume_generator(held, Value::Null)?;
+                    let more = item.is_some();
+                    held.borrow_mut().current = item;
+                    self.data.push(Value::Flag(more));
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None => {
@@ -2953,6 +3073,11 @@ impl<'a> Engine<'a> {
                     false => self.lang.walk_this.clone(),
                 };
                 let pair = self.drop_many(2)?;
+                if let Value::Generator(held) = &pair[0] {
+                    let item = if key { pair[1].clone() } else { held.borrow_mut().current.take().unwrap_or(Value::Null) };
+                    self.data.push(item);
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], named)? {
                     Some(answer) => answer,
                     None => {
@@ -3945,9 +4070,14 @@ impl<'a> Engine<'a> {
     // ---------- builtins ----------
 
     /// The collections this reader can walk without asking a protocol.
-    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+    fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Generator(held) => {
+                let mut items = Vec::new();
+                while let Some(item) = self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? { items.push(item); }
+                Ok(items)
+            }
+            Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Bond(cell) => self.comprehension_items(&cell.borrow()),
@@ -4499,6 +4629,23 @@ impl<'a> Engine<'a> {
                     self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some(), &self.wording())));
                 }
                 Value::Null
+            }
+            Builtin::Next => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.yield_unsupported[0].clone()); }
+                let Value::Generator(held) = &args[0] else { return Err(self.lang.collection_unwalkable[0].clone()); };
+                match self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? {
+                    Some(item) => item,
+                    None => args.get(1).cloned().ok_or_else(|| self.lang.yield_exhausted[0].clone())?,
+                }
+            }
+            Builtin::Iter => {
+                arity(1)?;
+                self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))?
+            }
+            Builtin::Tuple => {
+                if args.is_empty() { return Ok(Value::Tuple(Rc::new(Vec::new()))); }
+                arity(1)?;
+                Value::Tuple(Rc::new(self.comprehension_items(&args[0])?))
             }
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }

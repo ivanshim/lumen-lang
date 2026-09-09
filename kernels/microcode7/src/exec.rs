@@ -103,6 +103,44 @@ enum Next {
     Jump(Rc<Routine>, Rc<Env>),
 }
 
+/// The forms still owed by a yielding routine, innermost work last.
+enum Owed {
+    Find(Form),
+    Store(Address),
+    Drop,
+    Apply(Callee, usize),
+    Call(usize),
+    Select(Form, Form),
+    Test(Rc<Form>),
+    Decide(Rc<Form>),
+    Turn(Rc<Form>, usize),
+    HandOut,
+    From,
+    Finish,
+    Truth(Prim, Form),
+}
+
+pub struct Suspension {
+    frame: Rc<Env>,
+    owed: Vec<Owed>,
+    found: Vec<Value>,
+    begun: bool,
+    ended: bool,
+    receiving: bool,
+    result: Value,
+    inner: Option<Value>,
+    members: Option<std::vec::IntoIter<Value>>,
+    ready: Option<Value>,
+}
+
+impl Suspension {
+    fn body(program: &Routine, frame: Rc<Env>) -> Self {
+        Self { frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
+            begun: false, ended: false, receiving: false, result: Value::Nil,
+            inner: None, members: None, ready: None }
+    }
+}
+
 pub struct Machine<'a> {
     table: &'a Table,
     pub outermost: Rc<Env>,
@@ -437,6 +475,7 @@ impl<'a> Machine<'a> {
             // be walked for it. Either way a walk begins here.
             Prim::Walked => {
                 n(1)?;
+                if self.table.flag("ext.stmt.yield.suspends") && !matches!(v[0], Value::Thing(_)) { return self.make_iterator(v[0].clone()); }
                 let mut walking = v[0].clone();
                 // Asking a thing what it hands over runs a piece of the
                 // program standing elsewhere. The walk is written where
@@ -474,6 +513,12 @@ impl<'a> Machine<'a> {
             }
             Prim::MoreYet => {
                 n(2)?;
+                if let Value::Generator(state) = &v[0] {
+                    let item = self.resume(state, Value::Nil)?;
+                    let more = item.is_some();
+                    state.borrow_mut().ready = item;
+                    return Ok(Value::Flag(more));
+                }
                 match self.walk_asked(&v[0], self.table.single("ext.op.walk.more").map(str::to_string))? {
                     Some(answer) => Value::Flag(self.stands_true(&answer)),
                     None => {
@@ -489,6 +534,9 @@ impl<'a> Machine<'a> {
             }
             Prim::AtHand | Prim::NamedHere => {
                 let names = matches!(op, Prim::NamedHere);
+                if let Value::Generator(state) = &v[0] {
+                    return Ok(if names { v[1].clone() } else { state.borrow_mut().ready.take().unwrap_or(Value::Nil) });
+                }
                 let asked = match names {
                     true => "ext.op.walk.key",
                     false => "ext.op.walk.this",
@@ -1587,6 +1635,196 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn suspension_fault(&self, fault: Escape) -> String {
+        match fault {
+            Escape::Error(words) | Escape::Stopped(words) => words,
+            Escape::Thrown(value) => format!("Uncaught {}", value.render(self.wording())),
+            _ => self.generator_words("unsupported"),
+        }
+    }
+
+    fn generator_words(&self, suffix: &str) -> String {
+        self.table.single(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
+    }
+
+    fn make_iterator(&mut self, source: Value) -> Res {
+        if let Value::Generator(_) = source { return Ok(source); }
+        let members = self.gathered_members(&source)?;
+        Ok(Value::Generator(Rc::new(RefCell::new(Suspension {
+            frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
+            begun: false, ended: false, receiving: false, result: Value::Nil,
+            inner: None, members: Some(members.into_iter()), ready: None,
+        }))))
+    }
+
+    fn end_generator(&mut self, generator: &Rc<RefCell<Suspension>>) -> Res<()> {
+        let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
+        if let Some(Value::Generator(child)) = state.inner.take() { self.end_generator(&child)?; }
+        state.ended = true;
+        state.ready = None;
+        state.owed.clear();
+        state.found.clear();
+        state.members = None;
+        Ok(())
+    }
+
+    fn resume(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value) -> Res<Option<Value>> {
+        let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
+        if state.ended { return Ok(None); }
+        if !state.begun && !matches!(sent, Value::Nil) { return Err(self.generator_words("unstarted").into()); }
+        state.begun = true;
+        if state.ready.is_some() { return Ok(state.ready.take()); }
+        if let Some(members) = &mut state.members {
+            let next = members.next();
+            state.ended = next.is_none();
+            return Ok(next);
+        }
+        let row = self.row;
+        let outcome = self.unfold(&mut state, sent);
+        self.row = row;
+        if outcome.is_err() || matches!(outcome, Ok(None)) {
+            state.ended = true;
+            state.owed.clear();
+            state.found.clear();
+        }
+        outcome
+    }
+
+    fn unfold(&mut self, state: &mut Suspension, mut sent: Value) -> Res<Option<Value>> {
+        if state.receiving {
+            state.receiving = false;
+            state.found.push(sent.clone());
+        }
+        let frame = state.frame.clone();
+        while let Some(work) = state.owed.pop() {
+            match work {
+                Owed::Find(node) => match node {
+                    Form::OnLine(row, body) => { self.row = row; state.owed.push(Owed::Find(*body)); }
+                    Form::Write(place, body) => { state.owed.push(Owed::Store(place)); state.owed.push(Owed::Find(*body)); }
+                    Form::Apply(Callee::Prim(Prim::Seq, _), parts) => {
+                        if parts.is_empty() { state.found.push(Value::Nil); }
+                        for (at, part) in parts.into_iter().enumerate().rev() {
+                            if at > 0 { state.owed.push(Owed::Find(part)); state.owed.push(Owed::Drop); }
+                            else { state.owed.push(Owed::Find(part)); }
+                        }
+                    }
+                    Form::Apply(Callee::Prim(Prim::Suspend, _), mut parts) => {
+                        state.owed.push(Owed::HandOut);
+                        state.owed.push(Owed::Find(parts.remove(0)));
+                    }
+                    Form::Apply(Callee::Prim(Prim::Delegate, _), mut parts) => {
+                        state.owed.push(Owed::From);
+                        state.owed.push(Owed::Find(parts.remove(0)));
+                    }
+                    Form::Apply(Callee::Prim(Prim::Yield, _), mut parts) => {
+                        state.owed.push(Owed::Finish);
+                        state.owed.push(Owed::Find(if parts.is_empty() { Form::Const(Value::Nil) } else { parts.remove(0) }));
+                    }
+                    Form::Apply(Callee::Prim(Prim::Leave | Prim::Resume, _), _) => {
+                        let continuing = matches!(node, Form::Apply(Callee::Prim(Prim::Resume, _), _));
+                        let at = state.owed.iter().rposition(|w| matches!(w, Owed::Turn(..))).ok_or_else(|| self.generator_words("unsupported"))?;
+                        let Owed::Turn(_, floor) = &state.owed[at] else { unreachable!() };
+                        state.found.truncate(*floor);
+                        if continuing { state.owed.truncate(at + 1); state.found.push(Value::Nil); }
+                        else { state.owed.truncate(at); state.found.push(Value::Nil); }
+                    }
+                    Form::Apply(Callee::Prim(Prim::Choose, _), mut arms) => {
+                        let no = arms.pop().expect("else arm");
+                        let yes = arms.pop().expect("then arm");
+                        state.owed.push(Owed::Select(yes, no));
+                        state.owed.push(Owed::Find(arms.remove(0)));
+                    }
+                    Form::Apply(Callee::Prim(op @ (Prim::Both | Prim::Either), _), mut parts) => {
+                        let right = parts.pop().expect("right operand");
+                        state.owed.push(Owed::Truth(op, right));
+                        state.owed.push(Owed::Find(parts.remove(0)));
+                    }
+                    Form::Apply(Callee::Code(target), args) => {
+                        state.owed.push(Owed::Call(args.len()));
+                        for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
+                        state.owed.push(Owed::Find(*target));
+                    }
+                    Form::Apply(callee, args) => {
+                        state.owed.push(Owed::Apply(callee, args.len()));
+                        for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
+                    }
+                    Form::Cycle { after: false, .. } => state.owed.push(Owed::Test(Rc::new(node))),
+                    Form::Dyad { op, name, a, b } => {
+                        let form = |input| match input { Input::Form(f) => *f, Input::Address(a) => Form::Read(a), Input::Const(v) => Form::Const(v) };
+                        state.owed.push(Owed::Find(Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])));
+                    }
+                    other => state.found.push(self.value_of(&other, &frame)?),
+                },
+                Owed::Store(place) => self.store(&place, &frame, state.found.last().cloned().unwrap_or(Value::Nil))?,
+                Owed::Drop => { state.found.pop(); }
+                Owed::Apply(callee, count) => {
+                    let args = state.found.split_off(state.found.len() - count).into_iter().map(Form::Const).collect();
+                    state.found.push(self.value_of(&Form::Apply(callee, args), &frame)?);
+                }
+                Owed::Call(count) => {
+                    let args = state.found.split_off(state.found.len() - count).into_iter().map(Form::Const).collect();
+                    let target = state.found.pop().expect("called value");
+                    state.found.push(self.value_of(&Form::Apply(Callee::Code(Box::new(Form::Const(target))), args), &frame)?);
+                }
+                Owed::Select(yes, no) => {
+                    let test = state.found.pop().unwrap_or(Value::Nil);
+                    state.owed.push(Owed::Find(unwrapped_arm(if self.stands_true(&test) { yes } else { no })));
+                }
+                Owed::Truth(op, right) => {
+                    let left = state.found.pop().unwrap_or(Value::Nil);
+                    let holds = self.stands_true(&left);
+                    if (op == Prim::Both && !holds) || (op == Prim::Either && holds) { state.found.push(Value::Flag(holds)); }
+                    else {
+                        state.owed.push(Owed::Apply(Callee::Prim(Prim::AsTruth, Rc::from("")), 1));
+                        state.owed.push(Owed::Find(unwrapped_arm(right)));
+                    }
+                }
+                Owed::Test(cycle) => {
+                    if let Some(over) = self.past_its_time() { return Err(over); }
+                    if let Some(over) = self.past_its_room() { return Err(over); }
+                    let Form::Cycle { test, .. } = cycle.as_ref() else { unreachable!() };
+                    state.owed.push(Owed::Decide(cycle.clone()));
+                    state.owed.push(Owed::Find(*test.clone()));
+                }
+                Owed::Decide(cycle) => {
+                    let test = state.found.pop().unwrap_or(Value::Nil);
+                    let Form::Cycle { body, otherwise, .. } = cycle.as_ref() else { unreachable!() };
+                    if self.stands_true(&test) {
+                        state.owed.push(Owed::Turn(cycle.clone(), state.found.len()));
+                        state.owed.push(Owed::Find(*body.clone()));
+                    } else if let Some(arm) = otherwise { state.owed.push(Owed::Find(*arm.clone())); }
+                    else { state.found.push(Value::Nil); }
+                }
+                Owed::Turn(cycle, floor) => {
+                    state.found.truncate(floor);
+                    let Form::Cycle { step, .. } = cycle.as_ref() else { unreachable!() };
+                    state.owed.push(Owed::Test(cycle.clone()));
+                    if let Some(step) = step { state.owed.push(Owed::Drop); state.owed.push(Owed::Find(*step.clone())); }
+                }
+                Owed::HandOut => {
+                    state.receiving = true;
+                    return Ok(Some(state.found.pop().unwrap_or(Value::Nil)));
+                }
+                Owed::From => {
+                    if state.inner.is_none() {
+                        let source = state.found.pop().unwrap_or(Value::Nil);
+                        state.inner = Some(self.make_iterator(source)?);
+                        sent = Value::Nil;
+                    }
+                    let Some(Value::Generator(inner)) = state.inner.clone() else { unreachable!() };
+                    if let Some(item) = self.resume(&inner, std::mem::replace(&mut sent, Value::Nil))? {
+                        state.owed.push(Owed::From);
+                        return Ok(Some(item));
+                    }
+                    state.found.push(inner.borrow().result.clone());
+                    state.inner = None;
+                }
+                Owed::Finish => { state.result = state.found.pop().unwrap_or(Value::Nil); return Ok(None); }
+            }
+        }
+        Ok(None)
+    }
+
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
@@ -2300,6 +2538,17 @@ impl<'a> Machine<'a> {
                     }
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
+                    if let Value::Generator(generator) = subject {
+                        if self.table.spells("ext.stmt.yield.close", &called) && values.is_empty() {
+                            self.end_generator(&generator)?;
+                            return Ok(Value::Nil);
+                        }
+                        if self.table.spells("ext.stmt.yield.send", &called) && values.len() == 1 {
+                            return self.resume(&generator, values.remove(0))?.ok_or_else(|| self.generator_words("exhausted").into());
+                        }
+                        let fault = if self.table.spells("ext.stmt.yield.throw", &called) { "throw.unavailable" } else { "unsupported" };
+                        return Err(self.generator_words(fault).into());
+                    }
                     let Value::Thing(thing) = subject else {
                         return Err(format!("Cannot call '{}' on something that is not an object", called).into());
                     };
@@ -3077,6 +3326,9 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        if program.generator && self.table.flag("ext.stmt.yield.suspends") {
+            return Ok(Value::Generator(Rc::new(RefCell::new(Suspension::body(&program, frame)))));
+        }
         let memo = program.traps == Traps::Yields && self.memo_cell.map_or(false, |i| matches!(self.outermost.cells.borrow()[i], Value::Flag(true)));
         let key = memo.then(|| {
             let mut k = format!("{}(", program.ident);
@@ -3161,6 +3413,9 @@ impl<'a> Machine<'a> {
                     break Ok(v);
                 }
                 Ok(Next::Jump(p, f)) => {
+                    if p.generator && self.table.flag("ext.stmt.yield.suspends") {
+                        break Ok(Value::Generator(Rc::new(RefCell::new(Suspension::body(&p, f)))));
+                    }
                     program = p;
                     frame = f;
                     // A program holding no names of its own is a piece
@@ -4520,6 +4775,21 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::Suspend | Prim::Delegate => return Err(self.generator_words("unsupported")),
+            Prim::MakeTuple => Value::Tuple(Rc::new(v.to_vec())),
+            Prim::Following => {
+                if !(1..=2).contains(&v.len()) { return Err(self.generator_words("unsupported")); }
+                let Value::Generator(state) = &v[0] else { return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().into()); };
+                match self.resume(state, Value::Nil).map_err(|fault| self.suspension_fault(fault))? {
+                    Some(item) => item,
+                    None => v.get(1).cloned().ok_or_else(|| self.generator_words("exhausted"))?,
+                }
+            }
+            Prim::Iterator => { n(1)?; self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? }
+            Prim::Tupled => {
+                if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
+                else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
+            }
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -4987,10 +5257,15 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
+    fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
-            Value::Vector(values) => values.to_vec(),
+            Value::Generator(state) => {
+                let mut members = Vec::new();
+                while let Some(item) = self.resume(state, Value::Nil).map_err(|fault| self.suspension_fault(fault))? { members.push(item); }
+                members
+            }
+            Value::Tuple(values) | Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Shared(held) => return self.gathered_members(&held.borrow()),
             _ => return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Cannot gather members from this value").to_string()),
@@ -5647,5 +5922,12 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
     match number_spelled_in(&Value::text(&text[..end])) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+fn unwrapped_arm(form: Form) -> Form {
+    match form {
+        Form::Const(Value::Routine(program)) if program.frameless => program.body.clone(),
+        other => other,
     }
 }

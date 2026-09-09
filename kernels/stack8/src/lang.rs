@@ -365,6 +365,15 @@ pub struct Lang {
     pub with_as_words: Vec<String>,
     pub yield_words: Vec<String>,
     pub yield_from_words: Vec<String>,
+    pub yield_suspends: bool,
+    pub yield_exhausted: Vec<String>,
+    pub yield_send: Vec<String>,
+    pub yield_close: Vec<String>,
+    pub yield_throw: Vec<String>,
+    pub yield_unstarted: Vec<String>,
+    pub yield_busy: Vec<String>,
+    pub yield_unsupported: Vec<String>,
+    pub yield_throw_unavailable: Vec<String>,
     pub yield_unrun: Vec<String>,
     pub scope_unready: Vec<String>,
     pub global_words: Vec<String>,
@@ -753,7 +762,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
+w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | b ext.stmt.yield.suspends | w ext.stmt.yield.exhausted | w ext.stmt.yield.send | w ext.stmt.yield.close | w ext.stmt.yield.throw | w ext.stmt.yield.unstarted | w ext.stmt.yield.busy | w ext.stmt.yield.unsupported | w ext.stmt.yield.throw.unavailable | w ext.builtin.next | w ext.builtin.iter | w ext.builtin.tuple | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
@@ -1235,7 +1244,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
-            ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
+            ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.next", Builtin::Next), ("ext.builtin.iter", Builtin::Iter), ("ext.builtin.tuple", Builtin::Tuple), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
@@ -1532,6 +1541,15 @@ impl Lang {
             with_as_words: r.strings("ext.stmt.with.as")?,
             yield_words: r.strings("ext.stmt.yield")?,
             yield_from_words: r.strings("ext.stmt.yield.from")?,
+            yield_suspends: r.flag("ext.stmt.yield.suspends")?,
+            yield_exhausted: r.strings("ext.stmt.yield.exhausted")?,
+            yield_send: r.strings("ext.stmt.yield.send")?,
+            yield_close: r.strings("ext.stmt.yield.close")?,
+            yield_throw: r.strings("ext.stmt.yield.throw")?,
+            yield_unstarted: r.strings("ext.stmt.yield.unstarted")?,
+            yield_busy: r.strings("ext.stmt.yield.busy")?,
+            yield_unsupported: r.strings("ext.stmt.yield.unsupported")?,
+            yield_throw_unavailable: r.strings("ext.stmt.yield.throw.unavailable")?,
             yield_unrun: r.strings("ext.stmt.yield.unrun")?,
             scope_unready: r.strings("ext.system.scope.unready")?,
             global_words: r.strings("ext.stmt.global")?,

@@ -70,6 +70,9 @@ pub struct Cell {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    Suspend,
+    Delegate,
+    MakeTuple,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -315,6 +318,9 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Next,
+    Iter,
+    Tuple,
     Sum,
     List,
     Any,
@@ -581,6 +587,7 @@ pub enum Instr {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub generator: bool,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.

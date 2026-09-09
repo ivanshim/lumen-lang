@@ -138,6 +138,7 @@ pub struct Builder<'a> {
     tells_place: bool,
     generator_seen: bool,
     reading_yield: bool,
+    source_before: Option<(usize, usize, String)>,
     unsupported_place: bool,
     iteration_binding: Option<(String, usize)>,
     outside_lambda: Vec<String>,
@@ -249,6 +250,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
     let mut r = Builder { outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false,
+        source_before: None,
         unsupported_place: false,
         iteration_binding: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
@@ -320,7 +322,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { generator: false, gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -936,8 +938,9 @@ impl<'a> Builder<'a> {
         let enclosing_yield = self.generator_seen;
         if holds == Holds::Every { self.generator_seen = false; }
         let mut body = body(self)?;
+        let generator = holds == Holds::Every && self.generator_seen && self.table.flag("ext.stmt.yield.suspends");
         if holds == Holds::Every {
-            if self.generator_seen {
+            if self.generator_seen && !generator {
                 body = prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.yield.unrun").unwrap_or_default()))]);
             }
             self.generator_seen = enclosing_yield;
@@ -945,7 +948,7 @@ impl<'a> Builder<'a> {
         let scope = self.layers.pop().unwrap();
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(constant(Value::Routine(Rc::new(Routine { gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { generator, gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -962,7 +965,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { generator: false, gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -4386,15 +4389,22 @@ impl<'a> Builder<'a> {
             if from { self.advance(); }
             let at_end = |r: &Self| r.on_stmt_end() || r.exhausted() || r.look().shape == Shape::Close
                 || r.on_any("syntax.group.close") || r.on_any("syntax.array.close");
+            let mut values = Vec::new();
+            let mut comma = false;
             if from || !at_end(self) {
                 loop {
-                    let _ = self.expr(0)?;
+                    values.push(self.expr(0)?);
                     if from || !self.on_any("syntax.call.separator") { break; }
+                    comma = true;
                     self.advance();
                     if at_end(self) { break; }
                 }
             }
             self.reading_yield = previous_yield;
+            if table.flag("ext.stmt.yield.suspends") {
+                let value = if comma { prim_call(Prim::MakeTuple, values) } else { values.pop().unwrap_or_else(|| constant(Value::Nil)) };
+                return Ok(prim_call(if from { Prim::Delegate } else { Prim::Suspend }, vec![value]));
+            }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
         if table.spells("ext.literal.ellipsis", &t.lexeme) {
@@ -4633,7 +4643,7 @@ impl<'a> Builder<'a> {
                         value
                     } else {
                         match self.ahead_in_item("ext.op.comprehension.for") {
-                        Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
+                        Some(at) => self.generator_comprehension(at, table.single("syntax.group.close").unwrap())?,
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
                                 else if self.on_any("syntax.group.close") { self.scope_unrun("ext.system.scope.unready") }
@@ -5403,6 +5413,30 @@ impl<'a> Builder<'a> {
         Ok(value)
     }
 
+    fn generator_comprehension(&mut self, clause: usize, end: &str) -> Res<Form> {
+        if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
+        let head = self.pos;
+        self.pos = clause;
+        while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
+        self.advance();
+        let begins = self.pos;
+        let source = self.expr(1)?;
+        let ends = self.pos;
+        let parameter = self.gather_name("first_source");
+        let previous = self.source_before.replace((begins, ends, parameter.clone()));
+        let routine = self.routine("<generator>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+            r.pos = clause;
+            let before = r.gather_names.len();
+            let body = r.gather_tail(head, "", false)?;
+            r.gather_names.truncate(before);
+            r.need_sign(end, "after a generator expression")?;
+            r.generator_seen = true;
+            Ok(body)
+        })?;
+        self.source_before = previous;
+        Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(Prim::Walked, vec![source])]))
+    }
+
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
         let expression_at = self.pos;
         self.pos = first_for;
@@ -5447,6 +5481,7 @@ impl<'a> Builder<'a> {
             }
             if !self.on_any("ext.op.comprehension.for") && !self.on_any("ext.op.comprehension.async") { return Err("Expected a comprehension clause after its expression".into()); }
             self.pos = after_clauses;
+            if answer.is_empty() { return Ok(prim_call(if spread { Prim::Delegate } else { Prim::Suspend }, vec![term])); }
             let so_far = self.read(answer);
             let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
             return Ok(self.write(answer, enlarged));
@@ -5473,17 +5508,22 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
         self.advance();
         let unavailable = targets.iter().any(Option::is_none);
-        let source = self.expr(1)?;
+        let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
+            Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
+            None => self.expr(1)?,
+        };
+        let walks = self.table.flag("ext.stmt.yield.suspends");
         let source_name = self.gather_name("gather_source");
-        let hold = self.write(&source_name, prim_call(Prim::Iterated, vec![source]));
+        let hold = self.write(&source_name, prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![source]));
         let cursor = self.gather_name("gather_cursor");
         let begin = self.write(&cursor, constant(Value::Small(0)));
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let test = prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]);
+        let test = if walks { prim_call(Prim::MoreYet, vec![bag, index]) }
+            else { prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]) };
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let mut item = prim_call(Prim::At, vec![bag, index]);
+        let mut item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
         if taken_apart { item = prim_call(Prim::CheckUnpack(targets.len()), vec![item]); }
         let item_name = self.gather_name("gather_item");
         let mut body = vec![self.write(&item_name, item)];
@@ -5584,7 +5624,7 @@ impl<'a> Builder<'a> {
     fn args(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
         if let Some(at) = self.ahead_in_item("ext.op.comprehension.for") {
             let end = self.table.single(close_key).unwrap().to_string();
-            return Ok(vec![self.gather_comprehension(at, &end, false)?]);
+            return Ok(vec![self.generator_comprehension(at, &end)?]);
         }
         let close = self.table.single(close_key).unwrap().to_string();
         let sep = self.table.single(sep_key).map(str::to_string);
@@ -6061,7 +6101,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { generator: false, gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }

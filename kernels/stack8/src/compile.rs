@@ -122,6 +122,7 @@ pub struct Compiler<'a> {
     awkward_place: bool,
     for_binding: Option<(String, usize)>,
     comprehension_names: Vec<(String, String)>,
+    generator_source: Option<(usize, usize, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -269,7 +270,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), generator_source: None, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -338,7 +339,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -853,13 +854,13 @@ impl<'a> Compiler<'a> {
         }
         let unit = self.pieces.pop().expect("the unit");
         let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        if unit.generator {
+        if unit.generator && !self.lang.yield_suspends {
             instrs = vec![Instr::Const(Value::text(self.lang.yield_unrun.first().map_or("", String::as_str))),
                 Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { generator: false, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -4681,18 +4682,28 @@ impl<'a> Compiler<'a> {
             let ended = |r: &Self| r.on_sep() || r.exhausted() || r.look().shape == Shape::Close
                 || r.lang.grouping.as_ref().map_or(false, |g| r.at_symbol(&g.close))
                 || r.lang.array_brackets.as_ref().map_or(false, |g| r.at_symbol(&g.close));
+            let mut count = 0;
+            let mut tuple = false;
             if delegated || !ended(self) {
                 loop {
                     self.expr(0)?;
+                    count += 1;
                     if delegated || !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    tuple = true;
                     self.take();
                     if ended(self) { break; }
                 }
             }
             self.yield_operand = outer_operand;
-            self.piece().instrs.truncate(begin);
-            self.constant(Value::text(lang.yield_unrun.first().map_or("", String::as_str)));
-            self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            if lang.yield_suspends {
+                if tuple { self.act(Action::MakeTuple, count); }
+                else if count == 0 { self.constant(Value::Null); }
+                self.act(if delegated { Action::Delegate } else { Action::Suspend }, 1);
+            } else {
+                self.piece().instrs.truncate(begin);
+                self.constant(Value::text(lang.yield_unrun.first().map_or("", String::as_str)));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            }
             return Ok(());
         }
         if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
@@ -4979,7 +4990,7 @@ impl<'a> Compiler<'a> {
                             self.want_sign(&group.close, "to close a group")?;
                         } else {
                         if let Some(clause) = self.comprehension_ahead() {
-                            self.comprehension(&group, clause, false)?;
+                            self.lazy_comprehension(&group, clause)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
                                 self.scope_fault(&lang.scope_unready.clone());
@@ -5936,6 +5947,34 @@ impl<'a> Compiler<'a> {
         self.want_sign(&pair.close, "after a literal")
     }
 
+    fn lazy_comprehension(&mut self, pair: &Brackets, clause: usize) -> Res<()> {
+        if !self.lang.yield_suspends { return self.comprehension(pair, clause, false); }
+        let head = self.pos;
+        self.pos = clause;
+        while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }
+        self.take();
+        let source_at = self.pos;
+        self.expr(1)?;
+        let source_end = self.pos;
+        self.act(Action::WalkFrom, 1);
+        let seed = self.gensym("generator_source");
+        let name = self.gensym("generator");
+        let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
+        let program = self.routine(&name, vec![seed], 1, true, |r| {
+            r.pos = clause;
+            let names = r.comprehension_names.len();
+            r.comprehension_clause(head, "", false)?;
+            r.comprehension_names.truncate(names);
+            r.want_sign(&pair.close, "after a generator expression")?;
+            r.piece().generator = true;
+            Ok(())
+        })?;
+        self.generator_source = prior;
+        self.constant(Value::Routine(program));
+        self.act(Action::Invoke(Rc::from(name)), 2);
+        Ok(())
+    }
+
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
         let head = self.pos;
         let bindings = self.comprehension_names.len();
@@ -5993,22 +6032,31 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::text(&said));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
             }
-            self.expr(1)?;
-            self.act(Action::ComprehensionItems, 1);
+            if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
+                self.read(&seed);
+                self.pos = end;
+            } else { self.expr(1)?; }
+            self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
             let at = self.gensym("comprehension_place");
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
-            self.read(&at);
-            self.read(&bag);
-            self.act(Action::Extent, 1);
-            self.act(Action::Lt, 2);
+            if self.lang.yield_suspends {
+                self.read(&bag);
+                self.read(&at);
+                self.act(Action::WalkMore, 2);
+            } else {
+                self.read(&at);
+                self.read(&bag);
+                self.act(Action::Extent, 1);
+                self.act(Action::Lt, 2);
+            }
             let done = self.skip();
             self.read(&bag);
             self.read(&at);
-            self.act(Action::At, 2);
+            self.act(if self.lang.yield_suspends { Action::WalkThis } else { Action::At }, 2);
             let item = self.gensym("comprehension_item");
             if unpack { self.act(Action::UnpackCount(names.len()), 1); }
             self.write(&item);
@@ -6039,7 +6087,7 @@ impl<'a> Compiler<'a> {
         } else {
             let tail = self.pos;
             self.pos = head;
-            self.read(result);
+            if !result.is_empty() { self.read(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.take(); }
             self.expr(0)?;
@@ -6050,8 +6098,13 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Tie, 2);
             }
             if !self.on_any(&self.lang.comprehension_for) && !self.on_any(&self.lang.comprehension_async) { return Err("Expected a comprehension clause after its expression".to_string()); }
-            self.act(Action::GatherItem { map, spread }, 2);
-            self.write(result);
+            if result.is_empty() {
+                self.act(if spread { Action::Delegate } else { Action::Suspend }, 1);
+                self.put_away();
+            } else {
+                self.act(Action::GatherItem { map, spread }, 2);
+                self.write(result);
+            }
             self.pos = tail;
         }
         Ok(())
@@ -6131,7 +6184,7 @@ impl<'a> Compiler<'a> {
     /// argument is dropped. Returns how many.
     fn arguments(&mut self, pair: &Brackets) -> Res<usize> {
         if let Some(clause) = self.comprehension_ahead() {
-            self.comprehension(pair, clause, false)?;
+            self.lazy_comprehension(pair, clause)?;
             return Ok(1);
         }
         let mut count = 0;

@@ -90,6 +90,32 @@ impl Real {
     }
 }
 
+/// A walk keeps its own cells and the part of the stack still wanted.
+#[derive(Debug)]
+pub struct Generator {
+    pub program: Option<Rc<Routine>>,
+    pub frame: Vec<Value>,
+    pub stack: Vec<Value>,
+    pub pc: usize,
+    pub started: bool,
+    pub closed: bool,
+    pub waiting: bool,
+    pub handed: Option<Value>,
+    pub returned: Value,
+    pub delegate: Option<Value>,
+    pub sent: Value,
+    pub items: Vec<Value>,
+    pub current: Option<Value>,
+}
+
+impl Generator {
+    pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
+        Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
+            closed: false, waiting: false, handed: None, returned: Value::Null,
+            delegate: None, sent: Value::Null, current: None }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Small(i64),
@@ -101,6 +127,8 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    Tuple(Rc<Vec<Value>>),
+    Generator(Rc<RefCell<Generator>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -206,7 +234,7 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Generator(_) | Value::Tuple(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -226,10 +254,10 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Generator(_) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -247,6 +275,8 @@ impl Value {
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
+            (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
@@ -395,6 +425,8 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
+            Value::Generator(_) => "<generator>".to_string(),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Routine(p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
