@@ -519,15 +519,14 @@ only. The extension labels so far, all from PHP:
 - `ext.syntax.set`: a switch; a brace literal without pairs is read as
   an array, keeping order and repeated items. An empty brace literal
   remains a map. Line ends within these braces are space. This stage
-  does not provide a distinct set value.
+  does not provide a distinct set value. These arrays and maps keep
+  the kernel's accustomed printed form: `[1, hello]` and `[a => 1]`.
 - `ext.syntax.array.spread` and `ext.syntax.map.spread`: a mark before
   a literal item takes all its members; the former takes array items,
   letters of text or map keys, the latter takes map pairs, later keys
   replacing earlier ones. `ext.syntax.collection.unwalkable` gives
   the words for a value having no such members, and
   `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
-- `ext.system.collection.literal`: a switch; printed collections use
-  literal brackets and pairs, with text quoted inside them.
 - `ext.builtin.range.value`: a switch; a call of the range builtin
   yields an eager array from one, two or three whole-number bounds,
   the last a nonzero step. Without it the range remains loop syntax.
@@ -1821,7 +1820,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.system.collection.literal` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
 | `ext.system.complaint.markup.kind` | - | - | - | - | `<br />` `<b>` `</b>:  ` | - | - | - | - | - |

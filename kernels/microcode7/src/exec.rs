@@ -4546,43 +4546,7 @@ impl<'a> Machine<'a> {
         })
     }
 
-    /// Text within a collection keeps its quotes; text outside speaks
-    /// plainly. Maps use the marks by which they were written.
-    fn collection_text(&self, held: &Value, quoted: bool) -> String {
-        let joined = |parts: Vec<String>| parts.join(", ");
-        match held {
-            Value::Dict(entries) => {
-                let parts = entries.iter().map(|(key, item)| {
-                    [self.collection_text(key, true), self.collection_text(item, true)].join(": ")
-                }).collect();
-                format!("{{{}}}", joined(parts))
-            }
-            Value::Vector(values) => {
-                format!("[{}]", joined(values.iter().map(|item| self.collection_text(item, true)).collect()))
-            }
-            Value::Shared(cell) => self.collection_text(&cell.borrow(), quoted),
-            Value::Text(s) if quoted => {
-                let mark = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
-                let mut text = mark.to_string();
-                for letter in s.chars() {
-                    if letter == mark || letter == '\\' { text.push('\\'); text.push(letter); }
-                    else if letter == '\n' { text.push_str("\\n"); }
-                    else if letter == '\t' { text.push_str("\\t"); }
-                    else if letter == '\r' { text.push_str("\\r"); }
-                    else if letter.is_control() { text.push_str(&format!("\\x{:02x}", letter as u32)); }
-                    else { text.push(letter); }
-                }
-                text.push(mark);
-                text
-            }
-            _ => held.render(self.wording()),
-        }
-    }
-
     fn show(&self, v: &[Value]) -> String {
-        if self.table.flag("ext.system.collection.literal") {
-            return v.iter().map(|item| self.collection_text(item, false)).collect::<Vec<_>>().join(" ");
-        }
         let w = self.wording();
         let holes = self.table.strings("builtin.print.placeholder");
         let find = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|p| (p, h.len()))).min();

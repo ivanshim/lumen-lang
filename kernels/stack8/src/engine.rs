@@ -3470,8 +3470,6 @@ impl<'a> Engine<'a> {
 
     // ---------- builtins ----------
 
-    /// print and write: the values joined by spaces, or a template holding
-    /// the definition's placeholders filled from the rest.
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
@@ -3483,35 +3481,9 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn literal_shown(&self, value: &Value, inside: bool) -> String {
-        match value {
-            Value::Array(items) => format!("[{}]", items.iter().map(|v| self.literal_shown(v, true)).collect::<Vec<_>>().join(", ")),
-            Value::Map(pairs) => format!("{{{}}}", pairs.iter().map(|(k, v)| format!("{}: {}", self.literal_shown(k, true), self.literal_shown(v, true))).collect::<Vec<_>>().join(", ")),
-            Value::Text(text) if inside => {
-                let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
-                let mut out = String::new();
-                out.push(quote);
-                for c in text.chars() {
-                    match c {
-                        '\n' => out.push_str("\\n"), '\r' => out.push_str("\\r"), '\t' => out.push_str("\\t"),
-                        '\\' => out.push_str("\\\\"),
-                        c if c == quote => { out.push('\\'); out.push(c); }
-                        c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
-                        c => out.push(c),
-                    }
-                }
-                out.push(quote);
-                out
-            }
-            Value::Bond(cell) => self.literal_shown(&cell.borrow(), inside),
-            _ => value.display(&self.wording()),
-        }
-    }
-
+    /// print and write: the values joined by spaces, or a template holding
+    /// the definition's placeholders filled from the rest.
     fn render(&self, values: &[Value]) -> String {
-        if self.lang.collection_literal {
-            return values.iter().map(|v| self.literal_shown(v, false)).collect::<Vec<_>>().join(" ");
-        }
         let sp = self.wording();
         let holes = &self.lang.holes;
         let hole_in = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|at| (at, h.len()))).min();
