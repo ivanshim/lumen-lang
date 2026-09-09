@@ -1155,6 +1155,10 @@ only. The extension labels so far, all from PHP:
   lines within their call brackets; a routine's body may also be one
   statement on the line of its header. Without this switch labels retain their
   former meaning, and defaults are worked out when the call begins.
+- `ext.op.eq.maps.unordered`: map equality compares keys and values without
+  requiring the same insertion order, including maps nested in arrays or
+  other maps. Arrays themselves remain ordered, and map iteration keeps
+  insertion order.
 - `ext.op.bit.or.maps`: admit two map operands to the bit-or spelling,
   merging their pairs with right-hand values winning. Keys keep their first
   insertion order. Integer operands retain bit-or behavior. Compound writes
@@ -1869,6 +1873,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.comprehension.unpack.amiss` | - | - | `ValueError: comprehension target has the wrong number of values` | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
+| `ext.op.eq.maps.unordered` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | - | - | `===` | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |

@@ -3063,6 +3063,18 @@ impl<'a> Engine<'a> {
         number_spelled(s).map(|n| self.at_real_width(n))
     }
 
+    fn mapping_equality(&self, left: &Value, right: &Value) -> bool {
+        match (left, right) {
+            (Value::Map(a), Value::Map(b)) => a.len() == b.len() && a.iter().all(|(key, value)| {
+                b.iter().find(|(other, _)| self.mapping_equality(key, other))
+                    .map_or(false, |(_, other)| self.mapping_equality(value, other))
+            }),
+            (Value::Array(a), Value::Array(b)) => a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|(x, y)| self.mapping_equality(x, y)),
+            _ => left.equals(right),
+        }
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3142,6 +3154,9 @@ impl<'a> Engine<'a> {
                     _ => a.equals(b),
                 };
                 Value::Flag(matches!(op, Action::Eq) == alike)
+            }
+            Action::Eq | Action::Ne if self.lang.unordered_maps => {
+                Value::Flag(self.mapping_equality(a, b) == matches!(op, Action::Eq))
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),

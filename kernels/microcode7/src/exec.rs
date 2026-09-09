@@ -3160,6 +3160,25 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn equal_contents(&self, one: &Value, other: &Value) -> bool {
+        if let (Value::Dict(entries), Value::Dict(against)) = (one, other) {
+            if entries.len() != against.len() { return false; }
+            for (key, value) in entries.iter() {
+                let found = against.iter().find(|entry| self.equal_contents(key, &entry.0));
+                match found {
+                    Some(entry) if self.equal_contents(value, &entry.1) => (),
+                    _ => return false,
+                }
+            }
+            return true;
+        }
+        if let (Value::Vector(values), Value::Vector(against)) = (one, other) {
+            return values.len() == against.len() && (0..values.len())
+                .all(|i| self.equal_contents(&values[i], &against[i]));
+        }
+        one.equals(other)
+    }
+
     fn dictionary(&self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
         if positional.len() > 1 {
             return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or("A map takes at most one source").to_string());
@@ -4175,6 +4194,9 @@ impl<'a> Machine<'a> {
                     _ => left.equals(right),
                 };
                 Value::Flag((op == Prim::Eq) == alike)
+            }
+            Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
+                Value::Flag(self.equal_contents(&v[0], &v[1]) != (op == Prim::Ne))
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),

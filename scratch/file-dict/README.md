@@ -90,3 +90,8 @@ suite does when setting up related mappings. The source is evaluated once
 and its length checked before any target changes; swaps therefore read
 both old values. Nested, starred and indexed assignment targets are not
 covered by this bare-name path.
+
+`16.py` compares maps built in different insertion orders, including
+nested maps and maps inside arrays. The dictionary comparisons in the
+reference suite require key/value equality, while iteration must retain
+the original insertion order. Array element order still matters.

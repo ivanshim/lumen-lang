@@ -357,6 +357,7 @@
   "ext.op.comprehension.target.unavailable": ["NotImplementedError: indexed comprehension targets are not supported"],
   "ext.op.comprehension.unpack.amiss": ["ValueError: comprehension target has the wrong number of values"],
   "ext.op.tuple": [","],
+  "ext.op.eq.maps.unordered": true,
   "ext.op.index.slice": [":"],
   "ext.op.index.slice.assign": ["can only assign an iterable"],
   "ext.op.index.slice.bounds": ["slice indices must be integers or None or have an __index__ method"],
