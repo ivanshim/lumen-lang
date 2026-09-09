@@ -1367,7 +1367,7 @@ impl<'a> Builder<'a> {
         Ok(sequence(forms))
     }
 
-    /// `global a, b;`: the names mean the globals inside this function.
+    /// The items are found and bound in order, then the body is run.
     fn with_block(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
@@ -1378,8 +1378,10 @@ impl<'a> Builder<'a> {
             let mut distance = 1;
             while self.glance(distance).shape != Shape::Finish {
                 let token = self.glance(distance);
-                if token.lexeme == open { nesting += 1; }
-                if token.lexeme == close { nesting -= 1; }
+                if token.shape == Shape::Sign {
+                    if token.lexeme == open { nesting += 1; }
+                    if token.lexeme == close { nesting -= 1; }
+                }
                 if nesting == 0 {
                     enclosed = table.spells("block.intro", &self.glance(distance + 1).lexeme);
                     break;
@@ -1417,8 +1419,8 @@ impl<'a> Builder<'a> {
         loop {
             let token = self.glance(offset);
             if token.shape == Shape::Finish { break; }
-            let opens = self.table.spells("syntax.group.open", &token.lexeme) || self.table.spells("syntax.array.open", &token.lexeme);
-            let closes = self.table.spells("syntax.group.close", &token.lexeme) || self.table.spells("syntax.array.close", &token.lexeme);
+            let opens = token.shape == Shape::Sign && (self.table.spells("syntax.group.open", &token.lexeme) || self.table.spells("syntax.array.open", &token.lexeme));
+            let closes = token.shape == Shape::Sign && (self.table.spells("syntax.group.close", &token.lexeme) || self.table.spells("syntax.array.close", &token.lexeme));
             if nesting == 0 {
                 if (bracketed && closes) || (!bracketed && self.table.spells("stmt.for.in", &token.lexeme)) { break; }
                 if self.table.spells("syntax.call.separator", &token.lexeme) {
@@ -4020,7 +4022,10 @@ impl<'a> Builder<'a> {
             items.push(if self.unsupported_place {
                 prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.del.unrun").unwrap_or_default()))])
             } else { match named {
-                Form::Read(slot) => Form::Forget(slot),
+                Form::Read(slot) => {
+                    if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
+                    else { Form::Forget(slot) }
+                },
                 Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                     let at = args.pop().unwrap();
                     match args.pop().unwrap() {

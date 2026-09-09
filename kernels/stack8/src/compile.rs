@@ -1058,8 +1058,8 @@ impl<'a> Compiler<'a> {
         self.simple_stmt()
     }
 
-    /// A statement without a keyword: a step, a bare call, an
-    /// assignment or an expression.
+    /// Each value is found before its target is filled; the body
+    /// follows once all the bindings have been made.
     fn with_stmt(&mut self) -> Res<()> {
         self.take();
         let lang = self.lang;
@@ -1111,10 +1111,10 @@ impl<'a> Compiler<'a> {
         loop {
             let t = self.look_ahead(ahead);
             if t.shape == Shape::Finish { break; }
-            let opening = self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.open)
-                || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.open);
-            let closing = self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.close)
-                || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.close);
+            let opening = t.shape == Shape::Sign && (self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.open)
+                || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.open));
+            let closing = t.shape == Shape::Sign && (self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.close)
+                || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.close));
             if depth == 0 {
                 if (enclosed && closing) || (!enclosed && Lang::spells(&self.lang.in_words, &t.lexeme)) { break; }
                 if self.lang.calling.as_ref().and_then(|p| p.between.as_ref()).map_or(false, |s| t.lexeme == *s) {
@@ -1219,10 +1219,11 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as a binding target")?;
         self.read(&name);
         self.called_on_value()?;
-        self.keyed.clear();
+        let mut keyed = Vec::new();
         loop {
             if self.on_any(&self.lang.pipe_words) {
                 self.take();
+                keyed.clear();
                 let member = self.want_name("after the member mark")?;
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
                 self.called_on_value()?;
@@ -1254,10 +1255,11 @@ impl<'a> Compiler<'a> {
                     self.piece().instrs.truncate(at);
                     self.constant(Value::Small(0));
                 }
-                self.keyed.push(at);
+                keyed.push(at);
                 self.act(Action::At, 2);
             } else { break; }
         }
+        self.keyed = keyed;
         Ok(())
     }
 
@@ -4347,7 +4349,8 @@ impl<'a> Compiler<'a> {
             if targets {
                 let pair = self.lang.grouping.clone().filter(|p| self.at_symbol(&p.open))
                     .or_else(|| self.lang.array_brackets.clone().filter(|p| self.at_symbol(&p.open)));
-                if let Some(pair) = pair {
+                if let Some(mut pair) = pair {
+                    pair.between = call.between.clone();
                     self.take();
                     self.forget_targets(&pair, true, true)?;
                     self.discard();
@@ -4364,8 +4367,22 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             } else { match named.as_slice() {
                 [Instr::Read(slot)] => {
+                    if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
                     let held = self.cell_to_write(&slot.ident.to_string());
                     self.put(Instr::Forget(held));
+                }
+                [.., Instr::Act(Action::At, 2)] if targets => {
+                    let (keys, starts) = keys_apart(&named, from, &self.keyed);
+                    let Some(last) = keys.len().checked_sub(1) else {
+                        return Err("Only a place in a named array has a cell to share".to_string());
+                    };
+                    let holder = named[..starts[last] - from].to_vec();
+                    self.keyed = starts[..last].to_vec();
+                    self.footing_cell(&holder, from)?;
+                    let at = self.mark();
+                    for word in relocated(keys[last].clone(), at as i64 - starts[last] as i64) { self.put(word); }
+                    self.act(Action::ForgetWithin, 2);
+                    self.discard();
                 }
                 // `unset($o->p[k])`, `unset(C::$a[k])`: what holds the
                 // place is asked for its own cell, and the place taken
