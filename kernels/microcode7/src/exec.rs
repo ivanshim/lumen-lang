@@ -1097,9 +1097,6 @@ impl<'a> Machine<'a> {
             flag_counted: self.table.flag("system.flag.counts"),
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
-            infinity: self.table.single("ext.builtin.to_real.infinity"),
-            not_number: self.table.single("ext.builtin.to_real.nan"),
-            shortest: self.table.flag("ext.system.real.shortest"),
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",

@@ -256,7 +256,7 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.to_real.infinity` and `.nan`: lists of words the real
   reader takes without regard to case, with a sign before them if given.
   They stand for the number past all finite numbers and the value no
-  number equals. The first spelling is how each is written out.
+  number equals. Output retains the kernels' existing `INF` and `NAN` spelling.
 - `ext.builtin.to_real.text`: a switch admitting text to the real reader,
   including a decimal point and a power of ten. An empty call gives
   nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
@@ -589,10 +589,12 @@ only. The extension labels so far, all from PHP:
 - `ext.op.quot.floor`: a switch making quotient round downward and
   remainder take the divisor's sign. Real operands use binary arithmetic,
   retaining signed zero and the quotient correction near an integer.
-- `ext.system.real.shortest`: a switch printing the shortest decimal that
-  reads back to the same binary real, with a decimal point for whole reals
-  and a signed, two-digit exponent outside powers -4 through 15.
-  Python sets `ext.system.real.bits` to 64 and enables this spelling.
+  Python retains 64-bit real arithmetic but uses the existing kernel
+  rendering, not CPython's shortest round-trip spelling: whole reals
+  omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
+  For example, the kernels show `0.30000000000000`, `10000000000000000`,
+  `1`, `0.00001000000000`, `-0`, `INF` and `NAN` where CPython shows
+  `0.30000000000000004`, `1e+16`, `1.0`, `1e-05`, `-0.0`, `inf` and `nan`.
 - `ext.builtin.round`: nearest rounding with ties to even. Omitting the
   places, or passing null, returns an integer; explicit places retain the
   input's numeric kind. `ext.builtin.round.digits` names the places keyword.
@@ -2337,7 +2339,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
-| `ext.system.real.shortest` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |

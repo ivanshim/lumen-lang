@@ -166,9 +166,6 @@ pub struct Names<'a> {
     /// Where a language holds its reals to a width of bits, how many
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
-    pub infinity: Option<&'a str>,
-    pub not_number: Option<&'a str>,
-    pub shortest: bool,
     pub real_figures: Option<usize>,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
@@ -338,21 +335,11 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
-            Value::Frac(e) if e.past_numbers() => {
-                match (w.infinity, w.not_number) {
-                    (Some(infinite), Some(nan)) => {
-                        if e.answers_none() { nan.to_string() }
-                        else if e.above < BigInt::zero() { format!("-{infinite}") }
-                        else { infinite.to_string() }
-                    }
-                    _ => e.written().to_string(),
-                }
-            }
+            Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
-            Value::Frac(e) if !w.shortest && e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
+            Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
             // A language whose reals are numbers of bits writes one to
             // its own count of figures.
-            Value::Frac(e) if w.shortest => brief_decimal(if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) }),
             Value::Frac(e) if w.real_figures.is_some() => spelled_out(nearest_binary(&e.above, &e.beneath), figures_asked(false).unwrap_or(w.real_figures)),
             other => other.bare(),
         }
@@ -841,19 +828,4 @@ pub fn spelled_out(x: f64, figures: Option<usize>) -> String {
 /// one, else to the fewest figures that read back as the number itself.
 pub fn figured(x: f64, figures: Option<usize>) -> String {
     spelled_out(x, figures.or_else(|| figures_asked(true).flatten()))
-}
-
-/// Preserve a decimal point for whole reals; very small or large ones
-/// carry the shortest mantissa and a signed exponent padded to two places.
-fn brief_decimal(number: f64) -> String {
-    let parts = format!("{:e}", number);
-    let boundary = parts.find('e').expect("scientific notation");
-    let power = parts[boundary + 1..].parse::<i32>().expect("integer power");
-    match power {
-        -4..=15 => {
-            let text = format!("{}", number);
-            if text.contains('.') { text } else { text + ".0" }
-        }
-        _ => format!("{}e{}{:02}", &parts[..boundary], if power < 0 { '-' } else { '+' }, power.abs()),
-    }
 }

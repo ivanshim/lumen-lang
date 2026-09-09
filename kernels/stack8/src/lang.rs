@@ -100,7 +100,6 @@ pub struct Lang {
     /// are binary numbers rather than exact ones, and how many
     /// significant digits one shows when simply written out.
     pub quotient_floor: bool,
-    pub real_shortest: bool,
     pub round_digits: Vec<String>,
     pub arithmetic_flags: bool,
     pub infinity_words: Vec<String>,
@@ -794,7 +793,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-b ext.op.quot.floor | b ext.system.real.shortest | w ext.builtin.round | w ext.builtin.round.digits | b ext.op.arithmetic.flags
+b ext.op.quot.floor | w ext.builtin.round | w ext.builtin.round.digits | b ext.op.arithmetic.flags
 w ext.builtin.to_real.infinity | w ext.builtin.to_real.nan
 b ext.lexical.number.point_open | b ext.op.pow.real_exponent | w ext.op.pow.overflow | w ext.op.pow.nonreal | w ext.op.pow.zero | w ext.op.div.zero | w ext.op.quot.zero | w ext.op.quot.real_zero | w ext.op.rem.real_zero | w ext.builtin.to_int.text.detail
 b ext.op.bit.unbounded | w ext.op.bit.integer | w ext.op.bit.beyond
@@ -1405,7 +1404,6 @@ impl Lang {
             digit_separators: r.letters("ext.lexical.number.separator")?,
             integer_bits: r.count("ext.system.integer.bits")?,
             quotient_floor: r.flag("ext.op.quot.floor")?,
-            real_shortest: r.flag("ext.system.real.shortest")?,
             round_digits: r.strings("ext.builtin.round.digits")?,
             arithmetic_flags: r.flag("ext.op.arithmetic.flags")?,
             infinity_words: r.strings("ext.builtin.to_real.infinity")?,

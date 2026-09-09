@@ -853,7 +853,6 @@
   "ext.system.untrue.empty_array": true,
   "ext.op.quot.floor": true,
   "ext.system.real.bits": 64,
-  "ext.system.real.shortest": true,
   "ext.builtin.round": [
     "round"
   ],
