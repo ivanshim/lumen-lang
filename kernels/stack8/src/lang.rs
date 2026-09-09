@@ -323,6 +323,9 @@ pub struct Lang {
     /// worth, the way arithmetic reads one, rather than reading it
     /// straight as bits.
     pub shift_by_number: bool,
+    pub bit_operands: Option<String>,
+    pub matrix_words: Vec<String>,
+    pub matrix_unready: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -819,7 +822,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
+w ext.op.matrix | w ext.op.matrix.unready | w ext.op.bit.operands | w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
@@ -1188,6 +1191,7 @@ impl Lang {
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
+            ("ext.op.matrix", Action::Matrix),
             ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
             ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
@@ -1549,6 +1553,9 @@ impl Lang {
             fault_modulo: r.head("ext.system.fault.modulo")?,
             fault_shift: r.head("ext.system.fault.shift")?,
             shift_by_number: r.flag("ext.op.bit.shift.numbers")?,
+            bit_operands: r.head("ext.op.bit.operands")?,
+            matrix_words: r.strings("ext.op.matrix")?,
+            matrix_unready: r.head("ext.op.matrix.unready")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,
@@ -1909,6 +1916,9 @@ impl Lang {
         }
         for mark in &self.long_quotes {
             place(mark);
+        }
+        for lex in &self.matrix_words {
+            place(lex);
         }
         for lex in &self.plus_words {
             place(lex);

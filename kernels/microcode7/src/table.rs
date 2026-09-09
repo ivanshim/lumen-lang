@@ -99,7 +99,7 @@ ext.system.request.env:L ext.system.request.files:L ext.system.request.all:L ext
 ext.system.args.list:L ext.system.args.count:L ext.op.walk.class:L ext.op.walk.rewind:L ext.op.walk.more:L ext.op.walk.this:L ext.op.walk.key:L \
 ext.op.walk.onward:L ext.op.walk.giver.class:L ext.op.walk.giver:L ext.op.walk.no_cell:L ext.op.walk.key.no_cell:L ext.op.walk.live:B ext.builtin.array.front:L ext.stmt.case.mark.instead:L \
 ext.stmt.function.carries.pairs:L ext.stmt.function.keyword_only:L ext.stmt.function.positional_only:L ext.syntax.call.bind_names:B ext.syntax.call.spread:L ext.syntax.call.spread.pairs:L ext.syntax.call.amiss:L ext.syntax.call.amiss.missing:L ext.syntax.call.amiss.unknown:L ext.syntax.call.amiss.duplicate:L ext.syntax.call.amiss.builtin:L ext.builtin.print.sep:L ext.builtin.print.end:L ext.builtin.print.file:L ext.builtin.print.flush:L ext.builtin.print.file.error:L ext.builtin.print.file.output:L ext.builtin.print.file.unready:L ext.builtin.print.sep.amiss:L ext.builtin.print.end.amiss:L ext.builtin.to_int.base:L ext.builtin.to_int.base.amiss:L ext.builtin.to_int.text.amiss:L ext.builtin.to_int.text.required:L ext.builtin.to_real.text:B ext.builtin.to_real.text.amiss:L ext.builtin.to_string.object:L ext.builtin.to_string.encoding:L ext.builtin.to_string.errors:L ext.builtin.to_string.unready:L ext.builtin.range.value:B ext.builtin.range.zero:L ext.builtin.range.integer:L ext.builtin.range.index:L ext.syntax.call.spread.amiss:L ext.syntax.call.spread.pairs.amiss:L ext.stmt.function.defaults.amiss:L ext.stmt.function.parameters.amiss:L ext.stmt.function.carries:L ext.stmt.function.short:L ext.stmt.class.trait:L ext.stmt.class.uses:L ext.stmt.class.uses.alias:L ext.stmt.class.interface:L ext.stmt.class.implements:L ext.op.compare:L ext.builtin.unset:L ext.lexical.template:B ext.lexical.prologue.echo:L ext.lexical.prologue.folded:B \
-ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
+ext.op.matrix:L ext.op.matrix.unready:L ext.op.bit.operands:L ext.op.otherwise:L ext.op.bit.and:L ext.op.bit.or:L ext.op.bit.xor:L ext.op.bit.not:L \
 ext.op.bit.left:L ext.op.bit.right:L ext.op.bit.shift.numbers:B ext.op.identical:L ext.op.not_identical:L ext.system.kind.spelled:B ext.builtin.args.all:L \
 ext.builtin.args.count:L ext.builtin.args.at:L ext.builtin.args.all.outside:L ext.builtin.args.count.outside:L ext.builtin.args.at.outside:L ext.builtin.args.at.below:L ext.builtin.args.at.beyond:L ext.op.assign.value:B ext.op.index.plain_keys:B \
 ext.system.runner:L ext.system.source.file:L ext.system.source.directory:L ext.system.source.line:L ext.system.source.routine:L ext.system.source.class:L ext.system.source.method:L \
@@ -178,10 +178,11 @@ pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 25] = [
+const BINARY_LABELS: [(&str, Prim); 26] = [
     ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
+    ("ext.op.matrix", Prim::MatrixProduct),
     ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
     ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
     ("ext.op.in", Prim::Contains), ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
@@ -588,7 +589,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["ext.lexical.string.long", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.yield", "ext.stmt.yield.from", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close", "ext.op.if_else", "ext.op.identical.negated", "ext.op.in.negated", "ext.op.assign.expression", "ext.literal.ellipsis",
+        let symbol_labels = ["ext.op.matrix", "ext.lexical.string.long", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.yield", "ext.stmt.yield.from", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close", "ext.op.if_else", "ext.op.identical.negated", "ext.op.in.negated", "ext.op.assign.expression", "ext.literal.ellipsis",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",

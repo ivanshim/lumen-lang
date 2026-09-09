@@ -121,6 +121,12 @@
       "|"
     ],
     [
+      "^"
+    ],
+    [
+      "&"
+    ],
+    [
       "<<",
       ">>"
     ],
@@ -132,7 +138,8 @@
       "*",
       "/",
       "//",
-      "%"
+      "%",
+      "@"
     ],
     [
       "-"
@@ -502,14 +509,23 @@
   "ext.op.await": [
     "await"
   ],
+  "ext.op.bit.and": [
+    "&"
+  ],
   "ext.op.bit.left": [
     "<<"
+  ],
+  "ext.op.bit.operands": [
+    "NotImplementedError: bit operations require integers"
   ],
   "ext.op.bit.or": [
     "|"
   ],
   "ext.op.bit.right": [
     ">>"
+  ],
+  "ext.op.bit.xor": [
+    "^"
   ],
   "ext.op.compare.chained": true,
   "ext.op.comprehension.async": [
@@ -588,6 +604,12 @@
   ],
   "ext.op.lambda.unsupported": [
     "Lambda keyword parameters are not supported"
+  ],
+  "ext.op.matrix": [
+    "@"
+  ],
+  "ext.op.matrix.unready": [
+    "NotImplementedError: matrix multiplication is not supported"
   ],
   "ext.op.member": [
     "."

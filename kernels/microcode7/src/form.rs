@@ -225,6 +225,7 @@ pub enum Prim {
     /// The bits of a value, sixty-four of them, sign and all: both set,
     /// either set, one alone set, all turned over, and moved up or down.
     /// Two pieces of text take their bits letter by letter instead.
+    MatrixProduct,
     BitsBoth,
     BitsEither,
     BitsOne,

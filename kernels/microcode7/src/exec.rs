@@ -3465,6 +3465,8 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::MatrixProduct => return Err(self.table.single("ext.op.matrix.unready")
+                .unwrap_or("Matrix multiplication cannot run").to_string()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -4360,6 +4362,23 @@ impl<'a> Machine<'a> {
                 }
                 other => Value::Small(!self.bits_told(other)?),
             },
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+                if self.table.single("ext.op.bit.operands").is_some() =>
+            {
+                let whole = |value: &Value| match value {
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big(),
+                    _ => Err(self.table.single("ext.op.bit.operands").unwrap().to_owned()),
+                };
+                let mut answer = whole(&v[0])?;
+                let rhs = whole(&v[1])?;
+                if op == Prim::BitsOne { answer ^= rhs; }
+                else if op == Prim::BitsBoth { answer &= rhs; }
+                else { answer |= rhs; }
+                match (&v[0], &v[1]) {
+                    (Value::Flag(_), Value::Flag(_)) => Value::Flag(answer != BigInt::from(0)),
+                    _ => Value::from_big(answer),
+                }
+            }
             // Two pieces of text meet letter by letter. The shorter one
             // says how far it goes, save where either bit will do, and
             // there the longer one carries on alone.
