@@ -88,7 +88,7 @@ ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.as:L ext.system.module.name:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
-ext.lexical.line_continuation:L ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
+ext.op.bit.whole:B ext.op.matrix:L ext.op.matrix.unready:L ext.lexical.line_continuation:L ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.terminator:L ext.stmt.annotation:L ext.stmt.annotation.amiss:L ext.stmt.annotation.target.unready:L ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.assert:L ext.stmt.assert.kind:L ext.stmt.catch.invalid:L ext.stmt.catch.as:L ext.stmt.catch.tuple.open:L ext.stmt.catch.tuple.close:L ext.stmt.catch.group:L ext.stmt.catch.group.unsupported:L ext.stmt.try.else:B ext.stmt.throw.from:L ext.stmt.throw.empty:L ext.stmt.try:L \
@@ -175,11 +175,11 @@ pub const BUILTIN_LABELS: [(&str, Prim); 69] = [
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 24] = [
+const BINARY_LABELS: [(&str, Prim); 25] = [
     ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
-    ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
+    ("ext.op.matrix", Prim::MatrixProduct), ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
     ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
     ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
 ];
@@ -593,7 +593,7 @@ impl Table {
             "stmt.return", "stmt.break", "stmt.continue", "stmt.function", "stmt.pass", "literal.true", "literal.false", "literal.null",
             "ext.op.increment", "ext.op.decrement", "ext.stmt.case.mark", "ext.op.ternary", "ext.stmt.for.c", "ext.stmt.static",
             "ext.stmt.import", "ext.stmt.import.from", "ext.stmt.import.as",
-            "ext.stmt.global", "ext.stmt.decorator", "ext.lexical.line_continuation", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
+            "ext.stmt.global", "ext.stmt.decorator", "ext.lexical.line_continuation", "ext.op.matrix", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
             "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
             "ext.stmt.function.carries", "ext.stmt.function.carries.pairs", "ext.stmt.function.keyword_only", "ext.stmt.function.positional_only", "ext.syntax.call.spread", "ext.syntax.call.spread.pairs",
             "ext.stmt.terminator", "ext.stmt.annotation", "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",

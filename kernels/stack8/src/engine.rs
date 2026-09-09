@@ -953,6 +953,14 @@ impl<'a> Engine<'a> {
     /// A value with no places at all cannot be walked. A language with
     /// a word for a warning is told so and walks it no times, rather
     /// than having the run stopped over it.
+    fn whole_for_bits(&self, v: &Value) -> Res<BigInt> {
+        if matches!(v.sort(), Some(Sort::Integer | Sort::Boolean)) {
+            v.as_big()
+        } else {
+            Err(self.lang.operand_fault.clone().unwrap_or_else(|| "Working on bits needs a whole number".to_string()))
+        }
+    }
+
     /// The bits of a value, with a word said where a real is too wide
     /// for the whole numbers this language holds and working on its bits
     /// means taking something else. A language with no word for a
@@ -2229,6 +2237,7 @@ impl<'a> Engine<'a> {
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
+                    _ if self.lang.whole_bits => Value::of_big(!self.whole_for_bits(&v)?),
                     Value::Text(s) => {
                         let out: Vec<u8> = self.lang.bytes_of(s).iter().map(|c| !c).collect();
                         Value::text(&self.lang.text_of(&out))
@@ -2372,6 +2381,7 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_default().into()),
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {
                 let step = self.drop_top()?;
@@ -3136,6 +3146,35 @@ impl<'a> Engine<'a> {
             // is what a language that spells these operators means by
             // them; the shorter side decides the length, save for `or`,
             // where the longer one stands on as it is.
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.whole_bits => {
+                let (x, y) = (self.whole_for_bits(a)?, self.whole_for_bits(b)?);
+                let joined = match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    Action::BitOne => x ^ y,
+                    _ => {
+                        if y < BigInt::from(0) {
+                            return Err(self.lang.fault_shift.clone().unwrap_or_else(|| "Bit shift by a negative number".to_string()));
+                        }
+                        if matches!(op, Action::BitDown) && y >= BigInt::from(x.bits()) {
+                            BigInt::from(if x < BigInt::from(0) { -1 } else { 0 })
+                        } else if x == BigInt::from(0) {
+                            x
+                        } else {
+                            let by = y.to_usize().ok_or_else(|| self.lang.operand_fault.clone()
+                                .unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
+                            if matches!(op, Action::BitUp) { x << by } else { x >> by }
+                        }
+                    }
+                };
+                if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+                    && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne)
+                {
+                    Value::Flag(joined != BigInt::from(0))
+                } else {
+                    Value::of_big(joined)
+                }
+            }
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));

@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    /// Read a matrix product; the run cannot yet ask its methods.
+    MatrixProduct,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

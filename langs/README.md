@@ -1348,6 +1348,12 @@ only. The extension labels so far, all from PHP:
   the other does not leaving them past telling apart. Text spelling a
   number stands for that number, and a number met by text spelling
   none is itself read as text.
+- `ext.op.matrix`: the matrix product sign, taking its place among the
+  binary operators by `op.precedence`. The compound assignment switch
+  gives it a writing form as well. Both operands are read whole; where
+  the run reaches the product, `ext.op.matrix.unready` supplies the
+  complaint, since the methods for a matrix product are not yet called.
+  A product in a routine never called raises nothing.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
@@ -1362,6 +1368,13 @@ only. The extension labels so far, all from PHP:
   and read both sides as numbers however they were written. Like any
   operator these take their tiers from `op.precedence`, and a kernel
   that does not read the labels reads past those tiers too.
+- `ext.op.bit.whole`: a switch; bit operations keep every bit of a whole
+  number, with no fixed width. Flags stand for nought or one, and two
+  flags joined by and, or, or xor give a flag. Other kinds are refused
+  with `ext.system.fault.operands`; no text or fraction is made into a
+  whole number. A shift below nought says `ext.system.fault.shift`.
+  A left shift whose count the host cannot hold is refused with
+  `ext.system.fault.operands`.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -1684,7 +1697,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `@` `/` `//` `%` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1782,13 +1795,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
-| `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
-| `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
+| `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
+| `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
@@ -1814,6 +1828,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
+| `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
+| `ext.op.matrix.unready` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | - | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
@@ -1947,8 +1963,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
-| `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |
