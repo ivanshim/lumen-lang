@@ -3872,7 +3872,7 @@ impl<'a> Builder<'a> {
                 self.advance();
                 let test = self.expr(1)?;
                 let separator = table.strings("ext.op.conditional").get(1).map_or("", String::as_str);
-                if !self.look().is_lexeme(Shape::Bare, separator) { return Err(format!("Expected '{}'", separator)); }
+                if self.look().shape != Shape::Bare || self.look().lexeme != separator { return Err(format!("Expected '{}'", separator)); }
                 self.advance();
                 let first = self.limb(Traps::Naught, |_| Ok(left))?;
                 let second = self.limb(Traps::Naught, |r| r.expr(0))?;
