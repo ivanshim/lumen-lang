@@ -3685,6 +3685,9 @@ impl<'a> Machine<'a> {
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
+                if matches!(v[0], Value::Text(_)) && self.table.spells("ext.text.format", &called) {
+                    return Err(self.table.single("ext.text.format.unready").unwrap_or_default().to_owned());
+                }
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
                 }
@@ -4875,6 +4878,16 @@ impl<'a> Machine<'a> {
             Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_)))) => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
+                if let Some(Value::Text(text)) = v.first() {
+                    let lower = text.trim().to_ascii_lowercase();
+                    let letters = lower.trim_start_matches(['+', '-']);
+                    let sign_count = lower.len() - letters.len();
+                    let infinity = letters == "inf" || letters == "infinity";
+                    if sign_count <= 1 && (infinity || letters == "nan") {
+                        let x = if !infinity { f64::NAN } else if lower.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+                        return Ok(crate::data::past_the_numbers(x, math::DEFAULT_PLACES));
+                    }
+                }
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?
             }

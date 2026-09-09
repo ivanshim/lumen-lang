@@ -256,8 +256,8 @@ only. The extension labels so far, all from PHP:
   `.text.required` give plain complaints for a base outside its bounds,
   ill-written digits, and a base given with something other than text.
 - `ext.builtin.to_real.text`: a switch admitting text to the real reader,
-  including a decimal point and a power of ten. An empty call gives
-  nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
+  including a decimal point, a power of ten, and signed `nan`, `inf` or
+  `infinity`, without regard to letter case. An empty call gives nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
   which spells no number.
 - `ext.builtin.to_string.object`, `.encoding` and `.errors`: lists of
   names the text reader takes. Object names its first argument; an empty
@@ -1713,7 +1713,8 @@ only. The extension labels so far, all from PHP:
   specification, empty when omitted. Its spelling also gives formatted
   string fields and text remainder their fuller account. An explicit
   specification sets filling and alignment, sign, alternate radix prefix,
-  zero padding, width, grouping, precision and presentation. Whole numbers
+  zero padding, width, grouping, precision and presentation. The `z` mark
+  removes a real's minus when its rounded presentation is nought. Whole numbers
   retain all their digits; reals are rounded from their binary worth.
   Ordinary real output keeps the language's former spelling.
 - `ext.text.format`: the method that fills brace fields in text. Positional
@@ -1727,9 +1728,12 @@ only. The extension labels so far, all from PHP:
   and other values, in that order, for these complaints.
 - `ext.text.format.unready`: what is said when the requested presentation
   cannot be provided: country-dependent numbers, objects needing their own
-  formatter, the suppression of negative zero, or a width or precision
+  formatter, a format method kept apart from its receiver, a starred count
+  beside a mapping key, or a width or precision
   beyond one hundred thousand. Such requests are read, but never answered
   with an ordinary rendering in place of the requested one.
+- `ext.text.format.zero.integer` and `.zero.string`: complaints for the
+  suppression of negative zero on an integer presentation or on text.
 - `ext.text.format.precision.integer` and `.precision.missing`: complaints
   for precision on a whole number, or a point with no precision after it.
 - `ext.text.format.sign.string`, `.alternate.string` and `.align.string`:
@@ -1752,6 +1756,8 @@ only. The extension labels so far, all from PHP:
   `ext.op.rem.format.number` and `.integer` each hold two pieces, before
   the conversion letter and between it and the kind that cannot supply it.
   `ext.op.rem.format.real` precedes the kind of a nonnumeric real argument.
+- `ext.op.rem.format.nan` and `.infinity`: complaints for a decimal
+  integer conversion whose real argument is no number or is infinite.
 - `ext.op.rem.format.character`, `.star` and `.incomplete`: complaints for
   a character mark without a character or whole number, a starred count
   without a whole number, and an unfinished percent mark.
@@ -2307,9 +2313,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.incomplete` | - | - | `ValueError: incomplete format` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.integer` | - | - | `TypeError: %` ` format: an integer is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.many` | - | - | `TypeError: not all arguments converted during string formatting` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.mapping` | - | - | `TypeError: format requires a mapping` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.number` | - | - | `TypeError: %` ` format: a real number is required, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.real` | - | - | `TypeError: must be real number, not ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.star` | - | - | `TypeError: * wants int` | - | - | - | - | - | - | - |
@@ -2535,4 +2543,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.spec.type` | - | - | `TypeError: format() argument 2 must be str, not ` | - | - | - | - | - | - | - |
 | `ext.text.format.unknown` | - | - | `ValueError: Unknown format code '` `' for object of type '` `'` | - | - | - | - | - | - | - |
 | `ext.text.format.unready` | - | - | `NotImplementedError: this format cannot be represented` | - | - | - | - | - | - | - |
+| `ext.text.format.zero.integer` | - | - | `ValueError: Negative zero coercion (z) not allowed in integer format specifier` | - | - | - | - | - | - | - |
+| `ext.text.format.zero.string` | - | - | `ValueError: Negative zero coercion (z) not allowed in string format specifier` | - | - | - | - | - | - | - |
 <!-- table:end -->

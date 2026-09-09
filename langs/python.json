@@ -621,6 +621,9 @@
   "ext.op.rem.format.incomplete": [
     "ValueError: incomplete format"
   ],
+  "ext.op.rem.format.infinity": [
+    "OverflowError: cannot convert float infinity to integer"
+  ],
   "ext.op.rem.format.integer": [
     "TypeError: %",
     " format: an integer is required, not "
@@ -630,6 +633,9 @@
   ],
   "ext.op.rem.format.mapping": [
     "TypeError: format requires a mapping"
+  ],
+  "ext.op.rem.format.nan": [
+    "ValueError: cannot convert float NaN to integer"
   ],
   "ext.op.rem.format.number": [
     "TypeError: %",
@@ -955,5 +961,11 @@
   ],
   "ext.text.format.unready": [
     "NotImplementedError: this format cannot be represented"
+  ],
+  "ext.text.format.zero.integer": [
+    "ValueError: Negative zero coercion (z) not allowed in integer format specifier"
+  ],
+  "ext.text.format.zero.string": [
+    "ValueError: Negative zero coercion (z) not allowed in string format specifier"
   ]
 }

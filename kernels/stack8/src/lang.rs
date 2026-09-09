@@ -40,6 +40,10 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub fmt_text_format_zero_string: Vec<String>,
+    pub fmt_text_format_zero_integer: Vec<String>,
+    pub fmt_op_rem_format_infinity: Vec<String>,
+    pub fmt_op_rem_format_nan: Vec<String>,
     pub open_decimal_point: bool,
     pub format_builtin: Vec<String>,
     pub format_method: Vec<String>,
@@ -833,6 +837,10 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.text.format.zero.integer | w ext.text.format.zero.string
+
+w ext.op.rem.format.nan | w ext.op.rem.format.infinity
+
 b ext.lexical.number.point.open
 
 w ext.builtin.format | w ext.text.format | w ext.text.format.invalid | w ext.text.format.unknown | w ext.text.format.kinds | w ext.text.format.unready | w ext.text.format.precision.integer | w ext.text.format.precision.missing | w ext.text.format.sign.string | w ext.text.format.alternate.string | w ext.text.format.align.string | w ext.text.format.sign.character | w ext.text.format.alternate.character | w ext.text.format.character | w ext.text.format.spec.type | w ext.text.format.numbered.auto | w ext.text.format.numbered.manual | w ext.text.format.index | w ext.text.format.key | w ext.text.format.brace.open | w ext.text.format.brace.close | w ext.text.format.conversion | w ext.text.format.recursion | w ext.op.rem.format.few | w ext.op.rem.format.many | w ext.op.rem.format.mapping | w ext.op.rem.format.number | w ext.op.rem.format.integer | w ext.op.rem.format.real | w ext.op.rem.format.character | w ext.op.rem.format.star | w ext.op.rem.format.incomplete | w ext.op.rem.format.code
@@ -1425,6 +1433,10 @@ impl Lang {
             member_pipes: r.flag("ext.op.member.pipes")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
+            fmt_op_rem_format_nan: r.strings("ext.op.rem.format.nan")?,
+            fmt_op_rem_format_infinity: r.strings("ext.op.rem.format.infinity")?,
+            fmt_text_format_zero_integer: r.strings("ext.text.format.zero.integer")?,
+            fmt_text_format_zero_string: r.strings("ext.text.format.zero.string")?,
             format_builtin: r.strings("ext.builtin.format")?,
             format_method: r.strings("ext.text.format")?,
             fmt_text_format_invalid: r.strings("ext.text.format.invalid")?,

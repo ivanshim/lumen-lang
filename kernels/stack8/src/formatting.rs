@@ -15,6 +15,10 @@ pub struct Writer<'a> {
 impl Writer<'_> {
     pub fn fault(&self, key: &str, pieces: &[&str]) -> String {
         let words = match key {
+            "ext.text.format.zero.string" => &self.lang.fmt_text_format_zero_string,
+            "ext.text.format.zero.integer" => &self.lang.fmt_text_format_zero_integer,
+            "ext.op.rem.format.infinity" => &self.lang.fmt_op_rem_format_infinity,
+            "ext.op.rem.format.nan" => &self.lang.fmt_op_rem_format_nan,
             "ext.text.format.invalid" => &self.lang.fmt_text_format_invalid,
             "ext.text.format.unknown" => &self.lang.fmt_text_format_unknown,
             "ext.text.format.kinds" => &self.lang.fmt_text_format_kinds,
@@ -106,6 +110,7 @@ impl Writer<'_> {
         if let Value::Text(text) = value {
             if !matches!(kind, '\0' | 's') { return Err(self.unknown(value, kind)); }
             if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.string", &[])); }
+            if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.string", &[])); }
             if rule.alternate { return Err(self.fault("ext.text.format.alternate.string", &[])); }
             if rule.align == '=' { return Err(self.fault("ext.text.format.align.string", &[])); }
             if rule.group != '\0' || rule.fraction_group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
@@ -117,6 +122,7 @@ impl Writer<'_> {
         let real = matches!(value, Value::Real(_));
         if !whole && !real { return Err(self.fault("ext.text.format.unready", &[])); }
         if whole && matches!(kind, '\0' | 'd' | 'b' | 'o' | 'x' | 'X' | 'c') {
+            if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.integer", &[])); }
             if rule.precision.is_some() { return Err(self.fault("ext.text.format.precision.integer", &[])); }
             let number = value.as_big()?;
             if kind == 'c' {
@@ -144,12 +150,13 @@ impl Writer<'_> {
             _ => value.as_big()?.to_f64().filter(|n| n.is_finite()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?,
         };
         if kind == '%' { number *= 100.0; }
-        let head = rule.sign_for(number.is_sign_negative() && !number.is_nan());
         let magnitude = number.abs();
         let mut body = if magnitude.is_nan() { "nan".to_string() }
             else if magnitude.is_infinite() { "inf".to_string() }
             else { decimal(magnitude, &rule) };
         if kind.is_ascii_uppercase() { body.make_ascii_uppercase(); }
+        let suppress = rule.unsigned_zero && body.parse::<f64>().ok() == Some(0.0);
+        let head = rule.sign_for(number.is_sign_negative() && !number.is_nan() && !suppress);
         if kind == '%' { body.push('%'); }
         if magnitude.is_finite() { rule.group_digits(&mut body, head.len(), 3); }
         Ok(rule.pad(&head, &body, '>'))
@@ -172,7 +179,7 @@ impl Writer<'_> {
             rule.fill = letters[0]; rule.align = letters[1]; at = 2;
         } else if letters.first().map_or(false, |c| "<>=^".contains(*c)) { rule.align = letters[0]; at = 1; }
         if letters.get(at).map_or(false, |c| "+- ".contains(*c)) { rule.sign = letters[at]; at += 1; }
-        if letters.get(at) == Some(&'z') { return Err(self.fault("ext.text.format.unready", &[])); }
+        if letters.get(at) == Some(&'z') { rule.unsigned_zero = true; at += 1; }
         if letters.get(at) == Some(&'#') { rule.alternate = true; at += 1; }
         if letters.get(at) == Some(&'0') {
             if !fill_given { rule.fill = '0'; }
@@ -217,6 +224,7 @@ impl Writer<'_> {
             if !matches!(c, '{' | '}') { out.push(c); continue; }
             if chars.get(at) == Some(&c) { out.push(c); at += 1; continue; }
             if c == '}' { return Err(self.fault("ext.text.format.brace.close", &[])); }
+            if depth == 2 { return Err(self.fault("ext.text.format.recursion", &[])); }
             let from = at;
             let mut brackets = false;
             while let Some(&c) = chars.get(at) {
@@ -385,6 +393,11 @@ impl Writer<'_> {
             } else if matches!(code, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') {
                 let integral = matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 let decimal = matches!(code, 'd' | 'i' | 'u');
+                if decimal {
+                    if let Value::Real(r) = value {
+                        if r.outside() { return Err(self.fault(if r.no_number() { "ext.op.rem.format.nan" } else { "ext.op.rem.format.infinity" }, &[])); }
+                    }
+                }
                 if !integral && !(decimal && matches!(value, Value::Real(r) if !r.outside())) {
                     let key = if decimal { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" };
                     return Err(self.fault(key, &[&code.to_string(), self.kind(value)]));
@@ -421,13 +434,13 @@ impl Writer<'_> {
 }
 
 struct Rule {
-    fill: char, align: char, sign: char, alternate: bool, zero: bool,
+    fill: char, align: char, sign: char, alternate: bool, zero: bool, unsigned_zero: bool,
     width: usize, group: char, fraction_group: char, precision: Option<usize>, code: char,
 }
 
 impl Default for Rule {
     fn default() -> Self {
-        Self { fill: ' ', align: '\0', sign: '\0', alternate: false, zero: false, width: 0, group: '\0', fraction_group: '\0', precision: None, code: '\0' }
+        Self { fill: ' ', align: '\0', sign: '\0', alternate: false, zero: false, unsigned_zero: false, width: 0, group: '\0', fraction_group: '\0', precision: None, code: '\0' }
     }
 }
 
@@ -459,7 +472,9 @@ impl Rule {
         let mut digits = body[..point].to_string();
         if self.group != '\0' {
             if self.align == '=' && self.fill == '0' {
-                while head + digits.len() + (digits.len() - 1) / span + tail.len() < self.width { digits.insert(0, '0'); }
+                let mut wanted = digits.len();
+                while head + wanted + wanted.saturating_sub(1) / span + tail.len() < self.width { wanted += 1; }
+                digits = "0".repeat(wanted - digits.len()) + &digits;
             }
             let length = digits.len();
             let mut grouped = String::new();
@@ -517,6 +532,10 @@ fn decimal(number: f64, rule: &Rule) -> String {
 
 pub fn names_fault(lang: &Lang, text: &str) -> bool {
     [
+        &lang.fmt_text_format_zero_string,
+        &lang.fmt_text_format_zero_integer,
+        &lang.fmt_op_rem_format_infinity,
+        &lang.fmt_op_rem_format_nan,
         &lang.fmt_text_format_invalid,
         &lang.fmt_text_format_unknown,
         &lang.fmt_text_format_unready,

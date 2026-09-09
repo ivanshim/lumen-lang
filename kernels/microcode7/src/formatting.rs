@@ -94,7 +94,7 @@ impl Layout<'_> {
             shape.justify = marks.next();
         } else if first.map_or(false, |c| matches!(c, '<' | '>' | '=' | '^')) { shape.justify = marks.next(); }
         if marks.peek().map_or(false, |c| matches!(c, '+' | '-' | ' ')) { shape.polarity = marks.next(); }
-        if marks.peek() == Some(&'z') { return Err(self.refused()); }
+        if marks.peek() == Some(&'z') { marks.next(); shape.no_minus_zero = true; }
         if marks.peek() == Some(&'#') { marks.next(); shape.alternative = true; }
         if marks.peek() == Some(&'0') {
             marks.next(); shape.zero = true;
@@ -132,6 +132,7 @@ impl Layout<'_> {
         if let Value::Text(text) = item {
             if shape.letter.is_some() && shape.letter != Some('s') { return Err(unknown()); }
             let bad = if shape.polarity.is_some() { Some("sign") }
+                else if shape.no_minus_zero { Some("zero") }
                 else if shape.alternative { Some("alternate") }
                 else if shape.justify == Some('=') { Some("align") } else { None };
             if let Some(why) = bad { return Err(self.complain(&format!("ext.text.format.{why}.string"), &[])); }
@@ -143,6 +144,7 @@ impl Layout<'_> {
         let real = matches!(item, Value::Frac(n) if n.places.is_some());
         if !integer && !real { return Err(self.refused()); }
         if integer && shape.letter.map_or(true, |c| "dboxXc".contains(c)) {
+            if shape.no_minus_zero { return Err(self.complain("ext.text.format.zero.integer", &[])); }
             if shape.digits.is_some() { return Err(self.complain("ext.text.format.precision.integer", &[])); }
             if shape.letter == Some('c') {
                 if shape.polarity.is_some() { return Err(self.complain("ext.text.format.sign.character", &[])); }
@@ -169,8 +171,9 @@ impl Layout<'_> {
         if integer && !number.is_finite() { return Err(self.refused()); }
         if shape.letter == Some('%') { number *= 100.0; }
         if shape.zero && shape.justify.is_none() { shape.justify = Some('='); }
-        let prefix = shape.front(number.is_sign_negative() && !number.is_nan());
         let body = shape.real_digits(number.abs());
+        let nought = shape.no_minus_zero && body.trim_end_matches('%').parse::<f64>().ok() == Some(0.0);
+        let prefix = shape.front(number.is_sign_negative() && !number.is_nan() && !nought);
         let body = if number.is_finite() { shape.grouped(body, prefix.len(), 3) } else { body };
         Ok(shape.padded(prefix, body, '>'))
     }
@@ -194,6 +197,7 @@ impl Layout<'_> {
                 finished.push(rest.chars().next().unwrap()); rest = &rest[2..]; continue;
             }
             if rest.starts_with('}') { return Err(self.complain("ext.text.format.brace.close", &[])); }
+            if allowance == 0 { return Err(self.complain("ext.text.format.recursion", &[])); }
             rest = &rest[1..];
             let mut inside_key = false;
             let split = rest.char_indices().find_map(|(i, c)| {
@@ -364,6 +368,12 @@ impl Layout<'_> {
                 }
                 'd' | 'i' | 'u' | 'o' | 'x' | 'X' => {
                     let accepts_real = matches!(conversion, 'd' | 'i' | 'u');
+                    if let Value::Frac(r) = item {
+                        if accepts_real && r.past_numbers() {
+                            let fault = match r.answers_none() { true => "ext.op.rem.format.nan", false => "ext.op.rem.format.infinity" };
+                            return Err(self.complain(fault, &[]));
+                        }
+                    }
                     if !matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) &&
                         !(accepts_real && matches!(item, Value::Frac(r) if r.places.is_some() && !r.past_numbers())) {
                         return Err(self.complain(if accepts_real { "ext.op.rem.format.number" } else { "ext.op.rem.format.integer" }, &[&conversion.to_string(), self.typename(item)]));
@@ -411,6 +421,7 @@ struct Presentation {
     polarity: Option<char>,
     alternative: bool,
     zero: bool,
+    no_minus_zero: bool,
     extent: usize,
     digits: Option<usize>,
     separator: Option<char>,
@@ -420,7 +431,7 @@ struct Presentation {
 
 impl Presentation {
     fn new() -> Self {
-        Self { padding: ' ', justify: None, polarity: None, alternative: false, zero: false,
+        Self { padding: ' ', justify: None, polarity: None, alternative: false, zero: false, no_minus_zero: false,
             extent: 0, digits: None, separator: None, fraction_separator: None, letter: None }
     }
 
@@ -523,7 +534,7 @@ impl Presentation {
 }
 
 pub fn is_complaint(table: &Table, message: &str) -> bool {
-    let labels = "ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
+    let labels = "ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
     labels.split_whitespace().filter_map(|label| table.single(label))
         .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }

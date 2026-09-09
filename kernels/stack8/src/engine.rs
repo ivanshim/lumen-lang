@@ -2579,6 +2579,9 @@ impl<'a> Engine<'a> {
                 Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Text(_) if Lang::spells(&self.lang.format_method, name) => {
+                    return Err(self.lang.fmt_text_format_unready.first().cloned().unwrap_or_default().into());
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -4825,6 +4828,13 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
+                let spelling = text.trim().to_ascii_lowercase();
+                let unsigned = spelling.strip_prefix('-').or_else(|| spelling.strip_prefix('+')).unwrap_or(&spelling);
+                let special = match unsigned { "nan" => Some(f64::NAN), "inf" | "infinity" => Some(f64::INFINITY), _ => None };
+                if let Some(number) = special {
+                    let number = if spelling.starts_with('-') { -number } else { number };
+                    return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES));
+                }
                 let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
                 arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?
             }
