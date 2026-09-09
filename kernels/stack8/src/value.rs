@@ -327,6 +327,57 @@ impl Value {
         }
     }
 
+    /// A field is rendered after its specification has itself been
+    /// worked out. The small common formats are honoured here; the
+    /// rest say that the run has no rule for them.
+    pub fn string_field(&self, words: &Wording, spec: &str, conversion: &str) -> Option<String> {
+        if !matches!(self, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Text(_) | Value::Flag(_) | Value::Null) { return None; }
+        if !spec.is_empty() && conversion.is_empty() && matches!(self, Value::Flag(_) | Value::Null) { return None; }
+        let mut shown = self.display(words);
+        if let Value::Text(text) = self {
+            if conversion == "r" || conversion == "a" {
+                let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                shown = String::from(quote);
+                for c in text.chars() {
+                    match c {
+                        '\\' => shown.push_str("\\\\"),
+                        '\n' => shown.push_str("\\n"), '\r' => shown.push_str("\\r"), '\t' => shown.push_str("\\t"),
+                        c if c == quote => { shown.push('\\'); shown.push(c); }
+                        c if c.is_control() || conversion == "a" && !c.is_ascii() => {
+                            let n = c as u32;
+                            if n <= 255 { shown.push_str(&format!("\\x{n:02x}")); }
+                            else if n <= 65535 { shown.push_str(&format!("\\u{n:04x}")); }
+                            else { shown.push_str(&format!("\\U{n:08x}")); }
+                        }
+                        c => shown.push(c),
+                    }
+                }
+                shown.push(quote);
+            }
+        }
+        if conversion.is_empty() && !matches!(self, Value::Text(_)) {
+            if let Some(places) = spec.strip_prefix('.').and_then(|s| s.strip_suffix('f')).and_then(|s| s.parse::<usize>().ok()).filter(|n| *n <= 1000) {
+                if let Ok(number) = shown.parse::<f64>() { return Some(format!("{number:.places$}")); }
+            }
+        }
+        if spec.is_empty() { return Some(shown); }
+        let letters: Vec<char> = spec.chars().collect();
+        let (fill, align, offset) = if letters.len() > 1 && matches!(letters[1], '<' | '>' | '^') {
+            (letters[0], letters[1], 2)
+        } else if letters.first().map_or(false, |c| matches!(c, '<' | '>' | '^')) { (' ', letters[0], 1) }
+        else if letters.iter().all(char::is_ascii_digit) && letters.first() != Some(&'0') {
+            (' ', if conversion.is_empty() && !matches!(self, Value::Text(_)) { '>' } else { '<' }, 0)
+        } else { return None; };
+        let width = if offset == letters.len() { Some(0) } else { letters[offset..].iter().collect::<String>().parse::<usize>().ok().filter(|n| *n <= 100000) };
+        {
+            let width = width?;
+            let spaces = width.saturating_sub(shown.chars().count());
+            let left = match align { '>' => spaces, '^' => spaces / 2, _ => 0 };
+            shown = format!("{}{}{}", fill.to_string().repeat(left), shown, fill.to_string().repeat(spaces - left));
+        }
+        Some(shown)
+    }
+
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {

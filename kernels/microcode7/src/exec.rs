@@ -4105,6 +4105,13 @@ impl<'a> Machine<'a> {
             // with, and anything that is not an array becomes an array
             // holding only itself.
             Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::UnheldText => return Err(v[0].bare()),
+            Prim::RenderField => {
+                match v[0].in_field(w, &v[1].bare(), &v[2].bare()) {
+                    Some(text) => Value::text(&text),
+                    None => return Err(self.table.single("ext.lexical.string.format.unavailable").unwrap_or("This formatted value is not supported").to_owned()),
+                }
+            },
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {
