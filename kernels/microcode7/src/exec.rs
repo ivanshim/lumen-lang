@@ -4061,6 +4061,10 @@ impl<'a> Machine<'a> {
             // Two pieces of text meet letter by letter. The shorter one
             // says how far it goes, save where either bit will do, and
             // there the longer one carries on alone.
+            Prim::BitsEither if self.table.flag("ext.op.bit.or.maps")
+                && matches!(v, [Value::Dict(_), Value::Dict(_)]) => {
+                return self.prim(Prim::ExtendLiteral(true, true), name, v);
+            }
             Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
                 if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
             {

@@ -346,6 +346,7 @@
   "ext.op.bit.left": ["<<"],
   "ext.op.bit.not": ["~"],
   "ext.op.bit.or": ["|"],
+  "ext.op.bit.or.maps": true,
   "ext.op.bit.right": [">>"],
   "ext.op.bit.xor": ["^"],
   "ext.op.comprehension.async": ["async"],

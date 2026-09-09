@@ -1153,6 +1153,10 @@ only. The extension labels so far, all from PHP:
   lines within their call brackets; a routine's body may also be one
   statement on the line of its header. Without this switch labels retain their
   former meaning, and defaults are worked out when the call begins.
+- `ext.op.bit.or.maps`: admit two map operands to the bit-or spelling,
+  merging their pairs with right-hand values winning. Keys keep their first
+  insertion order. Integer operands retain bit-or behavior. Compound writes
+  store the merged value; shared mutable map identity is not implemented.
 - `ext.builtin.map`: a map constructor accepting zero or one positional
   source, either a map or an iterable of pairs, followed by keyword pairs.
   Later values replace earlier values while preserving key order. The
@@ -1848,6 +1852,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
+| `ext.op.bit.or.maps` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |

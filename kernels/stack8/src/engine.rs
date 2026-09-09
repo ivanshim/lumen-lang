@@ -3200,6 +3200,14 @@ impl<'a> Engine<'a> {
             // is what a language that spells these operators means by
             // them; the shorter side decides the length, save for `or`,
             // where the longer one stands on as it is.
+            Action::BitEither if self.lang.or_maps && matches!((a, b), (Value::Map(_), Value::Map(_))) => {
+                let (Value::Map(left), Value::Map(right)) = (a, b) else { unreachable!() };
+                let mut merged = left.as_ref().clone();
+                for (key, value) in right.iter() {
+                    put_key(&mut merged, key.clone(), value.clone());
+                }
+                Value::Map(Rc::new(merged))
+            }
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));

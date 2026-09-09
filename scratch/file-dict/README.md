@@ -34,7 +34,7 @@ not the provision of dictionary methods. `op.pipe` and the existing
 
 The four whole reference files still need the earlier class,
 block, expression, lexical, and string pieces. In particular, the base
-leaves class declarations, unparenthesized tuple commas, `with`, `del`, `yield`, and
+leaves class declarations, `with`, `del`, `yield`, and
 several operators unread. No class body is passed over here, and no
 new label is supplied for a construct belonging to those pieces.
 
@@ -42,8 +42,9 @@ The first Actions run on the given base reports `Unexpected character
 '&'` for `test_dict.py` and `test_set.py`, and `Unexpected token: :`
 for `test_dictcomps.py` and `test_setcomps.py`, on both kernels. The
 Python reasons table counts six files at the former complaint and
-21 at the latter. The spelling of `ext.op.bit.and` belongs to the
-lexical piece, and `ext.stmt.class` to the class piece. The full-file reading has not been proved here.
+21 at the latter. The bit spellings are now enabled. The second green run advances all four
+files to `Unexpected token: :` on both kernels. Class declarations remain
+unread; no class body is skipped. Full-file reading has not been proved.
 
 `6.py` spells the remaining bit operators used by dictionary and set view
 expressions, using the kernels' existing operations and Python precedence.
@@ -74,3 +75,12 @@ keyword, map copy and iterable pairs. Later pairs replace earlier ones;
 keyword pairs replace those in the positional source, while duplicate
 keyword arguments remain an error. The constructor walks the existing
 collection values; user-defined mapping and iterator protocols remain open.
+
+`14.py` checks the map merge operators from `test_dict.py`, including
+right-hand replacement, insertion order, reversed operands and a compound
+write. Integer bit-or remains available. The current map representation
+uses value writes; shared mutable identity and the iterable-pair variant
+of compound merge still need further work.
+
+`11.py` through `13.py` check constructor refusals for duplicate keyword
+names, pair length and positional argument count.
