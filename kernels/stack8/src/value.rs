@@ -329,6 +329,51 @@ impl Value {
         }
     }
 
+    /// A field is rendered after its specification has itself been
+    /// worked out. The small common formats are honoured here; the
+    /// rest keep the plain rendering until the run knows their rules.
+    pub fn string_field(&self, words: &Wording, spec: &str, conversion: &str) -> String {
+        let mut shown = self.display(words);
+        if let Value::Text(text) = self {
+            if conversion == "r" || conversion == "a" {
+                let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                shown = String::from(quote);
+                for c in text.chars() {
+                    match c {
+                        '\\' => shown.push_str("\\\\"),
+                        '\n' => shown.push_str("\\n"), '\r' => shown.push_str("\\r"), '\t' => shown.push_str("\\t"),
+                        c if c == quote => { shown.push('\\'); shown.push(c); }
+                        c if c.is_control() || conversion == "a" && !c.is_ascii() => {
+                            let n = c as u32;
+                            if n <= 255 { shown.push_str(&format!("\\x{n:02x}")); }
+                            else if n <= 65535 { shown.push_str(&format!("\\u{n:04x}")); }
+                            else { shown.push_str(&format!("\\U{n:08x}")); }
+                        }
+                        c => shown.push(c),
+                    }
+                }
+                shown.push(quote);
+            }
+        }
+        if conversion.is_empty() && !matches!(self, Value::Text(_)) {
+            if let Some(places) = spec.strip_prefix('.').and_then(|s| s.strip_suffix('f')).and_then(|s| s.parse::<usize>().ok()).filter(|n| *n <= 1000) {
+                if let Ok(number) = shown.parse::<f64>() { return format!("{number:.places$}"); }
+            }
+        }
+        let letters: Vec<char> = spec.chars().collect();
+        let (fill, align, offset) = if letters.len() > 1 && matches!(letters[1], '<' | '>' | '^') {
+            (letters[0], letters[1], 2)
+        } else if letters.first().map_or(false, |c| matches!(c, '<' | '>' | '^')) { (' ', letters[0], 1) }
+        else { return shown; };
+        let width = letters[offset..].iter().collect::<String>().parse::<usize>().ok().filter(|n| *n <= 100000);
+        if let Some(width) = width {
+            let spaces = width.saturating_sub(shown.chars().count());
+            let left = match align { '>' => spaces, '^' => spaces / 2, _ => 0 };
+            shown = format!("{}{}{}", fill.to_string().repeat(left), shown, fill.to_string().repeat(spaces - left));
+        }
+        shown
+    }
+
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
