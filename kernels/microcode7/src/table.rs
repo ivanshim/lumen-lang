@@ -93,6 +93,8 @@ ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.def
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
 ext.op.if_else:L ext.op.identical.negated:L ext.op.identical.unsupported:L ext.op.in:L ext.op.in.negated:L ext.op.in.unsupported:L ext.op.compare.chained:B \
 ext.stmt.loop.else:B ext.lexical.number.imaginary:L ext.lexical.number.imaginary.unready:L ext.lexical.string.adjacent:B \
+ext.lexical.string.prefix.bytes:L ext.lexical.string.bytes.unready:L \
+ext.lexical.number.point_edge:B \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.terminator:L ext.stmt.annotation:L ext.stmt.annotation.amiss:L ext.stmt.annotation.target.unready:L ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \

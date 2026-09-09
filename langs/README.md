@@ -1552,6 +1552,23 @@ awaits the class and iterator work. `ext.lexical.number.separator` and
 the former parts long figures with underscores, the latter reads the
 power of ten whole instead of leaving its letter as another name.
 
+- `ext.lexical.string.prefix.bytes`: a prefix adjoining a quoted run
+  marks bytes. `ext.lexical.string.bytes.unready` gives the complaint
+  raised on reaching that value; the ordinary text value is not given
+  in its stead. Adjacent byte runs are read together.
+
+A decorated class is read with all its decorators and its body, and says
+`ext.stmt.class.unready` when reached. Chained assignments are also read
+through their last value and say `ext.system.scope.unready`; their shared
+bindings await the common tuple and binding work. The class grammar with
+base brackets requires both closing brackets and the unready complaint;
+the older class grammar keeps its member and constructor requirements.
+
+- `ext.lexical.number.point_edge`: a switch; the decimal point may
+  stand at either end of a numeral, as in `.5` or `1.`. Either spelling
+  makes a real, so a range bound written thus is still turned down by
+  `ext.builtin.range.non_integer` when the run reaches it.
+
 ## The web
 
 A program may be run for a web request. The host gathers the request the
@@ -1913,13 +1930,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.imaginary.unready` | - | - | `NotImplementedError: complex arithmetic is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
+| `ext.lexical.number.point_edge` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | `_` | - | `_` | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |

@@ -9,6 +9,7 @@ pub enum Shape {
     Bare,
     Quoted,
     Numeral,
+    Bytes,
     Quote,
     Sign,
     LineEnd,
@@ -653,7 +654,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point_edge") && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit)) {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -679,7 +680,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point_edge") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -788,7 +789,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             if fold_id || (fold_kw && table.keywords.contains(&low)) {
                 s = low;
             }
-            tokens.push(tok(Shape::Bare, s, row));
+            let bytes = table.spells("ext.lexical.string.prefix.bytes", &s)
+                && src.get(k).map_or(false, |c| quotes.contains(c));
+            tokens.push(tok(if bytes { Shape::Bytes } else { Shape::Bare }, s, row));
             pos = k;
             continue;
         }

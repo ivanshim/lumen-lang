@@ -400,7 +400,8 @@ impl<'a> Compiler<'a> {
 
     fn want_sign(&mut self, text: &str, why: &str) -> Res<()> {
         if !self.at_symbol(text) {
-            return Err(format!("Expected '{}' {}, got '{}'", text, why, self.look().lexeme));
+            let said = format!("Expected '{}' {}, got '{}'", text, why, self.look().lexeme);
+            return Err(if self.lang.scope_unready.is_empty() { said } else { format!("{}\n{}", said, self.look().row) });
         }
         self.take();
         Ok(())
@@ -1209,6 +1210,7 @@ impl<'a> Compiler<'a> {
     /// routine through them from the last written to the first.
     fn decorated_function(&mut self) -> Res<()> {
         let lang = self.lang;
+        let beginning = self.mark();
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
@@ -1223,6 +1225,12 @@ impl<'a> Compiler<'a> {
             while self.look().shape == Shape::LineEnd {
                 self.take();
             }
+        }
+        if !lang.class_bases_open.is_empty() && self.on_keyword(&lang.class_words) {
+            self.scoped_class()?;
+            self.piece().instrs.truncate(beginning);
+            self.scope_fault(&lang.class_unready.clone());
+            return Ok(());
         }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
@@ -3471,7 +3479,13 @@ impl<'a> Compiler<'a> {
         match self.waiting.clone() {
             Some(cell) => self.read(&cell),
             None => {
+                let from = self.mark();
                 if self.lang.tuple_marks.is_empty() { self.expr(0)?; } else { self.scope_value()?; }
+                if !self.lang.tuple_marks.is_empty() && self.on_assign() {
+                    while self.on_assign() { self.take(); self.scope_value()?; }
+                    self.piece().instrs.truncate(from);
+                    self.scope_fault(&self.lang.scope_unready.clone());
+                }
             }
         }
         self.kept(keep);
@@ -4432,6 +4446,17 @@ impl<'a> Compiler<'a> {
             }
         }
         match tok.shape {
+            Shape::Bytes => {
+                self.take();
+                if self.look().shape != Shape::Quote { return Err("Expected quoted bytes after their prefix".to_string()); }
+                self.take();
+                while matches!(self.look().shape, Shape::Bytes | Shape::Quote) {
+                    if self.look().shape == Shape::Bytes { self.take(); }
+                    if self.look().shape != Shape::Quote { return Err("Expected quoted bytes after their prefix".to_string()); }
+                    self.take();
+                }
+                self.scope_fault(&lang.bytes_unready.clone());
+            }
             Shape::Numeral => {
                 self.take();
                 if tok.lexeme.chars().last().map_or(false, |c| lang.imaginary_letters.contains(&c)) {
@@ -6497,7 +6522,8 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let (whole, frac) = (&text[..at], &text[at + point.len_utf8()..]);
         let scale = BigInt::from(10).pow(frac.len() as u32);
         let whole = if whole.is_empty() { BigInt::from(0) } else { decimal(whole, text)? };
-        return Ok(arith::shape_number(whole * &scale + decimal(frac, text)?, scale, Some(precision_of(text))));
+        let fraction = if frac.is_empty() && lang.number_point_edge { BigInt::from(0) } else { decimal(frac, text)? };
+        return Ok(arith::shape_number(whole * &scale + fraction, scale, Some(precision_of(text))));
     }
     Ok(Value::of_big(decimal(text, text)?))
 }

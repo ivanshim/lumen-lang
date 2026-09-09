@@ -692,7 +692,8 @@ impl<'a> Builder<'a> {
             self.advance();
             Ok(())
         } else {
-            Err(format!("Expected '{}' {}, got '{}'", s, why, self.look().lexeme))
+            let said = format!("Expected '{}' {}, got '{}'", s, why, self.look().lexeme);
+            Err(if self.table.has_any("ext.system.scope.unready") { format!("{}\n{}", said, self.look().row) } else { said })
         }
     }
 
@@ -1507,6 +1508,9 @@ impl<'a> Builder<'a> {
             if !self.on_any("ext.stmt.decorator") {
                 break;
             }
+        }
+        if self.table.has_any("ext.stmt.class.bases.open") && self.key("ext.stmt.class") {
+            return self.class_scope();
         }
         if !self.key("stmt.function") {
             return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
@@ -3465,6 +3469,14 @@ impl<'a> Builder<'a> {
             (None, Some(cell), None) => self.read(&cell),
             (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
+        if self.table.has_any("ext.op.tuple") && self.on_assign() {
+            loop {
+                self.advance();
+                let _following = self.comma_value()?;
+                if !self.on_assign() { break; }
+            }
+            value = self.scope_unrun("ext.system.scope.unready");
+        }
         // The value comes before the bounds of a slice assignment.
         let before_bounds = if plain && slice_target(&expr) {
             self.gensyms += 1;
@@ -4174,6 +4186,15 @@ impl<'a> Builder<'a> {
             }
         }
         let node = match t.shape {
+            Shape::Bytes => {
+                loop {
+                    if self.look().shape == Shape::Bytes { self.advance(); }
+                    if self.look().shape != Shape::Quote { return Err("Expected quoted bytes after their prefix".into()); }
+                    self.advance();
+                    if !matches!(self.look().shape, Shape::Bytes | Shape::Quote) { break; }
+                }
+                self.scope_unrun("ext.lexical.string.bytes.unready")
+            }
             Shape::Numeral => {
                 self.advance();
                 if t.lexeme.chars().last().map_or(false, |c| table.letters("ext.lexical.number.imaginary").contains(&c)) {
@@ -5935,7 +5956,8 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
+            let f: BigInt = if f.is_empty() && table.flag("ext.lexical.number.point_edge") { BigInt::from(0) }
+                else { f.parse().map_err(|_| unreadable_numeral(text, table))? };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }

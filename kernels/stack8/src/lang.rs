@@ -404,6 +404,9 @@ pub struct Lang {
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub number_point_edge: bool,
+    pub bytes_prefixes: Vec<String>,
+    pub bytes_unready: Vec<String>,
     pub loop_else: bool,
     pub imaginary_letters: Vec<char>,
     pub imaginary_unready: Vec<String>,
@@ -748,6 +751,8 @@ w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.b
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
 w ext.op.if_else | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained
 b ext.stmt.loop.else | w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | b ext.lexical.string.adjacent
+w ext.lexical.string.prefix.bytes | w ext.lexical.string.bytes.unready
+b ext.lexical.number.point_edge
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1540,6 +1545,9 @@ impl Lang {
             },
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
+            number_point_edge: r.flag("ext.lexical.number.point_edge")?,
+            bytes_prefixes: r.strings("ext.lexical.string.prefix.bytes")?,
+            bytes_unready: r.strings("ext.lexical.string.bytes.unready")?,
             loop_else: r.flag("ext.stmt.loop.else")?,
             imaginary_letters: r.letters("ext.lexical.number.imaginary")?,
             imaginary_unready: r.strings("ext.lexical.number.imaginary.unready")?,

@@ -11,6 +11,7 @@ pub enum Shape {
     /// A name between name quotes: data for the word after it.
     Quoted,
     Numeral,
+    Bytes,
     Quote,
     Sign,
     LineEnd,
@@ -710,7 +711,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.number_point_edge || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -769,7 +770,10 @@ impl<'a> Cursor<'a> {
         if lang.names_folded || (lang.keywords_folded && lang.keywords.contains(&lowered)) {
             s = lowered;
         }
-        self.push(Shape::Instr, s, 0, line, col);
+        let shape = if Lang::spells(&lang.bytes_prefixes, &s) && self.look(0).map_or(false, |c| lang.quotes.contains(&c)) {
+            Shape::Bytes
+        } else { Shape::Instr };
+        self.push(shape, s, 0, line, col);
     }
 
     fn quoted_name(&mut self, quote: char) -> Result<(), String> {
@@ -834,7 +838,7 @@ impl<'a> Cursor<'a> {
                 self.heredoc()?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
-            } else if c.is_ascii_digit() {
+            } else if c.is_ascii_digit() || (lang.number_point_edge && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit())) {
                 self.number();
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;
