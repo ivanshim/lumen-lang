@@ -149,9 +149,30 @@ fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
         .unwrap_or(0)
 }
 
+/// The host may keep the prologue before the library and put the rest
+/// of its line after it. Where that prologue is now an import, join its
+/// line again at the beginning of the file's own text. Leave an empty
+/// line behind so that every later row keeps its number.
+fn whole_import<'a>(source: &'a str, lang: &Lang, before: u32) -> std::borrow::Cow<'a, str> {
+    let kept = std::borrow::Cow::Borrowed(source);
+    let Some(prologue) = &lang.prologue else { return kept };
+    if before == 0 || !prologue.split_whitespace().next().map_or(false, |head| Lang::spells(&lang.import_words, head)) {
+        return kept;
+    }
+    let Some(first_end) = source.find('\n') else { return kept };
+    let first = &source[..first_end];
+    if first.trim_start() != prologue {
+        return kept;
+    }
+    let Some((last, _)) = source.match_indices('\n').nth(before as usize - 1) else { return kept };
+    let cut = last + 1;
+    std::borrow::Cow::Owned(format!("{}{}{}", &source[first_end..cut], first, &source[cut..]))
+}
+
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let before = lines_before(request);
-    let read = lex::lex_at(source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
+    let source = whole_import(source, lang, before);
+    let read = lex::lex_at(&source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
     let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
     let tokens = shaped?;
     let mut registry = compile::Registry::default();
@@ -178,12 +199,18 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
+    for name in &lang.module_names {
+        registry.slot(name);
+    }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    for name in &lang.module_names {
+        machine.define(name, Value::text("__main__"));
+    }
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
     }

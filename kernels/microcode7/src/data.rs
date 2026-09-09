@@ -99,7 +99,10 @@ pub enum Value {
     Text(Rc<str>),
     Flag(bool),
     Nil,
+    Ellipsis,
     Vector(Rc<Vec<Value>>),
+    /// A span awaiting the length of what it is to read.
+    Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
     Dict(Rc<Vec<(Value, Value)>>),
     /// A key written together with its value (`k => v`), until a
@@ -169,7 +172,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset => return None,
+            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Ellipsis | Value::Span(_) => return None,
         })
     }
 
@@ -203,6 +206,8 @@ impl Value {
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
+            Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
     }
@@ -225,7 +230,7 @@ impl Value {
         match (self, other) {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Nil, Value::Nil) => true,
+            (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -301,8 +306,57 @@ impl Value {
         }
     }
 
+    /// Common field presentations, with the ordinary spelling kept for
+    /// those whose further rules the machine does not yet know.
+    pub fn in_field(&self, names: Names, pattern: &str, manner: &str) -> String {
+        let mut result = self.render(names);
+        if matches!(manner, "a" | "r") {
+            if let Value::Text(chars) = self {
+                let delimiter = match (chars.contains('\''), chars.contains('"')) { (true, false) => '"', _ => '\'' };
+                let mut body = String::new();
+                for letter in chars.chars() {
+                    if letter == delimiter || letter == '\\' { body.push('\\'); body.push(letter); continue; }
+                    let escaped = match letter { '\n' => Some("\\n"), '\t' => Some("\\t"), '\r' => Some("\\r"), _ => None };
+                    if let Some(escape) = escaped { body.push_str(escape); continue; }
+                    if letter.is_control() || manner == "a" && !letter.is_ascii() {
+                        let ordinal = u32::from(letter);
+                        body.push_str(&match ordinal {
+                            0..=0xff => format!("\\x{:02x}", ordinal),
+                            0x100..=0xffff => format!("\\u{:04x}", ordinal),
+                            _ => format!("\\U{:08x}", ordinal),
+                        });
+                    } else { body.push(letter); }
+                }
+                result = format!("{delimiter}{body}{delimiter}");
+            }
+        }
+        if manner.is_empty() && !matches!(self, Value::Text(_)) && pattern.starts_with('.') && pattern.ends_with('f') {
+            let precision = pattern[1..pattern.len() - 1].parse::<usize>();
+            if let (Ok(digits), Ok(number)) = (precision, result.parse::<f64>()) {
+                if digits <= 1000 { return format!("{:.*}", digits, number); }
+            }
+        }
+        let mut marks = pattern.chars();
+        let Some(first) = marks.next() else { return result; };
+        let (padding, direction, rest) = if ['<', '^', '>'].contains(&first) {
+            (' ', first, marks.as_str())
+        } else {
+            let Some(second) = marks.next().filter(|c| ['<', '^', '>'].contains(c)) else { return result; };
+            (first, second, marks.as_str())
+        };
+        let Ok(target) = rest.parse::<usize>() else { return result; };
+        if target > 100000 { return result; }
+        let extra = target.saturating_sub(result.chars().count());
+        let before = if direction == '<' { 0 } else if direction == '^' { extra / 2 } else { extra };
+        let mut padded = padding.to_string().repeat(before);
+        padded.push_str(&result);
+        padded.push_str(&padding.to_string().repeat(extra - before));
+        padded
+    }
+
     pub fn bare(&self) -> String {
         match self {
+            Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
@@ -322,6 +376,7 @@ impl Value {
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
+            Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
     }
