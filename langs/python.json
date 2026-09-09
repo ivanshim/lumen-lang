@@ -313,7 +313,20 @@
   "system.kind.boolean": [],
   "system.kind.array": [],
   "system.kind.null": [],
+  "ext.block.lone_statement": true,
+  "ext.op.await": ["await"],
+  "ext.stmt.async": ["async"],
   "ext.stmt.decorator": ["@"],
   "ext.stmt.decorator.amiss": ["A decorator must stand on its own line before a function definition"],
-  "ext.stmt.for.collection": true
+  "ext.stmt.del": ["del"],
+  "ext.stmt.for.collection": true,
+  "ext.stmt.global": ["global"],
+  "ext.stmt.loop.else": true,
+  "ext.stmt.nonlocal": ["nonlocal"],
+  "ext.stmt.nonlocal.unrun": ["Nonlocal bindings cannot be run without enclosing function cells"],
+  "ext.stmt.with": ["with"],
+  "ext.stmt.with.as": ["as"],
+  "ext.stmt.yield": ["yield"],
+  "ext.stmt.yield.from": ["from"],
+  "ext.stmt.yield.unrun": ["Generators cannot be run"]
 }

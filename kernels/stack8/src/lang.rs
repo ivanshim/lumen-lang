@@ -328,6 +328,17 @@ pub struct Lang {
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
     pub global_words: Vec<String>,
+    pub yield_unrun: String,
+    pub yield_from_words: Vec<String>,
+    pub yield_words: Vec<String>,
+    pub await_words: Vec<String>,
+    pub async_words: Vec<String>,
+    pub loop_else: bool,
+    pub nonlocal_unrun: String,
+    pub nonlocal_words: Vec<String>,
+    pub del_words: Vec<String>,
+    pub with_as_words: Vec<String>,
+    pub with_words: Vec<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
@@ -645,7 +656,7 @@ b system.flag.counts
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
-w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
@@ -1373,6 +1384,17 @@ impl Lang {
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
             global_words: r.strings("ext.stmt.global")?,
+            yield_unrun: r.head("ext.stmt.yield.unrun")?.unwrap_or_default(),
+            yield_from_words: r.strings("ext.stmt.yield.from")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            await_words: r.strings("ext.op.await")?,
+            async_words: r.strings("ext.stmt.async")?,
+            loop_else: r.flag("ext.stmt.loop.else")?,
+            nonlocal_unrun: r.head("ext.stmt.nonlocal.unrun")?.unwrap_or_default(),
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            del_words: r.strings("ext.stmt.del")?,
+            with_as_words: r.strings("ext.stmt.with.as")?,
+            with_words: r.strings("ext.stmt.with")?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
@@ -1626,6 +1648,8 @@ impl Lang {
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
             &self.finally_words, &self.throw_words,
+            &self.with_words, &self.with_as_words, &self.del_words, &self.nonlocal_words,
+            &self.async_words, &self.await_words, &self.yield_words, &self.yield_from_words,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {

@@ -82,6 +82,17 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
+ext.stmt.yield.unrun:L \
+ext.stmt.yield.from:L \
+ext.stmt.yield:L \
+ext.op.await:L \
+ext.stmt.async:L \
+ext.stmt.loop.else:B \
+ext.stmt.nonlocal.unrun:L \
+ext.stmt.nonlocal:L \
+ext.stmt.del:L \
+ext.stmt.with.as:L \
+ext.stmt.with:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
@@ -592,6 +603,8 @@ impl Table {
             "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally",
+            "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.del", "ext.stmt.nonlocal",
+            "ext.stmt.async", "ext.op.await", "ext.stmt.yield", "ext.stmt.yield.from",
             "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise", "ext.op.hush", "ext.op.name_by_value", "ext.stmt.unpack"];
         for key in symbol_labels {
             all.extend(self.strings(key).iter().cloned());

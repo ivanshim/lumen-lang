@@ -1938,7 +1938,8 @@ impl<'a> Machine<'a> {
                     shared: RefCell::new(shared),
                 })))
             }
-            Form::Cycle { test, body, step, after } => {
+            Form::Cycle { test, body, step, after, otherwise } => {
+                let mut broken = false;
                 loop {
                     // A pass of a loop is a fair place to look at the
                     // clock as well as a statement is, since a loop whose
@@ -1961,7 +1962,7 @@ impl<'a> Machine<'a> {
                     }
                     match self.value_of(body, frame) {
                         Ok(_) | Err(Escape::Resume(1)) => {}
-                        Err(Escape::Leave(1)) => break,
+                        Err(Escape::Leave(1)) => { broken = true; break; },
                         Err(Escape::Leave(n)) => return Err(Escape::Leave(n - 1)),
                         Err(Escape::Resume(n)) => return Err(Escape::Resume(n - 1)),
                         Err(other) => return Err(other),
@@ -1975,6 +1976,9 @@ impl<'a> Machine<'a> {
                             break;
                         }
                     }
+                }
+                if !broken {
+                    if let Some(arm) = otherwise { self.value_of(arm, frame)?; }
                 }
                 Ok(Value::Nil)
             }

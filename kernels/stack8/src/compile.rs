@@ -103,6 +103,7 @@ struct Piece {
     /// Whether an expression statement stored into the result slot; a
     /// function without one needs neither the slot nor its prologue.
     result_touched: bool,
+    generator: bool,
     /// Which line the last marker in this unit named, so that a run of
     /// statements on one line marks it once.
     line: u32,
@@ -245,6 +246,7 @@ pub fn compile_within(
         cycles: Vec::new(),
         escapes: Vec::new(),
         result_touched: false,
+            generator: false,
         line: 0,
         instrs: Vec::new(),
     };
@@ -700,6 +702,19 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn complete_cycle(&mut self, again: usize) -> Res<()> {
+        if !self.lang.loop_else { self.leave_cycle(again); return Ok(()); }
+        let cycle = self.piece().cycles.pop().expect("an open loop");
+        for at in cycle.resumes { self.piece().instrs[at] = Instr::Skip(again); }
+        self.skip_seps();
+        if self.on_keyword(&self.lang.else_words) {
+            self.take();
+            self.body()?;
+        }
+        for at in cycle.leaves { self.land(at); }
+        Ok(())
+    }
+
     /// How many loops a break or continue leaves: the number after the
     /// word when the definition allows one (ext.stmt.break.levels), else one.
     fn levels(&mut self) -> Res<usize> {
@@ -773,6 +788,7 @@ impl<'a> Compiler<'a> {
             cycles: Vec::new(),
             escapes: Vec::new(),
             result_touched: false,
+            generator: false,
             line: 0,
             instrs: Vec::new(),
         });
@@ -793,7 +809,11 @@ impl<'a> Compiler<'a> {
             self.piece().instrs[at] = Instr::Skip(end);
         }
         let unit = self.pieces.pop().expect("the unit");
-        let instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
+        let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
+        if unit.generator {
+            instrs = vec![Instr::Const(Value::text(&self.lang.yield_unrun)),
+                Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
+        }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
         Ok(Rc::new(Routine { ident: unit.ident, formals, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
@@ -820,6 +840,17 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         self.skip_intro();
+        if self.lang.blocks == Blocks::Indented && self.lang.lone_stmt
+            && !matches!(self.look().shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish)
+        {
+            while !matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+                self.stmt()?;
+                if self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
+                    self.take();
+                }
+            }
+            return Ok(());
+        }
         self.skip_seps();
         match self.lang.blocks {
             Blocks::Indented => {
@@ -897,6 +928,32 @@ impl<'a> Compiler<'a> {
             }
             if !lang.do_words.is_empty() && Lang::spells(&lang.do_words, &w) {
                 return self.do_stmt();
+            }
+            if Lang::spells(&lang.async_words, &w) {
+                self.take();
+                if !(self.on_keyword(&lang.function_words) || self.on_keyword(&lang.for_words) || self.on_keyword(&lang.with_words)) {
+                    return Err(format!("Expected a function, for loop or with block after '{}', got '{}'", w, self.look().lexeme));
+                }
+                return self.stmt();
+            }
+            if Lang::spells(&lang.with_words, &w) { return self.with_stmt(); }
+            if Lang::spells(&lang.del_words, &w) {
+                self.take();
+                let call = lang.calling.clone().expect("call marks");
+                self.forget_targets(&call, false)?;
+                self.discard();
+                return Ok(());
+            }
+            if Lang::spells(&lang.nonlocal_words, &w) {
+                self.take();
+                loop {
+                    self.want_name("after the nonlocal keyword")?;
+                    if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    self.take();
+                }
+                self.constant(Value::text(&lang.nonlocal_unrun));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                return Ok(());
             }
             if Lang::spells(&lang.if_words, &w) {
                 return self.branch();
@@ -991,6 +1048,98 @@ impl<'a> Compiler<'a> {
 
     /// A statement without a keyword: a step, a bare call, an
     /// assignment or an expression.
+    fn with_stmt(&mut self) -> Res<()> {
+        self.take();
+        let lang = self.lang;
+        let group = lang.grouping.clone().expect("group marks");
+        let mut bracketed = false;
+        if self.at_symbol(&group.open) {
+            let mut depth = 0;
+            let mut ahead = 0;
+            loop {
+                let t = self.look_ahead(ahead);
+                if t.shape == Shape::Finish { break; }
+                if t.is_lexeme(Shape::Sign, &group.open) { depth += 1; }
+                if t.is_lexeme(Shape::Sign, &group.close) {
+                    depth -= 1;
+                    if depth == 0 {
+                        bracketed = Lang::spells(&lang.block_intros, &self.look_ahead(ahead + 1).lexeme);
+                        break;
+                    }
+                }
+                ahead += 1;
+            }
+        }
+        if bracketed { self.take(); }
+        loop {
+            self.expr(0)?;
+            if self.on_keyword(&lang.with_as_words) {
+                self.take();
+                let held = self.gensym("with");
+                self.write(&held);
+                self.bind_block_target(&held)?;
+            } else {
+                self.discard();
+            }
+            if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+            self.take();
+            if bracketed && self.at_symbol(&group.close) { break; }
+        }
+        if bracketed { self.want_sign(&group.close, "after the with items")?; }
+        self.body()
+    }
+
+    fn bind_block_target(&mut self, held: &str) -> Res<()> {
+        let group = self.lang.grouping.clone().expect("group marks");
+        let array = self.lang.array_brackets.clone().expect("array marks");
+        let paired = if self.at_symbol(&group.open) { Some(group) }
+            else if self.at_symbol(&array.open) { Some(array) } else { None };
+        if let Some(pair) = paired {
+            self.take();
+            let mut index = 0;
+            loop {
+                let part = self.gensym("part");
+                self.read(held);
+                self.constant(Value::Small(index));
+                self.act(Action::At, 2);
+                self.write(&part);
+                self.bind_block_target(&part)?;
+                index += 1;
+                if !self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                self.take();
+                if self.at_symbol(&pair.close) { break; }
+            }
+            self.want_sign(&pair.close, "after the binding targets")?;
+            return Ok(());
+        }
+        let from = self.mark();
+        self.block_place()?;
+        let waiting = self.waiting.replace(held.to_string());
+        let answer = self.store_into(from, None, None, "");
+        self.waiting = waiting;
+        answer
+    }
+
+    /// A place in a binding or deletion; the pipe's mark names a field
+    /// here, since no method is being called.
+    fn block_place(&mut self) -> Res<()> {
+        let name = self.want_name("as a binding target")?;
+        self.read(&name);
+        loop {
+            if self.on_any(&self.lang.pipe_words) {
+                self.take();
+                let member = self.want_name("after the member mark")?;
+                self.act(Action::Grab(Rc::from(member.as_str())), 1);
+            } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
+                self.take();
+                self.expr(0)?;
+                self.want_sign(&pair.close, "after the index")?;
+                self.act(Action::At, 2);
+            } else { break; }
+        }
+        Ok(())
+    }
+
     fn simple_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.bare_calls && self.look().shape == Shape::Instr {
@@ -1037,6 +1186,7 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        if self.on_keyword(&lang.async_words) { self.take(); }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
         }
@@ -1508,7 +1658,7 @@ impl<'a> Compiler<'a> {
         self.read(&at);
         self.act(Action::WalkMore, 2);
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         // The walk lets its last item go once it is over, so that the
         // place holding it is a place two names share only while some
         // name of the program's own still holds it.
@@ -1900,7 +2050,7 @@ impl<'a> Compiler<'a> {
         self.expr(0)?;
         self.pos = after;
         self.loop_back(top);
-        self.leave_cycle(test);
+        self.complete_cycle(test)?;
         Ok(())
     }
 
@@ -1941,6 +2091,14 @@ impl<'a> Compiler<'a> {
             let call = lang.calling.clone().expect("call brackets");
             self.take();
             self.expr(0)?;
+            if lang.loop_else && self.at_symbol(&call.close) {
+                let bound = self.gensym("end");
+                self.write(&bound);
+                self.constant(Value::Small(0));
+                self.write(&var);
+                self.take();
+                return self.count_loop(&var, &bound, false);
+            }
             self.write(&var);
             if let Some(sep) = &call.between {
                 self.want_sign(sep, "between the range bounds")?;
@@ -1993,7 +2151,7 @@ impl<'a> Compiler<'a> {
         self.read(bound);
         self.act(Action::Lt, 2);
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -3639,6 +3797,32 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let from = self.mark();
         let tok = self.look().clone();
+        if self.on_keyword(&lang.await_words) {
+            self.take();
+            return self.prefix();
+        }
+        if self.on_keyword(&lang.yield_words) {
+            self.take();
+            self.piece().generator = true;
+            let delegated = self.on_keyword(&lang.yield_from_words);
+            if delegated { self.take(); }
+            let begin = self.mark();
+            let ended = |r: &Self| r.on_sep() || r.exhausted() || r.look().shape == Shape::Close
+                || r.lang.grouping.as_ref().map_or(false, |g| r.at_symbol(&g.close))
+                || r.lang.array_brackets.as_ref().map_or(false, |g| r.at_symbol(&g.close));
+            if delegated || !ended(self) {
+                loop {
+                    self.expr(0)?;
+                    if delegated || !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    self.take();
+                    if ended(self) { break; }
+                }
+            }
+            self.piece().instrs.truncate(begin);
+            self.constant(Value::text(&lang.yield_unrun));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            return Ok(());
+        }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if Lang::spells(&lang.unpack_words, &tok.lexeme) && matches!(tok.shape, Shape::Instr | Shape::Sign) {
@@ -4006,12 +4190,16 @@ impl<'a> Compiler<'a> {
     /// `unset(a, b[k])`: each name is left as though nothing were ever
     /// written to it, and each place named is taken out of its array.
     fn forget(&mut self, call: &Brackets) -> Res<()> {
-        while !self.at_symbol(&call.close) {
+        self.forget_targets(call, true)
+    }
+
+    fn forget_targets(&mut self, call: &Brackets, bracketed: bool) -> Res<()> {
+        while !(if bracketed { self.at_symbol(&call.close) } else { self.on_sep() || self.look().shape == Shape::Close || self.exhausted() }) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", call.close));
             }
             let from = self.mark();
-            self.expr(0)?;
+            if bracketed { self.expr(0)?; } else { self.block_place()?; }
             let named: Vec<Instr> = self.piece().instrs.drain(from..).collect();
             match named.as_slice() {
                 [Instr::Read(slot)] => {
@@ -4073,7 +4261,7 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        self.take();
+        if bracketed { self.take(); }
         self.constant(Value::Null);
         Ok(())
     }
