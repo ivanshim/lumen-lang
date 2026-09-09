@@ -243,8 +243,9 @@ only. The extension labels so far, all from PHP:
   value, `$i++` the value before).
 - `ext.stmt.class.bases.open` and `.close`: marks about the expressions
   naming a class's bases. The body is read in its own scope, including
-  its methods and their bodies. This small reading defers the making
-  of the class to the class piece.
+  its methods and their bodies. Class member annotations are not local
+  function annotations and await their own reader. This small reading
+  defers the making of the class to the class piece.
 - `ext.stmt.class.unready`: the complaint when a class can be read but
   its making cannot yet be honoured by the run.
 - `ext.op.member.pipes`: a member mark may also spell the old pipe to a
@@ -278,7 +279,8 @@ only. The extension labels so far, all from PHP:
   letters before a quote that ask for raw text, byte text, plain text,
   or text with expressions between braces. A raw letter may stand on
   either side of a byte or format letter. Raw text keeps its backslashes,
-  even one shielding a quote. Byte text is read whole; its distinct value awaits the run. Doubled braces in formatted text stand for single braces;
+  even one shielding a quote. Byte text is read whole; its distinct value
+  awaits the run. Doubled braces in formatted text stand for single braces;
   fields may carry conversions, format specifications and a debug equals
   sign. Each field and each field in its specification is read as code.
   Plain fields and whole-number debug fields run. Further conversions
@@ -298,7 +300,8 @@ only. The extension labels so far, all from PHP:
   exactly this many figures, instead of taking one or two as it may.
 - `ext.lexical.escape.controls`: further escape letters for the full
   readers: `a` for bell, `b` for backspace, `f` for form feed, `v` for
-  vertical tab. The older readers keep their smaller alphabet of escapes.
+  vertical tab, and `r` for carriage return where the core leaves it out.
+  The older readers keep their smaller alphabet of escapes.
 - `ext.lexical.escape.continued`: whether a backslash and the line end
   after it join the two lines of a string, standing for no character.
 - `ext.lexical.escape.named`: the letter before a character name between
@@ -1830,7 +1833,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.codepoint.wide` | - | - | `U` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.codepoint.wide.digits` | - | - | `8` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.continued` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.lexical.escape.controls` | - | - | `a` `b` `f` `v` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.controls` | - | - | `a` `b` `f` `v` `r` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.named` | - | - | `N` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |

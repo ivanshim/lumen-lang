@@ -116,6 +116,8 @@ pub struct Compiler<'a> {
     pos: usize,
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
+    /// The class body's frame is not a function's local annotation scope.
+    class_body_depth: Option<usize>,
     counter: usize,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
@@ -262,7 +264,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { class_body_depth: None, lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -2488,9 +2490,8 @@ impl<'a> Compiler<'a> {
         self.take();
         let name = self.want_name("as the class name")?;
         let start = self.mark();
-        if let Some(open) = self.lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
+        if self.lang.bases_open.as_ref().map_or(false, |s| self.at_symbol(s)) {
             self.take();
-            let _ = open;
             let close = self.lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
             while !self.at_symbol(&close) {
                 self.expr(0)?;
@@ -2500,7 +2501,12 @@ impl<'a> Compiler<'a> {
             }
             self.want_sign(&close, "after the bases")?;
         }
-        self.routine(&name, Vec::new(), 0, false, |a| a.body())?;
+        self.routine(&name, Vec::new(), 0, false, |a| {
+            let outer = a.class_body_depth.replace(a.pieces.len());
+            let body = a.body();
+            a.class_body_depth = outer;
+            body
+        })?;
         self.piece().instrs.truncate(start);
         self.constant(Value::text(self.lang.class_unready.as_deref().unwrap_or_default()));
         self.act(Action::StringFault, 1);
@@ -3252,7 +3258,7 @@ impl<'a> Compiler<'a> {
             ends.extend(call.between.iter().cloned());
         }
         self.annotation_expression(&ends)?;
-        if piped && lang.member_mark.is_none() {
+        if piped && (lang.member_mark.is_none() || lang.member_pipes) {
             self.piece().instrs.truncate(from);
             if self.on_assign() {
                 self.take();
@@ -3296,7 +3302,7 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
-        if starts_here && self.on_any(&self.lang.annotation_marks) {
+        if starts_here && self.class_body_depth != Some(self.pieces.len()) && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
         let done = if self.on_writing() {

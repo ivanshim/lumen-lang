@@ -328,7 +328,7 @@
   "ext.lexical.escape.codepoint.wide": ["U"],
   "ext.lexical.escape.codepoint.wide.digits": 8,
   "ext.lexical.escape.continued": true,
-  "ext.lexical.escape.controls": ["a", "b", "f", "v"],
+  "ext.lexical.escape.controls": ["a", "b", "f", "v", "r"],
   "ext.lexical.escape.named": ["N"],
   "ext.lexical.escape.octal": true,
   "ext.lexical.escape.unavailable": ["Unicode escape cannot be represented"],

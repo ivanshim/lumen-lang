@@ -54,6 +54,9 @@ struct Fork {
 }
 
 pub struct Builder<'a> {
+    /// An annotation in this layer belongs to the class's member table,
+    /// whose declarations the small class reader does not yet take in.
+    member_layer: Option<usize>,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -240,7 +243,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { member_layer: None, within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -1756,7 +1759,11 @@ impl<'a> Builder<'a> {
             }
             self.need_sign(right, "after the bases")?;
         }
-        self.routine(&title, Holds::Every, Traps::Naught, Vec::new(), 0, |r| r.body())?;
+        let previous = self.member_layer;
+        self.member_layer = Some(self.layers.len() + 1);
+        let contents = self.routine(&title, Holds::Every, Traps::Naught, Vec::new(), 0, |r| r.body());
+        self.member_layer = previous;
+        contents?;
         Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(table.single("ext.stmt.class.unready").unwrap_or_default()))]))
     }
 
@@ -3188,7 +3195,7 @@ impl<'a> Builder<'a> {
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
-        if through_pipe && !table.has_any("ext.op.member") {
+        if through_pipe && (!table.has_any("ext.op.member") || table.flag("ext.op.member.pipes")) {
             let mut steps = Vec::new();
             if self.on_assign() {
                 self.advance();
@@ -3221,7 +3228,7 @@ impl<'a> Builder<'a> {
             }
         });
         let expr = self.expr_at(0, false)?;
-        if boundary && self.on_any("ext.stmt.annotation") {
+        if boundary && self.member_layer != Some(self.layers.len()) && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
         if !self.on_writing() {
