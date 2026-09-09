@@ -64,6 +64,18 @@ pub struct Lang {
     pub byte_letter: Option<char>,
     /// What a language says of a number it cannot read.
     pub number_amiss: Option<String>,
+    pub imaginary_letters: Vec<char>,
+    pub imaginary_unready: Option<String>,
+    pub number_point_edge: bool,
+    pub number_strict: bool,
+    pub number_leading_zero: Option<String>,
+    pub binary_amiss: Option<String>,
+    pub binary_digit_amiss: Vec<String>,
+    pub octal_amiss: Option<String>,
+    pub octal_digit_amiss: Vec<String>,
+    pub hex_amiss: Option<String>,
+    pub real_shortest: bool,
+
     pub prologue: Option<String>,
     pub point: Option<char>,
     pub base_mark: Option<char>,
@@ -694,6 +706,17 @@ w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decora
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
+w ext.lexical.number.imaginary
+w ext.lexical.number.imaginary.unready
+b ext.lexical.number.point_edge
+b ext.lexical.number.separator.strict
+w ext.lexical.number.amiss.leading_zero
+w ext.lexical.number.amiss.binary
+w ext.lexical.number.amiss.binary.digit
+w ext.lexical.number.amiss.octal
+w ext.lexical.number.amiss.octal.digit
+w ext.lexical.number.amiss.hex
+b ext.system.real.shortest
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1257,6 +1280,18 @@ impl Lang {
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
             byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
+            imaginary_letters: r.letters("ext.lexical.number.imaginary")?,
+            imaginary_unready: r.head("ext.lexical.number.imaginary.unready")?,
+            number_point_edge: r.flag("ext.lexical.number.point_edge")?,
+            number_strict: r.flag("ext.lexical.number.separator.strict")?,
+            number_leading_zero: r.head("ext.lexical.number.amiss.leading_zero")?,
+            binary_amiss: r.head("ext.lexical.number.amiss.binary")?,
+            binary_digit_amiss: r.strings("ext.lexical.number.amiss.binary.digit")?,
+            octal_amiss: r.head("ext.lexical.number.amiss.octal")?,
+            octal_digit_amiss: r.strings("ext.lexical.number.amiss.octal.digit")?,
+            hex_amiss: r.head("ext.lexical.number.amiss.hex")?,
+            real_shortest: r.flag("ext.system.real.shortest")?,
+
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
             base_mark: r.letter("lexical.number.base_marker")?,

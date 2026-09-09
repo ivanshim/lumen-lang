@@ -32,7 +32,8 @@
   "lexical.number.base_marker": [],
   "lexical.number.exponent_marker": [],
   "lexical.number.hex_prefix": [
-    "0x"
+    "0x",
+    "0X"
   ],
   "lexical.keywords_case_insensitive": false,
   "identifier.unicode": true,
@@ -317,6 +318,21 @@
   "system.kind.array": [],
   "system.kind.null": [],
   "ext.block.lone_statement": true,
+  "ext.lexical.number.amiss": ["SyntaxError: invalid decimal literal"],
+  "ext.lexical.number.amiss.binary": ["SyntaxError: invalid binary literal"],
+  "ext.lexical.number.amiss.binary.digit": ["SyntaxError: invalid digit '", "' in binary literal"],
+  "ext.lexical.number.amiss.hex": ["SyntaxError: invalid hexadecimal literal"],
+  "ext.lexical.number.amiss.leading_zero": ["SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers"],
+  "ext.lexical.number.amiss.octal": ["SyntaxError: invalid octal literal"],
+  "ext.lexical.number.amiss.octal.digit": ["SyntaxError: invalid digit '", "' in octal literal"],
+  "ext.lexical.number.binary_prefix": ["0b", "0B"],
+  "ext.lexical.number.exponent": ["e", "E"],
+  "ext.lexical.number.imaginary": ["j", "J"],
+  "ext.lexical.number.imaginary.unready": ["NotImplementedError: complex arithmetic is not supported"],
+  "ext.lexical.number.octal_prefix": ["0o", "0O"],
+  "ext.lexical.number.point_edge": true,
+  "ext.lexical.number.separator": ["_"],
+  "ext.lexical.number.separator.strict": true,
   "ext.op.assign.compound": true,
   "ext.op.bit.or": ["|"],
   "ext.op.index.slice": [":"],
@@ -327,6 +343,7 @@
   "ext.op.index.slice.length": ["attempt to assign sequence of size", "to extended slice of size"],
   "ext.op.index.slice.unsupported": ["this slice operation is not supported"],
   "ext.op.index.slice.zero": ["slice step cannot be zero"],
+  "ext.op.plus": ["+"],
   "ext.stmt.annotation": [":"],
   "ext.stmt.annotation.amiss": ["invalid syntax"],
   "ext.stmt.annotation.target.unready": ["NotImplementedError: annotated attribute targets are not supported"],
@@ -370,5 +387,7 @@
   "ext.syntax.call.spread.amiss": ["TypeError: argument after * must be an iterable"],
   "ext.syntax.call.spread.pairs": ["**"],
   "ext.syntax.call.spread.pairs.amiss": ["TypeError: argument after ** must be a mapping with string keys"],
-  "ext.system.module.name": ["__name__"]
+  "ext.system.module.name": ["__name__"],
+  "ext.system.real.bits": 64,
+  "ext.system.real.shortest": true
 }

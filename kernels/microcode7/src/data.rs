@@ -96,6 +96,8 @@ pub enum Value {
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Ratio>),
+    /// The coefficient of an imaginary literal, with its unready words.
+    Imaginary { coefficient: f64, unready: Rc<str> },
     Text(Rc<str>),
     Flag(bool),
     Nil,
@@ -138,6 +140,7 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
+    pub shortest: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -177,6 +180,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
@@ -191,6 +195,7 @@ impl Value {
 
     pub fn as_big(&self) -> Result<BigInt, String> {
         Ok(match self {
+            Value::Imaginary { unready, .. } => return Err(unready.to_string()),
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => (**n).clone(),
             // A worth past the numbers has no whole part; a language
@@ -226,6 +231,10 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Imaginary { coefficient: x, .. }, Value::Imaginary { coefficient: y, .. }) => x == y,
+            (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
+                *coefficient == 0.0 && other.equals(&Value::Small(0))
+            }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
@@ -294,6 +303,10 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
+            Value::Frac(e) if w.shortest && e.places.is_some() => {
+                let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
+                brief_decimal(number, true)
+            }
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -306,6 +319,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient, false) + "j",
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
@@ -732,4 +746,24 @@ pub fn spelled_out(x: f64, figures: Option<usize>) -> String {
 /// one, else to the fewest figures that read back as the number itself.
 pub fn figured(x: f64, figures: Option<usize>) -> String {
     spelled_out(x, figures.or_else(|| figures_asked(true).flatten()))
+}
+
+/// A decimal shown in the fewest figures, with a signed two-place
+/// exponent beyond the plain range and a point when its kind asks it.
+pub fn brief_decimal(number: f64, real: bool) -> String {
+    if number.is_nan() { return "nan".into(); }
+    if number.is_infinite() { return if number.is_sign_negative() { "-inf" } else { "inf" }.into(); }
+    let written = format!("{number:e}");
+    let split = written.find('e').expect("the exponent's letter");
+    let scale = written[split + 1..].parse::<i32>().expect("the exponent's figures");
+    match scale {
+        -4..=15 => {
+            let plain = format!("{number}");
+            if real && !plain.contains('.') { plain + ".0" } else { plain }
+        }
+        _ => {
+            let signed = format!("{scale:+03}");
+            format!("{}e{}", &written[..split], signed)
+        }
+    }
 }

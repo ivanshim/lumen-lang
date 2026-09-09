@@ -998,6 +998,7 @@ impl<'a> Machine<'a> {
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
+            shortest: self.table.flag("ext.system.real.shortest"),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),
@@ -3136,7 +3137,14 @@ impl<'a> Machine<'a> {
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
+        if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
+            | Prim::Positive | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
+            for value in v {
+                if let Value::Imaginary { unready, .. } = value { return Err(unready.to_string()); }
+            }
+        }
         Ok(match op {
+            Prim::Positive => { n(1)?; v[0].clone() }
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

@@ -631,7 +631,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point_edge") && Some(c) == point
+            && src.get(pos + 1).map_or(false, char::is_ascii_digit)) {
+            let strict = table.flag("ext.lexical.number.separator.strict");
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -639,11 +641,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             let at = |k: usize| src.get(k).copied();
             let opened = in_base
                 .iter()
-                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(k + 1).map_or(false, |x| x.is_digit(*radix)))
+                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && (strict || at(k + 1).map_or(false, |x| x.is_digit(*radix))))
                 .copied();
             if let Some((_, _, radix)) = opened {
                 k += 1;
-                while k < src.len() && (src[k].is_digit(radix) || apart.contains(&src[k])) {
+                while k < src.len() && (src[k].is_digit(radix) || apart.contains(&src[k]) || (strict && table.extends_name(src[k]))) {
                     k += 1;
                 }
             } else if base.is_some() && at(k) == base {
@@ -657,7 +659,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point_edge") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -665,14 +667,22 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 }
                 // 1e9, 2.5E-3: a power of ten after the letter.
                 let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
-                if at(k).map_or(false, |c| powers.contains(&c)) && at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit()) {
+                if at(k).map_or(false, |c| powers.contains(&c)) && (strict || at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1 + sign_len;
-                    while k < src.len() && src[k].is_ascii_digit() {
+                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
                     }
                 }
             }
-            tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));
+            if at(k).map_or(false, |x| table.letters("ext.lexical.number.imaginary").contains(&x)) {
+                k += 1;
+            }
+            if strict {
+                while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
+            }
+            let spelling: String = src[pos..k].iter().collect();
+            if strict { check_numeral(&spelling, table)?; }
+            tokens.push(tok(Shape::Numeral, spelling, row));
             pos = k;
             continue;
         }
@@ -967,5 +977,74 @@ fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Tok
         }
     }
     tokens.push(sign(close));
+    Ok(())
+}
+
+/// Separators have a place between figures, and one may follow a base
+/// mark. Keep them until this asking is over, lest a bad spelling pass.
+pub fn check_numeral(word: &str, table: &Table) -> Result<(), String> {
+    let failure = |label: &str| table.single(label).or_else(|| table.single("ext.lexical.number.amiss"))
+        .map(str::to_owned).unwrap_or_else(|| format!("Invalid number: {}", word));
+    let breaks = table.letters("ext.lexical.number.separator");
+    let digits = |run: &str, base: u32, prefixed: bool| {
+        let mut previous = prefixed;
+        let mut count = 0;
+        for c in run.chars() {
+            if c.is_digit(base) { previous = true; count += 1; }
+            else if breaks.contains(&c) && previous { previous = false; }
+            else { return false; }
+        }
+        previous && count > 0
+    };
+    for (label, base, complaint, bad_digit) in [
+        ("lexical.number.hex_prefix", 16, "ext.lexical.number.amiss.hex", ""),
+        ("ext.lexical.number.octal_prefix", 8, "ext.lexical.number.amiss.octal", "ext.lexical.number.amiss.octal.digit"),
+        ("ext.lexical.number.binary_prefix", 2, "ext.lexical.number.amiss.binary", "ext.lexical.number.amiss.binary.digit"),
+    ] {
+        for opening in table.strings(label) {
+            let Some(tail) = word.strip_prefix(opening.as_str()) else { continue };
+            if !bad_digit.is_empty() {
+                let pieces = table.strings(bad_digit);
+                for letter in tail.chars() {
+                    if letter.is_ascii_digit() && !letter.is_digit(base) && pieces.len() == 2 {
+                        return Err([pieces[0].as_str(), &letter.to_string(), pieces[1].as_str()].concat());
+                    }
+                }
+            }
+            return digits(tail, base, true).then_some(()).ok_or_else(|| failure(complaint));
+        }
+    }
+    let mut end = word.len();
+    let has_imaginary = word.chars().next_back().map_or(false, |last| {
+        if table.letters("ext.lexical.number.imaginary").contains(&last) { end -= last.len_utf8(); true } else { false }
+    });
+    let decimal = &word[..end];
+    let exponents = table.letters("ext.lexical.number.exponent");
+    let mut parts = decimal.splitn(2, |c| exponents.contains(&c));
+    let front = parts.next().unwrap_or("");
+    let power = parts.next();
+    let bad = || failure("ext.lexical.number.amiss");
+    if let Some(p) = power {
+        let p = p.strip_prefix('+').or_else(|| p.strip_prefix('-')).unwrap_or(p);
+        if !digits(p, 10, false) { return Err(bad()); }
+    }
+    let dot = table.letter("lexical.number.decimal_point").and_then(|p| front.find(p).map(|n| (n, p)));
+    match dot {
+        Some((n, p)) => {
+            let a = &front[..n];
+            let b = &front[n + p.len_utf8()..];
+            if a.is_empty() && b.is_empty() || !(a.is_empty() || digits(a, 10, false)) || !(b.is_empty() || digits(b, 10, false)) {
+                return Err(bad());
+            }
+        }
+        None if !digits(front, 10, false) => return Err(bad()),
+        _ => (),
+    }
+    if !has_imaginary && power.is_none() && dot.is_none() && decimal.starts_with('0') {
+        let nonzero = decimal.chars().any(|c| matches!(c, '1'..='9'));
+        if nonzero && table.single("ext.lexical.number.amiss.leading_zero").is_some() {
+            return Err(failure("ext.lexical.number.amiss.leading_zero"));
+        }
+    }
     Ok(())
 }

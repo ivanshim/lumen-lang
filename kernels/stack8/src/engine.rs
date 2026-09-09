@@ -1122,6 +1122,7 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            real_shortest: self.lang.real_shortest,
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
             hidden_word: self.lang.hidden_words.first().map(String::as_str),
@@ -2236,9 +2237,15 @@ impl<'a> Engine<'a> {
                     _ => Value::Small(!self.bits_said(&v)?),
                 }
             }
+            Action::Positive => {
+                let value = self.drop_top()?;
+                if let Value::Imaginary(_, words) = &value { return Err(words.to_string().into()); }
+                value
+            }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                if let Value::Imaginary(_, words) = &v { return Err(words.to_string().into()); }
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -3009,6 +3016,10 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = b {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
+        }
+        if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
+            if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
+            if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
         }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));

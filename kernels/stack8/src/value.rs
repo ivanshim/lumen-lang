@@ -96,6 +96,8 @@ pub enum Value {
     Huge(Rc<BigInt>),
     Frac(Rc<Frac>),
     Real(Rc<Real>),
+    /// An imaginary literal and the words for working with it too soon.
+    Imaginary(f64, Rc<str>),
     Text(Rc<str>),
     Flag(bool),
     Null,
@@ -134,6 +136,7 @@ pub struct Wording<'a> {
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
     pub real_digits: Option<usize>,
+    pub real_shortest: bool,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
@@ -197,6 +200,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Imaginary(n, _) => *n != 0.0,
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
@@ -215,6 +219,7 @@ impl Value {
     /// text is parsed, the rest refuse.
     pub fn as_big(&self) -> Result<BigInt, String> {
         match self {
+            Value::Imaginary(_, words) => Err(words.to_string()),
             Value::Small(n) => Ok(BigInt::from(*n)),
             Value::Huge(n) => Ok((**n).clone()),
             // What stands outside the numbers has no whole part; such
@@ -241,6 +246,8 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
+            (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && b.equals(&Value::Small(0)),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) => true,
@@ -318,6 +325,10 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
+            Value::Real(r) if sp.real_shortest => {
+                let x = if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) };
+                shortest_real(x, true)
+            }
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
@@ -330,6 +341,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Imaginary(n, _) => format!("{}j", shortest_real(*n, false)),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
@@ -799,3 +811,18 @@ fn laid_flat(figures: &str, power: i32) -> String {
     format!("{}.{}", &figures[..point], &figures[point..])
 }
 
+
+/// Write the fewest figures, with the point kept for a whole real and
+/// the power of ten padded where the language asks for that spelling.
+pub fn shortest_real(x: f64, keep_point: bool) -> String {
+    if !x.is_finite() { return x.to_string().to_ascii_lowercase(); }
+    let scientific = format!("{:e}", x);
+    let (mantissa, exponent) = scientific.split_once('e').expect("a power follows");
+    let power: i32 = exponent.parse().expect("a whole power");
+    if x != 0.0 && !(-4..16).contains(&power) {
+        return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
+    }
+    let mut out = x.to_string();
+    if keep_point && !out.contains('.') { out.push_str(".0"); }
+    out
+}

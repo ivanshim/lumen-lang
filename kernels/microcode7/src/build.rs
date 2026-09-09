@@ -3936,7 +3936,8 @@ impl<'a> Builder<'a> {
                 // A plus sign leaves its operand as it is, bound like a negation.
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
-                return self.expr(tier);
+                let held = self.expr(tier)?;
+                return Ok(if table.strings("ext.lexical.number.imaginary").is_empty() { held } else { prim_call(Prim::Positive, vec![held]) });
             }
         }
         let node = match t.shape {
@@ -5463,6 +5464,7 @@ fn unreadable_numeral(text: &str, table: &Table) -> String {
 }
 
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
+    if table.flag("ext.lexical.number.separator.strict") { crate::scan::check_numeral(text, table)?; }
     Ok(at_language_width(read_numeral(text, table)?, table))
 }
 
@@ -5471,6 +5473,27 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
         return read_numeral(&plain, table);
+    }
+    let imaginary = table.letters("ext.lexical.number.imaginary");
+    if let Some(letter) = text.chars().next_back().filter(|c| imaginary.contains(c)) {
+        let coefficient: f64 = text[..text.len() - letter.len_utf8()].parse().map_err(|_| unreadable_numeral(text, table))?;
+        return Ok(Value::Imaginary {
+            coefficient,
+            unready: Rc::from(table.single("ext.lexical.number.imaginary.unready").unwrap_or("Imaginary arithmetic is not ready")),
+        });
+    }
+    let letters = table.letters("ext.lexical.number.exponent");
+    let dot = table.letter("lexical.number.decimal_point");
+    let prefixed = ["lexical.number.hex_prefix", "ext.lexical.number.octal_prefix", "ext.lexical.number.binary_prefix"]
+        .iter().any(|key| table.strings(key).iter().any(|p| text.starts_with(p)));
+    let is_real = !prefixed && text.chars().any(|c| Some(c) == dot || letters.contains(&c));
+    if is_real && table.flag("ext.system.real.shortest") && table.count("ext.system.real.bits") == Some(64) {
+        let normalized: String = text.chars().map(|c| {
+            if Some(c) == dot { '.' } else if letters.contains(&c) { 'e' } else { c }
+        }).collect();
+        let x = normalized.parse::<f64>().map_err(|_| unreadable_numeral(text, table))?;
+        let (a, b) = crate::data::binary_worth(x).unwrap_or_else(|| (BigInt::from(if x.is_nan() { 0 } else if x < 0.0 { -1 } else { 1 }), BigInt::from(0)));
+        return Ok(math::made_number(a, b, Some(17), x.is_sign_negative()));
     }
     for (key, radix) in [
         ("lexical.number.hex_prefix", 16u32),
@@ -5513,7 +5536,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
+            let f: BigInt = if f.is_empty() { BigInt::from(0) } else { f.parse().map_err(|_| unreadable_numeral(text, table))? };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }
