@@ -3411,6 +3411,13 @@ impl<'a> Builder<'a> {
     /// statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let table = self.table;
+        if floor == 0 && self.look().shape == Shape::Bare && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
+            let word = self.advance().lexeme;
+            self.advance();
+            let target = self.address_to_write(&word);
+            let expression = self.expr(0)?;
+            return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
+        }
         let mut left = self.monadic_expr()?;
         if floor == 0 && table.spells("ext.op.assign.expression", &self.look().lexeme) {
             let Form::Read(target) = left else {
@@ -4457,6 +4464,9 @@ impl<'a> Builder<'a> {
     }
 
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
+        if self.table.has_any("ext.op.lambda") {
+            node = self.called_on_value(node)?;
+        }
         node = self.members(node)?;
         let (Some(open), Some(close)) = (self.table.single("op.index.open"), self.table.single("op.index.close")) else { return Ok(node) };
         while self.sign(open) {

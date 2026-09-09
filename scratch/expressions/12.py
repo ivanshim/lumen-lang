@@ -22,3 +22,6 @@ def guarded(x):
     return lambda: 1 if True else x
 print(guarded(8)())
 print("a" in {"a": 1}, "b" not in {"a": 1})
+def local(x):
+    return lambda: (x := 4)
+print(local(3)())
