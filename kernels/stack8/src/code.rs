@@ -108,6 +108,11 @@ pub enum Action {
     Execute,
     /// The arguments as an array.
     MakeArray,
+    /// A literal grows by one item, or by all the items of a spread.
+    GatherItem { map: bool, spread: bool },
+    /// The values walked by a comprehension, with maps handing out keys.
+    ComprehensionItems,
+    UnpackCount(usize),
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.
     MakeMap,
@@ -304,6 +309,9 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Sum,
+    List,
+    Any,
     Echo,
     Say,
     Out,
