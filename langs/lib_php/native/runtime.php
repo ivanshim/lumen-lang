@@ -144,6 +144,8 @@ function __ini_default($name) {
     if ($name === "session.save_path") { return ""; }
     if ($name === "session.save_handler") { return "files"; }
     if ($name === "session.auto_start") { return "0"; }
+    if ($name === "allow_url_fopen") { return "1"; }
+    if ($name === "enable_post_data_reading") { return "1"; }
     if ($name === "precision") { global $__figures_at_start; return (string)$__figures_at_start; }
     if ($name === "serialize_precision") { global $__figures_shown_at_start; return (string)$__figures_shown_at_start; }
     return false;
@@ -189,6 +191,18 @@ function __real_kept($value) {
     $__real_figures = $was;
     return $kept;
 }
+// A setting the run was started with is written down as the reader of
+// an ini file leaves it, and not as the words it was given in: the words
+// for yes become 1, the words for no become nothing at all, and anything
+// else stands as it was written. A setting written while the run goes is
+// not read this way and keeps the very words it was handed.
+function __ini_started_word($said) {
+    if (!is_string($said)) { return $said; }
+    $plain = strtolower(trim($said));
+    if ($plain === "on" || $plain === "yes" || $plain === "true") { return "1"; }
+    if ($plain === "off" || $plain === "no" || $plain === "none" || $plain === "false" || $plain === "") { return ""; }
+    return $said;
+}
 function ini_get($name) {
     global $__settings;
     if (array_key_exists($name, $__settings)) { return $__settings[$name]; }
@@ -198,7 +212,7 @@ function ini_get($name) {
         // A setting counted in kinds of complaint is written as an
         // expression over their words, and answers as the number.
         if ($name === "error_reporting") { return (string)__ini_number($held); }
-        return $held;
+        return __ini_started_word($held);
     }
     return __ini_default($name);
 }
@@ -1282,6 +1296,13 @@ function file_get_contents($path, $use_include_path = false, $context = null, $o
     }
     if ($path === "php://input") {
         $held = is_string($__request_body) ? $__request_body : "";
+    } elseif (__http_named($path)) {
+        // A name that is a web address is not a file to be read but a
+        // request to be made, and what the host answers stands where the
+        // file's contents would have stood.
+        $answered = __http_fetched("file_get_contents", $path, $context);
+        if ($answered === false) { return false; }
+        $held = $answered[1];
     } else {
         $held = __file_read($path);
         if ($held === false) { return false; }

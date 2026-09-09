@@ -666,6 +666,30 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.net.ask`, `ext.builtin.run.begin` and `ext.builtin.run.end`:
+  three builtins that are wanted and are not written yet, said here so
+  that whoever writes them knows what is being waited for. The first
+  opens a connection to a host and a port, writes what it was handed on
+  it whole, reads back what comes until the far end closes, and answers
+  those bytes — or false where the connection could not be made, could
+  not be written on, or was broken before anything came back; it is
+  handed the host, the port, what to send, and how long to wait, a wait
+  of nought meaning as long as the host will. One writing and one
+  reading is the whole of it, which is enough for a request that says
+  the connection is to be closed, and this implementation's own server
+  answers nothing else. The second starts a program running beside this
+  one, handed the program, the words to hand it, and names to set in its
+  environment, and answers a number standing for that run or false where
+  it would not begin; what such a run writes goes nowhere, since this is
+  for starting a thing that answers on a connection. The third stops a
+  run begun under such a number. PHP's library is written against all
+  three already: `langs/lib_php/native/network.php` builds and reads a
+  web request and asks only for `__net_ask` to carry it, and the support
+  file under `tests/php/sapi/cli/tests/` starts this implementation as a
+  server and asks only for the other two. Until the labels are bound
+  each of these answers that it has no way to do what was asked, in the
+  words the reference uses for a wrapper it has not got, and nothing
+  else in a run is changed.
 - `ext.op.hush`: a mark written before a piece of a program, keeping
   quiet whatever that piece has to say about itself while its value is
   found. The value is the one the piece would have come to anyway; only

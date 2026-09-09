@@ -31,7 +31,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
 | skip php-cgi not available | 2 |
-| Fatal error: Uncaught Error: Failed opening required '<root>/tests/php/basic/../../sapi/cli/tests/php_cli_server.inc' (include_path='.') in <file> | 1 |
+| Fatal error: Uncaught Error: Undefined variable: PHP_CLI_SERVER_ADDRESS in <file> | 1 |
 | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> | 1 |
 | skip locale needed for this test is not supported on this platform | 1 |
 | skip for Windows only | 1 |
@@ -211,7 +211,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/bug54514.phpt` | pass | pass |  |
 | `php/basic/bug55500.phpt` | pass | pass |  |
 | `php/basic/bug61000.phpt` | pass | pass |  |
-| `php/basic/bug67198.phpt` | error | error | Fatal error: Uncaught Error: Failed opening required '<root>/tests/php/basic/../../sapi/cli/tests/php_cli_server.inc' (include_path='.') in <file> |
+| `php/basic/bug67198.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: PHP_CLI_SERVER_ADDRESS in <file> |
 | `php/basic/bug67988.phpt` | pass | pass |  |
 | `php/basic/bug71273.phpt` | error | error | Fatal error: Uncaught Error: Undefined variable: shell_exec in <file> |
 | `php/basic/bug73969.phpt` | pass | pass |  |

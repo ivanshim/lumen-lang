@@ -197,6 +197,13 @@ function fopen($path, $mode = "r", $use_include_path = false, $context = null) {
     if ($path === "php://stdout" || $path === "php://output" || $path === "php://stderr") {
         return __stream_open("", $path, true, true);
     }
+    // A web address is opened by making the request and holding what
+    // the host answered, which a program then reads as it reads a file.
+    if (__http_named($path)) {
+        $answered = __http_fetched("fopen", $path, $context);
+        if ($answered === false) { return false; }
+        return __stream_open($answered[1], $path, false, false);
+    }
     $writes = (strpos($mode, "w") !== false) || (strpos($mode, "a") !== false) || (strpos($mode, "x") !== false) || (strpos($mode, "+") !== false);
     $pieces = array("");
     $at = 0;
