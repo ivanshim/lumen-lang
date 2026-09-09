@@ -1153,6 +1153,11 @@ only. The extension labels so far, all from PHP:
   lines within their call brackets; a routine's body may also be one
   statement on the line of its header. Without this switch labels retain their
   former meaning, and defaults are worked out when the call begins.
+- `ext.builtin.print.separator` and `ext.builtin.print.end`: keyword names
+  selecting the text between printed values and after the last value. A
+  null option keeps the usual space or newline. `ext.builtin.print.option.type`
+  supplies the error for an option that is neither text nor null. Keyword
+  expansion from maps uses the same checks as direct keyword arguments.
 - `ext.stmt.function.defaults.amiss`: the words said when such a default
   is mutable. The kernels' arrays and maps are values, so they cannot yet
   share a mutable default between calls as Python requires.
@@ -1781,6 +1786,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.print.end` | - | - | `end` | - | - | - | - | - | - | - |
+| `ext.builtin.print.option.type` | - | - | `TypeError: print option must be a string or None` | - | - | - | - | - | - | - |
+| `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |

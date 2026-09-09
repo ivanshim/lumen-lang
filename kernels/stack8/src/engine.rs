@@ -2982,9 +2982,35 @@ impl<'a> Engine<'a> {
                 args.extend(self.data.drain(at..));
                 if self.lang.bind_names {
                     let items = self.call_items(std::mem::take(&mut args))?;
+                    let formatted = matches!(builtin, Builtin::Say) && self.lang.print_separator.is_some()
+                        && items.iter().any(|(key, _)| key.is_some());
+                    let (mut separator, mut ending) = (" ".to_string(), "\n".to_string());
+                    let mut seen = std::collections::HashSet::new();
                     for (key, value) in items {
-                        if key.is_some() { return Err(self.lang.call_builtin_amiss[0].clone().into()); }
-                        args.push(value);
+                        if let Some(key) = key {
+                            if !formatted { return Err(self.lang.call_builtin_amiss[0].clone().into()); }
+                            if !seen.insert(key.clone()) { return Err(Self::named_fault(&self.lang.call_duplicate, &key).into()); }
+                            let target = if self.lang.print_separator.as_deref() == Some(key.as_str()) {
+                                &mut separator
+                            } else if self.lang.print_ending.as_deref() == Some(key.as_str()) {
+                                &mut ending
+                            } else { return Err(self.lang.call_builtin_amiss[0].clone().into()); };
+                            match value {
+                                Value::Null => (),
+                                Value::Text(text) => *target = text.to_string(),
+                                _ => return Err(self.lang.print_option_type.clone().unwrap_or_else(|| "A print option needs text or nothing".into()).into()),
+                            }
+                        } else {
+                            args.push(value);
+                        }
+                    }
+                    if formatted {
+                        let words = self.wording();
+                        let said = args.iter().map(|v| v.display(&words)).collect::<Vec<_>>().join(&separator) + &ending;
+                        self.utter(&said);
+                        self.buffer = args;
+                        self.data.push(Value::Null);
+                        return Ok(());
                     }
                 }
                 let result = self.builtin(*builtin, name, &mut args);

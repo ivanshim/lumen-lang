@@ -2338,7 +2338,31 @@ impl<'a> Machine<'a> {
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
                         let (positions, keywords) = self.open_arguments(values)?;
                         if !keywords.is_empty() {
-                            return Err(self.argument_fault("ext.syntax.call.amiss.builtin", None).into());
+                            if *op != Prim::Say || !self.table.has_any("ext.builtin.print.separator") {
+                                return Err(self.argument_fault("ext.syntax.call.amiss.builtin", None).into());
+                            }
+                            let mut settings = [" ".to_string(), "\n".to_string()];
+                            let mut used = [false; 2];
+                            for (key, value) in keywords {
+                                let index = ["ext.builtin.print.separator", "ext.builtin.print.end"].iter()
+                                    .position(|label| self.table.single(label) == Some(key.as_str()))
+                                    .ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.builtin", None))?;
+                                if used[index] { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
+                                used[index] = true;
+                                match value {
+                                    Value::Text(text) => settings[index] = text.to_string(),
+                                    Value::Nil => (),
+                                    _ => return Err(self.table.single("ext.builtin.print.option.type").unwrap_or("A print option needs text or nothing").to_string().into()),
+                                }
+                            }
+                            let mut text = String::new();
+                            for (i, value) in positions.iter().enumerate() {
+                                if i != 0 { text.push_str(&settings[0]); }
+                                text.push_str(&value.render(self.wording()));
+                            }
+                            text.push_str(&settings[1]);
+                            self.utter(&text);
+                            return Ok(Value::Nil);
                         }
                         values = positions;
                     }

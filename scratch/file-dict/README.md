@@ -60,3 +60,11 @@ syntax. Other languages retain that syntax.
 `8.py` reads unparenthesized tuples after assignments, returns, and the
 `in` of an ordinary loop, including the pair of mapping expressions in
 `test_dict.py`. Commas inside calls still separate arguments.
+
+`9.py` checks dictionary expansion into the print separator and ending
+options, including null defaults, an empty argument list and positional
+spread. `scratch/params/15.py` remains `print(1, end="")`; its old `.err`
+expected a refusal of every builtin keyword argument. The replacement
+`15.out` contains exactly the byte `1`, without a newline, because this
+supported print option must behave as it does in CPython. Other unsupported
+builtin keyword arguments still use the existing refusal.
