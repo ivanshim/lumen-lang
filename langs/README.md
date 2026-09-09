@@ -695,7 +695,9 @@ only. The extension labels so far, all from PHP:
   empties the set, and `ext.builtin.set.copy` gives an independent copy.
   `ext.builtin.set.update` takes the members of each iterable given.
   These method names follow the member operator; a bare call still asks
-  for the routine bound to that name.
+  for the routine bound to that name. A method without its call is read
+  but stops when reached with `ext.builtin.set.method.unavailable`;
+  bound method values are not yet provided.
 - `ext.builtin.set.union`, `ext.builtin.set.intersection`,
   `ext.builtin.set.difference` and `ext.builtin.set.symmetric_difference`
   gather all members, shared members, those on the first side alone,
@@ -2040,6 +2042,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.isdisjoint` | - | - | `isdisjoint` | - | - | - | - | - | - | - |
 | `ext.builtin.set.issubset` | - | - | `issubset` | - | - | - | - | - | - | - |
 | `ext.builtin.set.issuperset` | - | - | `issuperset` | - | - | - | - | - | - | - |
+| `ext.builtin.set.method.unavailable` | - | - | `NotImplementedError: bound set methods are not provided` | - | - | - | - | - | - | - |
 | `ext.builtin.set.missing` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
 | `ext.builtin.set.operands` | - | - | `TypeError: set operands must be sets` | - | - | - | - | - | - | - |
 | `ext.builtin.set.pop` | - | - | `pop` | - | - | - | - | - | - | - |

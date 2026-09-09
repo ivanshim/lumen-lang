@@ -4576,13 +4576,21 @@ impl<'a> Compiler<'a> {
             return self.mutation(&name, &target, argc + 1);
         }
         let mut argc = 1;
+        let mut called = false;
         if let Some(call) = self.lang.calling.clone() {
             if self.at_symbol(&call.open) {
                 self.take();
+                called = true;
                 argc += self.arguments(&call)?;
             }
         }
         if let Some(method) = native.filter(|b| b.set_method()) {
+            if !called {
+                let words = self.lang.set_words["ext.builtin.set.method.unavailable"].first().cloned().unwrap_or_default();
+                self.constant(Value::text(&words));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from(name.as_str())), 1);
+                return Ok(());
+            }
             self.act(Action::Builtin(method, Rc::from(name.as_str())), argc);
             Ok(())
         } else { self.call(&name, argc) }

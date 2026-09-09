@@ -4184,13 +4184,20 @@ impl<'a> Builder<'a> {
                     break;
                 }
                 let mut args = vec![left];
+                let mut invoked = false;
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
                         self.advance();
+                        invoked = true;
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
                 left = match table.prims.get(&name).copied() {
+                    Some(Prim::SetCall(1..=17)) if !invoked => {
+                        let words = table.single("ext.builtin.set.method.unavailable").unwrap_or_default();
+                        args.push(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+                        sequence(args)
+                    }
                     Some(op @ Prim::SetCall(1..=17)) => Form::Apply(Callee::Prim(op, Rc::from(name.as_str())), args),
                     _ => self.named_call(&name, args)?,
                 };

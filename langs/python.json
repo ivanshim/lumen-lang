@@ -422,6 +422,9 @@
   "ext.builtin.set.issuperset": [
     "issuperset"
   ],
+  "ext.builtin.set.method.unavailable": [
+    "NotImplementedError: bound set methods are not provided"
+  ],
   "ext.builtin.set.missing": [
     "KeyError: "
   ],
