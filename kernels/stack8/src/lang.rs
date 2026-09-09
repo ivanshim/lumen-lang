@@ -574,6 +574,22 @@ pub struct Lang {
     /// The word a routine written where a value stands says, before the
     /// names it carries away from around it.
     pub carries_words: Vec<String>,
+    pub bind_names: bool,
+    pub carries_pairs: Vec<String>,
+    pub keyword_only: Vec<String>,
+    pub positional_only: Vec<String>,
+    pub call_spread: Vec<String>,
+    pub call_spread_pairs: Vec<String>,
+    pub call_amiss: Vec<String>,
+    pub call_missing: Vec<String>,
+    pub call_unknown: Vec<String>,
+    pub call_duplicate: Vec<String>,
+    pub call_builtin_amiss: Vec<String>,
+    pub spread_amiss: Vec<String>,
+    pub spread_pairs_amiss: Vec<String>,
+    pub defaults_amiss: Vec<String>,
+    pub parameters_amiss: Vec<String>,
+
     /// The word a routine written short says, and the mark standing
     /// between its parameters and the one expression it is: `fn ($x) =>
     /// $x + 1`. Such a routine takes with it every name around it.
@@ -683,7 +699,7 @@ w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries | w ext.stmt.function.short
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
@@ -1505,6 +1521,22 @@ impl Lang {
             trait_words: r.strings("ext.stmt.class.trait")?,
             uses_words: r.strings("ext.stmt.class.uses")?,
             carries_words: r.strings("ext.stmt.function.carries")?,
+            bind_names: r.flag("ext.syntax.call.bind_names")?,
+            carries_pairs: r.strings("ext.stmt.function.carries.pairs")?,
+            keyword_only: r.strings("ext.stmt.function.keyword_only")?,
+            positional_only: r.strings("ext.stmt.function.positional_only")?,
+            call_spread: r.strings("ext.syntax.call.spread")?,
+            call_spread_pairs: r.strings("ext.syntax.call.spread.pairs")?,
+            call_amiss: r.strings("ext.syntax.call.amiss")?,
+            call_missing: r.strings("ext.syntax.call.amiss.missing")?,
+            call_unknown: r.strings("ext.syntax.call.amiss.unknown")?,
+            call_duplicate: r.strings("ext.syntax.call.amiss.duplicate")?,
+            call_builtin_amiss: r.strings("ext.syntax.call.amiss.builtin")?,
+            spread_amiss: r.strings("ext.syntax.call.spread.amiss")?,
+            spread_pairs_amiss: r.strings("ext.syntax.call.spread.pairs.amiss")?,
+            defaults_amiss: r.strings("ext.stmt.function.defaults.amiss")?,
+            parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
+
             short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
                 [] => None,
                 [word, mark] => Some((word.clone(), mark.clone())),
@@ -1626,6 +1658,7 @@ impl Lang {
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
             &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
+            &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);

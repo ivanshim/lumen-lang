@@ -148,7 +148,8 @@ only names what its language spells; the floor is the same for all.
     stay empty.
 19. `syntax.call.label` is the token after an argument label in a call,
     Swift's `fib(n: 10)`. The label names the argument for the reader;
-    arguments pass by position and the label is dropped.
+    arguments pass by position and the label is dropped, unless
+    `ext.syntax.call.bind_names` says to bind them by name.
 20. The pipe passes the value on its left as the first argument of the
     call on its right, and a bare name on the right is a call with no other
     arguments. Spelled `.` in the highest tier, that is method syntax:
@@ -1047,6 +1048,43 @@ only. The extension labels so far, all from PHP:
   written and fills a slot of its own inside it. A name written with the
   reference mark is taken as the cell it shares with the name it came
   from, so writing to it there writes to the name here.
+  Before a parameter name the same label gathers the remaining positional
+  arguments into an array, as Python's `*args`; after the parameter list
+  its former meaning is unchanged.
+- `ext.stmt.function.carries.pairs`: the sign before a parameter gathering
+  keyword arguments which no other parameter names, as Python's `**kw`.
+- `ext.stmt.function.keyword_only`: a bare sign in a parameter list;
+  parameters after it must be given by name. A gathering parameter has
+  the same effect on the parameters after it.
+- `ext.stmt.function.positional_only`: a bare sign in a parameter list;
+  parameters before it must be given by position.
+- `ext.stmt.function.parameters.amiss`: the words said when a parameter
+  list repeats a name or puts a mark where none may stand.
+- `ext.syntax.call.bind_names`: a switch; call labels, or the assignment
+  sign after a name in call position, bind arguments by name. Defaults
+  fill the places left empty, and a name given twice or
+  not wanted is refused. Defaults are worked out where the routine is
+  written and taken away with it. Parameter and call lists may run over
+  lines within their call brackets; a routine's body may also be one
+  statement on the line of its header. Without this switch labels retain their
+  former meaning, and defaults are worked out when the call begins.
+- `ext.stmt.function.defaults.amiss`: the words said when such a default
+  is mutable. The kernels' arrays and maps are values, so they cannot yet
+  share a mutable default between calls as Python requires.
+- `ext.syntax.call.spread`: a sign before a call argument handing out its
+  items as positional arguments. Arrays, text and the keys of maps may
+  be handed out; other values are refused in the words of
+  `ext.syntax.call.spread.amiss`.
+- `ext.syntax.call.spread.pairs`: a sign before a call argument handing
+  out a map as keyword arguments. A value which is no map, or a key which
+  is no string, is refused in `ext.syntax.call.spread.pairs.amiss` words.
+- `ext.syntax.call.amiss`: plain words for arguments which do not fit the
+  parameter list. `ext.syntax.call.amiss.missing`,
+  `ext.syntax.call.amiss.unknown` and `ext.syntax.call.amiss.duplicate`
+  each hold two pieces, before and after the argument's name, for a
+  required place left empty, an unwanted keyword and a name given twice.
+  `ext.syntax.call.amiss.builtin` says that a builtin has no parameter
+  names by which the kernel can bind its keyword arguments.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. Such a routine
@@ -1785,10 +1823,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | - | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.stmt.function.carries` | - | - | - | - | `use` | - | - | - | - | - |
+| `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
+| `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
+| `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.stmt.function.keyword_only` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
+| `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | - | - | `fn` `=>` | - | - | - | - | - |
 | `ext.stmt.global` | - | - | - | - | `global` | - | - | - | - | - |
@@ -1803,7 +1846,17 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw` | - | - | - | - | `throw` | - | - | - | - | - |
 | `ext.stmt.try` | - | - | - | - | `try` | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
+| `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.builtin` | - | - | `TypeError: keyword arguments for this builtin are not supported` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |

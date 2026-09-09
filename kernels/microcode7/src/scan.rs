@@ -776,6 +776,20 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
         pos += sym.chars().count();
         tokens.push(tok(Shape::Sign, sym, row));
     }
+    if table.flag("ext.syntax.call.bind_names") {
+        let mut nesting: usize = 0;
+        let mut joined = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            match token.shape {
+                Shape::Sign if table.spells("syntax.call.open", &token.lexeme) => nesting += 1,
+                Shape::Sign if table.spells("syntax.call.close", &token.lexeme) => nesting = nesting.saturating_sub(1),
+                Shape::Lead | Shape::LineEnd if nesting != 0 => continue,
+                _ => {}
+            }
+            joined.push(token);
+        }
+        tokens = joined;
+    }
     tokens.push(tok(Shape::Finish, "EOF".into(), row));
     Ok(tokens)
 }
