@@ -38,11 +38,19 @@ Before any real work, prove the path end to end:
    it never has to be rediscovered.
 
 ```
-# The Codex invocation actually used — fill in and commit:
+# The Codex invocation actually used:
 #
-#   codex ... --model <gpt-6-astra as the CLI spells it> ...
+#   codex exec -C /Users/ivanshim/repos/lumen-lang -m gpt-6-astra \
+#       -s workspace-write --color never -o <last-message-file> - < <brief-file>
 #
-# Verified working on: ____________
+#   The brief is read from stdin (`-`), redirected from a file. Stdin must be
+#   a file or /dev/null: left as an open pipe, codex waits for it to close
+#   and never begins. `-m gpt-6-astra` selects the model; the transcript's
+#   first lines print `model: gpt-6-astra`, which is the check that it took.
+#   Edits land directly in the working tree; read them with `git diff`.
+#   The run asks no approvals, so the brief must say everything.
+#
+# Verified working on: 2026-09-10, codex-cli 0.153.4, macOS 26.6.2 arm64
 ```
 
 Do not begin implementation until step 4 has succeeded. A coordinator that
