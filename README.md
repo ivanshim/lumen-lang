@@ -322,6 +322,7 @@ shape, stack26 and microcode10, were retired at the same time.
 - [docs/LUMEN_KERNEL_STACK8.md](docs/LUMEN_KERNEL_STACK8.md) — the stack8 kernel: the fast stack machine, eight words
 - [docs/KERNEL_LAB.md](docs/KERNEL_LAB.md) — the kernel lab: evolving both kernel shapes for speed, cycle by cycle
 - [langs/README.md](langs/README.md) — the definition format, every label, and the languages side by side
+- [docs/REFERENCE_SUITE_WORK.md](docs/REFERENCE_SUITE_WORK.md) — working on the reference test suite: what to run, where a label goes, and what goes wrong quietly
 - [docs/LUMEN_LANGUAGE_DESIGN.md](docs/LUMEN_LANGUAGE_DESIGN.md) — design principles
 - [docs/LUMEN_COMPACT_REFERENCE.md](docs/LUMEN_COMPACT_REFERENCE.md) — Lumen quick reference
 - [docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md](docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md) — external function design
