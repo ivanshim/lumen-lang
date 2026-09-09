@@ -49,6 +49,7 @@ pub struct Lang {
     pub quotes: Vec<char>,
     pub raw_quotes: Vec<char>,
     pub long_quotes: Vec<String>,
+    pub line_continuations: Vec<String>,
     pub raw_prefixes: Vec<char>,
     pub byte_prefixes: Vec<char>,
     pub plain_prefixes: Vec<char>,
@@ -748,7 +749,7 @@ w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.
 b ext.stmt.terminator.only
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
-w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
+w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
 b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
@@ -1269,6 +1270,7 @@ impl Lang {
             quotes,
             raw_quotes,
             long_quotes: r.strings("ext.lexical.string.long")?,
+            line_continuations: r.strings("ext.lexical.line_continuation")?,
             raw_prefixes: r.letters("ext.lexical.string.prefix.raw")?,
             byte_prefixes: r.letters("ext.lexical.string.prefix.bytes")?,
             plain_prefixes: r.letters("ext.lexical.string.prefix.plain")?,
@@ -1710,7 +1712,7 @@ impl Lang {
             place(question);
             place(mark);
         }
-        for mark in &self.long_quotes {
+        for mark in self.long_quotes.iter().chain(&self.line_continuations) {
             place(mark);
         }
         for lex in &self.plus_words {

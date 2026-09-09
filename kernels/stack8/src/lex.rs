@@ -1029,8 +1029,13 @@ impl<'a> Cursor<'a> {
                     self.rich_string(prefix, &mark, raw, format)?;
                     continue;
                 }
-                if lang.adjacent_strings && self.look(0) == Some('\\') && self.look(1) == Some('\n') {
-                    self.step(); self.step();
+            }
+            if let Some(mark) = lang.line_continuations.iter().find(|mark| at_word(&self.text, self.at, mark)) {
+                let width = mark.chars().count();
+                let end = if self.look(width) == Some('\n') { 1 }
+                    else if self.look(width) == Some('\r') && self.look(width + 1) == Some('\n') { 2 } else { 0 };
+                if end != 0 {
+                    for _ in 0..width + end { self.step(); }
                     continue;
                 }
             }

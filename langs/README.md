@@ -241,6 +241,11 @@ only. The extension labels so far, all from PHP:
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
+- `ext.lexical.line_continuation`: marks which, immediately before a line
+  end outside a string or comment, join the next line to this one. The
+  mark and line end say nothing, and the next line's indentation opens
+  no block. Escaped ends within text belong to
+  `ext.lexical.escape.continued`; a comment never carries a line on.
 - `ext.lexical.string.long`: the quote marks that enclose text over
   lines. The whole mark ends the string; a shorter run and the other
   kind of quote stand for themselves.
@@ -1813,6 +1818,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
+| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |

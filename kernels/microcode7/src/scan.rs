@@ -848,11 +848,19 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 tokens.extend(quote.made);
                 continue;
             }
-            if table.flag("ext.lexical.string.adjacent") && src[pos] == '\\' && src.get(pos + 1) == Some(&'\n') {
-                pos += 2;
-                row += 1;
-                continue;
-            }
+        }
+        let carried = table.strings("ext.lexical.line_continuation").iter().find_map(|mark| {
+            let letters: Vec<char> = mark.chars().collect();
+            if !src[pos..].starts_with(&letters) { return None; }
+            let tail = &src[pos + letters.len()..];
+            if tail.starts_with(&['\r', '\n']) { Some(letters.len() + 2) }
+            else if tail.first() == Some(&'\n') { Some(letters.len() + 1) }
+            else { None }
+        });
+        if let Some(length) = carried {
+            row += 1;
+            pos += length;
+            continue;
         }
         let c = src[pos];
         if c == '\n' {

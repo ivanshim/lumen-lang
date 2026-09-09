@@ -351,6 +351,9 @@
   "ext.lexical.escape.unavailable": [
     "Unicode escape cannot be represented"
   ],
+  "ext.lexical.line_continuation": [
+    "\\"
+  ],
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
     "invalid string literal"
