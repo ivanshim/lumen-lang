@@ -731,6 +731,9 @@ impl<'a> Cursor<'a> {
                 }
             }
         }
+        if self.look(0).map_or(false, |c| self.lang.imaginary_letters.contains(&c)) {
+            s.push(self.step());
+        }
         self.push(Shape::Numeral, s, 0, line, col);
     }
 

@@ -404,6 +404,19 @@ pub struct Lang {
     pub exponent_letters: Vec<char>,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub loop_else: bool,
+    pub imaginary_letters: Vec<char>,
+    pub imaginary_unready: Vec<String>,
+    pub adjacent_strings: bool,
+
+    pub if_else_words: Vec<String>,
+    pub identity_not: Vec<String>,
+    pub identity_unsupported: Option<String>,
+    pub membership_words: Vec<String>,
+    pub membership_not: Vec<String>,
+    pub membership_unsupported: Option<String>,
+    pub chained_comparisons: bool,
+
     pub hush_words: Vec<String>,
     /// The mark written before a value to say that the value spells a
     /// name, and the name is what is meant.
@@ -733,6 +746,8 @@ w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decora
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
+w ext.op.if_else | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained
+b ext.stmt.loop.else | w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | b ext.lexical.string.adjacent
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1103,7 +1118,7 @@ impl Lang {
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
             ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
-            ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
+            ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1395,7 +1410,7 @@ impl Lang {
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
-            loose_equality: tells_same,
+            loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
             complaint_words: {
                 let named = [
                     (Complaint::Warning, "ext.system.complaint.warning"),
@@ -1525,6 +1540,19 @@ impl Lang {
             },
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             plus_words: r.strings("ext.op.plus")?,
+            loop_else: r.flag("ext.stmt.loop.else")?,
+            imaginary_letters: r.letters("ext.lexical.number.imaginary")?,
+            imaginary_unready: r.strings("ext.lexical.number.imaginary.unready")?,
+            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
+
+            if_else_words: r.strings("ext.op.if_else")?,
+            identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unsupported: r.head("ext.op.identical.unsupported")?,
+            membership_words: r.strings("ext.op.in")?,
+            membership_not: r.strings("ext.op.in.negated")?,
+            membership_unsupported: r.head("ext.op.in.unsupported")?,
+            chained_comparisons: r.flag("ext.op.compare.chained")?,
+
             hush_words: hushes,
             naming_words: r.strings("ext.op.name_by_value")?,
             casts_kinds: r.flag("ext.op.cast")?,
@@ -1688,8 +1716,14 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
-            return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+        if !lang.class_words.is_empty() {
+            if lang.class_bases_open.is_empty() {
+                if lang.member_mark.is_none() || lang.new_words.is_empty() {
+                    return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+                }
+            } else if lang.class_bases_close.is_empty() || lang.class_unready.is_empty() {
+                return Err("Deferred classes need closing base brackets and words for their unready form".to_string());
+            }
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
             return Err("stmt.foreach needs stmt.foreach.as".to_string());
@@ -1767,6 +1801,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.if_else_words, &self.identity_not, &self.membership_words, &self.membership_not,
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
             &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,

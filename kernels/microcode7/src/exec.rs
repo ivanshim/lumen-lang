@@ -297,7 +297,7 @@ impl<'a> Machine<'a> {
             plain_keys: table.flag("ext.op.index.plain_keys"),
             // A language with a word for being the very same means
             // something looser by being equal.
-            loose_equals: table.single("ext.op.identical").is_some(),
+            loose_equals: table.has_any("ext.op.identical") && !table.has_any("ext.op.identical.negated"),
         }
     }
 
@@ -4108,6 +4108,28 @@ impl<'a> Machine<'a> {
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Contains | Prim::Absent => {
+                let present = match (&v[0], &v[1]) {
+                    (needle, Value::Vector(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k)),
+                    (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
+                    _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(if op == Prim::Absent { !present } else { present })
+            }
+            Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
+                let identical = match (&v[0], &v[1]) {
+                    (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
+                    (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Nil, Value::Nil) => true,
+                    (Value::Flag(a), Value::Flag(b)) => a == b,
+                    (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
+                    _ if !v[0].selfsame(&v[1]) => false,
+                    _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
+                };
+                Value::Flag(if op == Prim::Unlike { !identical } else { identical })
+            }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
@@ -5479,4 +5501,29 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
     }
+}
+
+
+/// A container's comparison keeps a shared nonreflexive item findable.
+fn contained_equal(near: &Value, far: &Value) -> bool {
+    if let Value::Flag(bit) = near { return contained_equal(&Value::Small(if *bit { 1 } else { 0 }), far); }
+    if let Value::Flag(bit) = far { return contained_equal(near, &Value::Small(if *bit { 1 } else { 0 })); }
+    match (near, far) {
+        (Value::Frac(x), Value::Frac(y)) if Rc::ptr_eq(x, y) => return true,
+        (Value::Vector(left), Value::Vector(right)) => {
+            if Rc::ptr_eq(left, right) { return true; }
+            if left.len() != right.len() { return false; }
+            return left.iter().zip(right.iter()).all(|(l, r)| contained_equal(l, r));
+        }
+        (Value::Dict(left), Value::Dict(right)) => {
+            if Rc::ptr_eq(left, right) { return true; }
+            if left.len() != right.len() { return false; }
+            for (key, value) in left.iter() {
+                if !right.iter().any(|(k, v)| contained_equal(key, k) && contained_equal(value, v)) { return false; }
+            }
+            return true;
+        }
+        _ => {}
+    }
+    near.equals(far)
 }

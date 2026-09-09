@@ -694,6 +694,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             }
+            if src.get(k).map_or(false, |c| table.letters("ext.lexical.number.imaginary").contains(c)) { k += 1; }
             tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));
             pos = k;
             continue;

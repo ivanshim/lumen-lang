@@ -91,6 +91,8 @@ ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.as:L ext.system.module.name:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
+ext.op.if_else:L ext.op.identical.negated:L ext.op.identical.unsupported:L ext.op.in:L ext.op.in.negated:L ext.op.in.unsupported:L ext.op.compare.chained:B \
+ext.stmt.loop.else:B ext.lexical.number.imaginary:L ext.lexical.number.imaginary.unready:L ext.lexical.string.adjacent:B \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
 ext.stmt.terminator:L ext.stmt.annotation:L ext.stmt.annotation.amiss:L ext.stmt.annotation.target.unready:L ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
@@ -179,13 +181,13 @@ pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
     ("ext.builtin.run.begin", Prim::Raised), ("ext.builtin.run.end", Prim::Laid),
 ];
 
-const BINARY_LABELS: [(&str, Prim); 24] = [
+const BINARY_LABELS: [(&str, Prim); 25] = [
     ("op.add", Prim::Plus), ("op.sub", Prim::Minus), ("op.mul", Prim::Times), ("op.div", Prim::Over), ("op.quot", Prim::IntDiv),
     ("op.rem", Prim::Mod), ("op.pow", Prim::Power), ("op.eq", Prim::Eq), ("op.ne", Prim::Ne), ("op.lt", Prim::Lt), ("op.le", Prim::Le),
     ("op.gt", Prim::Gt), ("op.ge", Prim::Ge), ("op.and", Prim::Both), ("op.or", Prim::Either), ("op.concat", Prim::Join),
     ("ext.op.compare", Prim::Rank), ("ext.op.bit.and", Prim::BitsBoth), ("ext.op.bit.or", Prim::BitsEither),
     ("ext.op.bit.xor", Prim::BitsOne), ("ext.op.bit.left", Prim::BitsUp), ("ext.op.bit.right", Prim::BitsDown),
-    ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
+    ("ext.op.in", Prim::Contains), ("ext.op.identical", Prim::Selfsame), ("ext.op.not_identical", Prim::Unlike),
 ];
 
 fn top_object(text: &str) -> Result<serde_json::Map<String, Json>, String> {
@@ -551,8 +553,16 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
-            return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+        if self.has_any("ext.stmt.class") {
+            match self.has_any("ext.stmt.class.bases.open") {
+                true if !self.has_any("ext.stmt.class.bases.close") || !self.has_any("ext.stmt.class.unready") => {
+                    return Err("Deferred classes need closing base brackets and words for their unready form".into());
+                }
+                false if !self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new") => {
+                    return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
+                }
+                _ => {}
+            }
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
             return Err("stmt.foreach needs stmt.foreach.as".to_string());
@@ -589,7 +599,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["ext.lexical.string.long", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.yield", "ext.stmt.yield.from", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+        let symbol_labels = ["ext.op.if_else", "ext.op.identical.negated", "ext.op.in.negated", "ext.lexical.string.long", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.open", "ext.stmt.class.bases.close", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.yield", "ext.stmt.yield.from", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",

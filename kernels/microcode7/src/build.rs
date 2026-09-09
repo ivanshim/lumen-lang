@@ -957,6 +957,21 @@ impl<'a> Builder<'a> {
             Some(step) => Some(Box::new(step(self)?)),
             None => None,
         };
+        if self.table.flag("ext.stmt.loop.else") {
+            self.skip_line_ends();
+            if self.key("stmt.else") {
+                self.advance();
+                let last = self.body()?;
+                let exhausted = self.gensym("exhausted");
+                let begin = Form::Write(exhausted.clone(), Box::new(constant(Value::Flag(false))));
+                let reached = Form::Write(exhausted.clone(), Box::new(constant(Value::Flag(true))));
+                let no_more = sequence(vec![reached, constant(Value::Flag(false))]);
+                let test = self.choose(test, constant(Value::Flag(true)), no_more);
+                let run = Form::Cycle { test: Box::new(test), body: Box::new(body), step, after: false };
+                let tail = self.choose(Form::Read(exhausted), last, constant(Value::Nil));
+                return Ok(sequence(vec![begin, run, tail]));
+            }
+        }
         Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step, after: false })
     }
 
@@ -2620,10 +2635,48 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    /// A single name can already take the item. The other target shapes
+    /// are read here and left to the common binding work to execute.
+    fn walk_targets(&mut self) -> Res<Option<String>> {
+        let mut names = Vec::new();
+        let mut comma = false;
+        loop {
+            let close = if self.on_any("syntax.group.open") {
+                self.table.single("syntax.group.close")
+            } else if self.on_any("syntax.array.open") {
+                self.table.single("syntax.array.close")
+            } else { None };
+            let item = match close {
+                Some(end) => {
+                    self.advance();
+                    if !self.sign(end) { self.walk_targets()?; }
+                    self.need_sign(end, "to finish a walk target")?;
+                    None
+                }
+                None => {
+                    let starred = self.on_any("ext.syntax.array.spread");
+                    if starred { self.advance(); }
+                    let name = self.need_word("in a walk target")?;
+                    if starred { None } else { Some(name) }
+                }
+            };
+            names.push(item);
+            if !self.on_any("ext.op.tuple") { break; }
+            comma = true;
+            self.advance();
+            if self.key("stmt.for.in") || self.on_any("syntax.group.close")
+                || self.on_any("syntax.array.close") { break; }
+        }
+        Ok(if comma { None } else { names.pop().flatten() })
+    }
+
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
-        let var = self.need_word("as the loop variable")?;
+        let target = if table.has_any("ext.op.tuple") { self.walk_targets()? }
+            else { Some(self.need_word("as the loop variable")?) };
+        let pending = target.is_none();
+        let var = target.unwrap_or_else(|| self.gensym("walk_item").ident.to_string());
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
@@ -2644,7 +2697,8 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let start = self.expr(tier + 1)?;
+            let start = if table.has_any("ext.op.tuple") { self.comma_value()? }
+                else { self.expr(tier + 1)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -2655,7 +2709,8 @@ impl<'a> Builder<'a> {
                     None => start,
                 };
                 self.address_to_write(&var);
-                return self.walk(source, None, var, None, None);
+                let walked = self.walk(source, None, var, None, None)?;
+                return Ok(if pending { sequence(vec![self.scope_unrun("ext.system.scope.unready"), walked]) } else { walked });
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -3280,6 +3335,12 @@ impl<'a> Builder<'a> {
             if self.on_assign() { self.advance(); let _value = self.comma_value()?; }
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
+        if self.table.has_any("ext.system.scope.unready") && self.on_writing()
+            && self.tokens[began..self.pos].iter().any(|t| t.shape == Shape::Sign && self.table.spells("op.pipe", &t.lexeme)) {
+            self.advance();
+            let _value = self.comma_value()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         if boundary && self.on_any("ext.stmt.annotation") {
             return self.with_annotation(expr, began);
         }
@@ -3826,6 +3887,29 @@ impl<'a> Builder<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            let conditional = table.strings("ext.op.if_else");
+            if floor == 0 && conditional.first() == Some(&text) {
+                self.advance();
+                let test = self.expr(1)?;
+                let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
+                if self.look().lexeme != *end {
+                    return Err(format!("Expected '{}' in conditional expression", end));
+                }
+                self.advance();
+                let no = self.expr(0)?;
+                left = self.choose(test, left, no);
+                continue;
+            }
+            if table.flag("ext.op.compare.chained") {
+                if let Some((operation, level, words)) = self.comparison_head() {
+                    if floor > level { break; }
+                    let saved = self.gensym("middle");
+                    let keep = Form::Write(saved.clone(), Box::new(left));
+                    let links = self.comparison_tail(saved, operation, level, words)?;
+                    left = sequence(vec![keep, links]);
+                    continue;
+                }
+            }
             if table.spells("op.pipe", &text) {
                 if table.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -3848,7 +3932,10 @@ impl<'a> Builder<'a> {
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
-                left = self.named_call(&name, args)?;
+                let mutation = matches!(table.prims.get(&name), Some(Prim::Append) | Some(Prim::Replace));
+                left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
+                    self.scope_unrun("ext.system.scope.unready")
+                } else { self.named_call(&name, args)? };
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
@@ -3930,6 +4017,39 @@ impl<'a> Builder<'a> {
             };
         }
         Ok(left)
+    }
+
+    fn comparison_head(&self) -> Option<(Prim, u32, usize)> {
+        let t = self.table;
+        let first = &self.look().lexeme;
+        if t.spells("ext.op.in.negated", first) && t.spells("ext.op.in", &self.glance(1).lexeme) {
+            let membership = t.dyadic.get(&self.glance(1).lexeme)?;
+            return Some((Prim::Absent, membership.level, 2));
+        }
+        let binary = t.dyadic.get(first)?;
+        match binary.prim {
+            Prim::Selfsame if t.spells("ext.op.identical.negated", &self.glance(1).lexeme) => Some((Prim::Unlike, binary.level, 2)),
+            Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Selfsame | Prim::Unlike | Prim::Contains | Prim::Absent => Some((binary.prim, binary.level, 1)),
+            _ => None,
+        }
+    }
+
+    /// The next link runs beneath the true arm of this one. Its near
+    /// side is the cell this link filled, so no middle is read twice.
+    fn comparison_tail(&mut self, near: Address, operation: Prim, level: u32, words: usize) -> Res<Form> {
+        for _ in 0..words { self.advance(); }
+        let side = self.expr(level + 1)?;
+        let far = self.gensym("next");
+        let put = Form::Write(far.clone(), Box::new(side));
+        let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
+        let answer = match self.comparison_head() {
+            Some((following, tier, width)) if tier == level => {
+                let rest = self.comparison_tail(far, following, tier, width)?;
+                self.choose(test, rest, constant(Value::Flag(false)))
+            }
+            _ => test,
+        };
+        Ok(sequence(vec![put, answer]))
     }
 
     /// `++p` and `p--` over any place a write reaches: the place is
@@ -4056,11 +4176,17 @@ impl<'a> Builder<'a> {
         let node = match t.shape {
             Shape::Numeral => {
                 self.advance();
-                constant(numeral(&t.lexeme, table)?)
+                if t.lexeme.chars().last().map_or(false, |c| table.letters("ext.lexical.number.imaginary").contains(&c)) {
+                    self.scope_unrun("ext.lexical.number.imaginary.unready")
+                } else { constant(numeral(&t.lexeme, table)?) }
             }
             Shape::Quote => {
                 self.advance();
-                constant(Value::text(&t.lexeme))
+                let mut joined = t.lexeme.clone();
+                while table.flag("ext.lexical.string.adjacent") && self.look().shape == Shape::Quote {
+                    joined.push_str(&self.advance().lexeme);
+                }
+                constant(Value::text(&joined))
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.lexeme) => {
                 self.advance();
@@ -4949,7 +5075,7 @@ impl<'a> Builder<'a> {
     fn gather_tail(&mut self, expression_at: usize, answer: &str, dictionary: bool) -> Res<Form> {
         if self.on_any("ext.op.comprehension.if") {
             self.advance();
-            let condition = self.expr(0)?;
+            let condition = self.expr(1)?;
             let accepted = self.gather_tail(expression_at, answer, dictionary)?;
             return Ok(self.choose(condition, accepted, constant(Value::Nil)));
         }
@@ -5000,7 +5126,7 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
         self.advance();
         let unavailable = targets.iter().any(Option::is_none);
-        let source = self.expr(0)?;
+        let source = self.expr(1)?;
         let source_name = self.gather_name("gather_source");
         let hold = self.write(&source_name, prim_call(Prim::Iterated, vec![source]));
         let cursor = self.gather_name("gather_cursor");

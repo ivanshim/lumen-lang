@@ -176,6 +176,8 @@ pub enum Action {
     /// within it. 1 and 1.0 are equal but not the same.
     Same,
     Unsame,
+    Contains,
+    Lacks,
     /// The bits of two whole numbers taken together, and the bits of one
     /// turned over. A number is read as sixty-four bits, sign and all.
     BitBoth,

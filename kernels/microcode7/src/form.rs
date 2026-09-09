@@ -214,6 +214,8 @@ pub enum Prim {
     /// equal without being the same.
     Selfsame,
     Unlike,
+    Contains,
+    Absent,
     /// The bits of a value, sixty-four of them, sign and all: both set,
     /// either set, one alone set, all turned over, and moved up or down.
     /// Two pieces of text take their bits letter by letter instead.

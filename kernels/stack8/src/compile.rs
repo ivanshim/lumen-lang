@@ -720,6 +720,20 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Natural exhaustion reaches the last arm; a break lands beyond it.
+    fn complete_cycle(&mut self, again: usize) -> Res<()> {
+        if !self.lang.loop_else { self.leave_cycle(again); return Ok(()); }
+        let cycle = self.piece().cycles.pop().expect("an open loop");
+        for at in cycle.resumes { self.patch_jump(at, again); }
+        self.skip_seps();
+        if self.on_keyword(&self.lang.else_words) {
+            self.take();
+            self.body()?;
+        }
+        for at in cycle.leaves { self.land(at); }
+        Ok(())
+    }
+
     /// How many loops a break or continue leaves: the number after the
     /// word when the definition allows one (ext.stmt.break.levels), else one.
     fn levels(&mut self) -> Res<usize> {
@@ -1761,7 +1775,7 @@ impl<'a> Compiler<'a> {
         self.read(&at);
         self.act(Action::WalkMore, 2);
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         // The walk lets its last item go once it is over, so that the
         // place holding it is a place two names share only while some
         // name of the program's own still holds it.
@@ -2153,7 +2167,7 @@ impl<'a> Compiler<'a> {
         self.expr(0)?;
         self.pos = after;
         self.loop_back(top);
-        self.leave_cycle(test);
+        self.complete_cycle(test)?;
         Ok(())
     }
 
@@ -2177,11 +2191,50 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// Read the places of a collection walk before its source. Compound
+    /// places await the common unpacking reader; no item is lost to them.
+    fn loop_places(&mut self) -> Res<Option<String>> {
+        let mut simple = None;
+        let mut count = 0;
+        loop {
+            let group = [&self.lang.grouping, &self.lang.array_brackets].into_iter()
+                .flatten().find(|g| self.at_symbol(&g.open)).cloned();
+            let name = if let Some(group) = group {
+                self.take();
+                if !self.at_symbol(&group.close) { self.loop_places()?; }
+                self.want_sign(&group.close, "after loop targets")?;
+                None
+            } else {
+                let spread = self.on_any(&self.lang.array_spread);
+                if spread { self.take(); }
+                let name = self.want_name("as a loop target")?;
+                if spread { None } else { Some(name) }
+            };
+            count += 1;
+            if count == 1 { simple = name; }
+            if !self.on_any(&self.lang.tuple_marks) { break; }
+            self.take();
+            simple = None;
+            if self.on_keyword(&self.lang.in_words)
+                || self.lang.grouping.as_ref().map_or(false, |g| self.at_symbol(&g.close))
+                || self.lang.array_brackets.as_ref().map_or(false, |g| self.at_symbol(&g.close)) { break; }
+        }
+        Ok(if count == 1 { simple } else { None })
+    }
+
     /// `for v in a..b block`: a counted loop with the bound in a hidden slot.
     fn for_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
-        let var = self.want_name("as the loop variable")?;
+        let var = if !lang.tuple_marks.is_empty() {
+            match self.loop_places()? {
+                Some(name) => name,
+                None => {
+                    self.scope_fault(&lang.scope_unready.clone());
+                    self.gensym("loop_item")
+                }
+            }
+        } else { self.want_name("as the loop variable")? };
         if !self.on_keyword(&lang.in_words) {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
@@ -2203,7 +2256,8 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
+            if lang.tuple_marks.is_empty() { self.expr(tier + 1)?; }
+            else { self.scope_value()?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -2249,7 +2303,7 @@ impl<'a> Compiler<'a> {
         self.read(bound);
         self.act(Action::Lt, 2);
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -3368,6 +3422,14 @@ impl<'a> Compiler<'a> {
             self.scope_fault(&self.lang.scope_unready.clone());
             return Ok(());
         }
+        if !self.lang.scope_unready.is_empty() && self.on_writing()
+            && self.tokens[target_at..self.pos].iter().any(|t| t.shape == Shape::Sign && Lang::spells(&self.lang.pipe_words, &t.lexeme)) {
+            self.take();
+            self.scope_value()?;
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         if starts_here && self.on_any(&self.lang.annotation_marks) {
             return self.annotated_statement(from, target_at);
         }
@@ -3994,6 +4056,33 @@ impl<'a> Compiler<'a> {
                 break;
             }
             let text = t.lexeme.clone();
+            if floor == 0 && lang.if_else_words.first() == Some(&text) {
+                self.take();
+                let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
+                self.expr(1)?;
+                let no = self.skip();
+                let here = self.mark();
+                for word in relocated(yes, here as i64 - from as i64) {
+                    self.put(word);
+                }
+                let done = self.leap();
+                self.land(no);
+                let other = lang.if_else_words.get(1).ok_or("Conditional expression needs two words")?;
+                if !self.at_lexeme(other) {
+                    return Err(format!("Expected '{}' in conditional expression", other));
+                }
+                self.take();
+                self.expr(0)?;
+                self.land(done);
+                continue;
+            }
+            if lang.chained_comparisons {
+                if let Some((op, tier, width)) = self.comparison() {
+                    if tier < floor { break; }
+                    self.comparisons(op, tier, width)?;
+                    continue;
+                }
+            }
             if Lang::spells(&lang.pipe_words, &text) {
                 if lang.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
@@ -4108,6 +4197,55 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn comparison(&self) -> Option<(Action, u32, usize)> {
+        let word = &self.look().lexeme;
+        if Lang::spells(&self.lang.membership_not, word) {
+            let next = &self.look_ahead(1).lexeme;
+            if Lang::spells(&self.lang.membership_words, next) {
+                return self.lang.dyadic.get(next).map(|op| (Action::Lacks, op.level, 2));
+            }
+        }
+        let op = self.lang.dyadic.get(word)?;
+        let mut action = op.action.clone();
+        let mut width = 1;
+        if matches!(action, Action::Same) && Lang::spells(&self.lang.identity_not, &self.look_ahead(1).lexeme) {
+            action = Action::Unsame;
+            width = 2;
+        }
+        matches!(action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Same | Action::Unsame | Action::Contains | Action::Lacks)
+            .then_some((action, op.level, width))
+    }
+
+    /// Each link keeps its far side for the link after it. A false link
+    /// goes straight to the end, leaving the rest untouched.
+    fn comparisons(&mut self, mut op: Action, tier: u32, mut width: usize) -> Res<()> {
+        let near = self.gensym("near");
+        let far = self.gensym("far");
+        let answer = self.gensym("comparison");
+        self.write(&near);
+        let mut exits = Vec::new();
+        loop {
+            for _ in 0..width { self.take(); }
+            self.expr(tier + 1)?;
+            self.write(&far);
+            self.read(&near);
+            self.read(&far);
+            self.act(op, 2);
+            self.write(&answer);
+            let Some((next, level, words)) = self.comparison().filter(|(_, level, _)| *level == tier) else { break; };
+            let _ = level;
+            self.read(&answer);
+            exits.push(self.skip());
+            self.read(&far);
+            self.write(&near);
+            op = next;
+            width = words;
+        }
+        for exit in exits { self.land(exit); }
+        self.read(&answer);
+        Ok(())
+    }
+
     /// After a pipe: a call with the piped value first, or a bare name,
     /// a call with no other argument.
     fn pipe_target(&mut self, left: usize) -> Res<()> {
@@ -4124,6 +4262,16 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         let native = self.lang.builtins.get(&name).copied();
+        if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace))
+            && !self.lang.scope_unready.is_empty()
+            && !matches!(&self.piece().instrs[left..], [Instr::Read(cell)] if !cell.moving) {
+            let call = self.lang.calling.clone().ok_or("A member call needs brackets")?;
+            self.want_sign(&call.open, "after the method name")?;
+            self.arguments(&call)?;
+            self.piece().instrs.truncate(left);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
             // arr.push(x): the piped value must be the array's name.
             let target = match &self.piece().instrs[left..] {
@@ -4286,12 +4434,20 @@ impl<'a> Compiler<'a> {
         match tok.shape {
             Shape::Numeral => {
                 self.take();
-                let v = parse_number(&tok.lexeme, lang)?;
-                self.constant(v);
+                if tok.lexeme.chars().last().map_or(false, |c| lang.imaginary_letters.contains(&c)) {
+                    self.scope_fault(&lang.imaginary_unready.clone());
+                } else {
+                    let v = parse_number(&tok.lexeme, lang)?;
+                    self.constant(v);
+                }
             }
             Shape::Quote => {
                 self.take();
-                self.constant(Value::text(&tok.lexeme));
+                let mut text = tok.lexeme.clone();
+                if lang.adjacent_strings {
+                    while self.look().shape == Shape::Quote { text.push_str(&self.take().lexeme); }
+                }
+                self.constant(Value::text(&text));
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
                 self.take();
@@ -5439,7 +5595,7 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::text(&said));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
             }
-            self.expr(0)?;
+            self.expr(1)?;
             self.act(Action::ComprehensionItems, 1);
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
@@ -5478,7 +5634,7 @@ impl<'a> Compiler<'a> {
             self.land(done);
         } else if self.on_any(&self.lang.comprehension_if) {
             self.take();
-            self.expr(0)?;
+            self.expr(1)?;
             let rejected = self.skip();
             self.comprehension_clause(head, result, map)?;
             self.land(rejected);
