@@ -254,6 +254,8 @@ pub enum Action {
     Make,
     /// The property of that name, of the object above.
     Grab(Rc<str>),
+    /// Whether the value has this member, before choosing the pipe.
+    HasMember(Rc<str>),
     /// Write that property: the object, then the value.
     Plant(Rc<str>),
     /// Take that property off the object above, as though it had never

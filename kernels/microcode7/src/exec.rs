@@ -2147,11 +2147,22 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Method(body, object) = &stands {
+                    let mut given = vec![Value::Thing(object.clone())];
+                    given.extend(self.value_list(args, frame)?);
+                    return self.invoke(body.clone(), self.outermost.clone(), given).map_err(Escape::from);
+                }
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return done;
                 }
                 if let Some(done) = self.word_it_spells(&stands, args, frame) {
                     return done;
+                }
+                if self.table.flag("ext.stmt.class.this.explicit") {
+                    if let Value::Blueprint(class) = &stands {
+                        let values = self.value_list(args, frame)?;
+                        return self.make_instance(class.clone(), values);
+                    }
                 }
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
@@ -2305,6 +2316,13 @@ impl<'a> Machine<'a> {
                     }
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
+                    if self.table.flag("ext.op.member.pipes") {
+                        if let Some(target) = self.attribute(&subject, &called) {
+                            let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
+                            let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), expressions);
+                            return self.value_of(&call, frame);
+                        }
+                    }
                     let Value::Thing(thing) = subject else {
                         return Err(format!("Cannot call '{}' on something that is not an object", called).into());
                     };
@@ -2605,6 +2623,46 @@ impl<'a> Machine<'a> {
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
+    fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        let class = match value {
+            Value::Thing(thing) => {
+                let fields = thing.holds.borrow();
+                if let Some(at) = self.member_place(&fields, name) { return Some(fields[at].1.clone()); }
+                &thing.of
+            }
+            Value::Blueprint(class) => class,
+            _ => return None,
+        };
+        if let Some(keeper) = class.keeper(name) {
+            return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| {
+                match (value, x) {
+                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    _ => x.clone(),
+                }
+            });
+        }
+        if let Some(value) = class.constant(name) { return Some(value.clone()); }
+        class.program(name).map(|body| match value {
+            Value::Thing(o) => Value::Method(body.clone(), o.clone()),
+            _ => Value::Bound(body.clone(), self.outermost.clone()),
+        })
+    }
+
+    fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        self.made += 1;
+        let fields = class.every_field();
+        let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
+        if let Some(body) = self.table.single("ext.stmt.class.constructor").and_then(|word| class.program(word)).cloned() {
+            let mut given = Vec::with_capacity(args.len() + 1);
+            given.push(Value::Thing(object.clone()));
+            given.extend(args);
+            self.invoke(body, self.outermost.clone(), given)?;
+        } else if !args.is_empty() {
+            return Err(format!("Class {} takes no arguments when it is made", class.name).into());
+        }
+        Ok(Value::Thing(object))
+    }
+
     fn paired_call(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
         if !self.spelled_stands {
             return None;
@@ -2652,11 +2710,21 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Method(body, object) = &stands {
+                    let mut given = self.value_list(args, frame)?;
+                    given.insert(0, Value::Thing(object.clone()));
+                    let value = self.invoke(body.clone(), self.outermost.clone(), given)?;
+                    return Ok(Next::Value(value));
+                }
                 if let Some(done) = self.paired_call(&stands, args, frame) {
                     return Ok(Next::Value(done?));
                 }
                 if let Some(done) = self.word_it_spells(&stands, args, frame) {
                     return Ok(Next::Value(done?));
+                }
+                if let (true, Value::Blueprint(class)) = (self.table.flag("ext.stmt.class.this.explicit"), &stands) {
+                    let given = self.value_list(args, frame)?;
+                    return Ok(Next::Value(self.make_instance(class.clone(), given)?));
                 }
                 let (p, env) = self.routine_of(stands, target)?;
                 let callee = self.env_for(&p, env, args, frame)?;
@@ -2916,7 +2984,8 @@ impl<'a> Machine<'a> {
         }
         if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names)); }
         for at in 0..fitted.len() {
-            if matches!(fitted[at], Value::Unset) && !program.carried.contains(&program.formal_slots[at]) {
+            if matches!(fitted[at], Value::Unset) && !program.carried.contains(&program.formal_slots[at])
+                && !program.local_defaults.contains(&program.formal_slots[at]) {
                 return Err(self.argument_fault("ext.syntax.call.amiss.missing", Some(&program.formals[at])).into());
             }
         }
@@ -3562,9 +3631,22 @@ impl<'a> Machine<'a> {
                     _ => Value::Flag(true),
                 }
             }
+            Prim::HasMember => {
+                n(2)?;
+                let word = v[1].bare();
+                let (class, own) = match &v[0] {
+                    Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
+                    Value::Blueprint(c) => (Some(c), false),
+                    _ => (None, false),
+                };
+                Value::Flag(own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+            }
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
+                if self.table.flag("ext.op.member.pipes") {
+                    if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
+                }
                 match &v[0] {
                     Value::Thing(thing) => {
                         let found = {
@@ -3611,6 +3693,16 @@ impl<'a> Machine<'a> {
             Prim::Onto => {
                 n(3)?;
                 let called = v[1].bare();
+                if self.table.flag("ext.op.member.pipes") {
+                    if let Value::Blueprint(class) = &v[0] {
+                        let mut own = class.shared.borrow_mut();
+                        match own.iter_mut().find(|(n, _)| n == &called) {
+                            Some((_, value)) => *value = v[2].clone(),
+                            None => own.push((called, v[2].clone())),
+                        }
+                        return Ok(Value::Nil);
+                    }
+                }
                 match &v[0] {
                     Value::Thing(thing) => {
                         let mut holds = thing.holds.borrow_mut();

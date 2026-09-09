@@ -125,6 +125,8 @@ pub struct Compiler<'a> {
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
+    method_self: Option<String>,
+    class_names: Vec<(usize, HashMap<String, String>)>,
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
@@ -269,7 +271,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { class_names: Vec::new(), method_self: None, yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -604,6 +606,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
+        if let Some(alias) = alias {
+            let slot = self.cell_to_read(&alias, false);
+            self.put(Instr::Read(slot));
+            return;
+        }
         if self.refuse_uncarried(name) { return; }
         // The name a language gives the line it is written on stands
         // for that line itself, known while assembling.
@@ -701,6 +709,10 @@ impl<'a> Compiler<'a> {
     /// result after the function, a call of the function's own name inside
     /// it is the global program, not the result being built.
     fn read_callee(&mut self, name: &str) {
+        if self.class_names.last().map_or(false, |(depth, names)| *depth == self.pieces.len() && names.contains_key(name)) {
+            self.read(name);
+            return;
+        }
         if self.refuse_uncarried(name) { return; }
         let own = self.lang.named_result && self.piece().ident == name && !self.piece().outermost;
         let mut slot = self.cell_to_read(name, false);
@@ -1097,7 +1109,7 @@ impl<'a> Compiler<'a> {
             }
             let names_class = |word: &str| Lang::spells(&lang.class_words, word) || Lang::spells(&lang.interface_words, word);
             if names_class(&w) {
-                if !lang.class_bases_open.is_empty() { return self.scoped_class(); }
+                if !lang.explicit_this && !lang.class_bases_open.is_empty() { return self.scoped_class(); }
                 return self.class_decl();
             }
             // A class may be marked before it is named: `abstract class C`.
@@ -1426,7 +1438,7 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
-        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return self.scoped_class(); }
+        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return if lang.explicit_this { self.class_decl() } else { self.scoped_class() }; }
         if self.on_keyword(&lang.async_words) { self.take(); }
         if !self.on_keyword(&lang.function_words) {
             return Err(amiss());
@@ -2826,8 +2838,134 @@ impl<'a> Compiler<'a> {
     /// A class and its members: properties, constants, the values it
     /// keeps for itself, and its methods. The class becomes a value
     /// bound to its name, so `new C` and `C::X` are ordinary reads.
+    fn class_cannot_run(&mut self) {
+        let words = self.lang.class_unready.first().map(String::as_str).unwrap_or("This class form cannot run yet");
+        self.constant(Value::text(words));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("class")), 1);
+    }
+
+    /// A class whose methods name their object themselves. Its first base
+    /// is kept once, so the parent's name may be an expression as well.
+    fn explicit_class(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let name = self.want_name("as the class name")?;
+        let mut base = None;
+        let mut unready = !self.piece().outermost;
+        if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
+            self.want_sign(&open, "before the bases")?;
+            let close = lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
+            let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
+            let mut count = 0;
+            while !self.at_symbol(&close) {
+                let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
+                if spread { self.take(); unready = true; }
+                let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
+                if keyword { self.take(); self.take(); unready = true; }
+                let from = self.mark();
+                self.expr(0)?;
+                if count == 0 && !keyword && !spread {
+                    let held = self.gensym("base");
+                    self.write(&held);
+                    base = Some(held);
+                } else {
+                    self.piece().instrs.truncate(from);
+                }
+                count += 1;
+                if apart.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); } else { break; }
+            }
+            self.want_sign(&close, "after the bases")?;
+        }
+        let outer = self.within.replace((name.clone(), base.clone()));
+        self.expect_intro()?;
+        let inline = !self.on_sep() && self.look().shape != Shape::Open;
+        if !inline {
+            self.skip_seps();
+            if self.look().shape != Shape::Open { return Err("Expected an indented class body".into()); }
+            self.take();
+            self.skip_seps();
+        }
+        self.class_names.push((self.pieces.len(), HashMap::new()));
+        let mut methods = Vec::new();
+        let mut shared: Vec<(String, String)> = Vec::new();
+        let body_at = self.mark();
+        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
+            if self.on_keyword(&lang.function_words) {
+                self.take();
+                let named = self.want_name("as the method name")?;
+                let method = self.method(&named)?;
+                methods.retain(|(old, _)| old != &named);
+                shared.retain(|(old, _)| old != &named);
+                let slot = self.gensym("method");
+                self.constant(Value::Routine(method.clone()));
+                self.write(&slot);
+                self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
+                methods.push((named, method));
+            } else if self.on_keyword(&lang.pass_words) {
+                self.take();
+            } else if self.look().shape == Shape::Quote {
+                self.take();
+            } else if self.on_keyword(&lang.class_words) {
+                let named = self.look_ahead(1).lexeme.clone();
+                self.explicit_class()?;
+                self.read(&named);
+                let held = self.gensym("nested");
+                self.write(&held);
+                self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
+                shared.retain(|(old, _)| old != &named);
+                shared.push((named, held));
+            } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
+                let named = self.take().lexeme;
+                self.take();
+                self.expr(0)?;
+                let held = self.gensym("attribute");
+                self.write(&held);
+                self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
+                shared.retain(|(old, _)| old != &named);
+                shared.push((named, held));
+            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.block_intros, &self.look_ahead(1).lexeme) {
+                self.take();
+                self.take();
+                self.expr(0)?;
+                self.discard();
+                if self.on_assign() { self.take(); self.expr(0)?; self.discard(); }
+                unready = true;
+            } else {
+                self.stmt()?;
+                unready = true;
+            }
+            if !inline { self.skip_seps(); }
+        }
+        if !inline {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.take();
+        }
+        self.class_names.pop();
+        self.within = outer;
+        if unready {
+            self.piece().instrs.truncate(body_at);
+            self.class_cannot_run();
+            self.discard();
+        }
+        let mut count = shared.len();
+        if let Some(under) = &base { self.read(under); count += 1; }
+        for (_, held) in &shared { self.read(held); }
+        let plan = Plan { name: name.clone(), answers: 0, field_names: Vec::new(), field_reach: Vec::new(),
+            shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
+        self.act(Action::Forge(Rc::new(plan)), count);
+        if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
+            let private = self.gensym("class");
+            self.write(&private);
+            self.class_names.last_mut().expect("the enclosing class").1.insert(name, private);
+        } else { self.write(&name); }
+        Ok(())
+    }
+
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
+        if lang.explicit_this {
+            return self.explicit_class();
+        }
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
         // A class of method names only may stand on several at once; a
@@ -3018,14 +3156,15 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
-        let this = lang.this_word.clone().ok_or_else(|| "A class needs ext.stmt.class.this".to_string())?;
-        let mut formals = vec![this.clone()];
+        let this = lang.this_word.clone().unwrap_or_default();
+        let offset = usize::from(!lang.explicit_this);
+        let mut formals = if lang.explicit_this { Vec::new() } else { vec![this.clone()] };
         let (params, spares, promoted) = self.parameters(name, &call)?;
         formals.extend(params);
         // The object it is for is always given, so the count is one more.
         let least = formals.len() - spares.len();
         let given = formals.clone();
-        let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + 1, from)).collect();
+        let spares: Vec<(usize, usize)> = spares.into_iter().map(|(at, from)| (at + offset, from)).collect();
         if self.look().shape == Shape::Sign && Lang::spells(&lang.return_marks, &self.look().lexeme) {
             self.take();
             if lang.annotation_marks.is_empty() {
@@ -3048,7 +3187,10 @@ impl<'a> Compiler<'a> {
         }
         let named = promoted.clone();
         self.promoted = promoted;
-        self.routine(name, formals, least, true, |a| {
+        let previous = self.method_self.clone();
+        self.method_self = formals.first().cloned();
+        let built = self.routine(name, formals, least, true, |a| {
+            if lang.bind_names { a.carrying.extend(spares.iter().map(|(slot, _)| *slot)); }
             a.spare_values(&spares, &given)?;
             // What a parameter that names a property was given is
             // written into the object before anything else runs.
@@ -3059,8 +3201,16 @@ impl<'a> Compiler<'a> {
                 a.act(Action::Plant(Rc::from(bare.as_str())), 2);
                 a.discard();
             }
+            if a.lang.explicit_this && a.lang.blocks == Blocks::Indented {
+                a.skip_intro();
+                if !a.on_sep() && a.look().shape != Shape::Open {
+                    return a.stmt();
+                }
+            }
             a.body()
-        })
+        });
+        self.method_self = previous;
+        built
     }
 
     /// The parameters of a function or a method, up to the closing bracket.
@@ -4843,6 +4993,32 @@ impl<'a> Compiler<'a> {
                 };
                 self.act(Action::Make, argc + 1);
             }
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
+                self.take();
+                let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
+                self.want_sign(&call.open, "after the parent word")?;
+                let extra = self.arguments(&call)?;
+                for _ in 0..extra { self.discard(); }
+                let parent = self.within.as_ref().and_then(|(_, base)| base.clone());
+                let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
+                if let (0, Some(base), Some(this), Some(mark)) = (extra, parent, self.method_self.clone(), member) {
+                    self.want_sign(&mark, "after the parent call")?;
+                    let named = self.want_name("as the parent's member")?;
+                    self.read(&this);
+                    self.read(&base);
+                    if self.at_symbol(&call.open) {
+                        self.take();
+                        let count = self.arguments(&call)?;
+                        self.act(Action::Summon(named.as_str().into()), count + 2);
+                    } else {
+                        self.discard();
+                        self.discard();
+                        self.class_cannot_run();
+                    }
+                } else {
+                    self.class_cannot_run();
+                }
+            }
             Shape::Instr if Lang::spells(&lang.self_words, &tok.lexeme) || Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
                 self.read_class(&tok.lexeme)?;
@@ -5065,6 +5241,9 @@ impl<'a> Compiler<'a> {
     /// by its name however the name is written, every class is filed
     /// with its letters made small, so that each spelling finds it.
     fn class_key(&self, name: &str) -> String {
+        if self.lang.explicit_this {
+            return name.to_string();
+        }
         // A binding standing where a class is named is a binding still,
         // and bindings are told apart by how they are written; only a
         // class's own name is filed however it is written.
@@ -5750,9 +5929,6 @@ impl<'a> Compiler<'a> {
             if !member && !scope {
                 break;
             }
-            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
-                && lang.calling.as_ref().map_or(false, |pair| self.look_ahead(2).is_lexeme(Shape::Sign, &pair.open))
-                && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) { return Ok(()); }
             self.take();
             // A value may stand where a member's name stands: the
             // member is the one that value spells, worked out while the
@@ -5812,6 +5988,48 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+            if member && lang.member_pipes && (call.is_some() || !self.on_writing()) {
+                let resume = self.pos;
+                let target = match &self.piece().instrs[from..] {
+                    [Instr::Read(slot)] => Some(slot.ident.to_string()),
+                    _ => None,
+                };
+                let held = self.gensym("receiver");
+                self.write(&held);
+                self.read(&held);
+                self.act(Action::HasMember(named.as_str().into()), 1);
+                let fallback = self.skip();
+                self.read(&held);
+                if let Some(brackets) = &call {
+                    self.act(Action::Grab(named.as_str().into()), 1);
+                    let callee = self.gensym("method_value");
+                    self.write(&callee);
+                    self.take();
+                    let argc = self.arguments_of(&named, brackets)?;
+                    self.read(&callee);
+                    self.act(Action::Invoke(named.as_str().into()), argc + 1);
+                } else { self.act(Action::Grab(named.as_str().into()), 1); }
+                let finish = self.leap();
+                self.land(fallback);
+                self.pos = resume;
+                let native = lang.builtins.get(&named).copied();
+                let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
+                if !changes { self.read(&held); }
+                let argc = if let Some(brackets) = &call {
+                    self.take();
+                    self.arguments(brackets)?
+                } else { 0 };
+                if changes {
+                    let needed = if native == Some(Builtin::Append) { 1 } else { 2 };
+                    if let (Some(target), true) = (target, argc == needed) {
+                        self.mutation(&named, &held, argc + 1)?;
+                        self.read(&held);
+                        self.write(&target);
+                    } else { self.class_cannot_run(); }
+                } else { self.call(&named, argc + 1)?; }
+                self.land(finish);
+                continue;
+            }
             if member {
                 match call {
                     Some(call) => {

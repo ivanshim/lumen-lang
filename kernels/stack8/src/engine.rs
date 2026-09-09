@@ -2290,6 +2290,18 @@ impl<'a> Engine<'a> {
                 let callee = self.what_it_spells(top);
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
+                    Value::Method(object, method) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let mut given = vec![Value::Object(object)];
+                        given.extend(args);
+                        self.invoke(&method, given)
+                    }
+                    Value::Class(c) if self.lang.explicit_this => {
+                        let args = self.drop_many(argc - 1)?;
+                        self.data.push(Value::Class(c));
+                        self.data.extend(args);
+                        self.perform(&Action::Make, argc)
+                    }
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
                     // hands one routine over where any other would do.
@@ -2522,7 +2534,28 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
+            Action::HasMember(name) => {
+                let held = self.drop_top()?;
+                let class = match &held {
+                    Value::Object(o) => Some(&o.class),
+                    Value::Class(c) => Some(c),
+                    _ => None,
+                };
+                let field = match &held {
+                    Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
+                    _ => false,
+                };
+                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+            }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Class(c) if self.lang.member_pipes => {
+                    if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
+                        Value::Routine(method.clone())
+                    } else {
+                        self.data.push(Value::Class(c));
+                        return self.perform(&Action::Reach(name.clone()), 1);
+                    }
+                }
                 Value::Object(o) => {
                     let found = {
                         let held = o.fields.borrow();
@@ -2538,6 +2571,18 @@ impl<'a> Engine<'a> {
                         // does not hold: where the language has a word
                         // for such a method, it is called with the name
                         // that was asked for.
+                        None if self.lang.member_pipes && o.class.holder(name).is_some() => {
+                            self.data.push(Value::Class(o.class.clone()));
+                            self.perform(&Action::Reach(name.clone()), 1)?;
+                            match self.drop_top()? {
+                                Value::Routine(method) => Value::Method(o, method),
+                                held => held,
+                            }
+                        }
+                        None if self.lang.member_pipes && o.class.method(name).is_some() => {
+                            let method = o.class.method(name).expect("the member exists").clone();
+                            Value::Method(o, method)
+                        }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
                             let asked = Value::Text(Rc::from(name.as_ref()));
@@ -2609,6 +2654,15 @@ impl<'a> Engine<'a> {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
                 match pair.pop().expect("the object") {
+                    Value::Class(c) if self.lang.member_pipes => {
+                        let mut fields = c.shared.borrow_mut();
+                        if let Some((_, old)) = fields.iter_mut().find(|(n, _)| n == name.as_ref()) {
+                            *old = value;
+                        } else {
+                            fields.push((name.to_string(), value));
+                        }
+                        Value::Null
+                    }
                     Value::Object(o) => {
                         let taken = {
                             let fields = o.fields.borrow();
@@ -2678,7 +2732,29 @@ impl<'a> Engine<'a> {
             }
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
-                let Value::Object(o) = args.remove(0) else {
+                let subject = args.remove(0);
+                if self.lang.member_pipes {
+                    if let Value::Class(c) = &subject {
+                        if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
+                            return self.invoke(&method.clone(), args);
+                        }
+                    }
+                    let field = match &subject {
+                        Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some() || o.class.holder(name).is_some(),
+                        Value::Class(c) => c.holder(name).is_some() || c.constant(name).is_some(),
+                        _ => false,
+                    };
+                    if field {
+                        self.data.push(subject);
+                        self.perform(&Action::Grab(name.clone()), 1)?;
+                        let callee = self.drop_top()?;
+                        let count = args.len();
+                        self.data.extend(args);
+                        self.data.push(callee);
+                        return self.perform(&Action::Invoke(name.clone()), count + 1);
+                    }
+                }
+                let Value::Object(o) = subject else {
                     return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
                 };
                 let method = o.class.method(&name).cloned();

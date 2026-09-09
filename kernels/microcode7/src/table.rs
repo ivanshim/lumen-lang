@@ -90,7 +90,7 @@ ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.def
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
 ext.op.if_else:L ext.op.lambda.unsupported:L ext.op.lambda.enclosing:L ext.op.identical.negated:L ext.op.identical.unsupported:L ext.op.in:L ext.op.in.negated:L ext.op.in.unsupported:L ext.op.compare.chained:B ext.op.assign.expression:L ext.literal.ellipsis:L ext.op.rem.formats_text:B ext.op.rem.format.unsupported:L ext.op.rem.format.arguments:L \
 ext.lexical.number.exponent:L ext.op.plus:L ext.stmt.break.levels:B ext.builtin.array:L ext.op.index.append:B ext.stmt.for.collection:B ext.builtin.print_r:L \
-ext.stmt.terminator:L ext.stmt.annotation:L ext.stmt.annotation.amiss:L ext.stmt.annotation.target.unready:L ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L \
+ext.stmt.terminator:L ext.stmt.annotation:L ext.stmt.annotation.amiss:L ext.stmt.annotation.target.unready:L ext.stmt.function.returns:L ext.stmt.class:L ext.stmt.class.extends:L ext.stmt.class.new:L ext.stmt.class.this:L ext.stmt.class.this.explicit:B ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.op.member.pipes:B ext.stmt.class.unready:L \
 ext.stmt.class.constructor:L ext.stmt.class.modifier:L ext.stmt.class.hidden:L ext.stmt.class.guarded:L ext.stmt.class.shared:L ext.op.member:L ext.op.scope:L \
 ext.op.instanceof:L ext.stmt.class.parent:L ext.stmt.class.self:L ext.lexical.name_lead:L ext.stmt.assert:L ext.stmt.assert.kind:L ext.stmt.catch.invalid:L ext.stmt.catch.as:L ext.stmt.catch.tuple.open:L ext.stmt.catch.tuple.close:L ext.stmt.catch.group:L ext.stmt.catch.group.unsupported:L ext.stmt.try.else:B ext.stmt.throw.from:L ext.stmt.throw.empty:L ext.stmt.try:L \
 ext.stmt.catch:L ext.stmt.finally:L ext.stmt.throw:L ext.stmt.catch.separator:L ext.op.reference:L \
@@ -550,9 +550,7 @@ impl Table {
         if self.has_any("ext.stmt.switch") && (!self.has_any("ext.stmt.case") || !self.has_any("ext.stmt.case.mark")) {
             return Err("ext.stmt.switch needs ext.stmt.case and ext.stmt.case.mark".to_string());
         }
-        // Only the object-class reader requires these operations.
-        if self.has_any("ext.stmt.class") && !self.has_any("ext.stmt.class.bases.open")
-            && (!self.has_any("ext.op.member") || !self.has_any("ext.stmt.class.new")) {
+        if self.has_any("ext.stmt.class") && (!self.has_any("ext.op.member") || (!self.has_any("ext.stmt.class.new") && !self.flag("ext.stmt.class.this.explicit"))) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if self.has_any("stmt.foreach") && !self.has_any("stmt.foreach.as") {
@@ -600,9 +598,7 @@ impl Table {
             "ext.stmt.import", "ext.stmt.import.from", "ext.stmt.import.as",
             "ext.stmt.global", "ext.stmt.decorator", "ext.stmt.const", "ext.stmt.switch", "ext.stmt.case", "ext.stmt.default", "ext.op.plus",
             "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close", "stmt.foreach", "stmt.foreach.as",
-            "ext.stmt.function.carries", "ext.stmt.function.carries.pairs", "ext.stmt.function.keyword_only", "ext.stmt.function.positional_only", "ext.syntax.call.spread", "ext.syntax.call.spread.pairs",
-            "ext.stmt.terminator", "ext.stmt.annotation", "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends",
-            "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof",
+            "ext.stmt.function.carries", "ext.stmt.function.carries.pairs", "ext.stmt.function.keyword_only", "ext.stmt.function.positional_only", "ext.syntax.call.spread", "ext.syntax.call.spread.pairs", "ext.stmt.terminator", "ext.stmt.annotation", "ext.stmt.function.returns", "ext.op.member", "ext.op.scope", "ext.stmt.class", "ext.stmt.class.extends", "ext.stmt.class.new", "ext.stmt.class.modifier", "ext.stmt.class.shared", "ext.op.instanceof", "ext.stmt.class.bases.open", "ext.stmt.class.bases.close",
             "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.interface", "ext.stmt.class.implements",
             "ext.stmt.assert", "ext.stmt.catch.as", "ext.stmt.catch.tuple.open", "ext.stmt.catch.tuple.close", "ext.stmt.catch.group", "ext.stmt.throw.from", "ext.stmt.try", "ext.stmt.catch", "ext.stmt.finally", "ext.stmt.with", "ext.stmt.with.as", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.async", "ext.op.await", "ext.stmt.yield", "ext.stmt.yield.from",
             "ext.stmt.throw", "ext.stmt.catch.separator", "ext.op.reference", "ext.op.otherwise", "ext.op.hush", "ext.op.name_by_value", "ext.stmt.unpack"];
