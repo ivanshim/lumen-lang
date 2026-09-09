@@ -3573,6 +3573,31 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
+        if self.table.flag("ext.stmt.yield.suspends") && (self.on_any("syntax.group.open") || self.on_any("syntax.array.open")) {
+            let mut level = 0;
+            let mut sign = None;
+            for offset in began..self.tokens.len() {
+                let token = &self.tokens[offset];
+                if level == 0 {
+                    if matches!(token.shape, Shape::Finish | Shape::LineEnd) || self.table.spells("stmt.terminator", &token.lexeme) { break; }
+                    if self.table.spells("stmt.assign", &token.lexeme) { sign = Some(offset); break; }
+                }
+                if ["syntax.group.open", "syntax.array.open"].iter().any(|label| self.table.spells(label, &token.lexeme)) { level += 1; }
+                if ["syntax.group.close", "syntax.array.close"].iter().any(|label| self.table.spells(label, &token.lexeme)) { level -= 1; }
+            }
+            if let Some(offset) = sign {
+                self.pos = offset + 1;
+                let source = self.comma_value()?;
+                let place = self.gensym("unpacked_group");
+                let name = place.ident.to_string();
+                let mut forms = vec![Form::Write(place, Box::new(source))];
+                let end = self.pos;
+                self.pos = began;
+                forms.extend(self.with_target(&name)?);
+                self.pos = end;
+                return Ok(sequence(forms));
+            }
+        }
         let expr = self.expr_at(0, false)?;
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;

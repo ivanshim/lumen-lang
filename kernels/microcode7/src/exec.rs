@@ -1670,7 +1670,7 @@ impl<'a> Machine<'a> {
 
     fn resume(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value) -> Res<Option<Value>> {
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
-        if state.ended { return Ok(None); }
+        if state.ended { state.result = Value::Nil; return Ok(None); }
         if !state.begun && !matches!(sent, Value::Nil) { return Err(self.generator_words("unstarted").into()); }
         state.begun = true;
         if state.ready.is_some() { return Ok(state.ready.take()); }

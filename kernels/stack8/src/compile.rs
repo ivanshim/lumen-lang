@@ -3692,6 +3692,29 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
+        if self.lang.yield_suspends && [self.lang.grouping.as_ref(), self.lang.array_brackets.as_ref()].into_iter().flatten().any(|pair| self.at_symbol(&pair.open)) {
+            let mut nesting = 0;
+            let mut assignment = None;
+            for (index, token) in self.tokens.iter().enumerate().skip(target_at) {
+                if nesting == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Finish) || self.lang.ends_stmt(&token.lexeme)) { break; }
+                if nesting == 0 && Lang::spells(&self.lang.assign_words, &token.lexeme) { assignment = Some(index); break; }
+                for pair in [self.lang.grouping.as_ref(), self.lang.array_brackets.as_ref()].into_iter().flatten() {
+                    if token.lexeme == pair.open { nesting += 1; }
+                    if token.lexeme == pair.close { nesting -= 1; }
+                }
+            }
+            if let Some(at) = assignment {
+                self.pos = at + 1;
+                self.scope_value()?;
+                let held = self.gensym("unpacked_group");
+                self.write(&held);
+                let after = self.pos;
+                self.pos = target_at;
+                self.bind_block_target(&held)?;
+                self.pos = after;
+                return Ok(());
+            }
+        }
         self.expr_at(0, false)?;
         if self.on_any(&self.lang.tuple_marks) {
             self.scope_tail(from)?;

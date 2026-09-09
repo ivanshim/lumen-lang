@@ -29,3 +29,8 @@ print(next(it))
 print(it.send(6))
 print(it.send(7))
 print(next(it))
+it = inner()
+print(list(it))
+def exhausted():
+    yield (yield from it)
+print(list(exhausted()))

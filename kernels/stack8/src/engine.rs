@@ -1747,7 +1747,7 @@ impl<'a> Engine<'a> {
 
     fn resume_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value) -> Flow<Option<Value>> {
         let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-        if kept.closed { return Ok(None); }
+        if kept.closed { kept.returned = Value::Null; return Ok(None); }
         if !kept.started && !matches!(sent, Value::Null) {
             return Err(self.lang.yield_unstarted[0].clone().into());
         }
@@ -1776,7 +1776,7 @@ impl<'a> Engine<'a> {
         kept.stack = std::mem::replace(&mut self.data, outer);
         if kept.handed.is_none() || result.is_err() {
             kept.closed = true;
-            kept.returned = kept.stack.pop().unwrap_or(Value::Null);
+            kept.returned = if result.is_err() { Value::Null } else { kept.stack.pop().unwrap_or(Value::Null) };
             kept.stack.clear();
             kept.frame.clear();
         }
