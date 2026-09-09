@@ -819,7 +819,12 @@ impl<'a> Compiler<'a> {
             self.take();
             return Ok(());
         }
+        let introduced = self.on_any(&self.lang.block_intros);
         self.skip_intro();
+        if introduced && self.lang.lone_stmt && self.lang.blocks == Blocks::Indented
+            && !self.on_sep() && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish) {
+            return self.stmt();
+        }
         self.skip_seps();
         match self.lang.blocks {
             Blocks::Indented => {
@@ -965,6 +970,9 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.switch_words, &w) {
                 return self.switch();
             }
+            if Lang::spells(&lang.import_words, &w) || Lang::spells(&lang.import_from_words, &w) {
+                return self.import_stmt();
+            }
             if Lang::spells(&lang.global_words, &w) {
                 return self.global_stmt();
             }
@@ -1054,6 +1062,86 @@ impl<'a> Compiler<'a> {
             self.read_taking(&decorator);
             self.act(Action::Invoke(Rc::from(lang.decorator_words[0].as_str())), 2);
             self.put(Instr::Write(bound));
+        }
+        Ok(())
+    }
+
+    /// A path names what is wanted, without asking any part for a value.
+    /// The scanner may already have joined a builtin's dotted spelling.
+    fn import_name(&mut self, path: bool) -> Res<String> {
+        let word = self.want_name("in an import")?;
+        let divider = self.lang.pipe_words.first().map(String::as_str);
+        let parts: Vec<&str> = match divider.filter(|_| path) {
+            Some(mark) => word.split(mark).collect(),
+            None => vec![word.as_str()],
+        };
+        for part in &parts {
+            let mut letters = part.chars();
+            if !letters.next().map_or(false, |c| self.lang.begins_name(c))
+                || !letters.all(|c| self.lang.extends_name(c)) || self.lang.keywords.contains(*part) {
+                return Err(format!("Expected identifier in an import, got '{}'", word));
+            }
+        }
+        let first = parts[0].to_string();
+        if path {
+            while self.on_any(&self.lang.pipe_words) {
+                self.take();
+                self.import_name(true)?;
+            }
+        }
+        Ok(first)
+    }
+
+    /// Imports give their names places, but no module is carried yet.
+    fn import_stmt(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let from = self.on_keyword(&lang.import_from_words);
+        self.take();
+        if from {
+            let mut relative = false;
+            while self.on_any(&lang.pipe_words) {
+                relative = true;
+                self.take();
+            }
+            if !relative || !self.on_keyword(&lang.import_words) {
+                self.import_name(true)?;
+            }
+            if !self.on_keyword(&lang.import_words) {
+                return Err(format!("Expected '{}' after the module name, got '{}'", lang.import_words.first().map_or("", String::as_str), self.look().lexeme));
+            }
+            self.take();
+        }
+        let group = lang.grouping.as_ref().filter(|g| from && self.at_symbol(&g.open));
+        if group.is_some() {
+            self.take();
+        }
+        let star = from && self.look().shape == Shape::Sign && lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
+        if star && group.is_none() {
+            self.take();
+        } else {
+            loop {
+                let mut bound = self.import_name(!from)?;
+                if self.on_keyword(&lang.import_as_words) {
+                    self.take();
+                    bound = self.import_name(false)?;
+                }
+                self.constant(Value::Null);
+                self.write(&bound);
+                let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
+                if !comma.map_or(false, |mark| self.at_symbol(mark)) {
+                    break;
+                }
+                self.take();
+                if group.map_or(false, |g| self.at_symbol(&g.close)) {
+                    break;
+                }
+            }
+        }
+        if let Some(g) = group {
+            self.want_sign(&g.close, "after the imported names")?;
+        }
+        if !self.on_sep() && !matches!(self.look().shape, Shape::Close | Shape::Finish) {
+            return Err(format!("Unexpected token '{}' after an import", self.look().lexeme));
         }
         Ok(())
     }

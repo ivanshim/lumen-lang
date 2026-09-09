@@ -332,6 +332,10 @@ pub struct Lang {
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
     pub global_words: Vec<String>,
+    pub import_words: Vec<String>,
+    pub import_from_words: Vec<String>,
+    pub import_as_words: Vec<String>,
+    pub module_names: Vec<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
@@ -649,6 +653,7 @@ b system.flag.counts
 const EXT_LABELS: &str = "
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
@@ -1380,6 +1385,10 @@ impl Lang {
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
             global_words: r.strings("ext.stmt.global")?,
+            import_words: r.strings("ext.stmt.import")?,
+            import_from_words: r.strings("ext.stmt.import.from")?,
+            import_as_words: r.strings("ext.stmt.import.as")?,
+            module_names: r.strings("ext.system.module.name")?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
@@ -1632,7 +1641,7 @@ impl Lang {
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
-            &self.finally_words, &self.throw_words,
+            &self.finally_words, &self.throw_words, &self.import_words, &self.import_from_words, &self.import_as_words,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {

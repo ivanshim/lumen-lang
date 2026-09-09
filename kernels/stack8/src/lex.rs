@@ -50,6 +50,11 @@ fn marker_at(text: &str, marker: &str, folded: bool) -> Option<usize> {
 
 fn drop_prologue<'a>(source: &'a str, lang: &Lang) -> &'a str {
     let Some(prologue) = &lang.prologue else { return source };
+    // An import the reader knows must reach it whole, even where the
+    // old prologue named that same import.
+    if prologue.split_whitespace().next().map_or(false, |word| Lang::spells(&lang.import_words, word)) {
+        return source;
+    }
     let lead = source.len() - source.trim_start().len();
     let opens = match lang.prologue_folded {
         true => source[lead..].to_ascii_lowercase().starts_with(&prologue.to_ascii_lowercase()),

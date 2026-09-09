@@ -1020,7 +1020,13 @@ impl<'a> Builder<'a> {
             self.advance();
             return Ok(constant(Value::Nil));
         }
+        let head_mark = self.on_any("block.intro");
         self.skip_lead_word();
+        let on_head_line = head_mark && !self.on_stmt_end()
+            && !matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::Open);
+        if self.table.blocks == Blocks::Indented && self.table.flag("ext.block.lone_statement") && on_head_line {
+            return self.stmt();
+        }
         self.skip_line_ends();
         match self.table.blocks {
             Blocks::Indented => {
@@ -1231,6 +1237,9 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.switch") {
                 return self.switch_stmt();
             }
+            if self.key("ext.stmt.import.from") || self.key("ext.stmt.import") {
+                return self.import_bindings();
+            }
             if self.key("ext.stmt.global") {
                 return self.global_names();
             }
@@ -1255,6 +1264,83 @@ impl<'a> Builder<'a> {
             return Ok(invoke(program, Vec::new()));
         }
         self.plain_stmt()
+    }
+
+    /// Read the words of a module path as words, never as calls.
+    fn module_path(&mut self, dotted: bool) -> Res<String> {
+        let mut head = None;
+        loop {
+            let said = self.need_word("among imported names")?;
+            let pieces = match (dotted, self.table.single("op.pipe")) {
+                (true, Some(mark)) => said.split(mark).collect::<Vec<_>>(),
+                _ => vec![said.as_str()],
+            };
+            if pieces.iter().any(|part| !self.table.name_like(part) || self.table.keywords.contains(*part)) {
+                return Err(format!("Expected identifier among imported names, got '{}'", said));
+            }
+            head.get_or_insert_with(|| pieces[0].to_string());
+            if !dotted || !self.on_any("op.pipe") {
+                return Ok(head.unwrap_or_default());
+            }
+            self.advance();
+        }
+    }
+
+    /// Each wanted name receives nothing until modules have values.
+    fn import_bindings(&mut self) -> Res<Form> {
+        let taking_names = self.key("ext.stmt.import.from");
+        self.advance();
+        if taking_names {
+            let start = self.pos;
+            while self.on_any("op.pipe") {
+                self.advance();
+            }
+            if self.pos == start || !self.key("ext.stmt.import") {
+                self.module_path(true)?;
+            }
+            if self.key("ext.stmt.import") {
+                self.advance();
+            } else {
+                return Err(format!("Expected '{}' following the module path, got '{}'", self.table.single("ext.stmt.import").unwrap_or_default(), self.look().lexeme));
+            }
+        }
+        let enclosed = taking_names && self.on_any("syntax.group.open");
+        if enclosed {
+            self.advance();
+        }
+        let mut writes = Vec::new();
+        if taking_names && !enclosed && self.on_any("op.mul") {
+            self.advance();
+        } else {
+            loop {
+                let original = self.module_path(!taking_names)?;
+                let local = match self.key("ext.stmt.import.as") {
+                    false => original,
+                    true => {
+                        self.advance();
+                        self.module_path(false)?
+                    }
+                };
+                writes.push(self.write(&local, constant(Value::Nil)));
+                if !self.on_any("syntax.call.separator") {
+                    break;
+                }
+                self.advance();
+                if enclosed && self.on_any("syntax.group.close") {
+                    break;
+                }
+            }
+        }
+        if enclosed {
+            let closing = self.table.single("syntax.group.close").unwrap_or_default().to_string();
+            self.need_sign(&closing, "after the import list")?;
+        }
+        match self.look().shape {
+            Shape::Close | Shape::Finish => {},
+            _ if self.on_stmt_end() => {},
+            _ => return Err(format!("Unexpected token '{}' following imported names", self.look().lexeme)),
+        }
+        Ok(sequence(writes))
     }
 
     /// The writes before the definition gather its decorators. Those

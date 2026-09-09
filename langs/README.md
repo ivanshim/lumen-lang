@@ -424,6 +424,8 @@ only. The extension labels so far, all from PHP:
   precedence order.
 - `ext.block.lone_statement`: a switch; a single statement may stand
   where a block is expected (`if ($x) echo "y";`, `for (...) $n++;`).
+  In an indented language it stands on the same line as the head,
+  after the block introducer (`if ready: print(1)`).
 - `ext.stmt.function.hoisted`: a switch; a function defined at the top
   level is bound before anything else runs, so a call above it finds it.
   Wherever `stmt.function` is spelled, a routine may also be written
@@ -1182,6 +1184,23 @@ only. The extension labels so far, all from PHP:
   put together, so each stands for what it names where it is written;
   outside any routine or any class the name is text with nothing in it,
   as such a language leaves it.
+- `ext.stmt.import`, `ext.stmt.import.from` and `ext.stmt.import.as`:
+  lists of words for asking for modules, asking for names within a
+  module, and giving a wanted name another name here. A module path
+  is a name with dots in it, using the pipe spelling as its divider,
+  never a pipe expression. A plain import binds the first word of
+  each path, or its alias; a from-import binds each wanted name, or
+  its alias. Relative paths may begin with one dot or more, and the
+  wanted names may stand in parentheses over several lines, with a
+  trailing comma. The multiplication sign asks for all names and binds
+  none. For now an import names what is wanted and gets nothing: every
+  name it binds holds null in the current scope, so that reading can
+  go on to the constructs that matter. The kernels carry no modules;
+  a later stage will give the names something. An import named by the
+  lexical prologue is read too where these words are spelled.
+- `ext.system.module.name`: a list of names bound to the text
+  `"__main__"` before the file runs. These are ordinary bindings and
+  may be written anew by the program.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
@@ -1594,7 +1613,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 
 | Label | lumen | rplumen | python | rust | php (extra) | c (extra) | javascript (extra) | pascal (extra) | ruby (extra) | swift (extra) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `ext.block.lone_statement` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
 | `ext.builtin.args.all.outside` | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - | - | - | - |
 | `ext.builtin.args.at` | - | - | - | - | `func_get_arg` | - | - | - | - | - |
@@ -1773,6 +1792,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | - | - | `fn` `=>` | - | - | - | - | - |
 | `ext.stmt.global` | - | - | - | - | `global` | - | - | - | - | - |
+| `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
+| `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.static.read_in` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.switch` | - | - | - | - | `switch` | - | - | - | - | - |
@@ -1814,6 +1836,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.loose` | - | - | - | - | `mixed` `callable` `iterable` `object` `self` `static` `parent` `void` `never` `false` `true` | - | - | - | - | - |
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
 | `ext.system.reading.unclosed.mismatch` | - | - | - | - | `does not match '` `'` | - | - | - | - | - |
