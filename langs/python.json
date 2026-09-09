@@ -45,7 +45,9 @@
     ":"
   ],
   "block.indent_size": 4,
-  "stmt.terminator": [],
+  "stmt.terminator": [
+    ";"
+  ],
   "syntax.notation": "infix",
   "syntax.group.open": [
     "("
@@ -341,5 +343,6 @@
   ],
   "ext.stmt.unpack.amiss": [
     "invalid unpacking assignment"
-  ]
+  ],
+  "ext.block.lone_statement": true
 }

@@ -820,6 +820,16 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         self.skip_intro();
+        if self.lang.blocks == Blocks::Indented && self.lang.lone_stmt && !self.on_sep()
+            && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish) {
+            while !matches!(self.look().shape, Shape::LineEnd | Shape::Finish | Shape::Close) {
+                self.stmt()?;
+                if self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
+                    self.take();
+                } else { break; }
+            }
+            return Ok(());
+        }
         self.skip_seps();
         match self.lang.blocks {
             Blocks::Indented => {
@@ -1960,6 +1970,9 @@ impl<'a> Compiler<'a> {
                 self.want_sign(sep, "between the range bounds")?;
             }
             self.expr(0)?;
+            if !lang.tuple_marks.is_empty() && call.between.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
+                self.take();
+            }
             self.want_sign(&call.close, "after the range")?;
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
@@ -2936,6 +2949,7 @@ impl<'a> Compiler<'a> {
             self.waiting = previous;
             return done;
         }
+        if self.lang.unpack_words.is_empty() { return Err(amiss); }
         let mut spans = Vec::new();
         let mut left = begin;
         for right in commas.into_iter().chain(std::iter::once(end)) {
@@ -2966,7 +2980,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn tuple_assignment(&mut self) -> Res<bool> {
-        if self.lang.tuple_marks.is_empty() || self.lang.unpack_words.is_empty() { return Ok(false); }
+        if self.lang.tuple_marks.is_empty() && !self.lang.assign_chain { return Ok(false); }
         let begin = self.pos;
         let (signs, _) = self.outer_marks(begin, self.tokens.len(), &self.lang.assign_words);
         let Some(last) = signs.last().copied() else { return Ok(false); };

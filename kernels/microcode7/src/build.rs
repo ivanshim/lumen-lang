@@ -1021,6 +1021,17 @@ impl<'a> Builder<'a> {
             return Ok(constant(Value::Nil));
         }
         self.skip_lead_word();
+        let same_line = self.table.blocks == Blocks::Indented && self.table.flag("ext.block.lone_statement")
+            && !self.on_stmt_end() && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish);
+        if same_line {
+            let mut body = vec![self.stmt()?];
+            while self.look().shape == Shape::Sign && self.table.spells("stmt.terminator", &self.look().lexeme) {
+                self.advance();
+                if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+                body.push(self.stmt()?);
+            }
+            return Ok(sequence(body));
+        }
         self.skip_line_ends();
         match self.table.blocks {
             Blocks::Indented => {
@@ -2387,6 +2398,7 @@ impl<'a> Builder<'a> {
                 self.need_sign(sep, "between the range bounds")?;
             }
             let end = self.expr(0)?;
+            if table.single("ext.op.tuple").is_some() && self.on_any("syntax.call.separator") { self.advance(); }
             self.need_sign(table.single("syntax.call.close").unwrap(), "after the range")?;
             (start, end)
         } else {
@@ -2923,6 +2935,7 @@ impl<'a> Builder<'a> {
             self.waiting = old;
             return written;
         }
+        if self.table.single("ext.stmt.unpack").is_none() { return Err(bad); }
         let mut pieces = Vec::new();
         let mut previous = lo;
         for boundary in cuts.into_iter().chain(Some(hi)) {
@@ -2954,7 +2967,7 @@ impl<'a> Builder<'a> {
     }
 
     fn chained_places(&mut self) -> Res<Option<Form>> {
-        if self.table.single("ext.op.tuple").is_none() || self.table.single("ext.stmt.unpack").is_none() { return Ok(None); }
+        if self.table.single("ext.op.tuple").is_none() && !self.table.flag("ext.stmt.assign.chain") { return Ok(None); }
         let mut left = self.pos;
         let signs = self.divided_at(left, self.tokens.len(), "stmt.assign");
         if signs.is_empty() || (signs.len() > 1 && !self.table.flag("ext.stmt.assign.chain")) { return Ok(None); }
