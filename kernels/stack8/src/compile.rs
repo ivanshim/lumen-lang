@@ -5976,13 +5976,6 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let words = lang.imaginary_unready.as_deref().unwrap_or("Imaginary arithmetic is not ready");
         return Ok(Value::Imaginary(coefficient, Rc::from(words)));
     }
-    if lang.real_bits == Some(64) && lang.real_shortest
-        && !lang.base_prefixes.iter().any(|(p, _)| text.starts_with(p))
-        && (text.chars().any(|c| lang.exponent_letters.contains(&c)) || lang.point.map_or(false, |c| text.contains(c))) {
-        let decimal = if let Some(point) = lang.point { text.replace(point, ".") } else { text.to_string() };
-        let decimal: String = decimal.chars().map(|c| if lang.exponent_letters.contains(&c) { 'e' } else { c }).collect();
-        return decimal.parse::<f64>().map(|x| crate::value::real_of(x, 17)).map_err(|_| unreadable_number(text, lang));
-    }
     for (prefix, base) in &lang.base_prefixes {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {
             return BigInt::parse_bytes(digits.as_bytes(), *base)

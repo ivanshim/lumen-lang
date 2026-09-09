@@ -998,7 +998,6 @@ impl<'a> Machine<'a> {
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
-            shortest: self.table.flag("ext.system.real.shortest"),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),

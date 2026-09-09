@@ -457,10 +457,6 @@ only. The extension labels so far, all from PHP:
   `ext.lexical.number.amiss.binary.digit` and
   `ext.lexical.number.amiss.octal.digit` hold two pieces, before and
   after the first decimal digit that the base cannot hold.
-- `ext.system.real.shortest`: a switch; write a binary real with the
-  fewest figures that read back to it, keeping a decimal point for
-  whole reals. Powers below minus four or at least sixteen are written
-  with a lower-case e, a sign, and at least two exponent digits.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
@@ -1990,11 +1986,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.reading.unexpected` | - | - | - | - | `syntax error, unexpected` | - | - | - | - | - |
 | `ext.system.reading.unexpected.character` | - | - | - | - | `character 0x` | - | - | - | - | - |
 | `ext.system.reading.unmatched` | - | - | - | - | `Unmatched '` `'` | - | - | - | - | - |
-| `ext.system.real.bits` | - | - | `64` | - | `64` | - | - | - | - | - |
+| `ext.system.real.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
-| `ext.system.real.shortest` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |

@@ -387,7 +387,5 @@
   "ext.syntax.call.spread.amiss": ["TypeError: argument after * must be an iterable"],
   "ext.syntax.call.spread.pairs": ["**"],
   "ext.syntax.call.spread.pairs.amiss": ["TypeError: argument after ** must be a mapping with string keys"],
-  "ext.system.module.name": ["__name__"],
-  "ext.system.real.bits": 64,
-  "ext.system.real.shortest": true
+  "ext.system.module.name": ["__name__"]
 }

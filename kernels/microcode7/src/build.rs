@@ -5482,18 +5482,6 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             unready: Rc::from(table.single("ext.lexical.number.imaginary.unready").unwrap_or("Imaginary arithmetic is not ready")),
         });
     }
-    let letters = table.letters("ext.lexical.number.exponent");
-    let dot = table.letter("lexical.number.decimal_point");
-    let prefixed = ["lexical.number.hex_prefix", "ext.lexical.number.octal_prefix", "ext.lexical.number.binary_prefix"]
-        .iter().any(|key| table.strings(key).iter().any(|p| text.starts_with(p)));
-    let is_real = !prefixed && text.chars().any(|c| Some(c) == dot || letters.contains(&c));
-    if is_real && table.flag("ext.system.real.shortest") && table.count("ext.system.real.bits") == Some(64) {
-        let normalized: String = text.chars().map(|c| {
-            if Some(c) == dot { '.' } else if letters.contains(&c) { 'e' } else { c }
-        }).collect();
-        let x = normalized.parse::<f64>().map_err(|_| unreadable_numeral(text, table))?;
-        return Ok(crate::data::worth_of_binary(x, 17));
-    }
     for (key, radix) in [
         ("lexical.number.hex_prefix", 16u32),
         ("ext.lexical.number.binary_prefix", 2),

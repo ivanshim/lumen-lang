@@ -74,7 +74,6 @@ pub struct Lang {
     pub octal_amiss: Option<String>,
     pub octal_digit_amiss: Vec<String>,
     pub hex_amiss: Option<String>,
-    pub real_shortest: bool,
 
     pub prologue: Option<String>,
     pub point: Option<char>,
@@ -716,7 +715,6 @@ w ext.lexical.number.amiss.binary.digit
 w ext.lexical.number.amiss.octal
 w ext.lexical.number.amiss.octal.digit
 w ext.lexical.number.amiss.hex
-b ext.system.real.shortest
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
@@ -1290,7 +1288,6 @@ impl Lang {
             octal_amiss: r.head("ext.lexical.number.amiss.octal")?,
             octal_digit_amiss: r.strings("ext.lexical.number.amiss.octal.digit")?,
             hex_amiss: r.head("ext.lexical.number.amiss.hex")?,
-            real_shortest: r.flag("ext.system.real.shortest")?,
 
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,

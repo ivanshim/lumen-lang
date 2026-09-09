@@ -140,7 +140,6 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
-    pub shortest: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -303,10 +302,6 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
-            Value::Frac(e) if w.shortest && e.places.is_some() => {
-                let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
-                brief_decimal(number, true)
-            }
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -319,7 +314,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
-            Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient, false) + "j",
+            Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
@@ -748,19 +743,16 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
     spelled_out(x, figures.or_else(|| figures_asked(true).flatten()))
 }
 
-/// A decimal shown in the fewest figures, with a signed two-place
-/// exponent beyond the plain range and a point when its kind asks it.
-pub fn brief_decimal(number: f64, real: bool) -> String {
+/// The figures before an imaginary mark, with a signed two-place
+/// exponent beyond the plain range.
+fn brief_decimal(number: f64) -> String {
     if number.is_nan() { return "nan".into(); }
     if number.is_infinite() { return if number.is_sign_negative() { "-inf" } else { "inf" }.into(); }
     let written = format!("{number:e}");
     let split = written.find('e').expect("the exponent's letter");
     let scale = written[split + 1..].parse::<i32>().expect("the exponent's figures");
     match scale {
-        -4..=15 => {
-            let plain = format!("{number}");
-            if real && !plain.contains('.') { plain + ".0" } else { plain }
-        }
+        -4..=15 => format!("{number}"),
         _ => {
             let signed = format!("{scale:+03}");
             format!("{}e{}", &written[..split], signed)

@@ -136,7 +136,6 @@ pub struct Wording<'a> {
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
     pub real_digits: Option<usize>,
-    pub real_shortest: bool,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
@@ -325,10 +324,6 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
-            Value::Real(r) if sp.real_shortest => {
-                let x = if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) };
-                shortest_real(x, true)
-            }
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
@@ -341,7 +336,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
-            Value::Imaginary(n, _) => format!("{}j", shortest_real(*n, false)),
+            Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
@@ -812,9 +807,9 @@ fn laid_flat(figures: &str, power: i32) -> String {
 }
 
 
-/// Write the fewest figures, with the point kept for a whole real and
-/// the power of ten padded where the language asks for that spelling.
-pub fn shortest_real(x: f64, keep_point: bool) -> String {
+/// Write an imaginary coefficient in the fewest figures, with a sign
+/// and two places at least for the power of ten.
+fn shortest_real(x: f64) -> String {
     if !x.is_finite() { return x.to_string().to_ascii_lowercase(); }
     let scientific = format!("{:e}", x);
     let (mantissa, exponent) = scientific.split_once('e').expect("a power follows");
@@ -822,7 +817,5 @@ pub fn shortest_real(x: f64, keep_point: bool) -> String {
     if x != 0.0 && !(-4..16).contains(&power) {
         return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
     }
-    let mut out = x.to_string();
-    if keep_point && !out.contains('.') { out.push_str(".0"); }
-    out
+    x.to_string()
 }
