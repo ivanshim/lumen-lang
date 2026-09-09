@@ -118,6 +118,14 @@ pub struct Lang {
     pub pair_mark: Option<String>,
     pub index_brackets: Option<Brackets>,
     pub text_indexable: bool,
+    pub slice_marks: Vec<String>,
+    pub slice_ellipsis: Vec<String>,
+    pub slice_zero: Option<String>,
+    pub slice_bounds: Option<String>,
+    pub slice_unsupported: Option<String>,
+    pub slice_assign: Option<String>,
+    pub slice_length: Vec<String>,
+    pub slice_detached: Option<String>,
 
     pub true_words: Vec<String>,
     pub false_words: Vec<String>,
@@ -135,6 +143,10 @@ pub struct Lang {
     pub let_words: Vec<String>,
     pub mutable_words: Vec<String>,
     pub type_marks: Vec<String>,
+    /// An expression written as a kind is read and put by.
+    pub annotation_marks: Vec<String>,
+    pub annotation_amiss: Option<String>,
+    pub annotation_target_unready: Option<String>,
     pub types_first: bool,
     pub if_words: Vec<String>,
     pub elif_words: Vec<String>,
@@ -328,6 +340,10 @@ pub struct Lang {
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
     pub global_words: Vec<String>,
+    pub import_words: Vec<String>,
+    pub import_from_words: Vec<String>,
+    pub import_as_words: Vec<String>,
+    pub module_names: Vec<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
@@ -584,6 +600,22 @@ pub struct Lang {
     /// The word a routine written where a value stands says, before the
     /// names it carries away from around it.
     pub carries_words: Vec<String>,
+    pub bind_names: bool,
+    pub carries_pairs: Vec<String>,
+    pub keyword_only: Vec<String>,
+    pub positional_only: Vec<String>,
+    pub call_spread: Vec<String>,
+    pub call_spread_pairs: Vec<String>,
+    pub call_amiss: Vec<String>,
+    pub call_missing: Vec<String>,
+    pub call_unknown: Vec<String>,
+    pub call_duplicate: Vec<String>,
+    pub call_builtin_amiss: Vec<String>,
+    pub spread_amiss: Vec<String>,
+    pub spread_pairs_amiss: Vec<String>,
+    pub defaults_amiss: Vec<String>,
+    pub parameters_amiss: Vec<String>,
+
     /// The word a routine written short says, and the mark standing
     /// between its parameters and the one expression it is: `fn ($x) =>
     /// $x + 1`. Such a routine takes with it every name around it.
@@ -595,6 +627,17 @@ pub struct Lang {
     pub self_words: Vec<String>,
     /// Signs a name may be led by, which say nothing: PHP's `\Error`.
     pub name_leads: Vec<char>,
+    pub assert_words: Vec<String>,
+    pub assert_kind: Option<String>,
+    pub catch_as: Vec<String>,
+    pub catch_invalid: Option<String>,
+    pub catch_tuple_open: Option<String>,
+    pub catch_tuple_close: Option<String>,
+    pub catch_group: Option<String>,
+    pub catch_group_unsupported: Option<String>,
+    pub try_else: bool,
+    pub throw_from: Vec<String>,
+    pub throw_empty: Option<String>,
     pub try_words: Vec<String>,
     pub catch_words: Vec<String>,
     pub finally_words: Vec<String>,
@@ -661,24 +704,26 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
 w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
-w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
+w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
 w ext.op.walk.class | w ext.op.walk.rewind | w ext.op.walk.more | w ext.op.walk.this | w ext.op.walk.key
 w ext.op.walk.onward | w ext.op.walk.giver.class | w ext.op.walk.giver | w ext.op.walk.no_cell | w ext.op.walk.key.no_cell | b ext.op.walk.live | w ext.builtin.array.front | w ext.stmt.class.modifier | w ext.stmt.class.hidden | w ext.stmt.class.guarded | w ext.stmt.class.shared
 w ext.op.member | w ext.op.scope | w ext.op.instanceof | w ext.stmt.class.parent
-w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.try | w ext.stmt.catch
+w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt.assert.kind | w ext.stmt.catch.invalid | w ext.stmt.catch.as | w ext.stmt.catch.tuple.open | w ext.stmt.catch.tuple.close | w ext.stmt.catch.group | w ext.stmt.catch.group.unsupported | b ext.stmt.try.else | w ext.stmt.throw.from | w ext.stmt.throw.empty | w ext.stmt.try | w ext.stmt.catch
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
@@ -696,7 +741,7 @@ w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | w ext.stmt.function.carries | w ext.stmt.function.short
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
@@ -1261,7 +1306,7 @@ impl Lang {
             block_opens: openers,
             block_closes: closers,
             block_intros: r.strings("block.intro")?,
-            stmt_ends: r.strings("stmt.terminator")?,
+            stmt_ends: r.strings("stmt.terminator")?.into_iter().chain(r.strings("ext.stmt.terminator")?).collect(),
             grouping: r.brackets("syntax.group.open", "syntax.group.close", None)?,
             calling: call,
             argument_labels: call_labels,
@@ -1269,6 +1314,14 @@ impl Lang {
             map_brackets: r.brackets("syntax.map.open", "syntax.map.close", Some("syntax.map.separator"))?,
             pair_mark: r.head("syntax.map.pair")?,
             index_brackets: index,
+            slice_ellipsis: r.strings("ext.op.index.slice.ellipsis")?,
+            slice_marks: r.strings("ext.op.index.slice")?,
+            slice_zero: r.head("ext.op.index.slice.zero")?,
+            slice_bounds: r.head("ext.op.index.slice.bounds")?,
+            slice_unsupported: r.head("ext.op.index.slice.unsupported")?,
+            slice_assign: r.head("ext.op.index.slice.assign")?,
+            slice_length: r.strings("ext.op.index.slice.length")?,
+            slice_detached: r.head("ext.op.index.slice.detached")?,
             text_indexable: index_text,
             true_words: r.strings("literal.true")?,
             false_words: r.strings("literal.false")?,
@@ -1283,6 +1336,9 @@ impl Lang {
             let_words: lets,
             mutable_words: mutables,
             type_marks: annotation,
+            annotation_marks: r.strings("ext.stmt.annotation")?,
+            annotation_amiss: r.head("ext.stmt.annotation.amiss")?,
+            annotation_target_unready: r.head("ext.stmt.annotation.target.unready")?,
             types_first: type_first,
             if_words: ifs,
             elif_words: elifs,
@@ -1396,6 +1452,10 @@ impl Lang {
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
             global_words: r.strings("ext.stmt.global")?,
+            import_words: r.strings("ext.stmt.import")?,
+            import_from_words: r.strings("ext.stmt.import.from")?,
+            import_as_words: r.strings("ext.stmt.import.as")?,
+            module_names: r.strings("ext.system.module.name")?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
@@ -1530,6 +1590,22 @@ impl Lang {
             trait_words: r.strings("ext.stmt.class.trait")?,
             uses_words: r.strings("ext.stmt.class.uses")?,
             carries_words: r.strings("ext.stmt.function.carries")?,
+            bind_names: r.flag("ext.syntax.call.bind_names")?,
+            carries_pairs: r.strings("ext.stmt.function.carries.pairs")?,
+            keyword_only: r.strings("ext.stmt.function.keyword_only")?,
+            positional_only: r.strings("ext.stmt.function.positional_only")?,
+            call_spread: r.strings("ext.syntax.call.spread")?,
+            call_spread_pairs: r.strings("ext.syntax.call.spread.pairs")?,
+            call_amiss: r.strings("ext.syntax.call.amiss")?,
+            call_missing: r.strings("ext.syntax.call.amiss.missing")?,
+            call_unknown: r.strings("ext.syntax.call.amiss.unknown")?,
+            call_duplicate: r.strings("ext.syntax.call.amiss.duplicate")?,
+            call_builtin_amiss: r.strings("ext.syntax.call.amiss.builtin")?,
+            spread_amiss: r.strings("ext.syntax.call.spread.amiss")?,
+            spread_pairs_amiss: r.strings("ext.syntax.call.spread.pairs.amiss")?,
+            defaults_amiss: r.strings("ext.stmt.function.defaults.amiss")?,
+            parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
+
             short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
                 [] => None,
                 [word, mark] => Some((word.clone(), mark.clone())),
@@ -1541,6 +1617,17 @@ impl Lang {
             parent_words: r.strings("ext.stmt.class.parent")?,
             self_words: r.strings("ext.stmt.class.self")?,
             name_leads: r.letters("ext.lexical.name_lead")?,
+            assert_words: r.strings("ext.stmt.assert")?,
+            assert_kind: r.head("ext.stmt.assert.kind")?,
+            catch_as: r.strings("ext.stmt.catch.as")?,
+            catch_invalid: r.head("ext.stmt.catch.invalid")?,
+            catch_tuple_open: r.head("ext.stmt.catch.tuple.open")?,
+            catch_tuple_close: r.head("ext.stmt.catch.tuple.close")?,
+            catch_group: r.head("ext.stmt.catch.group")?,
+            catch_group_unsupported: r.head("ext.stmt.catch.group.unsupported")?,
+            try_else: r.flag("ext.stmt.try.else")?,
+            throw_from: r.strings("ext.stmt.throw.from")?,
+            throw_empty: r.head("ext.stmt.throw.empty")?,
             try_words: r.strings("ext.stmt.try")?,
             catch_words: r.strings("ext.stmt.catch")?,
             finally_words: r.strings("ext.stmt.finally")?,
@@ -1637,7 +1724,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
+        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.catch_tuple_open, &self.catch_tuple_close, &self.catch_group, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {
@@ -1649,9 +1736,10 @@ impl Lang {
         }
         let mut lists: Vec<&Vec<String>> = vec![
             &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread,
-            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.return_marks,
+            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
             &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
+            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
+            &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);
@@ -1667,7 +1755,8 @@ impl Lang {
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
-            &self.finally_words, &self.throw_words,
+            &self.finally_words, &self.throw_words, &self.assert_words, &self.catch_as, &self.throw_from,
+            &self.import_words, &self.import_from_words, &self.import_as_words,
         ];
         for word in keywords.into_iter().flatten() {
             if !name_like(word, unicode, prefix) {
