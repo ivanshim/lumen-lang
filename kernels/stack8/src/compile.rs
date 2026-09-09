@@ -171,6 +171,7 @@ pub struct Compiler<'a> {
     /// take, gathered as the parameters are read and taken by the
     /// routine they belong to.
     formal_kinds: Vec<Option<Rc<str>>>,
+    uncarried: Vec<String>,
 }
 
 type Res<T> = Result<T, String>;
@@ -260,7 +261,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -566,7 +567,20 @@ impl<'a> Compiler<'a> {
         Cell { ident: Rc::from(name), near: vec![slot], far: global, moving: false }
     }
 
+    fn refuse_uncarried(&mut self, name: &str) -> bool {
+        if !self.uncarried.iter().any(|n| n == name) || !self.cell_to_read(name, false).near.is_empty() {
+            return false;
+        }
+        if let Some(told) = self.lang.lambda_enclosing.clone() {
+            self.constant(Value::text(&told));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("lambda")), 1);
+            return true;
+        }
+        false
+    }
+
     fn read(&mut self, name: &str) {
+        if self.refuse_uncarried(name) { return; }
         // The name a language gives the line it is written on stands
         // for that line itself, known while assembling.
         if self.lang.line_binding.as_deref() == Some(name) {
@@ -663,6 +677,7 @@ impl<'a> Compiler<'a> {
     /// result after the function, a call of the function's own name inside
     /// it is the global program, not the result being built.
     fn read_callee(&mut self, name: &str) {
+        if self.refuse_uncarried(name) { return; }
         let own = self.lang.named_result && self.piece().ident == name && !self.piece().outermost;
         let mut slot = self.cell_to_read(name, false);
         if own {
@@ -2747,7 +2762,9 @@ impl<'a> Compiler<'a> {
         let least = rest.unwrap_or(formals.len()).saturating_sub(defaults.len());
         let given = formals.clone();
         let enclosing = if self.piece().outermost { Vec::new() } else { self.piece().idents.clone() };
-        let began = self.pos;
+        let mut unavailable = self.uncarried.clone();
+        unavailable.extend(enclosing);
+        let surrounding = std::mem::replace(&mut self.uncarried, unavailable);
         let mut program = self.routine(ANONYMOUS, formals, least, true, |a| {
             for (_, named) in &defaults {
                 let cell = a.cell_to_write(named);
@@ -2761,8 +2778,7 @@ impl<'a> Compiler<'a> {
                 a.land(done);
             }
             let code = a.member_value()?;
-            let captures = a.tokens[began..a.pos].iter().any(|t| t.shape == Shape::Instr && enclosing.contains(&t.lexeme) && !given.contains(&t.lexeme));
-            let fault = if unsupported { lang.lambda_unsupported.as_deref() } else if captures { lang.lambda_enclosing.as_deref() } else { None };
+            let fault = if unsupported { lang.lambda_unsupported.as_deref() } else { None };
             if let Some(told) = fault {
                 a.constant(Value::text(told));
                 a.act(Action::Builtin(Builtin::Raise, Rc::from("lambda")), 1);
@@ -2773,6 +2789,7 @@ impl<'a> Compiler<'a> {
             a.write(RESULT_CELL);
             Ok(())
         })?;
+        self.uncarried = surrounding;
         Rc::get_mut(&mut program).expect("a fresh lambda").rest_at = rest;
         for (_, named) in &defaults { self.read(named); }
         self.constant(Value::Routine(program));

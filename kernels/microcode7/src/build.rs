@@ -134,6 +134,7 @@ pub struct Builder<'a> {
     /// routine they belong to.
     formal_kinds: Vec<Option<Rc<str>>>,
     tells_place: bool,
+    outside_lambda: Vec<String>,
 }
 
 pub struct Built {
@@ -239,7 +240,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -852,6 +853,15 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if self.outside_lambda.iter().any(|word| word == name) {
+            let local = self.layers.iter().rev().find(|scope| scope.holds == Holds::Every)
+                .map_or(false, |scope| scope.idents.iter().any(|word| word == name));
+            if !local {
+                if let Some(said) = self.table.single("ext.op.lambda.enclosing") {
+                    return prim_call(Prim::Raise, vec![constant(Value::text(said))]);
+                }
+            }
+        }
         // The word a language uses for the line it is written on stands
         // for that line, which is known while the form is built.
         if self.table.single("ext.system.source.line") == Some(name) {
@@ -2733,7 +2743,9 @@ impl<'a> Builder<'a> {
         let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
         let parameters = names.clone();
         let enclosing: Vec<String> = self.layers.iter().skip(1).filter(|l| l.holds == Holds::Every).flat_map(|l| l.idents.clone()).collect();
-        let start = self.pos;
+        let mut unavailable = self.outside_lambda.clone();
+        unavailable.extend(enclosing);
+        let prior = std::mem::replace(&mut self.outside_lambda, unavailable);
         let mut function = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
             for (index, source) in &spares {
@@ -2745,12 +2757,12 @@ impl<'a> Builder<'a> {
                 steps.push(b.choose(absent, fill, constant(Value::Nil)));
             }
             let body = b.expr(0)?;
-            let wants_outer = b.tokens[start..b.pos].iter().any(|word| word.shape == Shape::Bare && enclosing.contains(&word.lexeme) && !parameters.contains(&word.lexeme));
-            let complaint = if cannot_call { table.single("ext.op.lambda.unsupported") } else if wants_outer { table.single("ext.op.lambda.enclosing") } else { None };
+            let complaint = if cannot_call { table.single("ext.op.lambda.unsupported") } else { None };
             if let Some(words) = complaint { steps.push(prim_call(Prim::Raise, vec![constant(Value::text(words))])); }
             steps.push(body);
             Ok(sequence(steps))
         })?;
+        self.outside_lambda = prior;
         if let Form::Const(Value::Routine(routine)) = &mut function {
             Rc::get_mut(routine).expect("new lambda").gather_from = gather;
         }

@@ -1047,8 +1047,13 @@ impl<'a> Machine<'a> {
                 }
                 'f' => {
                     if !matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_)) { return Err(mismatch.to_string()); }
-                    let ratio = math::ratio_of(worth).ok_or_else(|| mismatch.to_string())?;
-                    let binary = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+                    let binary = match worth {
+                        Value::Flag(truth) => if *truth { 1.0 } else { 0.0 },
+                        other => {
+                            let ratio = math::ratio_of(other).ok_or_else(|| mismatch.to_string())?;
+                            crate::data::nearest_binary(&ratio.above, &ratio.beneath)
+                        }
+                    };
                     result.push_str(&format!("{:.1$}", binary, places));
                 }
                 _ => return Err(unsupported.to_string()),
