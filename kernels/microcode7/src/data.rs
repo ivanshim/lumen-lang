@@ -119,6 +119,8 @@ impl Progression {
 
 #[derive(Clone)]
 pub enum Value {
+    Attributes(Rc<Thing>),
+    Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
     Refusal(Rc<str>),
     Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
     Channel(u8),
@@ -203,7 +205,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Refusal(_) | Value::Cursor(_) | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -238,7 +240,7 @@ impl Value {
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
-            Value::Refusal(_) | Value::Cursor(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -420,8 +422,9 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
+            Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
             Value::Refusal(word) => word.to_string(),
-            Value::Cursor(_) => "<iterator>".to_owned(),
+            Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),

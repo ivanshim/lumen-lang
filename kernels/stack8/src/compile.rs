@@ -4001,6 +4001,14 @@ impl<'a> Compiler<'a> {
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
         self.expr_at(0, false)?;
+        if !self.lang.class_special.is_empty() && self.on_writing()
+            && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.lexeme)) {
+            let end = self.pos;
+            self.piece().instrs.truncate(from);
+            self.pos = target_at;
+            self.block_place()?;
+            self.pos = end;
+        }
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
             && self.look_ahead(2).shape == Shape::Sign
@@ -5187,6 +5195,10 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
                 let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
+                if !self.at_symbol(&call.open) {
+                    self.class_cannot_run();
+                    return self.indexing(from);
+                }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
                 for _ in 0..extra { self.discard(); }

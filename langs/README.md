@@ -675,7 +675,7 @@ only. The extension labels so far, all from PHP:
   cannot yet run: header keywords or unpacking, annotations, classes inside
   functions, or statements in a class
   body beyond methods, assignments, nested classes, plain strings and pass.
-  A parent call outside a method, or one given explicit arguments, also
+  A parent word used as a value, a call outside a method, or one given explicit arguments, also
   stops with these words. A pipe that changes an unnamed array also stops
   here. Nothing in such a form is silently carried out.
 - `ext.op.instanceof`: whether a value is an object of a class or of one

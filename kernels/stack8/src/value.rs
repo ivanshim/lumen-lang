@@ -115,6 +115,8 @@ impl Counted {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Fields(Rc<Instance>),
+    Walking(Rc<RefCell<(Value, Option<Value>)>>),
     Declined(Rc<str>),
     Walk(Rc<RefCell<(Vec<Value>, usize)>>),
     Stream(bool),
@@ -226,7 +228,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
-            Value::Declined(_) | Value::Walk(_) | Value::Stream(_) => true,
+            Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -260,7 +262,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Declined(_) | Value::Walk(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -435,8 +437,9 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
+            Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),
-            Value::Walk(_) => "<iterator>".to_string(),
+            Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),

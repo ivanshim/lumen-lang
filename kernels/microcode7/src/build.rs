@@ -4871,6 +4871,10 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
                 let open = table.single("syntax.call.open").ok_or("A parent call needs brackets")?;
+                if !self.sign(open) {
+                    let unavailable = self.class_not_ready();
+                    return self.subscript(unavailable);
+                }
                 self.need_sign(open, "after the parent word")?;
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
                 let base = self.within.as_ref().and_then(|(_, b)| b.clone());
