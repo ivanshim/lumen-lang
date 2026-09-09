@@ -510,8 +510,20 @@ only. The extension labels so far, all from PHP:
   routine is bound to no name and stands for itself; it reaches the
   outermost bindings, as a routine written out does, and none of the
   names around where it was written.
+- `ext.lexical.number.point.bare`: a switch; a decimal point may lack
+  digits on either hand, though not on both (`.5`, `1.`, `1.e2`).
+  The numeric suites use these beside ordinary fractions; their reading
+  follows the lexical piece. `scratch/file-float/1.py` witnesses them.
+- `ext.lexical.number.imaginary`: suffix letters for an imaginary
+  decimal numeral (`1j`, `.5J`, `2.e-3j`). The coefficient is read whole,
+  including its point and exponent. The run cannot yet hold a complex
+  value; reaching this numeral says the plain words of
+  `ext.lexical.number.imaginary.unready`. An uncalled body may hold one
+  without complaint. `scratch/file-float/3.py` reads such bodies and
+  `scratch/file-float/4.py` reaches the complaint.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
-  in a number (`1e9`, `2.5E-3`), always a real.
+  in a number (`1e9`, `2.5E-3`), always a real. Python spells both
+  letters; `scratch/file-float/2.py` witnesses both signs and points.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
@@ -728,7 +740,9 @@ only. The extension labels so far, all from PHP:
   grew from C.
 - `ext.lexical.number.separator`: marks a program may write between the
   digits of a number to break them up (`1_000_000`), which count for
-  nothing when the number is read.
+  nothing when the number is read. Python spells the underscore; its
+  bare-point reading requires a digit on each hand of that separator.
+  `scratch/file-float/6.py` witnesses separated fractions and exponents.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -1518,6 +1532,15 @@ only. The extension labels so far, all from PHP:
   and read both sides as numbers however they were written. Like any
   operator these take their tiers from `op.precedence`, and a kernel
   that does not read the labels reads past those tiers too.
+- `ext.op.bit.whole`: a switch; bit operations keep every bit of a whole
+  number, with no fixed width. Flags stand for nought or one, and two
+  flags joined by and, or, or xor give a flag. Other kinds are refused
+  with `ext.system.fault.operands`; no text or fraction is made into a
+  whole number. A shift below nought says `ext.system.fault.shift`.
+  A left shift whose count the host cannot hold is refused with
+  `ext.system.fault.operands`.
+  The numeric suites need the lexical piece's whole-number reading;
+  `scratch/file-float/5.py` witnesses its signs and wide shifts.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -1840,7 +1863,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1939,12 +1962,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
-| `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
+| `ext.lexical.number.amiss` | - | - | `invalid decimal literal` | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
-| `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
+| `ext.lexical.number.imaginary.unready` | - | - | `NotImplementedError: complex literals cannot be evaluated` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
-| `ext.lexical.number.separator` | - | - | - | - | `_` | - | - | - | - | - |
+| `ext.lexical.number.point.bare` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.number.separator` | - | - | `_` | - | `_` | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |
@@ -1961,13 +1987,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
-| `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
-| `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
+| `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
+| `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.compare.chained` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2163,8 +2190,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
-| `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |

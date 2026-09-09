@@ -4249,7 +4249,14 @@ impl<'a> Builder<'a> {
         let node = match t.shape {
             Shape::Numeral => {
                 self.advance();
-                constant(numeral(&t.lexeme, table)?)
+                let suffix = table.letters("ext.lexical.number.imaginary");
+                match t.lexeme.char_indices().next_back() {
+                    Some((end, letter)) if suffix.contains(&letter) => {
+                        numeral(&t.lexeme[..end], table)?;
+                        self.scope_unrun("ext.lexical.number.imaginary.unready")
+                    }
+                    _ => constant(numeral(&t.lexeme, table)?),
+                }
             }
             Shape::Quote | Shape::Woven | Shape::Unheld => {
                 let mut text = self.quotation()?;
@@ -5967,6 +5974,28 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let apart = table.letters("ext.lexical.number.separator");
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
+        if table.flag("ext.lexical.number.point.bare") {
+            let mut base = 10;
+            let mut begins = 0;
+            for (label, worth) in [("lexical.number.hex_prefix", 16), ("ext.lexical.number.octal_prefix", 8), ("ext.lexical.number.binary_prefix", 2)] {
+                if let Some(prefix) = table.strings(label).iter().find(|p| text.starts_with(p.as_str())) {
+                    base = worth;
+                    begins = prefix.len();
+                    break;
+                }
+            }
+            for (offset, mark) in text.char_indices().filter(|(_, c)| apart.contains(c)) {
+                let next_digit = text[offset + mark.len_utf8()..].chars().next().map_or(false, |c| c.is_digit(base));
+                let follows = if offset == begins && begins != 0 {
+                    false
+                } else {
+                    text[..offset].chars().next_back().map_or(false, |c| c.is_digit(base))
+                };
+                if !follows || !next_digit {
+                    return Err(unreadable_numeral(text, table));
+                }
+            }
+        }
         return read_numeral(&plain, table);
     }
     for (key, radix) in [
@@ -6010,7 +6039,10 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = f.parse().map_err(|_| unreadable_numeral(text, table))?;
+            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.bare")) {
+                (true, true) => BigInt::from(0),
+                _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
+            };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
         }
     }

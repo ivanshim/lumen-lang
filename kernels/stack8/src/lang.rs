@@ -79,6 +79,10 @@ pub struct Lang {
     pub byte_letter: Option<char>,
     /// What a language says of a number it cannot read.
     pub number_amiss: Option<String>,
+    pub bare_number_point: bool,
+    pub whole_bits: bool,
+    pub imaginary_suffixes: Vec<char>,
+    pub imaginary_unready: Vec<String>,
     pub prologue: Option<String>,
     pub point: Option<char>,
     pub base_mark: Option<char>,
@@ -748,6 +752,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+b ext.lexical.number.point.bare | b ext.op.bit.whole | w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1344,6 +1349,10 @@ impl Lang {
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
             byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
+            bare_number_point: r.flag("ext.lexical.number.point.bare")?,
+            whole_bits: r.flag("ext.op.bit.whole")?,
+            imaginary_suffixes: r.letters("ext.lexical.number.imaginary")?,
+            imaginary_unready: r.strings("ext.lexical.number.imaginary.unready")?,
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
             base_mark: r.letter("lexical.number.base_marker")?,

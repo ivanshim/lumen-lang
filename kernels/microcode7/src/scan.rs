@@ -930,7 +930,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point.bare")
+            && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit))
+        {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -956,7 +958,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.bare") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -966,9 +968,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
                 if at(k).map_or(false, |c| powers.contains(&c)) && at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit()) {
                     k += 1 + sign_len;
-                    while k < src.len() && src[k].is_ascii_digit() {
+                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
                     }
+                }
+            }
+            if opened.is_none() {
+                if let Some(last) = at(k) {
+                    if table.letters("ext.lexical.number.imaginary").contains(&last) { k += 1; }
                 }
             }
             tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));

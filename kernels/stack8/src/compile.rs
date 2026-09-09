@@ -4518,8 +4518,14 @@ impl<'a> Compiler<'a> {
         match tok.shape {
             Shape::Numeral => {
                 self.take();
-                let v = parse_number(&tok.lexeme, lang)?;
-                self.constant(v);
+                if tok.lexeme.chars().last().map_or(false, |c| lang.imaginary_suffixes.contains(&c)) {
+                    let end = tok.lexeme.char_indices().last().expect("a suffix").0;
+                    parse_number(&tok.lexeme[..end], lang)?;
+                    self.scope_fault(&lang.imaginary_unready);
+                } else {
+                    let v = parse_number(&tok.lexeme, lang)?;
+                    self.constant(v);
+                }
             }
             Shape::Quote | Shape::StringBegin | Shape::StringFault => {
                 self.string_piece()?;
@@ -6538,6 +6544,20 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     // Marks put between digits to break them up count for nothing.
     let plain: String = text.chars().filter(|c| !lang.digit_separators.contains(c)).collect();
     if plain != text {
+        if lang.bare_number_point {
+            let (start, radix) = lang.base_prefixes.iter().find(|(p, _)| text.starts_with(p.as_str()))
+                .map_or((0, 10), |(p, base)| (p.chars().count(), *base));
+            let written: Vec<char> = text.chars().collect();
+            for (at, c) in written.iter().enumerate() {
+                if lang.digit_separators.contains(c) {
+                    let before = at > start && written[at - 1].is_digit(radix);
+                    let after = written.get(at + 1).map_or(false, |d| d.is_digit(radix));
+                    if !(after && before) {
+                        return Err(unreadable_number(text, lang));
+                    }
+                }
+            }
+        }
         return read_number(&plain, lang);
     }
     for (prefix, base) in &lang.base_prefixes {
@@ -6577,7 +6597,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let (whole, frac) = (&text[..at], &text[at + point.len_utf8()..]);
         let scale = BigInt::from(10).pow(frac.len() as u32);
         let whole = if whole.is_empty() { BigInt::from(0) } else { decimal(whole, text)? };
-        return Ok(arith::shape_number(whole * &scale + decimal(frac, text)?, scale, Some(precision_of(text))));
+        return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && lang.bare_number_point { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
     }
     Ok(Value::of_big(decimal(text, text)?))
 }
