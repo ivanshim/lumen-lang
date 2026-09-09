@@ -332,9 +332,38 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.yield.from` precedes a source of further values. The reader
   keeps the whole expression. `ext.stmt.yield.unrun` stops the run when
   it reaches the handing-out, since suspended routines are still owed.
+- `ext.stmt.async` precedes a routine, context or walk whose progress may
+  be suspended. `ext.op.await` precedes a value to wait upon. Their whole
+  bodies and operands are read, then `ext.system.scope.unready` refuses
+  to run the form; no synchronous work is put in its stead.
+- `ext.stmt.type_alias` introduces a name and its assigned type expression.
+  It is a soft word: a following name distinguishes it from an ordinary
+  use. `ext.stmt.type_parameters` admits bracketed type names after a
+  routine name or alias, with bounds, defaults and gathering marks.
+  These declarations are read whole and refused by
+  `ext.system.scope.unready` when reached; type bindings are still owed.
+- `ext.stmt.match` introduces a subject and an indented suite of
+  `ext.stmt.match.case` arms. Value, sequence, mapping and class patterns,
+  and a following context-binding word, are read with their suites.
+  The head is distinguished from a call or assignment by its body mark.
+  Pattern binding is still owed: `ext.system.scope.unready` stops the run
+  before the subject or any arm is worked out.
+- `ext.lexical.line_continuation` joins a physical line to the next when
+  its mark stands immediately before the line end. The joined line gives
+  no indentation boundary. A mark before any other character stays a mark.
+- `ext.lexical.number.imaginary` gives the suffix of an imaginary numeral.
+  The suffix stays with the number through reading; reaching it says
+  `ext.lexical.number.imaginary.unready`, since complex values are owed.
+- `ext.op.bit.whole` makes the bit operations work on whole numbers of
+  unbounded width, admitting booleans as nought and one. Two booleans
+  joined by and, or or exclusive-or give a boolean; mixed operands give
+  a whole number. Other kinds are refused in `ext.system.fault.operands`
+  words, and a negative shift in `ext.system.fault.shift` words.
 - `ext.stmt.with` reads a context expression and its suite;
   `ext.stmt.with.as` gives a name to what that context hands in. Further
-  contexts may be separated as arguments are. The suite is read whole,
+  contexts may be separated as arguments are. A binding may name an
+  attribute, indexed place, or bracketed gathering of places, including
+  one gathering mark within it. The suite is read whole,
   then `ext.system.scope.unready` refuses to run this form until entering
   and leaving the context can both be honoured.
 - `ext.stmt.del` reads the names or indexed places to be taken away.
@@ -1840,7 +1869,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `+` `-` < `*` `/` `//` `%` < `-` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -1938,10 +1967,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
+| `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | - | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | - | - | `0b` `0B` | - | - | - | - | - |
 | `ext.lexical.number.exponent` | - | - | - | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
+| `ext.lexical.number.imaginary.unready` | - | - | `NotImplementedError: complex arithmetic is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | - | - | `0o` `0O` | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | - | - | `_` | - | - | - | - | - |
@@ -1961,13 +1993,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.and` | - | - | - | - | `&` | - | - | - | - | - |
-| `ext.op.bit.left` | - | - | - | - | `<<` | - | - | - | - | - |
-| `ext.op.bit.not` | - | - | - | - | `~` | - | - | - | - | - |
+| `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
+| `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
-| `ext.op.bit.right` | - | - | - | - | `>>` | - | - | - | - | - |
+| `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.xor` | - | - | - | - | `^` | - | - | - | - | - |
+| `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.compare.chained` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2044,6 +2078,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
+| `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
 | `ext.stmt.break.levels` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2105,6 +2140,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.match` | - | - | `match` | - | - | - | - | - | - | - |
+| `ext.stmt.match.case` | - | - | `case` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
@@ -2117,6 +2154,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.type_alias` | - | - | `type` | - | - | - | - | - | - | - |
+| `ext.stmt.type_parameters` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
@@ -2163,8 +2202,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
-| `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |

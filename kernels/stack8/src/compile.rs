@@ -973,6 +973,89 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A context may hand its value to a bracketed gathering of places.
+    fn context_target(&mut self) -> Res<()> {
+        let lang = self.lang;
+        for pair in [&lang.grouping, &lang.array_brackets].into_iter().flatten() {
+            if self.at_symbol(&pair.open) {
+                self.take();
+                while !self.at_symbol(&pair.close) {
+                    self.context_target()?;
+                    if !self.on_any(&lang.tuple_marks) { break; }
+                    self.take();
+                }
+                return self.want_sign(&pair.close, "after context targets");
+            }
+        }
+        if self.on_any(&lang.array_spread) { self.take(); }
+        self.expr_at(0, false)
+    }
+
+    /// Type parameters belong to the declaration; their binding is owed.
+    fn declaration_types(&mut self) -> Res<bool> {
+        let lang = self.lang;
+        let Some(pair) = &lang.index_brackets else { return Ok(false); };
+        if !lang.type_parameters || !self.at_symbol(&pair.open) { return Ok(false); }
+        self.take();
+        let mut ends = lang.tuple_marks.clone();
+        ends.push(pair.close.clone());
+        loop {
+            if self.on_any(&lang.carries_words) || self.on_any(&lang.carries_pairs) { self.take(); }
+            self.want_name("as a type parameter")?;
+            if self.on_any(&lang.annotation_marks) {
+                self.take();
+                let mut bound_ends = ends.clone();
+                bound_ends.extend(lang.assign_words.clone());
+                self.annotation_expression(&bound_ends)?;
+            }
+            if self.on_assign() { self.take(); self.annotation_expression(&ends)?; }
+            if !self.on_any(&lang.tuple_marks) { break; }
+            self.take();
+            if self.at_symbol(&pair.close) { break; }
+        }
+        self.want_sign(&pair.close, "after type parameters")?;
+        Ok(true)
+    }
+
+    fn pattern_head(&self) -> bool {
+        let mut depth = 0usize;
+        for token in self.tokens.iter().skip(self.pos + 1) {
+            if matches!(token.shape, Shape::LineEnd | Shape::Finish) { return false; }
+            if depth == 0 && Lang::spells(&self.lang.block_intros, &token.lexeme) { return true; }
+            for pair in [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten() {
+                if token.lexeme == pair.open { depth += 1; }
+                if token.lexeme == pair.close { depth = depth.saturating_sub(1); }
+            }
+        }
+        false
+    }
+
+    /// The subject and each arm are read before an unprovided match is refused.
+    fn pattern_statement(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let from = self.mark();
+        self.take();
+        self.scope_value()?;
+        self.skip_intro();
+        self.skip_seps();
+        if self.look().shape != Shape::Open { return Err("Expected an indented pattern suite".into()); }
+        self.take();
+        self.skip_seps();
+        while self.look().shape != Shape::Close && !self.exhausted() {
+            if !self.on_any(&lang.match_cases) { return Err("Expected a pattern arm".into()); }
+            self.take();
+            self.expr(0)?;
+            if self.on_any(&lang.with_as_words) { self.take(); self.want_name("after a pattern binding")?; }
+            self.body()?;
+            self.skip_seps();
+        }
+        if self.look().shape != Shape::Close { return Err("Expected the end of a pattern suite".into()); }
+        self.take();
+        self.piece().instrs.truncate(from);
+        self.scope_fault(&lang.scope_unready);
+        Ok(())
+    }
+
     fn scoped_statement(&mut self) -> Res<()> {
         let lang = self.lang;
         let word = self.take().lexeme;
@@ -990,7 +1073,7 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 if self.on_any(&lang.with_as_words) {
                     self.take();
-                    self.want_name("as the name bound by the context")?;
+                    self.context_target()?;
                 }
                 if !self.on_any(&lang.tuple_marks) { break; }
                 self.take();
@@ -1031,6 +1114,32 @@ impl<'a> Compiler<'a> {
         }
         if self.look().shape == Shape::Instr || self.on_any(&lang.decorator_words) {
             let w = self.look().lexeme.clone();
+            if Lang::spells(&lang.async_words, &w) {
+                self.take();
+                if !self.on_any(&lang.function_words) && !self.on_any(&lang.with_words) && !self.on_any(&lang.for_words) {
+                    return Err("Expected a function, context or walk after the asynchronous word".into());
+                }
+                let from = self.mark();
+                self.stmt()?;
+                self.piece().instrs.truncate(from);
+                self.scope_fault(&lang.scope_unready);
+                return Ok(());
+            }
+            if Lang::spells(&lang.match_words, &w) && self.pattern_head() {
+                return self.pattern_statement();
+            }
+            if Lang::spells(&lang.type_alias_words, &w) && self.look_ahead(1).shape == Shape::Instr {
+                self.take();
+                self.want_name("as a type alias")?;
+                self.declaration_types()?;
+                if !self.on_assign() { return Err("Expected a value for a type alias".into()); }
+                self.take();
+                let from = self.mark();
+                self.expr(0)?;
+                self.piece().instrs.truncate(from);
+                self.scope_fault(&lang.scope_unready);
+                return Ok(());
+            }
             if Lang::spells(&lang.nonlocal_words, &w) || Lang::spells(&lang.yield_words, &w)
                 || Lang::spells(&lang.del_words, &w) || Lang::spells(&lang.with_words, &w) {
                 return self.scoped_statement();
@@ -3061,7 +3170,13 @@ impl<'a> Compiler<'a> {
 
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
         self.giving_cells.push(gives_cell);
+        let generic = self.declaration_types()?;
+        let begins = self.mark();
         let built = self.function_body(name);
+        if generic {
+            self.piece().instrs.truncate(begins);
+            self.scope_fault(&self.lang.scope_unready.clone());
+        }
         self.giving_cells.pop();
         built
     }
@@ -4430,6 +4545,13 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
+        if Lang::spells(&lang.await_words, &tok.lexeme) {
+            self.take();
+            self.prefix_piece()?;
+            self.piece().instrs.truncate(from);
+            self.scope_fault(&lang.scope_unready);
+            return Ok(());
+        }
         if Lang::spells(&lang.lambda_words, &tok.lexeme) {
             self.take();
             self.lambda_value()?;
@@ -4518,8 +4640,12 @@ impl<'a> Compiler<'a> {
         match tok.shape {
             Shape::Numeral => {
                 self.take();
-                let v = parse_number(&tok.lexeme, lang)?;
-                self.constant(v);
+                if lang.imaginary_suffixes.iter().any(|mark| tok.lexeme.ends_with(mark)) {
+                    self.scope_fault(&lang.imaginary_unready);
+                } else {
+                    let v = parse_number(&tok.lexeme, lang)?;
+                    self.constant(v);
+                }
             }
             Shape::Quote | Shape::StringBegin | Shape::StringFault => {
                 self.string_piece()?;

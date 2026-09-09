@@ -1167,6 +1167,79 @@ impl<'a> Builder<'a> {
         Ok(self.scope_unrun("ext.system.scope.unready"))
     }
 
+    fn context_place(&mut self) -> Res<()> {
+        let table = self.table;
+        let enclosure = [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close")]
+            .into_iter().find(|(left, _)| self.on_any(left));
+        if let Some((_, right)) = enclosure {
+            self.advance();
+            while !self.on_any(right) {
+                self.context_place()?;
+                if !self.on_any("ext.op.tuple") { break; }
+                self.advance();
+            }
+            return self.need_sign(table.single(right).unwrap(), "after the gathered places");
+        }
+        if self.on_any("ext.syntax.array.spread") { self.advance(); }
+        let _place = self.expr_at(0, false)?;
+        Ok(())
+    }
+
+    /// Read a declaration's type names without pretending to bind them.
+    fn type_names(&mut self) -> Res<bool> {
+        if !self.table.flag("ext.stmt.type_parameters") || !self.on_any("op.index.open") { return Ok(false); }
+        self.advance();
+        loop {
+            if self.on_any("ext.stmt.function.carries") || self.on_any("ext.stmt.function.carries.pairs") { self.advance(); }
+            self.need_word("among type parameters")?;
+            if self.on_any("ext.stmt.annotation") {
+                self.advance();
+                self.put_by_annotation(&["stmt.assign", "ext.op.tuple", "op.index.close"])?;
+            }
+            if self.on_assign() {
+                self.advance();
+                self.put_by_annotation(&["ext.op.tuple", "op.index.close"])?;
+            }
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+            if self.on_any("op.index.close") { break; }
+        }
+        self.need_sign(self.table.single("op.index.close").unwrap(), "after the type names")?;
+        Ok(true)
+    }
+
+    fn pattern_head(&self) -> bool {
+        let mut nesting = 0i32;
+        for index in self.pos + 1..self.tokens.len() {
+            let word = &self.tokens[index];
+            if word.shape == Shape::LineEnd || word.shape == Shape::Finish { break; }
+            if nesting == 0 && self.table.spells("block.intro", &word.lexeme) { return true; }
+            if ["syntax.group.open", "syntax.array.open", "syntax.map.open"].iter().any(|key| self.table.spells(key, &word.lexeme)) { nesting += 1; }
+            if ["syntax.group.close", "syntax.array.close", "syntax.map.close"].iter().any(|key| self.table.spells(key, &word.lexeme)) { nesting -= 1; }
+        }
+        false
+    }
+
+    fn pattern_suite(&mut self) -> Res<Form> {
+        self.advance();
+        let _subject = self.comma_value()?;
+        self.skip_lead_word();
+        self.skip_line_ends();
+        if self.look().shape != Shape::Open { return Err("Expected an indented pattern suite".into()); }
+        self.advance();
+        self.skip_line_ends();
+        loop {
+            if self.look().shape == Shape::Close { self.advance(); break; }
+            if !self.key("ext.stmt.match.case") { return Err("Expected a pattern arm".into()); }
+            self.advance();
+            let _pattern = self.expr(0)?;
+            if self.key("ext.stmt.with.as") { self.advance(); self.need_word("to bind the pattern")?; }
+            let _arm = self.body()?;
+            self.skip_line_ends();
+        }
+        Ok(self.scope_unrun("ext.system.scope.unready"))
+    }
+
     fn scope_statement(&mut self) -> Res<Form> {
         let head = self.advance().lexeme;
         if self.table.spells("ext.stmt.nonlocal", &head) {
@@ -1182,7 +1255,7 @@ impl<'a> Builder<'a> {
                 let _manager = self.expr(0)?;
                 if self.key("ext.stmt.with.as") {
                     self.advance();
-                    self.need_word("after the context binding word")?;
+                    self.context_place()?;
                 }
                 if !self.on_any("ext.op.tuple") { break; }
                 self.advance();
@@ -1207,6 +1280,24 @@ impl<'a> Builder<'a> {
             return Ok(constant(Value::Nil));
         }
         if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
+            if self.key("ext.stmt.async") {
+                self.advance();
+                if !["stmt.function", "ext.stmt.with", "stmt.for"].iter().any(|key| self.key(key)) {
+                    return Err("Expected a function, context or walk after the asynchronous word".into());
+                }
+                let _form = self.stmt()?;
+                return Ok(self.scope_unrun("ext.system.scope.unready"));
+            }
+            if self.key("ext.stmt.match") && self.pattern_head() { return self.pattern_suite(); }
+            if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+                self.advance();
+                self.need_word("for the type alias")?;
+                self.type_names()?;
+                if !self.on_assign() { return Err("Expected a value for a type alias".into()); }
+                self.advance();
+                let _meaning = self.expr(0)?;
+                return Ok(self.scope_unrun("ext.system.scope.unready"));
+            }
             if ["ext.stmt.nonlocal", "ext.stmt.yield", "ext.stmt.del", "ext.stmt.with"].iter().any(|label| self.key(label)) {
                 return self.scope_statement();
             }
@@ -1301,7 +1392,9 @@ impl<'a> Builder<'a> {
                 let gives_cell = self.skip_reference();
                 let name = self.need_word("after the function keyword")?;
                 self.giving_cells.push(gives_cell);
+                let generic = self.type_names()?;
                 let built = self.func(name, true);
+                let built = if generic { built.map(|_| self.scope_unrun("ext.system.scope.unready")) } else { built };
                 self.giving_cells.pop();
                 return built;
             }
@@ -4163,6 +4256,11 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
         }
+        if table.spells("ext.op.await", &t.lexeme) {
+            self.advance();
+            let _waited = self.monadic_piece()?;
+            return Ok(self.scope_unrun("ext.system.scope.unready"));
+        }
         if table.spells("ext.op.lambda", &t.lexeme) {
             self.advance();
             return self.lambda_form();
@@ -4249,7 +4347,10 @@ impl<'a> Builder<'a> {
         let node = match t.shape {
             Shape::Numeral => {
                 self.advance();
-                constant(numeral(&t.lexeme, table)?)
+                match table.strings("ext.lexical.number.imaginary").iter().any(|tail| t.lexeme.ends_with(tail)) {
+                    true => self.scope_unrun("ext.lexical.number.imaginary.unready"),
+                    false => constant(numeral(&t.lexeme, table)?),
+                }
             }
             Shape::Quote | Shape::Woven | Shape::Unheld => {
                 let mut text = self.quotation()?;

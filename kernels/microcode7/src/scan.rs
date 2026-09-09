@@ -865,6 +865,24 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
         }
         let c = src[pos];
+        let mut carried = false;
+        for mark in table.strings("ext.lexical.line_continuation") {
+            if written_at(&src, pos, mark) {
+                let mut end = pos + mark.chars().count();
+                if src.get(end) == Some(&'\r') {
+                    end += 1;
+                }
+                if src.get(end) == Some(&'\n') {
+                    pos = end + 1;
+                    row += 1;
+                    carried = true;
+                    break;
+                }
+            }
+        }
+        if carried {
+            continue;
+        }
         if c == '\n' {
             tokens.push(tok(Shape::LineEnd, "\n".into(), row));
             row += 1;
@@ -970,6 +988,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                         k += 1;
                     }
                 }
+            }
+            if let Some(tail) = table.strings("ext.lexical.number.imaginary").iter().find(|word| written_at(&src, k, word)) {
+                k += tail.chars().count();
             }
             tokens.push(tok(Shape::Numeral, src[pos..k].iter().collect(), row));
             pos = k;
