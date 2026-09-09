@@ -1861,6 +1861,7 @@ impl<'a> Engine<'a> {
                         if kept.delegate.is_none() {
                             let source = self.drop_top()?;
                             kept.delegate = Some(self.iterator(source)?);
+                            kept.sent = Value::Null;
                         }
                         let Value::Generator(inner) = kept.delegate.as_ref().expect("delegated walk").clone() else { unreachable!() };
                         match self.resume_generator(&inner, std::mem::replace(&mut kept.sent, Value::Null))? {

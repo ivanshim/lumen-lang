@@ -5972,10 +5972,7 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&pair.close) {
             let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
             if spread { self.take(); }
-            let before_yield = self.yield_operand;
-            if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
-            self.yield_operand = before_yield;
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a map key and value")?;
@@ -6133,7 +6130,10 @@ impl<'a> Compiler<'a> {
             if !result.is_empty() { self.read(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.take(); }
+            let before_yield = self.yield_operand;
+            if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
+            self.yield_operand = before_yield;
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;

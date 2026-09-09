@@ -20,3 +20,12 @@ def items():
     yield ()
 for item in items():
     print(item)
+def after_send():
+    value = yield 0
+    yield from inner()
+    yield value
+it = after_send()
+print(next(it))
+print(it.send(6))
+print(it.send(7))
+print(next(it))
