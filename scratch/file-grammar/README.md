@@ -154,8 +154,8 @@ The borrowed lexical reading is from `a3d8d6c`;
 the borrowed string reading is from `ab5ff7c`. The class, tuple, context, and
 ellipsis readings here are deliberately small and await their pieces.
 
-The old `scratch/annotations/10.err` expects a class to fail in the
-reader. Reading classes changes that result to the class complaint
-described above. That expectation is outside this piece's permitted
-files, so it is left for the coordinator; no source is made unreadable
-to preserve it.
+`scratch/annotations/10.py` now keeps its annotated class in an uncalled
+routine and prints `read`, as the reference does. Its former colon-reader
+error ceased to apply once class headers could be read. The fixture still
+checks reading a class field annotation without asking this piece to run
+a class or resolve its annotation; `10.out` replaces `10.err`.
