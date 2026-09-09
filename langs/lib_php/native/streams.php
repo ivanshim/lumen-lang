@@ -176,8 +176,13 @@ function __pieces_wide($pieces) {
     return $wide;
 }
 
-function fopen($path, $mode = "r") {
+// A stream opened on a name. A program may hand a context along with the
+// name; none of the wrappers a run of this kind has is told anything by
+// one, so it is looked at, to say so where what was handed is not one,
+// and then let be.
+function fopen($path, $mode = "r", $use_include_path = false, $context = null) {
     global $__request_body;
+    __context_given("fopen", "context", 4, $context);
     // The body of the request the run was started with is a stream a
     // program may open as often as it likes: each opening reads it from
     // its beginning, since it is held as it came rather than drawn from.

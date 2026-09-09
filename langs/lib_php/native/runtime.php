@@ -1187,23 +1187,48 @@ function trigger_error($message, $level = 1024) {
     return __complaint_say(__complaint_word($level), $message);
 }
 function user_error($message, $level = 1024) { return trigger_error($message, $level); }
-// What a file holds. The body of the request the run was started with
-// is a file a program may name, and reads the same however often it is
-// read, since it is held as it came rather than drawn from.
-function file_get_contents($path) {
+// What a file holds, or as much of it as was asked for. The body of the
+// request the run was started with is a file a program may name, and
+// reads the same however often it is read, since it is held as it came
+// rather than drawn from. A context may be handed along with the name
+// and is looked at, to say so where it is not one, and then let be: no
+// wrapper a run of this kind has is told anything by one. Reading may
+// begin somewhere other than the beginning, counted from the end where
+// the place asked for is below nothing, and a place before the beginning
+// of the file is nowhere to read from at all.
+function file_get_contents($path, $use_include_path = false, $context = null, $offset = 0, $length = null) {
     global $__request_body;
-    if ($path === "php://input") {
-        if (!is_string($__request_body)) { return ""; }
-        return $__request_body;
+    __context_given("file_get_contents", "context", 3, $context);
+    if ($length !== null && $length < 0) {
+        throw new ValueError('file_get_contents(): Argument #5 ($length) must be greater than or equal to 0');
     }
-    return __file_read($path);
+    if ($path === "php://input") {
+        $held = is_string($__request_body) ? $__request_body : "";
+    } else {
+        $held = __file_read($path);
+        if ($held === false) { return false; }
+    }
+    if ($offset != 0 || $length !== null) {
+        $at = $offset;
+        if ($at < 0) {
+            $at = strlen($held) + $at;
+            if ($at < 0) {
+                __complaint_say(__complaint_word(E_WARNING), "file_get_contents(): Failed to seek to position " . $offset . " in the stream");
+                return false;
+            }
+        }
+        if ($at >= strlen($held)) { return ""; }
+        $held = $length === null ? substr($held, $at) : substr($held, $at, $length);
+    }
+    return $held;
 }
 function realpath($path) { return $path; }
 // Moving a file: what it held is written where it is going and taken
 // from where it was. A file that is not there to move is said so and
 // answered with false, as every other reading of one that is not there
 // is answered.
-function rename($from, $to) {
+function rename($from, $to, $context = null) {
+    __context_given("rename", "context", 3, $context);
     $held = __file_read($from);
     if ($held === false) {
         __complaint_say(__complaint_word(E_WARNING), "rename(" . $from . "," . $to . "): No such file or directory");
