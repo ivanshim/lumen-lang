@@ -88,6 +88,23 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
     let mut escaped = false;
     while let Some(c) = ahead.chars().next() {
         let w = c.len_utf8();
+        if quote.is_none() {
+            if let Some(mark) = lang.long_quotes.iter().find(|mark| ahead.starts_with(mark.as_str())) {
+                let mut reach = mark.len();
+                while reach < ahead.len() {
+                    let rest = &ahead[reach..];
+                    if rest.starts_with(mark.as_str()) { reach += mark.len(); break; }
+                    let ch = rest.chars().next().expect("text remains");
+                    reach += ch.len_utf8();
+                    if ch == '\\' {
+                        if let Some(next) = ahead[reach..].chars().next() { reach += next.len_utf8(); }
+                    }
+                }
+                kept.push_str(&ahead[..reach]);
+                ahead = &ahead[reach..];
+                continue;
+            }
+        }
         match quote {
             Some(opener) => {
                 kept.push(c);
@@ -426,7 +443,11 @@ impl<'a> Cursor<'a> {
 
     fn string(&mut self, quote: char) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        self.step();
+        let width = self.lang.long_quotes.iter().find(|mark| {
+            mark.chars().all(|ch| ch == quote)
+                && mark.chars().enumerate().all(|(i, ch)| self.look(i) == Some(ch))
+        }).map_or(1, |mark| mark.chars().count());
+        for _ in 0..width { self.step(); }
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
@@ -447,10 +468,11 @@ impl<'a> Cursor<'a> {
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
-            self.step();
-            if c == quote {
+            if c == quote && (0..width).all(|i| self.look(i) == Some(quote)) {
+                for _ in 0..width { self.step(); }
                 break;
             }
+            self.step();
             s.push(c);
         }
         if woven {

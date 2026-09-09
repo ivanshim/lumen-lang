@@ -86,6 +86,20 @@ fn drop_comments(source: &str, table: &Table) -> String {
             let reach = folded(ahead, table).map_or(ahead.len(), |(_, _, far)| far);
             kept.push_str(&ahead[..reach]);
             ahead = &ahead[reach..];
+        } else if let Some(delimiter) = table.strings("ext.lexical.string.long").iter().find(|d| ahead.starts_with(d.as_str())) {
+            let mut end = delimiter.len();
+            let mut shield = false;
+            for (offset, ch) in ahead[end..].char_indices() {
+                let at = delimiter.len() + offset;
+                if !shield && ahead[at..].starts_with(delimiter.as_str()) {
+                    end = at + delimiter.len();
+                    break;
+                }
+                end = at + ch.len_utf8();
+                shield = !shield && ch == '\\';
+            }
+            kept.push_str(&ahead[..end]);
+            ahead = &ahead[end..];
         } else if quotes.contains(&c) {
             inside = Some(c);
             kept.push(c);
@@ -586,6 +600,12 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             continue;
         }
         if quotes.contains(&c) {
+            let delimiter = table.strings("ext.lexical.string.long").iter().find(|word| {
+                let letters: Vec<char> = word.chars().collect();
+                letters.iter().all(|letter| *letter == c)
+                    && src.get(pos..pos + letters.len()) == Some(letters.as_slice())
+            });
+            let length = delimiter.map_or(1, |word| word.chars().count());
             let is_raw = raw.contains(&c);
             let woven = weaving.contains(&c);
             let slash = Backslash {
@@ -603,18 +623,20 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             };
             // Positions in s that were escaped, so never open a variable.
             let mut plain: Vec<usize> = Vec::new();
-            let (mut s, mut k, mut closed) = (String::new(), pos + 1, false);
+            let (mut s, mut k, mut closed) = (String::new(), pos + length, false);
             while k < src.len() {
                 let d = src[k];
                 if d == '\\' && k + 1 < src.len() {
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }
-                k += 1;
-                if d == c {
+                let ends_here = src.get(k..k + length).map_or(false, |tail| tail.iter().all(|letter| *letter == c));
+                if ends_here {
+                    k += length;
                     closed = true;
                     break;
                 }
+                k += 1;
                 if d == '\n' {
                     row += 1;
                 }
