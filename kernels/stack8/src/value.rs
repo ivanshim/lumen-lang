@@ -161,6 +161,7 @@ pub struct Wording<'a> {
     /// Where it says nothing, a real is shown to its own precision.
     pub infinity_word: Option<&'a str>,
     pub nan_word: Option<&'a str>,
+    pub real_shortest: bool,
     pub real_digits: Option<usize>,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
@@ -362,6 +363,7 @@ impl Value {
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
+            Value::Real(r) if sp.real_shortest => shortest_real(if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }),
             Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
             Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
             other => other.plain(),
@@ -774,10 +776,11 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
         Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
         _ => return v,
     };
-    match from_binary(as_binary(&p, &q)) {
+    let binary = as_binary(&p, &q);
+    match from_binary(binary) {
         // A nought below nought keeps its minus at any width.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below),
-        None => v,
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below || binary.is_sign_negative()),
+        None => real_of(binary, places),
     }
 }
 
@@ -889,3 +892,17 @@ fn laid_flat(figures: &str, power: i32) -> String {
     format!("{}.{}", &figures[..point], &figures[point..])
 }
 
+
+/// Shortest binary decimal, retaining the real kind and a signed,
+/// two-digit exponent outside the plain range.
+fn shortest_real(x: f64) -> String {
+    let scientific = format!("{x:e}");
+    let (mantissa, exponent) = scientific.split_once('e').expect("finite real exponent");
+    let exponent: i32 = exponent.parse().expect("decimal exponent");
+    if !(-4..16).contains(&exponent) {
+        return format!("{mantissa}e{exponent:+03}");
+    }
+    let mut plain = x.to_string();
+    if !plain.contains('.') { plain.push_str(".0"); }
+    plain
+}

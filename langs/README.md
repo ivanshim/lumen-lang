@@ -586,6 +586,17 @@ only. The extension labels so far, all from PHP:
   one in arithmetic, numeric comparison and conversion to a real.
   Identity keeps the kinds apart, and bit operations keep their own
   rule for two flags.
+- `ext.op.quot.floor`: a switch making quotient round downward and
+  remainder take the divisor's sign. Real operands use binary arithmetic,
+  retaining signed zero and the quotient correction near an integer.
+- `ext.system.real.shortest`: a switch printing the shortest decimal that
+  reads back to the same binary real, with a decimal point for whole reals
+  and a signed, two-digit exponent outside powers -4 through 15.
+  Python sets `ext.system.real.bits` to 64 and enables this spelling.
+- `ext.builtin.round`: nearest rounding with ties to even. Omitting the
+  places, or passing null, returns an integer; explicit places retain the
+  input's numeric kind. `ext.builtin.round.digits` names the places keyword.
+  Decimal rounding uses the exact binary ratio to avoid rounding twice.
 - `ext.op.pow.real_exponent`: a switch; a real operand or an exponent
   below nought makes a real power. Whole nonnegative powers stay exact.
   `ext.op.pow.overflow`, `.zero` and `.nonreal` give plain complaints
@@ -2016,6 +2027,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
 | `ext.builtin.room.used` | - | - | - | - | `__room_used` | - | - | - | - | - |
+| `ext.builtin.round` | - | - | `round` | - | - | - | - | - | - | - |
+| `ext.builtin.round.digits` | - | - | `ndigits` | - | - | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
@@ -2150,6 +2163,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.pow.overflow` | - | - | `OverflowError: numerical result out of range` | - | - | - | - | - | - | - |
 | `ext.op.pow.real_exponent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.pow.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
+| `ext.op.quot.floor` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: float floor division by zero` | - | - | - | - | - | - | - |
 | `ext.op.quot.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
@@ -2319,10 +2333,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.reading.unexpected` | - | - | - | - | `syntax error, unexpected` | - | - | - | - | - |
 | `ext.system.reading.unexpected.character` | - | - | - | - | `character 0x` | - | - | - | - | - |
 | `ext.system.reading.unmatched` | - | - | - | - | `Unmatched '` `'` | - | - | - | - | - |
-| `ext.system.real.bits` | - | - | - | - | `64` | - | - | - | - | - |
+| `ext.system.real.bits` | - | - | `64` | - | `64` | - | - | - | - | - |
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
+| `ext.system.real.shortest` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |

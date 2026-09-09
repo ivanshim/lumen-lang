@@ -850,5 +850,14 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.op.quot.floor": true,
+  "ext.system.real.bits": 64,
+  "ext.system.real.shortest": true,
+  "ext.builtin.round": [
+    "round"
+  ],
+  "ext.builtin.round.digits": [
+    "ndigits"
+  ]
 }

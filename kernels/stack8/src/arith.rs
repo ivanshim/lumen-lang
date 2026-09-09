@@ -89,7 +89,7 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
 
 pub fn to_real(v: &Value, places: usize) -> Option<Value> {
     let f = Exact::from_value(v)?;
-    Some(shape_number(f.p, f.q, Some(places)))
+    Some(shape_signed(f.p, f.q, Some(places), matches!(v, Value::Real(r) if r.below)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,4 +263,80 @@ pub fn whole_of(v: &Value) -> Option<BigInt> {
         true => BigInt::zero(),
         false => f.p / f.q,
     })
+}
+
+/// Arithmetic with a downward quotient and binary real operands.
+pub fn downward(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, String>> {
+    let (x, y) = (Exact::from_value(a)?, Exact::from_value(b)?);
+    if x.places.is_none() && y.places.is_none() {
+        if !matches!(calc, Operation::Floor | Operation::Remainder) { return None; }
+        if y.p.is_zero() { return Some(Err("Division by zero".into())); }
+        let top = &x.p * &y.q;
+        let bottom = &x.q * &y.p;
+        let quotient = top.div_floor(&bottom);
+        return Some(Ok(if calc == Operation::Floor { Value::of_big(quotient) }
+            else { shape_number(&x.p * &y.q - quotient * &y.p * &x.q, &x.q * &y.q, None) }));
+    }
+    let binary = |v: &Value, e: &Exact| {
+        if matches!(v, Value::Real(r) if r.below && r.p.is_zero()) { -0.0 }
+        else { crate::value::as_binary(&e.p, &e.q) }
+    };
+    let (left, right) = (binary(a, &x), binary(b, &y));
+    let result = match calc {
+        Operation::Plus => left + right,
+        Operation::Minus => left - right,
+        Operation::Times => left * right,
+        Operation::Over | Operation::OverReal => left / right,
+        Operation::Floor | Operation::Remainder => {
+            let mut rem = left % right;
+            let mut div = (left - rem) / right;
+            if rem != 0.0 {
+                if (rem < 0.0) != (right < 0.0) { rem += right; div -= 1.0; }
+            } else { rem = 0.0f64.copysign(right); }
+            if calc == Operation::Remainder { rem }
+            else if div == 0.0 { 0.0f64.copysign(left / right) }
+            else { let floor = div.floor(); floor + if div - floor > 0.5 { 1.0 } else { 0.0 } }
+        }
+        Operation::Raise => return None,
+    };
+    Some(Ok(crate::value::real_of(result, DEFAULT_PLACES)))
+}
+
+/// Round an exact binary value to decimal places, resolving ties to even.
+pub fn round_even(value: &Value, digits: Option<&Value>) -> Result<Value, String> {
+    let value = match value { Value::Flag(b) => Value::Small(i64::from(*b)), v => v.clone() };
+    let e = Exact::from_value(&value).ok_or("Rounding requires a number")?;
+    let specified = digits.filter(|d| !matches!(d, Value::Null));
+    let count = match specified {
+        None => BigInt::zero(),
+        Some(Value::Small(n)) => BigInt::from(*n),
+        Some(Value::Huge(n)) => (**n).clone(),
+        Some(Value::Flag(b)) => BigInt::from(i64::from(*b)),
+        _ => return Err("Rounding places must be an integer".into()),
+    };
+    let real = e.places.is_some();
+    if e.q.is_zero() {
+        return if specified.is_some() { Ok(value) } else { Err("Cannot round a nonfinite number to an integer".into()) };
+    }
+    if !real && count >= BigInt::zero() { return Ok(value); }
+    let lower = if real { 308 } else { e.p.to_str_radix(10).len() };
+    if count < -BigInt::from(lower) {
+        return Ok(if real && specified.is_some() { crate::value::real_of(0.0f64.copysign(crate::value::as_binary(&e.p, &e.q)), DEFAULT_PLACES) } else { Value::Small(0) });
+    }
+    if real && count > BigInt::from(323) { return Ok(value); }
+    let count = count.to_i64().ok_or("Rounding places too large")?;
+    let factor = BigInt::from(10).pow(count.unsigned_abs() as u32);
+    let (p, q) = if count >= 0 { (&e.p * &factor, e.q.clone()) } else { (e.p.clone(), &e.q * &factor) };
+    let (mut whole, remainder) = p.div_mod_floor(&q);
+    match (&remainder * 2u8).cmp(&q) {
+        Ordering::Greater => whole += 1,
+        Ordering::Equal if whole.is_odd() => whole += 1,
+        _ => (),
+    }
+    if !real || specified.is_none() { return Ok(Value::of_big(if count < 0 { whole * factor } else { whole })); }
+    let (p, q) = if count < 0 { (whole * factor, BigInt::one()) } else { (whole, factor) };
+    let result = crate::value::as_binary(&p, &q);
+    if result.is_infinite() { return Err("Rounded value is too large".into()); }
+    let negative = e.p.is_negative() || matches!(&value, Value::Real(r) if r.below);
+    Ok(crate::value::real_of(if result == 0.0 && negative { -0.0 } else { result }, DEFAULT_PLACES))
 }
