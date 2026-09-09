@@ -200,6 +200,30 @@ pub struct Lang {
     /// warning is one where reading a binding never written is a
     /// complaint rather than a stop.
     pub complaint_words: Vec<(Complaint, String)>,
+    /// The name of the setting that asks for a complaint to be dressed
+    /// for a reader of markup, and the dressing itself. Where the
+    /// setting says no, the dressing is put by before the first word of
+    /// the program is read and the plain words stand.
+    pub markup_setting: Option<String>,
+    /// What stands before the break of line a complaint opens with,
+    /// what stands after that break and before the word naming the
+    /// kind, and what stands after that word.
+    pub markup_kind: Option<(String, String, String)>,
+    /// What stands before and after the file a complaint names, and
+    /// before and after the line, the kernel's own break of line coming
+    /// after the last of it either way.
+    pub markup_place: Option<(String, String)>,
+    pub markup_line: Option<(String, String)>,
+    /// What stands before the address of a word's page, between the
+    /// address and the page's name, and after the name.
+    pub markup_page: Option<(String, String, String)>,
+    /// The name of the setting holding where the language's own pages
+    /// are kept, the pieces standing before and after a word's name in
+    /// the name of its page, and a mark of a word's name with what
+    /// stands in its place in a page's.
+    pub pages_setting: Option<String>,
+    pub page_named: Option<(String, String)>,
+    pub page_mark: Option<(String, String)>,
     pub line_binding: Option<String>,
     /// The names a program calls the routine it is written in, the
     /// class that routine belongs to, and the two written together.
@@ -426,6 +450,12 @@ pub struct Lang {
     /// The words on either side of the line the reading of text was
     /// asked for on, which together name where that text stands.
     pub eval_place: Option<(String, String)>,
+    /// The words for reading a file in that will not go on without it:
+    /// where the file is not there the run is stopped instead of
+    /// answering false. The words on either side of the file's name say
+    /// so; a language naming none reads every file in the same way.
+    pub include_demanded: Vec<String>,
+    pub include_demanded_missing: Option<(String, String)>,
     /// What a language says of a key between the brackets of a name
     /// woven into text where the shorter writing does not take it.
     pub woven_index_words: Option<String>,
@@ -635,6 +665,9 @@ w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builti
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.op.index.plain_keys
 w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
+w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
+w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
+w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
 w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -719,6 +752,19 @@ impl<'a> Reader<'a> {
         match (said.next(), said.next()) {
             (Some(before), Some(after)) => Ok(Some((before, after))),
             (Some(_), None) => Err(format!("label '{key}' wants a word on either side of what it names")),
+            _ => Ok(None),
+        }
+    }
+
+    /// A label whose words stand about two things the kernel puts
+    /// between them: a word before the first, a word between the two,
+    /// and a word after the second. Fewer than three leaves the kernel
+    /// short of a piece, so they are refused rather than half read.
+    fn about_two(&self, key: &str) -> Result<Option<(String, String, String)>, String> {
+        let mut said = self.strings(key)?.into_iter();
+        match (said.next(), said.next(), said.next()) {
+            (Some(first), Some(second), Some(third)) => Ok(Some((first, second, third))),
+            (Some(_), ..) => Err(format!("label '{key}' wants three words about the two things it names")),
             _ => Ok(None),
         }
     }
@@ -1261,6 +1307,14 @@ impl Lang {
                 }
                 found
             },
+            markup_setting: r.head("ext.system.complaint.markup.setting")?,
+            markup_kind: r.about_two("ext.system.complaint.markup.kind")?,
+            markup_place: r.around("ext.system.complaint.markup.place")?,
+            markup_line: r.around("ext.system.complaint.markup.line")?,
+            markup_page: r.about_two("ext.system.complaint.markup.reference")?,
+            pages_setting: r.head("ext.system.complaint.reference.setting")?,
+            page_named: r.around("ext.system.complaint.reference.page")?,
+            page_mark: r.around("ext.system.complaint.reference.mark")?,
             line_binding: r.head("ext.system.source.line")?,
             routine_binding: r.head("ext.system.source.routine")?,
             class_binding: r.head("ext.system.source.class")?,
@@ -1372,6 +1426,8 @@ impl Lang {
             unmatched_words: r.around("ext.system.reading.unmatched")?,
             fault_reading: r.head("ext.system.fault.class.reading")?,
             eval_place: r.around("ext.builtin.eval.place")?,
+            include_demanded: r.strings("ext.builtin.include.demanded")?,
+            include_demanded_missing: r.around("ext.builtin.include.demanded.missing")?,
             woven_index_words: r.head("ext.lexical.interpolating.index.amiss")?,
             flags_count: r.flag("system.flag.counts")?,
             args_outside_all: r.head("ext.builtin.args.all.outside")?,

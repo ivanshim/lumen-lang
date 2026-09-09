@@ -44,6 +44,7 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
         if lang::identify(text)?.0 == language {
             let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
             settle_brief(&mut lang, request);
+            settle_markup(&mut lang, request);
             return go(&lang, source, program_args, request);
         }
     }
@@ -54,7 +55,45 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     settle_brief(&mut lang, request);
+    settle_markup(&mut lang, request);
     go(&lang, source, program_args, request)
+}
+
+/// What a setting the run was started with stands at, with the quotes a
+/// setting may be written in taken off, the way the reference reads one
+/// written down for it.
+fn setting_said(request: &[(String, String, String, bool)], setting: &str) -> Option<String> {
+    let said = request.iter().find(|(from, key, ..)| from == "SETTINGS" && *key == setting)?;
+    let worth = said.2.trim();
+    let bare = worth.strip_prefix('"').and_then(|rest| rest.strip_suffix('"'));
+    Some(bare.unwrap_or(worth).to_string())
+}
+
+/// Whether a complaint is dressed for a reader of markup. The setting
+/// that says so is one the run is started with and cannot change while
+/// it goes, so it is settled once, before a word of the program is
+/// read. Where it is off the dressing is taken away and the plain words
+/// stand; where the language gives no dressing there is nothing to take.
+fn settle_markup(lang: &mut Lang, request: &[(String, String, String, bool)]) {
+    let Some(setting) = lang.markup_setting.clone() else { return };
+    let said = setting_said(request, &setting).map(|worth| worth.to_ascii_lowercase());
+    // A setting stands for yes unless it is one of the words for no,
+    // which is how the reference reads one written in a file.
+    let on = matches!(said.as_deref(), Some(worth) if !matches!(worth, "" | "0" | "off" | "false" | "no"));
+    if !on {
+        lang.markup_kind = None;
+        lang.markup_place = None;
+        lang.markup_line = None;
+        lang.markup_page = None;
+    }
+}
+
+/// Where the language's own pages are kept, as the run was started.
+/// Nothing where the run names nowhere, and then a complaint about a
+/// word of the language points at no page.
+fn pages_kept(lang: &Lang, request: &[(String, String, String, bool)]) -> Option<String> {
+    let setting = lang.pages_setting.as_ref()?;
+    setting_said(request, setting).filter(|where_at| !where_at.is_empty())
 }
 
 /// Whether the shorter marker opens a run of code at all. The setting
@@ -94,7 +133,7 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
     let line = (row as u32).saturating_sub(before);
-    print!("\n{}: {} in {} on line {}\n", word, said, file, line);
+    print!("{}{}", engine::complaint_opening(lang, word, said), engine::complaint_place(lang, &file, line));
     // The run ends straight after this, and ending does not empty what
     // is waiting to be written, so it is emptied here.
     use std::io::Write;
@@ -208,6 +247,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.written_in(place);
     }
+    machine.pages_are_kept(pages_kept(lang, request));
     // Where the program is written, as the request carries it.
     for (part, name) in &lang.source_bindings {
         let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == part);

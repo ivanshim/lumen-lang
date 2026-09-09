@@ -844,6 +844,38 @@
   "ext.system.complaint.deprecated": [
     "Deprecated"
   ],
+  "ext.system.complaint.markup.setting": [
+    "html_errors"
+  ],
+  "ext.system.complaint.markup.kind": [
+    "<br />",
+    "<b>",
+    "</b>:  "
+  ],
+  "ext.system.complaint.markup.place": [
+    "<b>",
+    "</b>"
+  ],
+  "ext.system.complaint.markup.line": [
+    "<b>",
+    "</b><br />"
+  ],
+  "ext.system.complaint.markup.reference": [
+    " [<a href='",
+    "'>",
+    "</a>]"
+  ],
+  "ext.system.complaint.reference.setting": [
+    "docref_root"
+  ],
+  "ext.system.complaint.reference.page": [
+    "function.",
+    ".html"
+  ],
+  "ext.system.complaint.reference.mark": [
+    "_",
+    "-"
+  ],
   "ext.lexical.number.binary_prefix": [
     "0b",
     "0B"
@@ -973,6 +1005,14 @@
   "ext.builtin.include.once": [
     "include_once",
     "require_once"
+  ],
+  "ext.builtin.include.demanded": [
+    "require",
+    "require_once"
+  ],
+  "ext.builtin.include.demanded.missing": [
+    "Failed opening required '",
+    "' (include_path='.')"
   ],
   "ext.builtin.calls": [
     "__calls"

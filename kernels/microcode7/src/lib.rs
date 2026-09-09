@@ -52,6 +52,7 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let mut table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     brief_settled(&mut table, request);
+    markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| format!("{}: {}", prefix, e))
 }
@@ -92,7 +93,8 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
     let Some(word) = table.single(key) else { return said.to_string() };
     let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
     let file = named("file").unwrap_or_default();
-    print!("\n{}: {} in {} on line {}\n", word, said, file, row.saturating_sub(before));
+    let head = exec::complaint_head(table, word, said);
+    print!("{head}{}", exec::complaint_tail(table, &file, row.saturating_sub(before)));
     // The run ends straight after this, and ending does not empty what
     // waits to be written, so it is emptied here.
     use std::io::Write;
@@ -117,6 +119,42 @@ fn brief_settled(table: &mut Table, request: &[(String, String, String, bool)]) 
     if !matches!(told.as_deref(), Some(worth) if !no.contains(&worth)) {
         table.put_by("ext.lexical.prologue.brief");
     }
+}
+
+/// What a setting the run began with stands at, without the quotes one
+/// may be written in, since the reference takes those off too.
+fn setting_at(request: &[(String, String, String, bool)], setting: &str) -> Option<String> {
+    let held = request.iter().find(|(from, key, ..)| from == "SETTINGS" && *key == setting)?;
+    let worth = held.2.trim();
+    match worth.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')) {
+        Some(bare) => Some(bare.to_string()),
+        None => Some(worth.to_string()),
+    }
+}
+
+/// Whether complaints are dressed for a reader of markup. A setting the
+/// run began with says so and cannot change while it goes, so it is
+/// looked at once, before the first word is read; where it says no the
+/// dressing is put by and the bare words stand.
+fn markup_settled(table: &mut Table, request: &[(String, String, String, bool)]) {
+    let Some(setting) = table.single("ext.system.complaint.markup.setting").map(str::to_string) else { return };
+    let held = setting_at(request, &setting).map(|worth| worth.to_ascii_lowercase());
+    let no = ["", "0", "off", "false", "no"];
+    if matches!(held.as_deref(), Some(worth) if !no.contains(&worth)) {
+        return;
+    }
+    for label in ["ext.system.complaint.markup.kind", "ext.system.complaint.markup.place",
+                  "ext.system.complaint.markup.line", "ext.system.complaint.markup.reference"] {
+        table.put_by(label);
+    }
+}
+
+/// Where the language keeps its own pages, as the run began. Nothing
+/// where the run names nowhere, and a complaint about a word of the
+/// language then points at no page of it.
+fn pages_lie_at(table: &Table, request: &[(String, String, String, bool)]) -> Option<String> {
+    let setting = table.single("ext.system.complaint.reference.setting")?;
+    setting_at(request, setting).filter(|held| !held.is_empty())
 }
 
 fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
@@ -228,6 +266,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
         machine.found_in(place);
     }
+    machine.pages_lie_at(pages_lie_at(table, request));
     // Where the program is written, as the request carries it.
     for (part, key) in OWN_PLACE {
         let Some(name) = table.single(key) else { continue };

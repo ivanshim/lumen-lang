@@ -120,6 +120,10 @@ pub struct Machine<'a> {
     row: u32,
     raised_on: u32,
     written_in: Rc<str>,
+    /// Where the language keeps its own pages, as the run was
+    /// started. Nothing where the run was started naming nowhere,
+    /// and then a complaint about a word points at no page of it.
+    pages_at: Option<String>,
     /// The calls under way, innermost last: what each called, where the
     /// call itself was written, and where among the arguments kept the
     /// ones it was handed stand.
@@ -244,6 +248,7 @@ impl<'a> Machine<'a> {
             allowed: 0,
             started: None,
             written_in: Rc::from(""),
+            pages_at: None,
             calls: Vec::new(),
             under: None,
             entering: None,
@@ -283,6 +288,11 @@ impl<'a> Machine<'a> {
     /// Where the program is written, which a complaint names.
     pub fn found_in(&mut self, place: &str) {
         self.written_in = Rc::from(place);
+    }
+
+    /// Where the language keeps its own pages, as the run was started.
+    pub fn pages_lie_at(&mut self, held: Option<String>) {
+        self.pages_at = held;
     }
 
     /// Say a complaint of this kind in the language's own word for it
@@ -780,7 +790,8 @@ impl<'a> Machine<'a> {
                         Escape::Error(m) => m,
                         Escape::Stopped(told) => {
                             if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
-                                self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.written_in, self.row));
+                                let head = complaint_head(&self.table, word, &told);
+                                self.utter(&format!("{head}{}", complaint_tail(&self.table, &self.written_in, self.row)));
                             }
                             told
                         }
@@ -847,7 +858,24 @@ impl<'a> Machine<'a> {
 
     fn said_plainly(&self, kind: &str, about: &str, row: u32) {
         let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        self.utter(&format!("\n{}: {} in {} on line {}\n", word, about, self.written_in, row));
+        let head = complaint_head(&self.table, word, about);
+        self.utter(&format!("{head}{}", complaint_tail(&self.table, &self.written_in, row)));
+    }
+
+    /// Where a word of the language has its page, written into a
+    /// complaint about that word. Nothing at all where the run knows
+    /// nowhere the pages are kept, or where it is not dressing its
+    /// complaints for a reader with any way of following an address.
+    fn word_page(&self, word: &str) -> String {
+        let Some(kept) = self.pages_at.as_deref() else { return String::new() };
+        let [opens, joins, closes, ..] = self.table.strings("ext.system.complaint.markup.reference") else { return String::new() };
+        let Some((ahead, behind)) = self.table.around("ext.system.complaint.reference.page") else { return String::new() };
+        let spelled = match self.table.around("ext.system.complaint.reference.mark") {
+            Some((mark, instead)) => word.replace(mark, instead),
+            None => word.to_string(),
+        };
+        let page = format!("{ahead}{spelled}{behind}");
+        format!("{opens}{kept}{page}{joins}{page}{closes}")
     }
 
     /// The complaints still waiting go to the routine the program put in
@@ -1116,8 +1144,8 @@ impl<'a> Machine<'a> {
             },
             None => (said.to_string(), self.written_in.clone(), self.raised_on),
         };
-        self.utter(&format!("\n{}: {} in {}:{}\n", word, said, place, at));
-        self.utter(&format!("{}  thrown in {} on line {}\n", self.calls_under(), place, at));
+        self.utter(&format!("{} in {}:{}\n", complaint_head(&self.table, word, &said), place, at));
+        self.utter(&format!("{}  thrown{}", self.calls_under(), complaint_tail(&self.table, &place, at)));
     }
 
     /// Build source against the globals this run already has and run it
@@ -1291,7 +1319,8 @@ impl<'a> Machine<'a> {
             // A limit passed is told plainly, since nothing was raised.
             Err(Escape::Stopped(told)) => {
                 if let Some((_, word)) = self.complaint_words.iter().find(|(k, _)| *k == "fatal") {
-                    self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.written_in, self.row));
+                    let head = complaint_head(&self.table, word, &told);
+                    self.utter(&format!("{head}{}", complaint_tail(&self.table, &self.written_in, self.row)));
                 }
                 Err(told)
             }
@@ -1306,7 +1335,8 @@ impl<'a> Machine<'a> {
                     Some((said, place, on)) if *said == e => (place.clone(), *on),
                     _ => (self.written_in.clone(), self.row),
                 };
-                self.utter(&format!("\n{}: {} in {} on line {}\n", word, e, place, at));
+                let head = complaint_head(&self.table, word, &e);
+                self.utter(&format!("{head}{}", complaint_tail(&self.table, &place, at)));
                 Err(e)
             }
             Err(Escape::Error(e)) => {
@@ -4115,12 +4145,19 @@ impl<'a> Machine<'a> {
                         match held {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                             // A file that will not be read is not there
-                            // as far as the run can tell: it says so
-                            // twice, of the file and of the reading in,
-                            // and answers false.
+                            // as far as the run can tell. It says so of
+                            // the file; then a word that will not go on
+                            // without it stops the run, and one that
+                            // will says so of the reading in besides and
+                            // answers false.
                             Err(_) => {
-                                self.grumble("warning", &format!("{}(): Failed to open stream: No such file or directory", name));
-                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                let page = self.word_page(name);
+                                self.grumble("warning", &format!("{}(){}: Failed to open stream: No such file or directory", name, page));
+                                let insisted = self.table.strings("ext.builtin.include.demanded").iter().any(|word| word == name);
+                                if let (true, Some((opens, closes))) = (insisted, self.table.around("ext.builtin.include.demanded.missing")) {
+                                    return Err(format!("{opens}{given}{closes}"));
+                                }
+                                let told = format!("{}(){}: Failed opening '{}' for inclusion (include_path='.')", name, page, given);
                                 self.grumble("warning", &told);
                                 return Ok(Value::Flag(false));
                             }
@@ -4283,6 +4320,30 @@ fn written_reach(of: &Blueprint, filed: &str, w: Names) -> String {
         Some((Reach::Within, _)) => w.within_word.map_or_else(String::new, |word| format!(":{word}")),
         _ => String::new(),
     }
+}
+
+/// The head of a complaint: the break of line one opens with, the word
+/// naming the kind, and what the complaint says. Where the language
+/// gives words for dressing a complaint for a reader of markup the word
+/// is wrapped in them; where it gives none the bare words go out.
+pub fn complaint_head(table: &Table, word: &str, about: &str) -> String {
+    match table.strings("ext.system.complaint.markup.kind") {
+        [ahead, opens, closes, ..] => format!("{ahead}\n{opens}{word}{closes}{about}"),
+        _ => format!("\n{word}: {about}"),
+    }
+}
+
+/// The tail of a complaint: where it was raised and on what line, each
+/// wrapped as the language would have it, and the break of line that
+/// ends a complaint after the two.
+pub fn complaint_tail(table: &Table, place: &str, row: u32) -> String {
+    let wrapped = |label: &str, held: String| match table.around(label) {
+        Some((opens, closes)) => format!("{opens}{held}{closes}"),
+        None => held,
+    };
+    let file = wrapped("ext.system.complaint.markup.place", place.to_string());
+    let at = wrapped("ext.system.complaint.markup.line", row.to_string());
+    format!(" in {file} on line {at}\n")
 }
 
 /// Whether a thing still keeps a member at a place. Taking one off

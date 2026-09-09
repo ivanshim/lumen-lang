@@ -110,6 +110,11 @@ def normalise(message, banner):
     # Where a language names the file and line a fault happened in, the
     # file is a fresh temporary each run, so the shape stands for it.
     m = re.sub(r"\s+in\s+\S+?\.php(:\d+| on line \d+)", " in <file>", m)
+    # A file named by a whole path from the root names where this
+    # checkout happens to sit, which differs from one to the next, so
+    # the shape stands for it and the report reads the same anywhere.
+    m = m.replace(str(ROOT), "<root>")
+    m = re.sub(r"'/[^']*'", "'<path>'", m)
     m = re.sub(r"'\$[A-Za-z_][A-Za-z0-9_]*'", "'$name'", m)
     m = re.sub(r"'\d+(\.\d+)?'", "'<number>'", m)
     m = re.sub(r'"[^"]*"', '"..."', m)
@@ -268,7 +273,7 @@ def main():
     if "--kernel" in sys.argv:
         kernels = [sys.argv[sys.argv.index("--kernel") + 1]]
     subprocess.run(["cargo", "build", "--release", "--quiet"], cwd=ROOT, check=True)
-    php_def = json.loads((ROOT / "langs" / "extras" / "php.json").read_text())
+    php_def = json.loads((ROOT / "langs" / "php.json").read_text())
     py_def = json.loads((ROOT / "langs" / "python.json").read_text())
     php_have, py_have = spelled(php_def), spelled(py_def)
 

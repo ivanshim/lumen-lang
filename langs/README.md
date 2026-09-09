@@ -597,6 +597,34 @@ only. The extension labels so far, all from PHP:
   Where it has a word for the end of a run, a value raised and never
   taken is told with that word, and written where the program's own
   writing goes.
+- `ext.system.complaint.markup.setting` names the setting that asks for
+  every complaint to be dressed for a reader of markup, and the labels
+  under `ext.system.complaint.markup.*` are that dressing. A complaint
+  is written as a break of line, the word for its kind, what it says,
+  the file and the line; `.kind` gives three pieces — what stands before
+  the break of line, what stands after it and before the word, and what
+  stands after the word — while `.place` and `.line` each give the two
+  pieces standing on either side of the file and of the line. Where the
+  setting says no the dressing is put by before the first word of the
+  program is read, and the plain words stand; a language naming no
+  setting is never dressed at all. `.reference` gives the three pieces
+  of an address written into a complaint about a word of the language:
+  what stands before the address, what stands between the address and
+  the page's name, and what stands after that name.
+- `ext.system.complaint.reference.setting` names the setting holding
+  where the language keeps its own pages, `.page` the two pieces
+  standing on either side of a word's name in the name of its page, and
+  `.mark` a mark of a word's name with what stands in its place there
+  (PHP's `require_once` has its page under `function.require-once`).
+  Nothing is written where the run was started naming nowhere, or where
+  the complaint is not being dressed for a reader who could follow an
+  address at all.
+- `ext.builtin.include.demanded`: which of the words for reading a file
+  in will not go on without it. Where a word named here is given a file
+  that is not there, the run stops instead of answering false, and
+  `ext.builtin.include.demanded.missing` gives the words standing before
+  and after the file's name in what is said. The rest say what they
+  found and answer false, as they did before.
 - `ext.system.source.line`: the name a program calls the line it is
   written on (`__LINE__`), which is known while the program is read.
 - `ext.system.kind.brief`: the shorter name each kind goes by where a
@@ -1505,6 +1533,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
+| `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
+| `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
@@ -1649,8 +1679,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
+| `ext.system.complaint.markup.kind` | - | - | - | - | `<br />` `<b>` `</b>:  ` | - | - | - | - | - |
+| `ext.system.complaint.markup.line` | - | - | - | - | `<b>` `</b><br />` | - | - | - | - | - |
+| `ext.system.complaint.markup.place` | - | - | - | - | `<b>` `</b>` | - | - | - | - | - |
+| `ext.system.complaint.markup.reference` | - | - | - | - | ` [<a href='` `'>` `</a>]` | - | - | - | - | - |
+| `ext.system.complaint.markup.setting` | - | - | - | - | `html_errors` | - | - | - | - | - |
 | `ext.system.complaint.notice` | - | - | - | - | `Notice` | - | - | - | - | - |
 | `ext.system.complaint.reading` | - | - | - | - | `Parse error` | - | - | - | - | - |
+| `ext.system.complaint.reference.mark` | - | - | - | - | `_` `-` | - | - | - | - | - |
+| `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
+| `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |

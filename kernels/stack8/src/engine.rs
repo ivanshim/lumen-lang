@@ -34,6 +34,10 @@ pub struct Engine<'a> {
     line: u32,
     /// Where the program is written, as the request carried it.
     source: Rc<str>,
+    /// Where the language's own pages are kept, as the run was started.
+    /// Nothing where the run was started with nowhere named, and then a
+    /// complaint about a word of the language points at no page.
+    pages_kept: Option<String>,
     /// The calls under way, innermost last: what each called, where the
     /// call was written, and where among the arguments kept aside its
     /// own stand. A fault raised inside them names them all.
@@ -200,6 +204,7 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             source: Rc::from(""),
+            pages_kept: None,
             calls: Vec::new(),
             under: None,
             entering: None,
@@ -375,6 +380,11 @@ impl<'a> Engine<'a> {
         self.source = Rc::from(place);
     }
 
+    /// Where the language's own pages are kept, as the run was started.
+    pub fn pages_are_kept(&mut self, where_at: Option<String>) {
+        self.pages_kept = where_at;
+    }
+
     /// Whether a name never written is worth complaining about rather
     /// than stopping for. Only a variable is: where a language marks
     /// its variables with a sign, a name without that sign is a
@@ -545,7 +555,27 @@ impl<'a> Engine<'a> {
 
     fn say_complaint(&self, kind: Complaint, message: &str, line: u32) {
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == kind) else { return };
-        self.utter(&format!("\n{}: {} in {} on line {}\n", word, message, self.source, line));
+        let opening = complaint_opening(self.lang, word, message);
+        self.utter(&format!("{}{}", opening, complaint_place(self.lang, &self.source, line)));
+    }
+
+    /// Where the page for a word of the language is to be found, said
+    /// in a complaint about that word. Nothing at all unless the run
+    /// was started knowing where the pages are kept and asking to be
+    /// told for a reader of markup, an address being of no use to a
+    /// reader who is given no way to follow it.
+    fn page_for(&self, word: &str) -> String {
+        let (Some(kept), Some((before, between, after)), Some((opens, closes))) =
+            (&self.pages_kept, &self.lang.markup_page, &self.lang.page_named)
+        else {
+            return String::new();
+        };
+        let named = match &self.lang.page_mark {
+            Some((mark, instead)) => word.replace(mark.as_str(), instead),
+            None => word.to_string(),
+        };
+        let page = format!("{}{}{}", opens, named, closes);
+        format!("{}{}{}{}{}{}", before, kept, page, between, page, after)
     }
 
     /// The complaints waiting are handed to the routine the program put
@@ -712,7 +742,7 @@ impl<'a> Engine<'a> {
             Fault::Finished => return,
             // A limit passed is told plainly, since nothing was raised.
             Fault::Stopped(told) => {
-                self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, self.source, self.line));
+                self.utter(&format!("{}{}", complaint_opening(self.lang, word, told), complaint_place(self.lang, &self.source, self.line)));
                 return;
             }
             Fault::Thrown(raised) => raised,
@@ -728,7 +758,7 @@ impl<'a> Engine<'a> {
                         Some((said, place, on)) if said == told => (place.clone(), *on),
                         _ => (self.source.clone(), self.line),
                     };
-                    self.utter(&format!("\n{}: {} in {} on line {}\n", word, told, place, at));
+                    self.utter(&format!("{}{}", complaint_opening(self.lang, word, told), complaint_place(self.lang, &place, at)));
                     return;
                 }
                 // A fault raised on the way into a routine belongs where
@@ -743,8 +773,9 @@ impl<'a> Engine<'a> {
                     },
                     None => (told.clone(), self.source.clone(), self.line),
                 };
-                self.utter(&format!("\n{}: Uncaught {}: {} in {}:{}\n", word, named, told, place, at));
-                self.utter(&format!("{}  thrown in {} on line {}\n", self.calls_under(), place, at));
+                let said = format!("Uncaught {}: {}", named, told);
+                self.utter(&format!("{} in {}:{}\n", complaint_opening(self.lang, word, &said), place, at));
+                self.utter(&format!("{}  thrown{}", self.calls_under(), complaint_place(self.lang, &place, at)));
                 return;
             }
         };
@@ -759,8 +790,8 @@ impl<'a> Engine<'a> {
             v => format!("Uncaught {}", v.display(&sp)),
         };
         let at = self.hurled_at.get();
-        self.utter(&format!("\n{}: {} in {}:{}\n", word, said, self.source, at));
-        self.utter(&format!("{}  thrown in {} on line {}\n", self.calls_under(), self.source, at));
+        self.utter(&format!("{} in {}:{}\n", complaint_opening(self.lang, word, &said), self.source, at));
+        self.utter(&format!("{}  thrown{}", self.calls_under(), complaint_place(self.lang, &self.source, at)));
     }
 
     /// The calls a fault was raised under, where any were written down,
@@ -3182,12 +3213,19 @@ impl<'a> Engine<'a> {
                         match found {
                             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                             // A file that cannot be read is not there as
-                            // far as the run is concerned: it says so
-                            // twice, once of the file and once of the
-                            // reading in, and answers false.
+                            // far as the run is concerned: it says so of
+                            // the file, and then either stops, where the
+                            // word will not go on without it, or says so
+                            // of the reading in besides and answers
+                            // false.
                             Err(_) => {
-                                self.complain(Complaint::Warning, &format!("{}(): Failed to open stream: No such file or directory", name));
-                                let told = format!("{}(): Failed opening '{}' for inclusion (include_path='.')", name, given);
+                                let page = self.page_for(name);
+                                self.complain(Complaint::Warning, &format!("{}(){}: Failed to open stream: No such file or directory", name, page));
+                                let demanded = self.lang.include_demanded.iter().any(|word| word == name);
+                                if let (true, Some((before, after))) = (demanded, &self.lang.include_demanded_missing) {
+                                    return Err(format!("{}{}{}", before, given, after));
+                                }
+                                let told = format!("{}(){}: Failed opening '{}' for inclusion (include_path='.')", name, page, given);
                                 self.complain(Complaint::Warning, &told);
                                 return Ok(Value::Flag(false));
                             }
@@ -4075,6 +4113,33 @@ fn as_index(v: &Value) -> Res<usize> {
         Value::Huge(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
         _ => Err("Array index must be a number".to_string()),
     }
+}
+
+/// A complaint's opening, from the break of line it begins with to the
+/// end of what it says: the word for the kind and then the words
+/// themselves. Where the language gives a dressing for a reader of
+/// markup the opening wears it; where it gives none the plain words
+/// stand.
+pub fn complaint_opening(lang: &Lang, word: &str, message: &str) -> String {
+    match &lang.markup_kind {
+        Some((ahead, before, after)) => format!("{}\n{}{}{}{}", ahead, before, word, after, message),
+        None => format!("\n{}: {}", word, message),
+    }
+}
+
+/// Where a complaint was raised, said after what it says: the file and
+/// the line, each in whatever the language dresses it in, and the break
+/// of line that ends a complaint after them both.
+pub fn complaint_place(lang: &Lang, place: &str, line: u32) -> String {
+    let named = match &lang.markup_place {
+        Some((before, after)) => format!("{}{}{}", before, place, after),
+        None => place.to_string(),
+    };
+    let on = match &lang.markup_line {
+        Some((before, after)) => format!("{}{}{}", before, line, after),
+        None => line.to_string(),
+    };
+    format!(" in {} on line {}\n", named, on)
 }
 
 pub fn sort_value(kind: Sort) -> Value {
