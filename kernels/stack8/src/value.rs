@@ -269,6 +269,11 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Stream(a), Value::Stream(b)) => a == b,
+            (Value::Counted(a), Value::Counted(b)) => {
+                let length = a.length();
+                length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
+            }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) => true,

@@ -6,3 +6,4 @@ for x in range(5, 0, -2):
 print()
 print(*range(3), sep="-")
 print(range(1, 10, 2))
+print(range(0) == range(4, 4), range(1, 4, 2) == range(1, 5, 2))

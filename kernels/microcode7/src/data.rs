@@ -256,6 +256,15 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Channel(left), Value::Channel(right)) => left == right,
+            (Value::Progression(left), Value::Progression(right)) => {
+                if left.count() != right.count() { return false; }
+                match left.count().to_u8() {
+                    Some(0) => true,
+                    Some(1) => left.first == right.first,
+                    _ => left.first == right.first && left.stride == right.stride,
+                }
+            }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
