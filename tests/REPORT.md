@@ -17,20 +17,19 @@ is listed, since the full kernels are meant to behave alike.
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `php/basic` | 114 | pass 101, differs 1, error 2, skipped 10 | pass 101, differs 1, error 2, skipped 10 |
+| `php/basic` | 114 | pass 102, differs 0, error 2, skipped 10 | pass 102, differs 0, error 2, skipped 10 |
 | `php/func` | 14 | pass 14, differs 0, error 0, skipped 0 | pass 14, differs 0, error 0, skipped 0 |
 | `php/lang` | 213 | pass 207, differs 1, error 0, skipped 5 | pass 207, differs 1, error 0, skipped 5 |
 | `php/lang/constants` | 2 | pass 1, differs 0, error 0, skipped 1 | pass 1, differs 0, error 0, skipped 1 |
 | `php/lang/integer_literals` | 6 | pass 3, differs 0, error 0, skipped 3 | pass 3, differs 0, error 0, skipped 3 |
 | `php/lang/operators` | 64 | pass 58, differs 0, error 0, skipped 6 | pass 58, differs 0, error 0, skipped 6 |
 | `php/lang/string` | 9 | pass 9, differs 0, error 0, skipped 0 | pass 9, differs 0, error 0, skipped 0 |
-| all | 422 | pass 393, differs 2, error 2, skipped 25 | pass 393, differs 2, error 2, skipped 25 |
+| all | 422 | pass 394, differs 1, error 2, skipped 25 | pass 394, differs 1, error 2, skipped 25 |
 
 | Reason | Tests |
 |---|---|
 | skip this test is for 32bit platform only | 9 |
 | skip Windows only test | 5 |
-| ran, printed something else | 2 |
 | skip php-cgi not available | 2 |
 | no --FILE-- section | 2 |
 | Fatal error: Uncaught Error: Failed opening required '<root>/tests/php/basic/../../sapi/cli/tests/php_cli_server.inc' (include_path='.') in <file> | 1 |
@@ -41,6 +40,7 @@ is listed, since the full kernels are meant to behave alike.
 | skip Can't find german locale | 1 |
 | skip setlocale() failed | 1 |
 | skip only for Windows | 1 |
+| ran, printed something else | 1 |
 | skip this test is for 32-bit platforms only | 1 |
 
 ### Reserved words: 59 of 68 spelled
@@ -198,7 +198,7 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/basic/023.phpt` | pass | pass |  |
 | `php/basic/025.phpt` | pass | pass |  |
 | `php/basic/028.phpt` | pass | pass |  |
-| `php/basic/029.phpt` | differs | differs | ran, printed something else |
+| `php/basic/029.phpt` | pass | pass |  |
 | `php/basic/030.phpt` | pass | pass |  |
 | `php/basic/031.phpt` | pass | pass |  |
 | `php/basic/032.phpt` | pass | pass |  |

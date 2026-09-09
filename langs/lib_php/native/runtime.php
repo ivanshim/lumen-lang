@@ -137,6 +137,7 @@ function __ini_default($name) {
     if ($name === "input_encoding") { return ""; }
     if ($name === "internal_encoding") { return ""; }
     if ($name === "output_encoding") { return ""; }
+    if ($name === "mbstring.encoding_translation") { return "0"; }
     if ($name === "error_log") { return ""; }
     if ($name === "error_log_mode") { return "0644"; }
     if ($name === "session.name") { return "PHPSESSID"; }
@@ -384,7 +385,7 @@ function restore_exception_handler() {
 // ordinary it may be elsewhere. The reference does not mind how a name
 // is spelled, so neither does this.
 function __carried() {
-    return array("core", "standard", "date", "json", "pcre", "session", "hash", "random");
+    return array("core", "standard", "date", "json", "pcre", "session", "hash", "random", "mbstring");
 }
 function extension_loaded($name) {
     return in_array(strtolower($name), __carried(), true);
