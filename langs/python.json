@@ -420,6 +420,8 @@
   "ext.stmt.throw.from": ["from"],
   "ext.stmt.try": ["try"],
   "ext.stmt.try.else": true,
+  "ext.stmt.type_params.close": ["]"],
+  "ext.stmt.type_params.open": ["["],
   "ext.stmt.with": ["with"],
   "ext.stmt.with.as": ["as"],
   "ext.stmt.with.unready": ["NotImplementedError: context managers are not supported"],

@@ -1134,6 +1134,7 @@ impl<'a> Compiler<'a> {
         self.take();
         self.want_name("after the class word")?;
         let from = self.mark();
+        if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         if self.on_any(&self.lang.class_bases_open) {
             self.take();
             let mut call = self.lang.calling.clone().unwrap();
@@ -1146,9 +1147,32 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn class_type_parameters(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let mut names = std::collections::HashSet::new();
+        loop {
+            if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
+            let name = self.want_name("as a type parameter")?;
+            if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+            if self.on_any(&lang.annotation_marks) { self.take(); self.expr(0)?; }
+            if self.on_assign() { self.take(); self.expr(0)?; }
+            if !self.on_any(&lang.tuple_marks) { break; }
+            self.take();
+            if self.on_any(&lang.type_params_close) { break; }
+        }
+        self.want_sign(&lang.type_params_close[0], "after the type parameters")
+    }
+
     fn refuse_reading(&mut self, words: &[String]) {
         self.constant(Value::text(words.first().map_or("", String::as_str)));
         self.act(Action::Builtin(Builtin::Raise, Rc::from("form")), 1);
+    }
+
+    fn refuse_tuple(&mut self) {
+        let words = self.lang.tuple_unready.first().cloned().unwrap_or_default();
+        self.constant(Value::text(&words));
+        self.act(Action::Builtin(Builtin::Raise, Rc::from("tuple")), 1);
     }
 
     /// A comma belongs to a tuple only where the caller has allowed a
@@ -1163,7 +1187,7 @@ impl<'a> Compiler<'a> {
             self.expr_at(0, false)?;
         }
         self.piece().instrs.truncate(from);
-        self.refuse_reading(&self.lang.tuple_unready.clone());
+        self.refuse_tuple();
         Ok(true)
     }
 
@@ -3477,15 +3501,14 @@ impl<'a> Compiler<'a> {
     /// Turn the load of a target, already assembled from `from`, into a
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
-        let refused = self.lang.tuple_unready.first().cloned();
-        let tuple = self.piece().instrs[from..].iter().any(|word| matches!(word, Instr::Const(Value::Text(s)) if refused.as_ref().map_or(false, |said| s.as_ref() == said)));
+        let tuple = matches!(self.piece().instrs[from..].last(), Some(Instr::Act(Action::Builtin(Builtin::Raise, name), 1)) if name.as_ref() == "tuple");
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
         let assign = self.take().lexeme;
         if tuple {
             self.expr(0)?;
             self.tuple_tail(from)?;
             self.piece().instrs.truncate(from);
-            self.refuse_reading(&self.lang.tuple_unready.clone());
+            self.refuse_tuple();
             return Ok(());
         }
         self.store_into(from, keep, compound, &assign)
@@ -4531,7 +4554,7 @@ impl<'a> Compiler<'a> {
                             self.comprehension(&group, clause, false)?;
                         } else {
                             let empty = !lang.tuple_marks.is_empty() && self.at_symbol(&group.close);
-                            if empty { self.refuse_reading(&lang.tuple_unready); }
+                            if empty { self.refuse_tuple(); }
                             else {
                                 if self.on_any(&lang.array_spread) { self.take(); }
                                 self.expr(0)?;

@@ -43,6 +43,8 @@ pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
+    pub type_params_close: Vec<String>,
+    pub type_params_open: Vec<String>,
     pub for_target_unready: Vec<String>,
     pub identity_unready: Vec<String>,
     pub identity_not: Vec<String>,
@@ -746,6 +748,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.stmt.type_params.close
+w ext.stmt.type_params.open
 w ext.stmt.for.target.unready
 w ext.op.identity.unready
 w ext.op.identity.negated
@@ -1374,6 +1378,8 @@ impl Lang {
             names_folded: r.flag("identifier.case_insensitive")?,
             quote_for_names: r.letter("lexical.name_quote")?,
             symbols: Vec::new(),
+            type_params_close: r.strings("ext.stmt.type_params.close")?,
+            type_params_open: r.strings("ext.stmt.type_params.open")?,
             for_target_unready: r.strings("ext.stmt.for.target.unready")?,
             identity_unready: r.strings("ext.op.identity.unready")?,
             identity_not: r.strings("ext.op.identity.negated")?,
@@ -1853,6 +1859,8 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
+            &self.type_params_close,
+            &self.type_params_open,
             &self.identity_not,
             &self.identity_words,
             &self.membership_not,

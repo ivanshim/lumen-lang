@@ -253,6 +253,14 @@ only. The extension labels so far, all from PHP:
   can be held. Decimal exponents, bit conjunction, left shifts and unary
   plus use `ext.lexical.number.exponent`, `ext.op.bit.and`,
   `ext.op.bit.left` and `ext.op.plus` as already described below.
+- `ext.stmt.type_params.open` and `.close` enclose type parameters after
+  a class name. Each names a type, a row of types after the existing
+  `ext.stmt.function.carries` mark, or a parameter row after `.pairs`.
+  A bound after `ext.stmt.annotation` and a default after `stmt.assign`
+  are read as expressions; a last comma is allowed and repeated names
+  are refused. The class still raises `ext.stmt.class.unready` when
+  reached. These labels also belong to the separate modern syntax piece;
+  this reading supplies only the class head needed here.
 - `ext.stmt.class.bases.open` and `.close` enclose the expressions a
   class takes as bases. With `ext.stmt.class.unready` spelled, this small
   reading reads the head and every statement within, then refuses the
@@ -2064,6 +2072,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.close` | - | - | `]` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |

@@ -2482,6 +2482,7 @@ impl<'a> Builder<'a> {
     fn class_reading(&mut self) -> Res<Form> {
         self.advance();
         self.need_word("after the class word")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
             self.args("ext.stmt.class.bases.close", "syntax.call.separator")?;
@@ -2490,9 +2491,28 @@ impl<'a> Builder<'a> {
         Ok(self.reading_refusal("ext.stmt.class.unready"))
     }
 
+    fn class_type_parameters(&mut self) -> Res<()> {
+        self.advance();
+        let table = self.table;
+        let mut declared = Vec::new();
+        loop {
+            if ["ext.stmt.function.carries", "ext.stmt.function.carries.pairs"].iter().any(|key| self.on_any(key)) { self.advance(); }
+            let parameter = self.need_word("among the type parameters")?;
+            if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
+            declared.push(parameter);
+            if self.on_any("ext.stmt.annotation") { self.advance(); self.expr(0)?; }
+            if self.on_assign() { self.advance(); self.expr(0)?; }
+            if self.on_any("ext.stmt.type_params.close") { break; }
+            self.need_sign(table.single("syntax.call.separator").unwrap(), "between type parameters")?;
+            if self.on_any("ext.stmt.type_params.close") { break; }
+        }
+        self.need_sign(table.single("ext.stmt.type_params.close").unwrap(), "after the type parameters")?;
+        Ok(())
+    }
+
     fn reading_refusal(&self, label: &str) -> Form {
         let message = self.table.single(label).unwrap_or_default();
-        prim_call(Prim::Raise, vec![constant(Value::text(message))])
+        Form::Apply(Callee::Prim(Prim::Raise, Rc::from(label)), vec![constant(Value::text(message))])
     }
 
     fn tuple_tail(&mut self, first: Form) -> Res<Form> {
@@ -3307,7 +3327,7 @@ impl<'a> Builder<'a> {
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
         let assign = self.advance();
-        let tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), args) if matches!(args.first(), Some(Form::Const(Value::Text(s))) if Some(s.as_ref()) == self.table.single("ext.op.tuple.unready")));
+        let tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, label), _) if label.as_ref() == "ext.op.tuple.unready");
         if tuple {
             let value = self.expr(0)?;
             self.tuple_tail(value)?;

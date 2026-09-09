@@ -82,6 +82,8 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
+ext.stmt.type_params.close:L \
+ext.stmt.type_params.open:L \
 ext.stmt.for.target.unready:L \
 ext.op.identity.unready:L \
 ext.op.identity.negated:L \
@@ -622,7 +624,7 @@ impl Table {
             }
         }
         let mut all: Vec<String> = self.dyadic.keys().chain(self.monadic.keys()).chain(self.precedence.keys()).chain(self.compound.keys()).cloned().collect();
-        let symbol_labels = ["ext.op.identity.negated", "ext.op.identity", "ext.op.in.negated", "ext.op.in", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.yield.from", "ext.stmt.yield", "ext.op.await", "ext.stmt.async", "ext.stmt.with.as", "ext.stmt.with", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.close", "ext.stmt.class.bases.open", "ext.lexical.number.imaginary", "ext.lexical.string.long", "ext.lexical.line_continuation", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
+        let symbol_labels = ["ext.stmt.type_params.close", "ext.stmt.type_params.open", "ext.op.identity.negated", "ext.op.identity", "ext.op.in.negated", "ext.op.in", "ext.stmt.del", "ext.stmt.nonlocal", "ext.stmt.yield.from", "ext.stmt.yield", "ext.op.await", "ext.stmt.async", "ext.stmt.with.as", "ext.stmt.with", "ext.op.lambda", "ext.op.tuple", "ext.stmt.class.bases.close", "ext.stmt.class.bases.open", "ext.lexical.number.imaginary", "ext.lexical.string.long", "ext.lexical.line_continuation", "ext.op.index.slice.ellipsis", "ext.op.index.slice", "ext.op.comprehension.async", "ext.op.comprehension.for", "ext.op.comprehension.in", "ext.op.comprehension.if", "ext.syntax.array.spread", "ext.syntax.map.spread", "syntax.group.open", "syntax.group.close", "syntax.call.open", "syntax.call.separator", "syntax.call.close",
             "syntax.call.label", "syntax.array.open", "syntax.array.separator", "syntax.array.close", "op.index.open", "op.index.close",
             "block.intro", "stmt.assign", "stmt.terminator", "stmt.let.annotation", "stmt.function.returns", "stack.dup", "stack.drop",
             "stack.swap", "stack.over", "stack.rot", "stack.eval", "stack.program.open", "stack.program.close", "stmt.let",
