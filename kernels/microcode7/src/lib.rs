@@ -54,7 +54,12 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     brief_settled(&mut table, request);
     markup_settled(&mut table, request);
     let prefix = table.banner();
-    go(&table, source, program_args, request).map_err(|e| format!("{}: {}", prefix, e))
+    go(&table, source, program_args, request).map_err(|e| {
+        match table.strings("ext.syntax.call.amiss.builtin").as_slice() {
+            [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
+            _ => format!("{}: {}", prefix, e),
+        }
+    })
 }
 
 /// Which group of the request each label names, and the one that holds

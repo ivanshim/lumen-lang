@@ -232,6 +232,43 @@ only. The extension labels so far, all from PHP:
   and running to the end of the statement (`print "x";`). `echo` is read
   this way even with a bracket after it, since `echo ($a) . "b", $c;` is
   a group and then more arguments, not a call.
+- `ext.builtin.print.sep`, `.end`, `.file` and `.flush`: lists naming the
+  printer's keyword arguments. The first two give the text between values
+  and after them; nothing keeps the usual space or line end. The file
+  chooses where the text goes, nothing choosing ordinary output. Flush is
+  read and put by. Positional arguments, including those spread from a
+  walk, remain the values to print.
+- `ext.builtin.print.file.error` and `.output`: lists naming the error and
+  ordinary streams (`sys.stderr` and `sys.stdout`). Each is a value which
+  may be held under another name and handed to the printer. These dotted
+  words are read whole, as dotted builtin names are.
+  `ext.builtin.print.file.unready` gives the complaint for any other file
+  value; calling a file object's writer is still wanting.
+- `ext.builtin.print.sep.amiss` and `.end.amiss`: plain words for a joining
+  or ending which is neither text nor nothing.
+- `ext.builtin.to_int.base`: a list naming the integer reader's base
+  keyword. Spelling it also admits text and a second positional base.
+  Bases two through thirty-six and nought are read, nought taking the
+  base from a leading mark. Signs and single underscores between digits
+  are admitted. `ext.builtin.to_int.base.amiss`, `.text.amiss` and
+  `.text.required` give plain complaints for a base outside its bounds,
+  ill-written digits, and a base given with something other than text.
+- `ext.builtin.to_real.text`: a switch admitting text to the real reader,
+  including a decimal point and a power of ten. An empty call gives
+  nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
+  which spells no number.
+- `ext.builtin.to_string.object`, `.encoding` and `.errors`: lists of
+  names the text reader takes. Object names its first argument; an empty
+  call gives empty text. Encoding and errors are read but cannot yet be
+  run, nor can their positional forms; `ext.builtin.to_string.unready`
+  gives the plain complaint rather than pretending to decode bytes.
+- `ext.builtin.range.value`: a switch making the range builtin a value
+  with one, two or three whole-number arguments: end; start and end;
+  start, end and step. Its bounds are kept, so its length, indexed places
+  and walks need no array made beforehand. A slice of it remains wanting.
+  `ext.builtin.range.zero`, `.integer` and `.index` give plain complaints
+  for a step of nought, a bound or index of the wrong kind, and a place
+  beyond the walk.
 - `ext.builtin.write.operator`: a switch; the writer (`builtin.write`) is
   read the same way, as an operator and not as a call, so a bracket after
   it groups what follows rather than holding its argument. It takes the
@@ -1124,8 +1161,10 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.call.amiss.unknown` and `ext.syntax.call.amiss.duplicate`
   each hold two pieces, before and after the argument's name, for a
   required place left empty, an unwanted keyword and a name given twice.
-  `ext.syntax.call.amiss.builtin` says that a builtin has no parameter
-  names by which the kernel can bind its keyword arguments.
+  `ext.syntax.call.amiss.builtin` says that a builtin takes no keyword
+  arguments. One piece is said alone; two pieces stand before and after
+  the builtin's last name, and the complete complaint is passed to the
+  host without another heading.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. Such a routine
@@ -1735,7 +1774,20 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.print.end` | - | - | `end` | - | - | - | - | - | - | - |
+| `ext.builtin.print.end.amiss` | - | - | `TypeError: end must be None or a string` | - | - | - | - | - | - | - |
+| `ext.builtin.print.file` | - | - | `file` | - | - | - | - | - | - | - |
+| `ext.builtin.print.file.error` | - | - | `sys.stderr` | - | - | - | - | - | - | - |
+| `ext.builtin.print.file.output` | - | - | `sys.stdout` | - | - | - | - | - | - | - |
+| `ext.builtin.print.file.unready` | - | - | `NotImplementedError: print file objects are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.print.flush` | - | - | `flush` | - | - | - | - | - | - | - |
+| `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
+| `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
+| `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
+| `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -1746,6 +1798,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
+| `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.text.required` | - | - | `TypeError: int() can't convert non-string with explicit base` | - | - | - | - | - | - | - |
+| `ext.builtin.to_real.text` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
@@ -1907,7 +1969,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | - | - | `list` | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
-| `ext.syntax.call.amiss.builtin` | - | - | `TypeError: keyword arguments for this builtin are not supported` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |

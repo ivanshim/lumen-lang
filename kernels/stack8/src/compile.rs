@@ -2066,7 +2066,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", lang.in_words[0], self.look().lexeme));
         }
         self.take();
-        let range_call = self.look().shape == Shape::Instr
+        let range_call = !lang.range_value && self.look().shape == Shape::Instr
             && lang.builtins.get(&self.look().lexeme) == Some(&Builtin::Span)
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call {
@@ -4189,6 +4189,10 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
+                } else if Lang::spells(&lang.print_file_error, &tok.lexeme) {
+                    self.constant(Value::Stream(true));
+                } else if Lang::spells(&lang.print_file_output, &tok.lexeme) {
+                    self.constant(Value::Stream(false));
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
                     && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
                 {

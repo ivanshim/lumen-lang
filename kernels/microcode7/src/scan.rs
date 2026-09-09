@@ -749,7 +749,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             let mut s: String = src[if led { pos + 1 } else { pos }..k].iter().collect();
             let mut longest = 0;
-            for name in table.prims.keys() {
+            for name in table.prims.keys().chain(table.strings("ext.builtin.print.file.output").iter()).chain(table.strings("ext.builtin.print.file.error").iter()) {
                 if name.len() > s.len() && name.starts_with(s.as_str()) {
                     let tail: Vec<char> = name[s.len()..].chars().collect();
                     let same = tail.iter().enumerate().all(|(n, t)| src.get(k + n) == Some(t));

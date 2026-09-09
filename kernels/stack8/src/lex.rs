@@ -726,7 +726,7 @@ impl<'a> Cursor<'a> {
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
-        for name in lang.builtins.keys() {
+        for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
             if name.len() <= s.len() || !name.starts_with(s.as_str()) {
                 continue;
             }

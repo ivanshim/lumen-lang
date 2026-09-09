@@ -90,8 +90,33 @@ impl Real {
     }
 }
 
+/// A counted walk keeps its bounds rather than all its places.
+#[derive(Debug, Clone)]
+pub struct Counted {
+    pub start: BigInt,
+    pub stop: BigInt,
+    pub step: BigInt,
+    pub name: String,
+}
+
+impl Counted {
+    pub fn length(&self) -> BigInt {
+        let distance = if self.step.is_positive() { &self.stop - &self.start } else { &self.start - &self.stop };
+        if distance <= BigInt::zero() { BigInt::zero() }
+        else { (distance - 1) / self.step.abs() + 1 }
+    }
+
+    pub fn at(&self, mut index: BigInt) -> Option<Value> {
+        let length = self.length();
+        if index.is_negative() { index += &length; }
+        (index >= BigInt::zero() && index < length).then(|| Value::of_big(&self.start + index * &self.step))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
+    Stream(bool),
+    Counted(Rc<Counted>),
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Frac>),
@@ -197,6 +222,8 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Stream(_) => true,
+            Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
@@ -229,6 +256,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -330,6 +358,9 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
+            Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
+                else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),

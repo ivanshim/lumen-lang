@@ -2525,7 +2525,7 @@ impl<'a> Builder<'a> {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
         self.advance();
-        let ranged = self.look().shape == Shape::Bare
+        let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged {
@@ -3975,6 +3975,10 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
+                } else if table.spells("ext.builtin.print.file.output", &t.lexeme) {
+                    constant(Value::Channel(1))
+                } else if table.spells("ext.builtin.print.file.error", &t.lexeme) {
+                    constant(Value::Channel(2))
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
                     && table.single("syntax.call.open").map_or(false, |o| self.sign(o))
                 {
