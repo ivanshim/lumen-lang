@@ -2239,7 +2239,7 @@ impl<'a> Compiler<'a> {
             }
         }
         self.piece().instrs.truncate(began);
-        self.routine(&name, Vec::new(), 0, false, |a| a.attempt_body())?;
+        self.routine(&name, Vec::new(), 0, false, |a| a.attempt_body().map(|_| ()))?;
         self.unready(&lang.class_suite_unsupported);
         Ok(())
     }
