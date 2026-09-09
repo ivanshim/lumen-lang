@@ -83,6 +83,10 @@ pub enum Prim {
     AsDecimal,
     /// The value made text.
     AsChars,
+    /// The value, specification and conversion of a field in text.
+    RenderField,
+    /// Stop upon reaching a character the run cannot represent.
+    UnheldText,
     /// The value made a flag.
     AsTruth,
     /// The value made an array; anything that is not one becomes an
@@ -212,9 +216,10 @@ pub enum Prim {
     /// Whether two values are one and the same, which asks more than
     /// being equal: they must also be of one kind, so 1 and 1.0 are
     /// equal without being the same.
-    Contains,
     Selfsame,
     Unlike,
+    Contains,
+    Absent,
     /// The bits of a value, sixty-four of them, sign and all: both set,
     /// either set, one alone set, all turned over, and moved up or down.
     /// Two pieces of text take their bits letter by letter instead.
@@ -375,7 +380,7 @@ pub enum Form {
     Apply(Callee, Vec<Form>),
     /// A loop as a form, run in the frame it appears in, instead
     /// of a program that calls itself. `after` tests after the body.
-    Cycle { test: Box<Form>, body: Box<Form>, step: Option<Box<Form>>, after: bool },
+    Cycle { test: Box<Form>, body: Box<Form>, step: Option<Box<Form>>, after: bool, otherwise: Option<Box<Form>> },
     /// An operation of two operands, evaluated without a vector
     /// of arguments.
     Dyad { op: Prim, name: Rc<str>, a: Input, b: Input },
@@ -533,6 +538,7 @@ pub struct Routine {
     /// How many arguments must be given; the rest carry a value of their
     /// own, written by the body's first forms.
     pub least: usize,
+    pub gather_from: Option<usize>,
     pub ident: String,
     pub formals: Vec<String>,
     /// How each place is filled: both ways, by position, by name, or gathered.

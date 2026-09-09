@@ -12,7 +12,10 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
-    PendingQuote,
+    StringBegin,
+    StringEnd,
+    StringField,
+    StringFault,
     Sign,
     LineEnd,
     /// The indentation of a line that has something on it.
@@ -80,6 +83,7 @@ fn drop_epilogue<'a>(source: &'a str, lang: &Lang) -> &'a str {
 }
 
 fn drop_comments(source: &str, lang: &Lang) -> String {
+    if !lang.long_quotes.is_empty() { return source.to_string(); }
     if lang.line_comments.is_empty() && lang.block_comments.is_empty() {
         return source.to_string();
     }
@@ -89,6 +93,23 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
     let mut escaped = false;
     while let Some(c) = ahead.chars().next() {
         let w = c.len_utf8();
+        if quote.is_none() {
+            if let Some(mark) = lang.long_quotes.iter().find(|mark| ahead.starts_with(mark.as_str())) {
+                let mut reach = mark.len();
+                while reach < ahead.len() {
+                    let rest = &ahead[reach..];
+                    if rest.starts_with(mark.as_str()) { reach += mark.len(); break; }
+                    let ch = rest.chars().next().expect("text remains");
+                    reach += ch.len_utf8();
+                    if ch == '\\' {
+                        if let Some(next) = ahead[reach..].chars().next() { reach += next.len_utf8(); }
+                    }
+                }
+                kept.push_str(&ahead[..reach]);
+                ahead = &ahead[reach..];
+                continue;
+            }
+        }
         match quote {
             Some(opener) => {
                 kept.push(c);
@@ -109,20 +130,6 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                 let over = heredoc_at(ahead, lang).map_or(ahead.len(), |here| here.done);
                 kept.push_str(&ahead[..over]);
                 ahead = &ahead[over..];
-            }
-            None if lang.long_quotes.iter().any(|mark| ahead.starts_with(mark)) => {
-                let mark = lang.long_quotes.iter().find(|mark| ahead.starts_with(mark.as_str())).unwrap();
-                let mut end = mark.len();
-                while end < ahead.len() && !ahead[end..].starts_with(mark) {
-                    let d = ahead[end..].chars().next().unwrap();
-                    end += d.len_utf8();
-                    if d == '\\' {
-                        if let Some(next) = ahead[end..].chars().next() { end += next.len_utf8(); }
-                    }
-                }
-                end = (end + mark.len()).min(ahead.len());
-                kept.push_str(&ahead[..end]);
-                ahead = &ahead[end..];
             }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
@@ -268,7 +275,8 @@ impl<'a> Cursor<'a> {
             j += 1;
         }
         let end = self.text[j..].iter().position(|c| *c == '\n').map_or(self.text.len(), |p| j + p);
-        if self.text[j..end].iter().all(|c| c.is_whitespace()) {
+        if self.text[j..end].iter().all(|c| c.is_whitespace())
+            || self.lang.line_comments.iter().any(|mark| at_word(&self.text, j, mark)) {
             while self.at < end {
                 self.step();
             }
@@ -405,7 +413,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
             shielded.push(s.chars().count());
-            s.push(char::from_u32(number & 0xFF).expect("a character of one byte"));
+            s.push(char::from_u32(if self.lang.codepoint_digits.is_some() { number } else { number & 0xFF }).expect("a character numbered in eights"));
             return Ok(());
         }
         // The same by number, but written bare: one figure in sixteens
@@ -430,6 +438,10 @@ impl<'a> Cursor<'a> {
                 't' => '\t',
                 'r' => '\r',
                 '0' => '\0',
+                'a' => '\u{7}',
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'v' => '\u{b}',
                 c => c,
             });
         } else {
@@ -439,16 +451,225 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn string(&mut self, quote: char) -> Result<(), String> {
-        self.string_mode(quote, false, false)
+    fn string_open(&self) -> Option<(usize, String, bool, bool)> {
+        let lang = self.lang;
+        let mut count = 0;
+        let (mut raw, mut bytes, mut plain, mut format) = (false, false, false, false);
+        while let Some(c) = self.look(count) {
+            if lang.quotes.contains(&c) { break; }
+            if count == 2 { return None; }
+            if lang.raw_prefixes.contains(&c) && !raw { raw = true; }
+            else if lang.byte_prefixes.contains(&c) && !bytes { bytes = true; }
+            else if lang.plain_prefixes.contains(&c) && !plain { plain = true; }
+            else if lang.format_prefixes.contains(&c) && !format { format = true; }
+            else { return None; }
+            count += 1;
+        }
+        if count == 2 && (!raw || plain || bytes == format) { return None; }
+        let quote = self.look(count).filter(|c| lang.quotes.contains(c))?;
+        let mark = lang.long_quotes.iter().filter(|q| at_word(&self.text, self.at + count, q))
+            .max_by_key(|q| q.len()).cloned().unwrap_or_else(|| quote.to_string());
+        Some((count, mark, raw, format))
     }
 
-    fn string_mode(&mut self, quote: char, plain: bool, prefixed: bool) -> Result<(), String> {
+    fn string_words(&self) -> String {
+        self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())
+    }
+
+    fn string_text(&mut self, text: &mut String, fault: &mut bool, line: usize, col: usize) {
+        if *fault {
+            self.push(Shape::StringFault, self.lang.escape_unavailable.clone().unwrap_or_else(|| "Unicode escape cannot be represented".into()), 0, line, col);
+        } else {
+            self.push(Shape::Quote, std::mem::take(text), 0, line, col);
+        }
+        text.clear();
+        *fault = false;
+    }
+
+    /// A prefixed or long string, with each field kept apart from its
+    /// text until the assembler has read the expression it holds.
+    fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        let mark = self.lang.long_quotes.iter().find(|mark| at_word(&self.text, self.at, mark))
-            .cloned().unwrap_or_else(|| quote.to_string());
-        for _ in mark.chars() { self.step(); }
-        let raw = plain || self.lang.raw_quotes.contains(&quote);
+        let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
+        for _ in 0..prefix + mark.chars().count() { self.step(); }
+        if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
+        let (mut text, mut fault) = (String::new(), false);
+        loop {
+            if at_word(&self.text, self.at, mark) {
+                for _ in mark.chars() { self.step(); }
+                break;
+            }
+            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
+            if format && (c == '{' || c == '}') {
+                if self.look(1) == Some(c) {
+                    self.step(); self.step(); text.push(c);
+                } else if c == '{' {
+                    self.string_text(&mut text, &mut fault, line, col);
+                    self.string_field(raw)?;
+                } else { return Err(self.string_words()); }
+            } else if c == '\\' {
+                self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
+            } else { text.push(self.step()); }
+        }
+        self.string_text(&mut text, &mut fault, line, col);
+        if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
+        Ok(())
+    }
+
+    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool) -> Result<(), String> {
+        let Some(next) = self.look(1) else { return Err(self.string_words()); };
+        if raw {
+            text.push(self.step());
+            if !format || !matches!(next, '{' | '}') { text.push(self.step()); }
+            return Ok(());
+        }
+        let lang = self.lang;
+        if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {
+            text.push(self.step()); text.push(self.step());
+            return Ok(());
+        }
+        if bytes && lang.octal_escapes && next.is_digit(8) {
+            self.step();
+            let mut number = 0;
+            for _ in 0..3 {
+                let Some(digit) = self.look(0).and_then(|c| c.to_digit(8)) else { break; };
+                number = number * 8 + digit;
+                self.step();
+            }
+            text.push(char::from((number & 255) as u8));
+            return Ok(());
+        }
+        if Some(next) == lang.named_letter && self.look(2) == Some('{') {
+            self.step(); self.step(); self.step();
+            while self.look(0).map_or(false, |c| c != '}') { self.step(); }
+            if self.look(0).is_none() { return Err(self.string_words()); }
+            self.step(); *fault = true;
+            return Ok(());
+        }
+        let digits = if Some(next) == lang.codepoint_letter { lang.codepoint_digits }
+            else if Some(next) == lang.wide_letter { lang.wide_digits } else { None };
+        if let Some(digits) = digits {
+            self.step(); self.step();
+            let mut number = 0u32;
+            for _ in 0..digits {
+                let d = self.look(0).and_then(|c| c.to_digit(16))
+                    .ok_or_else(|| lang.codepoint_amiss.clone().unwrap_or_else(|| self.string_words()))?;
+                number = number.checked_mul(16).and_then(|n| n.checked_add(d))
+                    .ok_or_else(|| lang.codepoint_beyond.clone().unwrap_or_else(|| self.string_words()))?;
+                self.step();
+            }
+            if number > 0x10ffff { return Err(lang.codepoint_beyond.clone().unwrap_or_else(|| self.string_words())); }
+            match char::from_u32(number) { Some(c) => text.push(c), None => *fault = true }
+            return Ok(());
+        }
+        if Some(next) == lang.byte_letter {
+            if let Some(digits) = lang.byte_digits {
+                if !(0..digits).all(|n| self.look(n + 2).map_or(false, |c| c.is_ascii_hexdigit())) {
+                    return Err(lang.codepoint_amiss.clone().unwrap_or_else(|| self.string_words()));
+                }
+            }
+        }
+        if format && matches!(next, '{' | '}') { text.push(self.step()); return Ok(()); }
+        if lang.continued_strings && matches!(next, '\n' | '\r') {
+            self.step(); self.step();
+            if next == '\r' && self.look(0) == Some('\n') { self.step(); }
+            return Ok(());
+        }
+        let letters: Vec<char> = lang.escape_letters.iter().chain(&lang.control_escapes).copied().collect();
+        let how = Escapes { letters: &letters, quote: None, numbered: true, woven: false };
+        self.escape(&how, text, &mut Vec::new())
+    }
+
+    fn field_space(&mut self) -> String {
+        let mut kept = String::new();
+        loop {
+            if self.look(0).map_or(false, |c| c.is_whitespace()) { kept.push(self.step()); }
+            else if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
+            } else { break; }
+        }
+        kept
+    }
+
+    fn string_field(&mut self, raw: bool) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        self.step();
+        let mut expression = String::new();
+        let mut brackets = Vec::new();
+        loop {
+            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            if let Some((prefix, mark, is_raw, format)) = self.string_open() {
+                let saved = self.out.len();
+                let began = self.at;
+                self.rich_string(prefix, &mark, is_raw, format)?;
+                self.out.truncate(saved);
+                expression.extend(self.text[began..self.at].iter());
+                continue;
+            }
+            if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
+                continue;
+            }
+            if brackets.is_empty() && (matches!(c, '}' | ':') || c == '!' && self.look(1) != Some('=')
+                || c == '=' && self.look(1) != Some('=') && !matches!(self.text.get(self.at.wrapping_sub(1)), Some('!' | '<' | '>' | '='))) { break; }
+            match c {
+                '(' => brackets.push(')'), '[' => brackets.push(']'), '{' => brackets.push('}'),
+                ')' | ']' | '}' => { if brackets.pop() != Some(c) { return Err(self.string_words()); } }
+                _ => {}
+            }
+            expression.push(self.step());
+        }
+        if expression.trim().is_empty() { return Err(self.string_words()); }
+        let debug = self.look(0) == Some('=');
+        if debug {
+            self.step();
+            let shown = format!("{}={}", expression, self.field_space());
+            self.push(Shape::Quote, shown, 0, line, col);
+        }
+        let mut conversion = String::new();
+        if self.look(0) == Some('!') {
+            self.step();
+            let Some(c @ ('r' | 's' | 'a')) = self.look(0) else { return Err(self.string_words()); };
+            conversion.push(c); self.step();
+            self.field_space();
+        } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
+        self.push(Shape::StringField, conversion, 0, line, col);
+        let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
+        self.push(Shape::Sign, group.open.clone(), 0, line, col);
+        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+        inner.run(false)?;
+        self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
+        self.push(Shape::Sign, group.close.clone(), 0, line, col);
+        self.push(Shape::StringBegin, String::new(), 0, line, col);
+        let (mut text, mut fault) = (String::new(), false);
+        if self.look(0) == Some(':') {
+            self.step();
+            loop {
+                match self.look(0) {
+                    Some('}') => break,
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw)?; }
+                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
+                    Some(_) => text.push(self.step()),
+                    None => return Err(self.string_words()),
+                }
+            }
+        }
+        if self.look(0) != Some('}') { return Err(self.string_words()); }
+        self.step();
+        self.string_text(&mut text, &mut fault, line, col);
+        self.push(Shape::StringEnd, String::new(), 0, line, col);
+        Ok(())
+    }
+
+    fn string(&mut self, quote: char) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        let width = self.lang.long_quotes.iter().find(|mark| {
+            mark.chars().all(|ch| ch == quote)
+                && mark.chars().enumerate().all(|(i, ch)| self.look(i) == Some(ch))
+        }).map_or(1, |mark| mark.chars().count());
+        for _ in 0..width { self.step(); }
+        let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
             letters: match raw {
@@ -460,28 +681,17 @@ impl<'a> Cursor<'a> {
             woven,
         };
         let mut s = String::new();
-        let mut deferred = false;
         // Char positions in s that came escaped: text, never code.
         let mut shielded: Vec<usize> = Vec::new();
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
-            if at_word(&self.text, self.at, &mark) {
-                for _ in mark.chars() { self.step(); }
-                break;
-            }
-            if !plain && self.lang.continued_strings && c == '\\' && self.look(1) == Some('\n') {
-                self.step(); self.step();
-                continue;
-            }
-            if plain && c == '\\' && self.look(1).is_some() {
-                s.push(self.step()); s.push(self.step());
-                continue;
-            }
             if c == '\\' && self.look(1).is_some() {
-                deferred |= !raw && (prefixed || mark.len() > 1)
-                    && self.look(1).map_or(false, |letter| self.lang.deferred_escapes.contains(&letter));
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
+            }
+            if c == quote && (0..width).all(|i| self.look(i) == Some(quote)) {
+                for _ in 0..width { self.step(); }
+                break;
             }
             self.step();
             s.push(c);
@@ -489,47 +699,7 @@ impl<'a> Cursor<'a> {
         if woven {
             return self.woven(s, &shielded, line, col);
         }
-        if deferred { self.push(Shape::PendingQuote, self.lang.escape_unavailable.clone().unwrap_or_default(), 0, line, col); }
         self.push(Shape::Quote, s, 0, line, col);
-        Ok(())
-    }
-
-    fn prefixed_quote(&self) -> Option<(usize, bool, bool, bool)> {
-        let mut count = 0;
-        let (mut raw, mut bytes, mut formatted) = (false, false, false);
-        while count < 2 {
-            let letter = self.look(count)?.to_string();
-            if self.lang.raw_prefixes.contains(&letter) && !raw { raw = true; }
-            else if self.lang.byte_prefixes.contains(&letter) && !bytes && !formatted { bytes = true; }
-            else if self.lang.format_prefixes.contains(&letter) && !formatted && !bytes { formatted = true; }
-            else if self.lang.plain_prefixes.contains(&letter) && count == 0 {
-                return self.look(1).filter(|c| self.lang.quotes.contains(c)).map(|_| (1, false, false, false));
-            } else { return None; }
-            count += 1;
-            if self.look(count).map_or(false, |c| self.lang.quotes.contains(&c)) { return Some((count, raw, bytes, formatted)); }
-        }
-        None
-    }
-
-    fn prefixed_text(&mut self, count: usize, raw: bool, bytes: bool, formatted: bool) -> Result<(), String> {
-        for _ in 0..count { self.step(); }
-        self.string_mode(self.look(0).unwrap(), raw, true)?;
-        if !bytes && !formatted { return Ok(()); }
-        let quoted = self.out.pop().unwrap();
-        let words = if bytes { &self.lang.bytes_unready } else { &self.lang.format_unready };
-        self.push(Shape::PendingQuote, words.first().cloned().unwrap_or_default(), 0, quoted.row, quoted.column);
-        if bytes { self.out.push(quoted); return Ok(()); }
-        let brackets = self.lang.array_brackets.clone().ok_or("Formatted fields need array brackets")?;
-        self.push(Shape::Sign, brackets.open, 0, quoted.row, quoted.column);
-        for field in format_fields(&quoted.lexeme).map_err(|_| self.lang.string_amiss.clone().unwrap_or_default())? {
-            let group = self.lang.grouping.clone().ok_or("Formatted fields need grouping brackets")?;
-            self.push(Shape::Sign, group.open, 0, quoted.row, quoted.column);
-            let inner = lex(&field, self.lang)?;
-            self.out.extend(inner.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd | Shape::Finish)));
-            self.push(Shape::Sign, group.close, 0, quoted.row, quoted.column);
-            if let Some(comma) = &brackets.between { self.push(Shape::Sign, comma.clone(), 0, quoted.row, quoted.column); }
-        }
-        self.push(Shape::Sign, brackets.close, 0, quoted.row, quoted.column);
         Ok(())
     }
 
@@ -799,7 +969,7 @@ impl<'a> Cursor<'a> {
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
-        for name in lang.builtins.keys() {
+        for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
             if name.len() <= s.len() || !name.starts_with(s.as_str()) {
                 continue;
             }
@@ -870,6 +1040,20 @@ impl<'a> Cursor<'a> {
                     continue;
                 }
             }
+            if !lang.long_quotes.is_empty() {
+                if lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                    while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
+                    continue;
+                }
+                if let Some((prefix, mark, raw, format)) = self.string_open() {
+                    self.rich_string(prefix, &mark, raw, format)?;
+                    continue;
+                }
+                if lang.adjacent_strings && self.look(0) == Some('\\') && self.look(1) == Some('\n') {
+                    self.step(); self.step();
+                    continue;
+                }
+            }
             let c = self.text[self.at];
             if c == '\n' {
                 let (line, col) = (self.row, self.column);
@@ -890,8 +1074,6 @@ impl<'a> Cursor<'a> {
                 // A sign standing before a name, saying nothing: PHP's `\Error`.
                 self.step();
                 self.word(false);
-            } else if let Some((count, raw, bytes, formatted)) = self.prefixed_quote() {
-                self.prefixed_text(count, raw, bytes, formatted)?;
             } else if lang.begins_name(c) {
                 self.word(false);
             } else if lang.sigil == Some(c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {
@@ -1116,44 +1298,4 @@ fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
 /// stands nowhere after it.
 fn word_at(chars: &[char], from: usize, mark: &str) -> Option<usize> {
     (from..chars.len()).find(|at| at_word(chars, *at, mark))
-}
-
-fn format_fields(text: &str) -> Result<Vec<String>, String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut at = 0;
-    let mut fields = Vec::new();
-    while at < chars.len() {
-        if matches!(chars[at], '{' | '}') && chars.get(at + 1) == Some(&chars[at]) { at += 2; continue; }
-        if chars[at] != '{' { at += 1; continue; }
-        at += 1;
-        let start = at;
-        let mut closes = Vec::new();
-        let mut quote = None;
-        while at < chars.len() {
-            let c = chars[at];
-            if let Some(q) = quote {
-                if c == '\\' { at += 2; continue; }
-                if c == q { quote = None; }
-            } else if matches!(c, '\'' | '"') { quote = Some(c); }
-            else if closes.is_empty() && (matches!(c, ':' | '}') || c == '!' && chars.get(at + 1) != Some(&'=')) { break; }
-            else {
-                match c {
-                    '(' => closes.push(')'), '[' => closes.push(']'), '{' => closes.push('}'),
-                    ')' | ']' | '}' => { if closes.pop() != Some(c) { return Err("Invalid formatted field".into()); } }
-                    _ => {}
-                }
-            }
-            at += 1;
-        }
-        if at == chars.len() || start == at { return Err("Invalid formatted field".into()); }
-        let expression: String = chars[start..at].iter().collect();
-        fields.push(expression.trim_end().trim_end_matches('=').trim_end().to_string());
-        if chars[at] != '}' {
-            while at < chars.len() && chars[at] != '}' && chars[at] != '{' { at += 1; }
-            if chars.get(at) == Some(&'{') { continue; }
-        }
-        if at == chars.len() { return Err("Unclosed formatted field".into()); }
-        at += 1;
-    }
-    Ok(fields)
 }
