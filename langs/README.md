@@ -499,10 +499,12 @@ only. The extension labels so far, all from PHP:
   otherwise. A method takes its object before the written arguments; a
   pipe keeps the ordinary rules for changing the array named on its left.
 - `ext.stmt.class.unready`: words said when a class form has been read but
-  cannot yet run: header keywords, annotations, or statements in a class
+  cannot yet run: header keywords or unpacking, annotations, classes inside
+  functions, or statements in a class
   body beyond methods, assignments, nested classes, plain strings and pass.
   A parent call outside a method, or one given explicit arguments, also
-  stops with these words. Nothing in such a form is silently carried out.
+  stops with these words. A pipe that changes an unnamed array also stops
+  here. Nothing in such a form is silently carried out.
 - `ext.op.instanceof`: whether a value is an object of a class or of one
   beneath it.
 - `ext.stmt.try`, `ext.stmt.catch`, `ext.stmt.finally`, `ext.stmt.throw`

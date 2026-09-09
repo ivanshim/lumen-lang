@@ -58,6 +58,7 @@ pub struct Builder<'a> {
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
     receiver: Option<String>,
+    class_bindings: Vec<(usize, HashMap<String, Address>)>,
     /// Which parameters of each program take a name's own cell instead
     /// of a copy, read from the tokens before anything is built.
     shared_args: HashMap<String, Vec<bool>>,
@@ -240,7 +241,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { receiver: None, within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
+    let mut r = Builder { class_bindings: Vec::new(), receiver: None, within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(),
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
@@ -853,6 +854,11 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if let Some((depth, names)) = self.class_bindings.last() {
+            if *depth == self.layers.len() {
+                if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }
+            }
+        }
         // The word a language uses for the line it is written on stands
         // for that line, which is known while the form is built.
         if self.table.single("ext.system.source.line") == Some(name) {
@@ -1593,16 +1599,18 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let mut setup = Vec::new();
         let mut parent = None;
-        let mut cannot = false;
+        let mut cannot = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
             let end = table.single("ext.stmt.class.bases.close").ok_or("The bases need a closing mark")?;
             let mut first = true;
             while !self.sign(end) {
+                let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
+                if expanded { self.advance(); cannot = true; }
                 let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
                 if keyword { self.pos += 2; cannot = true; }
                 let value = self.expr(0)?;
-                if first && !keyword {
+                if first && !keyword && !expanded {
                     let slot = self.gensym("parent");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
                     parent = Some(slot);
@@ -1625,6 +1633,7 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
         }
         let mut methods = Vec::new();
+        self.class_bindings.push((self.layers.len(), HashMap::new()));
         let mut attributes = Vec::new();
         let mut values = Vec::new();
         if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
@@ -1635,6 +1644,7 @@ impl<'a> Builder<'a> {
                 self.advance();
                 let method_name = self.need_word("as the method name")?;
                 let body = self.method(&method_name)?;
+                methods.retain(|(old, _)| old != &method_name);
                 methods.push((method_name, body));
             } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
                 self.advance();
@@ -1649,6 +1659,12 @@ impl<'a> Builder<'a> {
                     self.pos += 2;
                     attributes.push(member);
                     Some(self.expr(0)?)
+                } else if self.look().shape == Shape::Bare && table.spells("block.intro", &self.glance(1).lexeme) {
+                    self.pos += 2;
+                    let _annotation = self.expr(0)?;
+                    if self.on_assign() { self.advance(); let _value = self.expr(0)?; }
+                    cannot = true;
+                    None
                 } else {
                     let _read = self.stmt()?;
                     cannot = true;
@@ -1657,6 +1673,12 @@ impl<'a> Builder<'a> {
                 if let Some(value) = value {
                     let place = self.gensym("attribute");
                     setup.push(Form::Write(place.clone(), Box::new(value)));
+                    let word = attributes.last().expect("an attribute").clone();
+                    if let Some(index) = attributes[..attributes.len() - 1].iter().position(|n| n == &word) {
+                        attributes.remove(index);
+                        values.remove(index + usize::from(parent.is_some()));
+                    }
+                    self.class_bindings.last_mut().expect("the class namespace").1.insert(word, place.clone());
                     values.push(Form::Read(place));
                 }
             }
@@ -1666,6 +1688,7 @@ impl<'a> Builder<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.advance();
         }
+        self.class_bindings.pop();
         self.within = previous;
         if cannot {
             setup.truncate(before_body);
@@ -1676,7 +1699,11 @@ impl<'a> Builder<'a> {
             shared_names: attributes, constant_names: vec![], methods, extends: parent.is_some(),
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
-        setup.push(self.write(&named, declaration));
+        if self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len()) {
+            let slot = self.gensym("inner_class");
+            self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
+            setup.push(Form::Write(slot, Box::new(declaration)));
+        } else { setup.push(self.write(&named, declaration)); }
         Ok(sequence(setup))
     }
 
@@ -4395,13 +4422,14 @@ impl<'a> Builder<'a> {
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {
-                            Some(slot) => sequence(vec![fallback, Form::Write(slot.clone(), Box::new(Form::Read(held.clone())))]),
+                            Some(slot) => sequence(vec![fallback, Form::Write(slot.clone(), Box::new(Form::Read(held.clone()))), constant(Value::Nil)]),
                             None => r.class_not_ready(),
                         });
                     }
                     Ok(fallback)
                 })?;
-                node = sequence(vec![save, prim_call(Prim::Choose, vec![test, yes, no])]);
+                let branch = self.choose(test, yes, no);
+                node = sequence(vec![save, branch]);
                 continue;
             }
             let mut given = vec![node];

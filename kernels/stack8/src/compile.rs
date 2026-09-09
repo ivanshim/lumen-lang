@@ -120,6 +120,7 @@ pub struct Compiler<'a> {
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
     method_self: Option<String>,
+    class_names: Vec<(usize, HashMap<String, String>)>,
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
@@ -261,7 +262,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { method_self: None, lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
+    let mut a = Compiler { class_names: Vec::new(), method_self: None, lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new() };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -568,6 +569,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
+        if let Some(alias) = alias {
+            let slot = self.cell_to_read(&alias, false);
+            self.put(Instr::Read(slot));
+            return;
+        }
         // The name a language gives the line it is written on stands
         // for that line itself, known while assembling.
         if self.lang.line_binding.as_deref() == Some(name) {
@@ -2264,18 +2271,20 @@ impl<'a> Compiler<'a> {
         self.take();
         let name = self.want_name("as the class name")?;
         let mut base = None;
-        let mut unready = false;
+        let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
             let close = lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
             let apart = lang.calling.as_ref().and_then(|c| c.between.clone());
             let mut count = 0;
             while !self.at_symbol(&close) {
+                let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
+                if spread { self.take(); unready = true; }
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
                 if keyword { self.take(); self.take(); unready = true; }
                 let from = self.mark();
                 self.expr(0)?;
-                if count == 0 && !keyword {
+                if count == 0 && !keyword && !spread {
                     let held = self.gensym("base");
                     self.write(&held);
                     base = Some(held);
@@ -2296,14 +2305,17 @@ impl<'a> Compiler<'a> {
             self.take();
             self.skip_seps();
         }
+        self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
-        let mut shared = Vec::new();
+        let mut shared: Vec<(String, String)> = Vec::new();
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             if self.on_keyword(&lang.function_words) {
                 self.take();
                 let named = self.want_name("as the method name")?;
-                methods.push((named.clone(), self.method(&named)?));
+                let method = self.method(&named)?;
+                methods.retain(|(old, _)| old != &named);
+                methods.push((named, method));
             } else if self.on_keyword(&lang.pass_words) {
                 self.take();
             } else if self.look().shape == Shape::Quote {
@@ -2314,6 +2326,8 @@ impl<'a> Compiler<'a> {
                 self.read(&named);
                 let held = self.gensym("nested");
                 self.write(&held);
+                self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
+                shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
             } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
                 let named = self.take().lexeme;
@@ -2321,7 +2335,16 @@ impl<'a> Compiler<'a> {
                 self.expr(0)?;
                 let held = self.gensym("attribute");
                 self.write(&held);
+                self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
+                shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
+            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.block_intros, &self.look_ahead(1).lexeme) {
+                self.take();
+                self.take();
+                self.expr(0)?;
+                self.discard();
+                if self.on_assign() { self.take(); self.expr(0)?; self.discard(); }
+                unready = true;
             } else {
                 self.stmt()?;
                 unready = true;
@@ -2332,6 +2355,7 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
         }
+        self.class_names.pop();
         self.within = outer;
         if unready {
             self.piece().instrs.truncate(body_at);
@@ -2344,7 +2368,11 @@ impl<'a> Compiler<'a> {
         let plan = Plan { name: name.clone(), answers: 0, field_names: Vec::new(), field_reach: Vec::new(),
             shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), count);
-        self.write(&name);
+        if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
+            let private = self.gensym("class");
+            self.write(&private);
+            self.class_names.last_mut().expect("the enclosing class").1.insert(name, private);
+        } else { self.write(&name); }
         Ok(())
     }
 
