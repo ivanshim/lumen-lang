@@ -1861,7 +1861,11 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
-                f.cells.borrow_mut()[slot.at] = Value::Unset;
+                let mut places = f.cells.borrow_mut();
+                match &places[slot.at] {
+                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") => *cell.borrow_mut() = Value::Unset,
+                    _ => places[slot.at] = Value::Unset,
+                }
                 Ok(Value::Nil)
             }
             Form::ShareWithin(under, places) => {

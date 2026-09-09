@@ -1249,6 +1249,9 @@ impl<'a> Engine<'a> {
                 return Ok(&frame[s]);
             }
         }
+        if self.lang.closes_over && !slot.near.is_empty() {
+            return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
+        }
         if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
             self.complain(Complaint::Warning, &format!("Undefined variable {}", slot.ident));
             return Ok(&self.nothing);
@@ -1284,6 +1287,9 @@ impl<'a> Engine<'a> {
             if !matches!(frame[s], Value::Blank) {
                 return Ok(&mut frame[s]);
             }
+        }
+        if self.lang.closes_over && !slot.near.is_empty() {
+            return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
         if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
             self.complain(Complaint::Warning, &format!("Undefined variable {}", slot.ident));
@@ -1919,6 +1925,9 @@ impl<'a> Engine<'a> {
                 Instr::Nothing => {}
                 Instr::Forget(slot) => {
                     for &s in &slot.near {
+                        if self.lang.closes_over {
+                            if let Value::Bond(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
+                        }
                         frame[s] = Value::Blank;
                     }
                     if slot.near.is_empty() {

@@ -980,6 +980,9 @@ impl<'a> Builder<'a> {
         self.layers.push(Layer { borrowed: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
+                if known.borrowed.iter().any(|word| params.contains(word)) {
+                    return Err(self.table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
+                }
                 let scope = self.layers.last_mut().unwrap();
                 for word in &known.bound {
                     if !scope.idents.contains(word) { scope.idents.push(word.clone()); }
@@ -1230,6 +1233,7 @@ impl<'a> Builder<'a> {
     fn class_scope(&mut self) -> Res<Form> {
         self.advance();
         let name = self.need_word("as the class name")?;
+        if self.table.flag("ext.stmt.function.closes_over") { self.address_to_write(&name); }
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
             loop {
@@ -3359,13 +3363,15 @@ impl<'a> Builder<'a> {
         Ok(sequence(items))
     }
 
-    /// A lambda gives its single expression back. Only its defaults
-    /// are carried from the place where it was made.
+    /// A lambda gives its single expression back. Defaults keep their
+    /// values; free bindings are found through the enclosing frames.
     fn lambda_form(&mut self) -> Res<Form> {
         let table = self.table;
         let colon = table.single("block.intro").ok_or("Lambda needs a body mark")?;
         let comma = table.single("syntax.call.separator").ok_or("Lambda needs a parameter separator")?;
         let mut names = Vec::new();
+        let mut ways = Vec::new();
+        let mut positional_mark = false;
         let mut spares = Vec::new();
         let mut before = Vec::new();
         let mut gather = None;
@@ -3375,6 +3381,13 @@ impl<'a> Builder<'a> {
             if self.sign(colon) { self.advance(); break; }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
+                if table.flag("ext.stmt.function.closes_over") {
+                    if positional_mark || named_only || names.is_empty() {
+                        return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
+                    }
+                    positional_mark = true;
+                    for way in &mut ways { *way = 'p'; }
+                }
                 self.advance();
             } else {
                 let many = table.spells("op.mul", &self.look().lexeme);
@@ -3393,6 +3406,7 @@ impl<'a> Builder<'a> {
                 let parameter = self.need_word("as a lambda parameter")?;
                 if names.contains(&parameter) { return Err("Duplicate lambda parameter".to_string()); }
                 names.push(parameter);
+                ways.push(if many { 'v' } else { 'b' });
                 if self.on_assign() {
                     self.advance();
                     let worth = self.expr(0)?;
@@ -3405,6 +3419,8 @@ impl<'a> Builder<'a> {
         }
         let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
         let parameters = names.clone();
+        let bind_arguments = table.flag("ext.stmt.function.closes_over") && table.flag("ext.syntax.call.bind_names") && !cannot_call;
+        if bind_arguments { self.taking = Some(ways); }
         let enclosing: Vec<String> = self.layers.iter().skip(1).filter(|l| l.holds == Holds::Every).flat_map(|l| l.idents.clone()).collect();
         let mut unavailable = self.outside_lambda.clone();
         unavailable.extend(enclosing);
@@ -3412,6 +3428,7 @@ impl<'a> Builder<'a> {
         let mut function = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
             for (index, source) in &spares {
+                if bind_arguments { b.carrying.push(*index); continue; }
                 let cell = b.address_to_write(&source.ident);
                 b.carrying.push(cell.at);
                 let target = b.address_to_write(&parameters[*index]);
@@ -3427,7 +3444,7 @@ impl<'a> Builder<'a> {
         })?;
         self.outside_lambda = prior;
         if let Form::Const(Value::Routine(routine)) = &mut function {
-            Rc::get_mut(routine).expect("new lambda").gather_from = gather;
+            Rc::get_mut(routine).expect("new lambda").gather_from = if bind_arguments { None } else { gather };
         }
         if !spares.is_empty() {
             let mut carrying = vec![function];

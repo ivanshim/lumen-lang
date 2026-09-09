@@ -891,6 +891,9 @@ impl<'a> Compiler<'a> {
         });
         if self.lang.closes_over && !self.discovering {
             if let Some(plan) = self.plans.get(&source).cloned() {
+                if plan.nonlocals.iter().any(|name| formals.contains(name)) {
+                    return Err(self.lang.parameters_amiss.first().cloned().unwrap_or_default());
+                }
                 let unit = self.piece();
                 for name in plan.names {
                     if !unit.idents.contains(&name) { unit.idents.push(name); unit.declared.push(false); }
@@ -1041,6 +1044,7 @@ impl<'a> Compiler<'a> {
     fn scoped_class(&mut self) -> Res<()> {
         self.take();
         let named = self.want_name("as the class name")?;
+        if self.lang.closes_over { self.cell_to_write(&named); }
         if self.on_any(&self.lang.class_bases_open) {
             self.take();
             let from = self.mark();
@@ -3467,12 +3471,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// An unbracketed parameter list and one expression make a value.
-    /// Defaults go with that value; names in the body do not.
+    /// Defaults go with that value; free names may go as shared cells.
     fn lambda_value(&mut self) -> Res<()> {
         let lang = self.lang;
         let mark = lang.block_intros.first().cloned().ok_or("Lambda needs a body mark")?;
         let separator = lang.calling.as_ref().and_then(|b| b.between.clone()).ok_or("Lambda needs a parameter separator")?;
         let mut formals = Vec::new();
+        let mut modes = Vec::new();
+        let mut divided = false;
         let mut defaults = Vec::new();
         let mut rest = None;
         let mut keywords = false;
@@ -3480,6 +3486,11 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&mark) {
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Div | Action::DivReal)) {
+                if lang.closes_over {
+                    if divided || keywords || modes.is_empty() { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+                    divided = true;
+                    modes.fill(1);
+                }
                 self.take();
             } else {
                 let star = self.look().lexeme.clone();
@@ -3494,6 +3505,7 @@ impl<'a> Compiler<'a> {
                 let name = self.want_name("as a lambda parameter")?;
                 if formals.contains(&name) { return Err("Duplicate lambda parameter".to_string()); }
                 formals.push(name);
+                modes.push(if spread { 3 } else { 0 });
                 if self.on_assign() {
                     self.take();
                     let hidden = self.gensym("default");
@@ -3507,16 +3519,22 @@ impl<'a> Compiler<'a> {
         self.take();
         let least = rest.unwrap_or(formals.len()).saturating_sub(defaults.len());
         let given = formals.clone();
+        let binds = lang.closes_over && lang.bind_names && !unsupported;
+        if binds { self.parameter_rules = Some(modes); }
         let enclosing = if self.piece().outermost { Vec::new() } else { self.piece().idents.clone() };
         let mut unavailable = self.uncarried.clone();
         unavailable.extend(enclosing);
         let surrounding = std::mem::replace(&mut self.uncarried, unavailable);
         let mut program = self.routine(ANONYMOUS, formals, least, true, |a| {
-            for (_, named) in &defaults {
-                let cell = a.cell_to_write(named);
-                a.carrying.push(cell.near[0]);
+            for (at, named) in &defaults {
+                if binds { a.carrying.push(*at); }
+                else {
+                    let cell = a.cell_to_write(named);
+                    a.carrying.push(cell.near[0]);
+                }
             }
             for (at, hidden) in &defaults {
+                if binds { continue; }
                 a.put(Instr::Missing(*at));
                 let done = a.skip();
                 a.read(hidden);
@@ -3536,7 +3554,7 @@ impl<'a> Compiler<'a> {
             Ok(())
         })?;
         self.uncarried = surrounding;
-        Rc::get_mut(&mut program).expect("a fresh lambda").rest_at = rest;
+        Rc::get_mut(&mut program).expect("a fresh lambda").rest_at = if binds { None } else { rest };
         for (_, named) in &defaults { self.read(named); }
         self.constant(Value::Routine(program));
         if !defaults.is_empty() { self.act(Action::Close, defaults.len() + 1); }
