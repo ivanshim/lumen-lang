@@ -11,13 +11,18 @@ numbers; `10.py` asks for that refusal. Flags become whole numbers.
 `ext.op.bit.xor`, with either sign and with flags. `3.py` moves them by
 `ext.op.bit.left` and `ext.op.bit.right`. `4.py` turns and joins numbers
 longer than a machine word with `ext.op.bit.not` and the same signs.
-`ext.op.bit.unbounded` keeps all their bits, sign and all.
+`ext.op.bit.whole` keeps all their bits, sign and all.
 
 `5.py` checks their precedence and compound writes. `6.py` asks for a
 negative shift, whose words are `ext.system.fault.shift`. `7.py` and
 `8.py` ask for bits from a real and from text; these are refused with
-`ext.op.bit.unbounded.operand`. `9.py` asks for a left shift too long
-for the host to hold, named by `ext.op.bit.unbounded.room`.
+`ext.system.fault.operands`. `9.py` asks for a left shift too long
+for the host to hold, named by `ext.op.bit.whole.room`.
 
 Classes, tuples, string prefixes and compound statement forms stand in
 the first-wave pieces. These programs do not supply those readers.
+
+The whole-bit reading and running are taken from the lexical piece,
+using its `ext.op.bit.whole` label. The room complaint and the unary
+plus check are refinements here; the merge should keep that one account
+of whole-bit operations.

@@ -1398,15 +1398,15 @@ only. The extension labels so far, all from PHP:
   and read both sides as numbers however they were written. Like any
   operator these take their tiers from `op.precedence`, and a kernel
   that does not read the labels reads past those tiers too.
-- `ext.op.bit.unbounded`: a switch; the bit signs take whole numbers of
+- `ext.op.bit.whole`: a switch; the bit signs take whole numbers of
   any length, keeping the sign as though it went on without end.
   Fractions, text and objects are refused; flags stand for nought or one,
   and two flags joined by and, or or xor give a flag back. Python spells
   all six bit signs with this switch, in its own precedence tiers;
   compound writes use those same operations.
-- `ext.op.bit.unbounded.operand` and `ext.op.bit.unbounded.room`: the
-  words for a bit operand that is no whole number, and for a left shift
-  whose length cannot fit in the host's address space. A right shift
+- `ext.op.bit.whole.room`: the words for a left shift whose length
+  cannot fit in the host's address space. An operand that is no whole
+  number is refused with `ext.system.fault.operands`. A right shift
   beyond every bit gives nought or minus one according to the sign;
   either shift by a negative count uses `ext.system.fault.shift`.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
@@ -1841,9 +1841,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.bit.unbounded` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.op.bit.unbounded.operand` | - | - | `TypeError: bitwise operations require integers` | - | - | - | - | - | - | - |
-| `ext.op.bit.unbounded.room` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.room` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
@@ -2016,7 +2015,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
-| `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
+| `ext.system.fault.operands` | - | - | `TypeError: bitwise operations require integers` | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | `ValueError: negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
