@@ -60,6 +60,7 @@ impl Kind {
 /// each other and in no other place.
 #[derive(Debug, Clone)]
 pub struct Ratio {
+    pub float_style: bool,
     pub above: BigInt,
     pub beneath: BigInt,
     pub places: Option<usize>,
@@ -337,6 +338,10 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
+            Value::Frac(e) if e.float_style => {
+                let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
+                format!("{number:?}").to_lowercase()
+            }
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -692,7 +697,7 @@ pub fn past_the_numbers(x: f64, figures: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Frac(Rc::new(Ratio { above, beneath: BigInt::zero(), places: Some(figures), under: false }))
+    Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::zero(), places: Some(figures), under: false }))
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,

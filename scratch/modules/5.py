@@ -21,3 +21,8 @@ print(p.x, q.x, p.y)
 queue = deque([1, 2])
 queue.appendleft(0)
 print(queue.popleft(), queue.pop())
+
+from test import support
+with support.captured_stdout() as stream:
+    print('kept')
+print(stream.getvalue(), end='')

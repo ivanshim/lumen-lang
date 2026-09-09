@@ -94,7 +94,7 @@ class _AttrGetter:
             # A dotted attribute is followed one word at a time.
             word = ''
             held = value
-            for ch in name:
+            for ch in list(name):
                 if ch == '.':
                     held = getattr(held, word)
                     word = ''
@@ -107,3 +107,56 @@ class _AttrGetter:
 
 def attrgetter(*names):
     return _AttrGetter(names).take
+
+# Bit work can be written with division and remainders, including the
+# sign extension of negative whole numbers.
+def _bits(a, b, operation):
+    result = 0
+    place = 1
+    while a not in (0, -1) or b not in (0, -1):
+        left = a % 2
+        right = b % 2
+        if operation == 'and':
+            digit = left * right
+        elif operation == 'or':
+            digit = 1 if left + right != 0 else 0
+        else:
+            digit = (left + right) % 2
+        result += digit * place
+        place *= 2
+        a //= 2
+        b //= 2
+    negative = (a == -1 and b == -1) if operation == 'and' else (a == -1 or b == -1)
+    if operation == 'xor':
+        negative = a != b
+    if negative:
+        result -= place
+    return result
+
+def and_(a, b):
+    return _bits(a, b, 'and')
+
+def or_(a, b):
+    return _bits(a, b, 'or')
+
+def xor(a, b):
+    return _bits(a, b, 'xor')
+
+def invert(a):
+    return -a - 1
+
+def lshift(a, b):
+    if b < 0:
+        raise 'ValueError: negative shift count'
+    return a * 2 ** b
+
+def rshift(a, b):
+    if b < 0:
+        raise 'ValueError: negative shift count'
+    return a // 2 ** b
+
+def concat(a, b):
+    return a + b
+
+def matmul(a, b):
+    raise 'NotImplementedError: matrix multiplication is not supported'

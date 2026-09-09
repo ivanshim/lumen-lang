@@ -419,6 +419,8 @@ pub struct Lang {
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
+    pub math_floating: bool,
+    pub module_cache: Vec<String>,
     pub module_names: Vec<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
@@ -822,6 +824,8 @@ w ext.builtin.instance
 w ext.builtin.module.load
 w ext.builtin.copy
 w ext.stmt.with.enter | w ext.stmt.with.leave
+w ext.system.module.cache
+b ext.builtin.math.floating
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1641,6 +1645,8 @@ impl Lang {
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
+            math_floating: r.flag("ext.builtin.math.floating")?,
+            module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,

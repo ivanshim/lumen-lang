@@ -94,29 +94,31 @@ class swap_attr:
 
 class captured_stdout:
     def __init__(self):
-        self.stream = StringIO()
+        self.text = ''
+        self.active = False
 
     def __enter__(self):
-        self.old = sys.stdout
-        sys.stdout = self.stream
-        return self.stream
+        __output_hold()
+        self.active = True
+        return self
+
+    def write(self, text):
+        print(text, end='')
+        return len(text)
+
+    def getvalue(self):
+        if self.active:
+            return __output_held()
+        return self.text
 
     def __exit__(self, kind, value, traceback):
-        sys.stdout = self.old
+        self.text = __output_drop()
+        self.active = False
         return False
 
 class captured_stderr:
     def __init__(self):
-        self.stream = StringIO()
-
-    def __enter__(self):
-        self.old = sys.stderr
-        sys.stderr = self.stream
-        return self.stream
-
-    def __exit__(self, kind, value, traceback):
-        sys.stderr = self.old
-        return False
+        raise 'NotImplementedError: capturing stderr is not supported'
 
 def check_impl_detail(**guards):
     # Stub: this run claims no reference implementation internals.
@@ -151,3 +153,24 @@ class _AlwaysEqual:
 # Comparison dispatch is not yet honoured for user objects. The value
 # remains visible, so uses which require it will meet that limitation.
 ALWAYS_EQ = _AlwaysEqual()
+
+# These entry points can be imported, but their absent machinery must
+# be named before a test can mistake it for a successful check.
+async_yield = _unavailable
+run_yielding_async_fn = _unavailable
+force_not_colorized = _unavailable
+skip_if_double_rounding = _identity
+_1G = 1073741824
+_2G = 2147483648
+_4G = 4294967296
+TestFailed = unittest.AssertionError
+
+class _NeverEqual:
+    def __eq__(self, other):
+        return False
+
+NEVER_EQ = _NeverEqual()
+
+# Tracing control is a stub; the kernel does not install trace callbacks.
+no_tracing = _identity
+SuppressCrashReport = _unavailable

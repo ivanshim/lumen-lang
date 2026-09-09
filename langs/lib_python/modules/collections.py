@@ -19,7 +19,7 @@ def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
     if type(field_names) == type(''):
         names = []
         word = ''
-        for letter in field_names + ' ':
+        for letter in list(field_names + ' '):
             if letter == ' ' or letter == ',':
                 if word != '':
                     names.append(word)

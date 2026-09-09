@@ -14,8 +14,8 @@ pub const DEFAULT_PLACES: usize = 15;
 
 pub fn ratio_of(v: &Value) -> Option<Ratio> {
     Some(match v {
-        Value::Small(n) => Ratio { above: BigInt::from(*n), beneath: BigInt::one(), places: None, under: false },
-        Value::Huge(n) => Ratio { above: (**n).clone(), beneath: BigInt::one(), places: None, under: false },
+        Value::Small(n) => Ratio { float_style: false, above: BigInt::from(*n), beneath: BigInt::one(), places: None, under: false },
+        Value::Huge(n) => Ratio { float_style: false, above: (**n).clone(), beneath: BigInt::one(), places: None, under: false },
         Value::Frac(e) => (**e).clone(),
         _ => return None,
     })
@@ -33,11 +33,11 @@ pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under:
     // its sign alone, so that two got by different roads are one worth.
     if beneath.is_zero() {
         let places = places.or(Some(DEFAULT_PLACES));
-        return Value::Frac(Rc::new(Ratio { above: above.signum(), beneath, places, under: false }));
+        return Value::Frac(Rc::new(Ratio { float_style: false, above: above.signum(), beneath, places, under: false }));
     }
     if above.is_zero() {
         return match places {
-            Some(d) => Value::Frac(Rc::new(Ratio { above, beneath: BigInt::one(), places: Some(d), under })),
+            Some(d) => Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::one(), places: Some(d), under })),
             None => Value::Small(0),
         };
     }
@@ -47,7 +47,7 @@ pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under:
     if places.is_none() && beneath.is_one() {
         Value::from_big(above)
     } else {
-        Value::Frac(Rc::new(Ratio { above, beneath, places, under: false }))
+        Value::Frac(Rc::new(Ratio { float_style: false, above, beneath, places, under: false }))
     }
 }
 
@@ -144,7 +144,7 @@ fn precise(op: Calc, a: &Ratio, b: &Ratio) -> Result<Value, String> {
             let under_nought = whole.is_negative();
             let mut e = whole.abs().to_u64().ok_or_else(|| "Exponent too large".to_string())?;
             let mut base = a.clone();
-            let mut acc = Ratio { above: BigInt::one(), beneath: BigInt::one(), places: a.places, under: false };
+            let mut acc = Ratio { float_style: false, above: BigInt::one(), beneath: BigInt::one(), places: a.places, under: false };
             while e > 0 {
                 if e & 1 == 1 {
                     acc = ratio_of(&precise(Calc::Times, &acc, &base)?).unwrap();

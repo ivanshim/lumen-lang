@@ -3435,6 +3435,7 @@ impl<'a> Engine<'a> {
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };
@@ -4734,7 +4735,9 @@ impl<'a> Engine<'a> {
                     "fdiv" => x / y,
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 };
-                crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES))
+                let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                value
             }
             Builtin::OutBegun => {
                 arity(0)?;
@@ -5832,6 +5835,9 @@ impl Engine<'_> {
             self.world[offset + index] = shared.clone();
             fields.push((name.clone(), shared));
         }
+        for name in &self.lang.module_names {
+            if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }
+        }
         self.made += 1;
         let object = Rc::new(Instance {
             class: Rc::new(Class { name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }),
@@ -5842,12 +5848,13 @@ impl Engine<'_> {
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
-        if let Err(fault) = result { self.modules.remove(path); return Err(fault); }
+        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 parent.fields.borrow_mut().push((name.to_string(), module.clone()));
             }
         }
+        self.refresh_module_cache();
         Ok(module)
     }
 
@@ -5867,7 +5874,14 @@ impl Engine<'_> {
 fn instance_matches(value: &Value, kind: &Value) -> bool {
     if let Value::Array(kinds) = kind { return kinds.iter().any(|k| instance_matches(value, k)); }
     match (value, kind) {
-        (Value::Object(object), Value::Class(class)) => object.class.named(&class.name, false),
+        (Value::Object(object), Value::Class(class)) => {
+            let mut here = Some(object.class.clone());
+            while let Some(current) = here {
+                if Rc::ptr_eq(&current, class) { return true; }
+                here = current.base.clone();
+            }
+            false
+        },
         (_, Value::SortOf(sort)) => value.sort() == Some(*sort),
         _ => false,
     }
@@ -5894,5 +5908,18 @@ fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, 
         Value::Map(items) if deep => Value::Map(Rc::new(items.iter().map(|(key, value)| (duplicate_value(key, true, seen, made), duplicate_value(value, true, seen, made))).collect())),
         Value::Bond(cell) => duplicate_value(&cell.borrow(), deep, seen, made),
         _ => value.clone(),
+    }
+}
+
+impl Engine<'_> {
+    fn refresh_module_cache(&self) {
+        let [owner, member] = self.lang.module_cache.as_slice() else { return };
+        let Some(Value::Object(module)) = self.modules.get(owner) else { return };
+        let values = self.modules.iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
+        let map = Value::Map(Rc::new(values));
+        let mut fields = module.fields.borrow_mut();
+        if let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) {
+            match place { Value::Bond(cell) => *cell.borrow_mut() = map, _ => *place = map }
+        }
     }
 }

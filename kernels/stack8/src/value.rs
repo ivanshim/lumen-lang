@@ -57,6 +57,7 @@ pub struct Frac {
 /// else.
 #[derive(Debug, Clone)]
 pub struct Real {
+    pub floating: bool,
     pub p: BigInt,
     pub q: BigInt,
     pub places: usize,
@@ -355,6 +356,7 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
+            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
@@ -758,7 +760,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false }))
+    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.

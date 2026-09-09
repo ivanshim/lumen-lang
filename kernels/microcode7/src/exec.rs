@@ -4336,7 +4336,11 @@ impl<'a> Machine<'a> {
                     _ => 0.0,
                 };
                 match math::worked(&working, width(1), two) {
-                    Some(got) => crate::data::worth_of_binary(got, self.real_figures()),
+                    Some(got) => {
+                        let mut result = crate::data::worth_of_binary(got, self.real_figures());
+                        if let Value::Frac(number) = &mut result { Rc::make_mut(number).float_style = self.table.flag("ext.builtin.math.floating"); }
+                        result
+                    },
                     None => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 }
             }
@@ -4630,6 +4634,7 @@ impl<'a> Machine<'a> {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
                     (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
@@ -6070,6 +6075,9 @@ impl Machine<'_> {
                 world[beginning + position] = link;
             }
         }
+        for word in self.table.strings("ext.system.module.name") {
+            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::text(path))); }
+        }
         let kind = Blueprint {
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
@@ -6080,6 +6088,7 @@ impl Machine<'_> {
         let scope = self.outermost.clone();
         if let Err(stopped) = self.value_of(&built.program.body, &scope) {
             self.imported.remove(path);
+            self.refresh_import_table();
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
         if let Some((owner, name)) = split {
@@ -6087,6 +6096,7 @@ impl Machine<'_> {
                 parent.holds.borrow_mut().push((name.into(), value.clone()));
             }
         }
+        self.refresh_import_table();
         Ok(value)
     }
 
@@ -6108,7 +6118,14 @@ impl Machine<'_> {
 fn belongs_to(worth: &Value, kind: &Value) -> bool {
     match kind {
         Value::Vector(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
-        Value::Blueprint(class) => match worth { Value::Thing(object) => object.of.goes_by(&class.name, false), _ => false },
+        Value::Blueprint(class) => {
+            let Value::Thing(object) = worth else { return false };
+            let mut current = object.of.clone();
+            loop {
+                if Rc::ptr_eq(&current, class) { return true; }
+                match current.under.clone() { Some(parent) => current = parent, None => return false }
+            }
+        },
         Value::KindOf(tag) => worth.kind() == Some(*tag),
         _ => false,
     }
@@ -6145,6 +6162,23 @@ impl Machine<'_> {
                 Value::Dict(Rc::new(copied))
             }
             _ => value.clone(),
+        }
+    }
+}
+
+impl Machine<'_> {
+    fn refresh_import_table(&self) {
+        let names = self.table.strings("ext.system.module.cache");
+        if names.len() != 2 { return; }
+        if let Some(Value::Thing(namespace)) = self.imported.get(&names[0]) {
+            let dictionary = Value::Dict(Rc::new(self.imported.iter().map(|(key, worth)| (Value::text(key), worth.clone())).collect()));
+            for (key, worth) in namespace.holds.borrow_mut().iter_mut() {
+                if key == &names[1] {
+                    if let Value::Shared(cell) = worth { *cell.borrow_mut() = dictionary; }
+                    else { *worth = dictionary; }
+                    break;
+                }
+            }
         }
     }
 }

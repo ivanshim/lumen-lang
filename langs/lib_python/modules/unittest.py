@@ -177,6 +177,10 @@ class TestCase:
                 getattr(self, self._method)()
             finally:
                 self.tearDown()
+        except _Expected as error:
+            result.expectedFailures.append([self._method, error.message])
+        except _Unexpected as error:
+            result.unexpectedSuccesses.append([self._method, error.message])
         except AssertionError as error:
             result.failures.append([self._method, error.message])
         except SkipTest as error:
@@ -209,10 +213,29 @@ def skipIf(condition, reason):
 def skipUnless(condition, reason):
     return skipIf(not condition, reason)
 
+class _ExpectedFailure:
+    def __init__(self, function):
+        self.function = function
+
+    def call(self, *args, **kwargs):
+        try:
+            self.function(*args, **kwargs)
+        except SkipTest:
+            raise
+        except:
+            raise _Expected('expected failure')
+        raise _Unexpected('unexpected success')
+
+class _Expected:
+    def __init__(self, message):
+        self.message = message
+
+class _Unexpected:
+    def __init__(self, message):
+        self.message = message
+
 def expectedFailure(function):
-    # This marker is read by a future result protocol; refusing it keeps
-    # an unexpected success from being counted as a passing test.
-    raise 'NotImplementedError: expectedFailure result handling is not supported'
+    return _ExpectedFailure(function).call
 
 class TestSuite:
     def __init__(self, tests=None):
@@ -245,7 +268,7 @@ def main(module=None, exit=True, verbosity=1):
     loader = TestLoader()
     for name in list(names):
         cls = names[name]
-        if not getattr(cls, '_test_case', False) or cls is TestCase:
+        if not getattr(cls, '_test_case', False):
             continue
         before = len(result.failures)
         errors = len(result.errors)

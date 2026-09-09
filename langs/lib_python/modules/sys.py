@@ -1,9 +1,12 @@
 # Host details which the present numeric and object model can honour.
-argv = []
+argv = __program_namespace()['__program_argv']
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
+# The cache is refreshed after imports; editing this view does not yet
+# alter the loader's stored namespaces.
 modules = {}
+# Stub: this is the advertised limit; the kernel does not yet count calls.
 _recursion_limit = 1000
 
 class _Flags:
