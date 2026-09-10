@@ -79,6 +79,12 @@ impl Request<'_> {
     fn on_number(&self,value:Value)->ResultValue{
         self.takes(0,0)?;
         let real=matches!(value,Value::Frac(_));
+        if !real && self.operation == "bit_count" {
+            let magnitude = value.as_big()?.magnitude().clone();
+            let mut total = BigInt::from(0);
+            for limb in magnitude.iter_u32_digits() { total += limb.count_ones(); }
+            return Ok(Value::from_big(total));
+        }
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
         if self.operation=="as_integer_ratio"{

@@ -1483,6 +1483,8 @@ only. The extension labels so far, all from PHP:
   or merge pairs and named arguments. `.pop` takes a map key too.
   `.keys`, `.values` and `.items` yield views which follow later changes
   to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.method.bit_count`: the count of set bits in a whole
+  number's magnitude, without regard to its sign.
 - `ext.builtin.method.bit_length`, `.is_integer`, `.hex` and
   `.as_integer_ratio`: the width of a whole number's magnitude, whether
   a number is whole, a real's hexadecimal spelling, and a number's
@@ -3160,6 +3162,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
+| `ext.builtin.method.bit_count` | - | - | `bit_count` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_length` | - | - | `bit_length` | - | - | - | - | - | - | - |
 | `ext.builtin.method.capitalize` | - | - | `capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.method.center` | - | - | `center` | - | - | - | - | - | - | - |

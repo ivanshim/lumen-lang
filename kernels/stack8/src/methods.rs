@@ -234,6 +234,10 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         Value::Small(_) | Value::Huge(_) | Value::Real(_) => {
             arity(0,0)?;
             match op {
+                "bit_count" if !matches!(held, Value::Real(_)) => {
+                    let count: u64 = held.as_big()?.to_bytes_le().1.iter().map(|byte| u64::from(byte.count_ones())).sum();
+                    Ok(Value::of_big(BigInt::from(count)))
+                },
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
                 "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},

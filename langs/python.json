@@ -564,6 +564,9 @@
   "ext.builtin.method.as_integer_ratio": [
     "as_integer_ratio"
   ],
+  "ext.builtin.method.bit_count": [
+    "bit_count"
+  ],
   "ext.builtin.method.bit_length": [
     "bit_length"
   ],
