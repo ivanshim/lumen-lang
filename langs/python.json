@@ -331,12 +331,19 @@
   "ext.builtin.call.outcome": [
     "__call_outcome"
   ],
+  "ext.builtin.class.beneath": [
+    "__class_beneath"
+  ],
   "ext.builtin.class.derive": [
     "__derive_class"
   ],
   "ext.builtin.class.methods": [
     "__class_methods"
   ],
+  "ext.builtin.clock": [
+    "__clock"
+  ],
+  "ext.builtin.clock.parts": true,
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -395,6 +402,11 @@
   ],
   "ext.builtin.print.flush": [
     "flush"
+  ],
+  "ext.builtin.print.redirect": [
+    "sys",
+    "stdout",
+    "write"
   ],
   "ext.builtin.print.sep": [
     "sep"
@@ -640,6 +652,15 @@
     "."
   ],
   "ext.op.member.pipes": true,
+  "ext.op.object.protocol": [
+    "__repr__",
+    "__eq__",
+    "__getitem__",
+    "__class_call__",
+    "__class_iter__",
+    "__init_subclass__",
+    "__str__"
+  ],
   "ext.op.plus": [
     "+"
   ],
@@ -704,6 +725,10 @@
   ],
   "ext.stmt.class": [
     "class"
+  ],
+  "ext.stmt.class.annotations": [
+    "__annotations__",
+    "__name__"
   ],
   "ext.stmt.class.bases.close": [
     ")"
@@ -897,6 +922,9 @@
   "ext.syntax.set": true,
   "ext.system.args.list": [
     "__program_argv"
+  ],
+  "ext.system.fault.class.key": [
+    "KeyError"
   ],
   "ext.system.module.cache": [
     "sys",

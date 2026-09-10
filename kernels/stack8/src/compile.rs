@@ -2927,6 +2927,7 @@ impl<'a> Compiler<'a> {
         self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
         let mut shared: Vec<(String, String)> = Vec::new();
+        let mut annotated = Vec::new();
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             if self.on_keyword(&lang.function_words) {
@@ -2963,12 +2964,20 @@ impl<'a> Compiler<'a> {
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
             } else if self.look().shape == Shape::Instr && Lang::spells(&lang.block_intros, &self.look_ahead(1).lexeme) {
+                let field = self.take().lexeme;
                 self.take();
-                self.take();
+                let start = self.mark();
                 self.expr(0)?;
-                self.discard();
-                if self.on_assign() { self.take(); self.expr(0)?; self.discard(); }
-                unready = true;
+                self.piece().instrs.truncate(start);
+                annotated.push((Value::text(&field), Value::Null));
+                if self.on_assign() {
+                    self.take();
+                    self.expr(0)?;
+                    let slot = self.gensym("default");
+                    self.write(&slot);
+                    shared.push((field, slot));
+                }
+                if lang.class_annotations.is_empty() { unready = true; }
             } else {
                 self.stmt()?;
                 unready = true;
@@ -2985,6 +2994,12 @@ impl<'a> Compiler<'a> {
             self.piece().instrs.truncate(body_at);
             self.class_cannot_run();
             self.discard();
+        }
+        if let Some(word) = lang.class_annotations.first() {
+            let slot = self.gensym("annotations");
+            self.constant(Value::Map(Rc::new(annotated)));
+            self.write(&slot);
+            shared.push((word.clone(), slot));
         }
         let mut count = shared.len();
         if let Some(under) = &base { self.read(under); count += 1; }

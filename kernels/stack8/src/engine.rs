@@ -28,6 +28,7 @@ pub struct Engine<'a> {
     world: Vec<Value>,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
+    routing_output: bool,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -214,7 +215,11 @@ impl<'a> Engine<'a> {
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world: idents.iter().map(|name| {
+                if lang.fault_key.as_ref() != Some(name) { return Value::Blank; }
+                Value::Class(Rc::new(Class { name: name.clone(), base: None, answers: vec![],
+                    fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) }))
+            }).collect(),
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -251,6 +256,7 @@ impl<'a> Engine<'a> {
             reading_amiss: None,
             module_sources: HashMap::new(),
             modules: HashMap::new(),
+            routing_output: false,
             registry,
         }
     }
@@ -836,6 +842,7 @@ impl<'a> Engine<'a> {
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
         let named = match told {
+            _ if told.starts_with("Undefined array key ") => &self.lang.fault_key,
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if self.lang.args_below.as_deref() == Some(told) || self.lang.args_beyond.as_deref() == Some(told) => &self.lang.fault_value,
@@ -881,7 +888,8 @@ impl<'a> Engine<'a> {
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let found = self.class_named(&named).or_else(|| if self.lang.explicit_this { self.lookup(&named) } else { None });
+        let Some(Value::Class(class)) = found.cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
@@ -1737,7 +1745,10 @@ impl<'a> Engine<'a> {
                     let (kind, fault) = match &ending {
                         Err(Fault::Thrown(Value::Object(raised))) => (Value::Class(raised.class.clone()), Value::Object(raised.clone())),
                         Err(Fault::Thrown(value)) => (Value::text("exception"), value.clone()),
-                        Err(Fault::Note(words)) => (Value::text("error"), Value::text(words)),
+                        Err(Fault::Note(words)) => match self.as_fault(words) {
+                            Some(Value::Object(fault)) => (Value::Class(fault.class.clone()), Value::Object(fault)),
+                            _ => (Value::text("error"), Value::text(words)),
+                        },
                         _ => (Value::Null, Value::Null),
                     };
                     let failed = !matches!(kind, Value::Null);
@@ -1993,7 +2004,8 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let (left, right) = (av.clone(), bv.clone());
+                            let told = self.object_dyad(op, left, right)?;
                             self.truth(&told)
                         }
                     };
@@ -2025,7 +2037,7 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => { let (left, right) = (av.clone(), bv.clone()); self.object_dyad(op, left, right)? },
                     };
                     self.data.push(r);
                 }
@@ -2057,6 +2069,53 @@ impl<'a> Engine<'a> {
             pc += 1;
         }
         Ok(Passage::Along(pc))
+    }
+
+    /// A protocol method receives its owner before the written arguments.
+    fn object_answer(&mut self, owner: &Value, place: usize, rest: Vec<Value>) -> Res<Option<Value>> {
+        let class = match owner { Value::Class(c) => c, Value::Object(o) => &o.class, _ => return Ok(None) };
+        let Some(word) = self.lang.object_protocol.get(place) else { return Ok(None) };
+        let Some(method) = class.method(word).cloned() else { return Ok(None) };
+        let mut given = vec![owner.clone()];
+        given.extend(rest);
+        match self.invoke(&method, given) {
+            Ok(()) => Ok(Some(self.drop_top()?)),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err("the method stopped the run".into()) }
+        }
+    }
+
+    fn object_dyad(&mut self, op: &Action, a: Value, b: Value) -> Res<Value> {
+        let slot = match op { Action::Eq | Action::Ne => Some(1), Action::At => Some(2), _ => None };
+        if let Some(slot) = slot {
+            if let Some(answer) = self.object_answer(&a, slot, vec![b.clone()])? {
+                return Ok(if matches!(op, Action::Ne) { Value::Flag(!self.truth(&answer)) } else { answer });
+            }
+        }
+        if matches!(op, Action::Eq | Action::Ne) {
+            if let Some(answer) = self.object_answer(&b, 1, vec![a.clone()])? {
+                return Ok(Value::Flag(self.truth(&answer) != matches!(op, Action::Ne)));
+            }
+        }
+        self.dyadic(op, &a, &b)
+    }
+
+    fn object_text(&mut self, value: &Value, nested: bool) -> Res<String> {
+        if let Value::Array(items) = value {
+            if !self.lang.object_protocol.is_empty() {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.object_text(item, true)?); }
+                return Ok(format!("[{}]", parts.join(", ")));
+            }
+        }
+        if matches!(value, Value::Object(_)) {
+            let answer = if nested { None } else { self.object_answer(value, 6, vec![])? };
+            let answer = match answer { Some(value) => Some(value), None => self.object_answer(value, 0, vec![])? };
+            if let Some(answer) = answer {
+                return Ok(answer.display(&self.wording()));
+            }
+        }
+        Ok(value.display(&self.wording()))
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -2321,9 +2380,14 @@ impl<'a> Engine<'a> {
                     }
                     Value::Class(c) if self.lang.explicit_this => {
                         let args = self.drop_many(argc - 1)?;
-                        self.data.push(Value::Class(c));
-                        self.data.extend(args);
-                        self.perform(&Action::Make, argc)
+                        if let Some(answer) = self.object_answer(&Value::Class(c.clone()), 3, args.clone())? {
+                            self.data.push(answer);
+                            Ok(())
+                        } else {
+                            self.data.push(Value::Class(c));
+                            self.data.extend(args);
+                            self.perform(&Action::Make, argc)
+                        }
                     }
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
@@ -2425,7 +2489,8 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                Value::array(self.comprehension_items(&source)?)
+                if let Some(items) = self.object_answer(&source, 4, vec![])? { items }
+                else { Value::array(self.comprehension_items(&source)?) }
             }
             Action::UnpackCount(wanted) => {
                 let source = self.drop_top()?;
@@ -2550,7 +2615,7 @@ impl<'a> Engine<'a> {
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Null))).collect()
                 };
-                Value::Class(Rc::new(Class {
+                let made = Value::Class(Rc::new(Class {
                     name: plan.name.clone(),
                     base,
                     answers,
@@ -2559,7 +2624,19 @@ impl<'a> Engine<'a> {
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
-                }))
+                }));
+                if let Value::Class(c) = &made {
+                    if let Some(word) = self.lang.class_annotations.get(1) {
+                        c.shared.borrow_mut().push((word.clone(), Value::text(&plan.name)));
+                    }
+                    let members = Value::Map(Rc::new(c.shared.borrow().iter().map(|(k, v)| (Value::text(k), v.clone())).collect()));
+                    let inherited = c.base.as_ref().and_then(|parent| self.lang.object_protocol.get(5).and_then(|name| parent.method(name))).cloned();
+                    if let Some(method) = inherited {
+                        self.invoke(&method, vec![made.clone(), members])?;
+                        self.drop_top()?;
+                    }
+                }
+                made
             }
             Action::Make => {
                 let mut args = self.drop_many(argc)?;
@@ -3042,6 +3119,7 @@ impl<'a> Engine<'a> {
             // be walked in its stead. Either way the walk begins here.
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if let Some(items) = self.object_answer(&handed, 4, vec![])? { handed = items; }
                 // One thing may hand over another that hands over a
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that
@@ -3203,7 +3281,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.object_dyad(dyadic, a, b)?
             }
         };
         self.data.push(result);
@@ -4210,7 +4288,32 @@ impl<'a> Engine<'a> {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
             }
-            let text = args.iter().map(|v| v.display(&self.wording())).collect::<Vec<_>>().join(&between) + &ending;
+            let mut pieces = Vec::new();
+            for value in &args { pieces.push(self.object_text(value, false)?); }
+            let text = pieces.join(&between) + &ending;
+            if !error && !self.routing_output {
+                if let [owner, member, writer] = self.lang.print_redirect.as_slice() {
+                    let writer = writer.clone();
+                    let target = self.modules.get(owner).and_then(|module| match module {
+                        Value::Object(o) => o.fields.borrow().iter().find(|(n, _)| n == member).map(|(_, v)| match v {
+                            Value::Bond(cell) => cell.borrow().clone(), value => value.clone(),
+                        }),
+                        _ => None,
+                    });
+                    if let Some(Value::Object(stream)) = target {
+                        if let Some(method) = stream.class.method(&writer).cloned() {
+                            self.routing_output = true;
+                            let outcome = self.invoke(&method, vec![Value::Object(stream), Value::text(&text)]);
+                            self.routing_output = false;
+                            match outcome {
+                                Ok(()) => { self.drop_top()?; return Ok(Value::Null); }
+                                Err(Fault::Note(told)) => return Err(told),
+                                Err(fault) => { self.carried = Some(fault); return Err("the output method stopped the run".into()); }
+                            }
+                        }
+                    }
+                }
+            }
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
@@ -4268,6 +4371,9 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::ToText && args.len() == 1 && matches!(args[0], Value::Object(_)) {
+            return Ok(Value::text(&self.object_text(&args[0], false)?));
+        }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -4706,6 +4812,19 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                if self.lang.clock_parts && args.len() == 1 {
+                    let seconds = match args[0] {
+                        Value::Flag(true) => {
+                            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                            START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64()
+                        }
+                        Value::Flag(false) => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()),
+                        _ => return Err(self.lang.module_helper_amiss.clone()),
+                    };
+                    let mut value = crate::value::real_of(seconds, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = true; }
+                    return Ok(value);
+                }
                 arity(0)?;
                 let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(since.map_or(0, |gone| gone.as_secs() as i64))
@@ -4882,7 +5001,8 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                Value::array(self.comprehension_items(&args[0])?)
+                if let Some(values) = self.object_answer(&args[0], 4, vec![])? { values }
+                else { Value::array(self.comprehension_items(&args[0])?) }
             }
             Builtin::Any => {
                 arity(1)?;

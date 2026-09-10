@@ -106,6 +106,7 @@ enum Next {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    in_output_method: bool,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -245,11 +246,20 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
 impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let outermost = Env::make(idents.len(), None);
+        if let Some(name) = table.single("ext.system.fault.class.key") {
+            if let Some(at) = idents.iter().position(|word| word == name) {
+                let class = Blueprint { name: name.to_string(), under: None, answers: Vec::new(),
+                    fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
+                outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(class));
+            }
+        }
         Machine {
             library_sources: HashMap::new(),
             imported: HashMap::new(),
+            in_output_method: false,
             table,
-            outermost: Env::make(idents.len(), None),
+            outermost,
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
@@ -441,7 +451,7 @@ impl<'a> Machine<'a> {
             // be walked for it. Either way a walk begins here.
             Prim::Walked => {
                 n(1)?;
-                let mut walking = v[0].clone();
+                let mut walking = self.protocol_value(&v[0], 4, &[])?.unwrap_or_else(|| v[0].clone());
                 // Asking a thing what it hands over runs a piece of the
                 // program standing elsewhere. The walk is written where
                 // it is written, and is spoken of as standing there, so
@@ -1122,6 +1132,7 @@ impl<'a> Machine<'a> {
     fn class_of_fault(&self, told: &str) -> Option<String> {
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
+            _ if told.starts_with("Undefined array key ") => Some("ext.system.fault.class.key"),
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if told_of("ext.builtin.args.at.below") || told_of("ext.builtin.args.at.beyond") => Some("ext.system.fault.class.value"),
@@ -1170,7 +1181,10 @@ impl<'a> Machine<'a> {
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
-        let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
+        let class = self.class_bound(&named).or_else(|| {
+            if self.table.flag("ext.stmt.class.this.explicit") { self.lookup(&named) } else { None }
+        });
+        let Some(Value::Blueprint(of)) = class else { return None };
         self.made += 1;
         let mut holds = of.every_field();
         // A fault of the kernel's own carries the words said and the
@@ -2007,7 +2021,7 @@ impl<'a> Machine<'a> {
                 if let Some(method) = leave {
                     let fault = match &outcome {
                         Err(Escape::Thrown(value)) => Some(value.clone()),
-                        Err(Escape::Error(words)) => Some(Value::text(words)),
+                        Err(Escape::Error(words)) => self.as_raised(words).or_else(|| Some(Value::text(words))),
                         _ => None,
                     };
                     let kind = match &fault {
@@ -2117,7 +2131,7 @@ impl<'a> Machine<'a> {
                 let fields = named(&plan.field_names);
                 let shared = named(&plan.shared_names);
                 let constants = named(&plan.constant_names);
-                Ok(Value::Blueprint(Rc::new(Blueprint {
+                let built = Value::Blueprint(Rc::new(Blueprint {
                     name: plan.name.clone(),
                     under,
                     answers,
@@ -2126,7 +2140,22 @@ impl<'a> Machine<'a> {
                     methods: plan.methods.clone(),
                     constants,
                     shared: RefCell::new(shared),
-                })))
+                }));
+                if let Value::Blueprint(blueprint) = &built {
+                    if let Some(word) = self.table.strings("ext.stmt.class.annotations").get(1) {
+                        blueprint.shared.borrow_mut().push((word.clone(), Value::text(&plan.name)));
+                    }
+                    if blueprint.under.is_some() {
+                        let entries = blueprint.shared.borrow().iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
+                        let hook = self.table.strings("ext.op.object.protocol").get(5)
+                            .and_then(|name| blueprint.under.as_ref().and_then(|parent| parent.program(name))).cloned();
+                        if let Some(hook) = hook {
+                            let outer = self.outermost.clone();
+                            self.invoke(hook, outer, vec![built.clone(), Value::Dict(Rc::new(entries))])?;
+                        }
+                    }
+                }
+                Ok(built)
             }
             Form::Cycle { test, body, step, after, otherwise } => {
                 let mut broken = false;
@@ -2683,7 +2712,53 @@ impl<'a> Machine<'a> {
         })
     }
 
+    /// Ask the method named for an operation, if the owner supplies it.
+    fn protocol_value(&mut self, receiver: &Value, index: usize, supplied: &[Value]) -> Result<Option<Value>, String> {
+        let blueprint = match receiver {
+            Value::Thing(thing) => &thing.of,
+            Value::Blueprint(blueprint) => blueprint,
+            _ => return Ok(None),
+        };
+        let names = self.table.strings("ext.op.object.protocol");
+        let body = names.get(index).and_then(|name| blueprint.program(name)).cloned();
+        let Some(body) = body else { return Ok(None) };
+        let mut arguments = Vec::with_capacity(supplied.len() + 1);
+        arguments.push(receiver.clone());
+        arguments.extend_from_slice(supplied);
+        let env = self.outermost.clone();
+        match self.invoke(body, env, arguments) {
+            Ok(value) => Ok(Some(value)),
+            Err(Escape::Error(message)) => Err(message),
+            Err(away) => { self.got_away = Some(away); Err("the protocol call did not return".to_string()) }
+        }
+    }
+
+    fn protocol_text(&mut self, item: &Value, quoted: bool) -> Result<String, String> {
+        if !self.table.strings("ext.op.object.protocol").is_empty() {
+            match item {
+                Value::Vector(items) => {
+                    let mut text = String::from("[");
+                    for (n, value) in items.iter().enumerate() {
+                        if n > 0 { text.push_str(", "); }
+                        text.push_str(&self.protocol_text(value, true)?);
+                    }
+                    text.push(']');
+                    return Ok(text);
+                }
+                Value::Thing(_) => {
+                    if !quoted {
+                        if let Some(value) = self.protocol_value(item, 6, &[])? { return Ok(value.render(self.wording())); }
+                    }
+                    if let Some(value) = self.protocol_value(item, 0, &[])? { return Ok(value.render(self.wording())); }
+                }
+                _ => (),
+            }
+        }
+        Ok(item.render(self.wording()))
+    }
+
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if let Some(answer) = self.protocol_value(&Value::Blueprint(class.clone()), 3, &args)? { return Ok(answer); }
         self.made += 1;
         let fields = class.every_field();
         let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
@@ -2820,7 +2895,7 @@ impl<'a> Machine<'a> {
 
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
-    fn builtin_names(&self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
+    fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
@@ -2854,9 +2929,24 @@ impl<'a> Machine<'a> {
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
                 if at != 0 { written.push_str(&join); }
-                written.push_str(&item.render(self.wording()));
+                written.push_str(&self.protocol_text(item, false)?);
             }
             written.push_str(&tail);
+            let route = table.strings("ext.builtin.print.redirect");
+            if channel == 1 && !self.in_output_method && route.len() == 3 {
+                let target = self.imported.get(&route[0]).and_then(|module| self.attribute(module, &route[1]));
+                if let Some(Value::Thing(thing)) = target {
+                    let routine = thing.of.program(&route[2]).cloned();
+                    if let Some(routine) = routine {
+                        self.in_output_method = true;
+                        let outer = self.outermost.clone();
+                        let done = self.invoke(routine, outer, vec![Value::Thing(thing), Value::text(&written)]);
+                        self.in_output_method = false;
+                        done?;
+                        return Ok(Some(Value::Nil));
+                    }
+                }
+            }
             match channel {
                 2 => eprint!("{}", written),
                 _ => self.utter(&written),
@@ -3495,6 +3585,25 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if v.len() == 2 {
+            let index = match op { Prim::Eq | Prim::Ne => Some(1), Prim::Fetch | Prim::At => Some(2), _ => None };
+            if let Some(index) = index {
+                if let Some(answer) = self.protocol_value(&v[0], index, &v[1..])? {
+                    return Ok(if op == Prim::Ne { Value::Flag(!answer.is_true()) } else { answer });
+                }
+            }
+        }
+        if matches!(op, Prim::Eq | Prim::Ne) && v.len() == 2 {
+            if let Some(value) = self.protocol_value(&v[1], 1, &v[..1])? {
+                return Ok(Value::Flag(value.is_true() != (op == Prim::Ne)));
+            }
+        }
+        if op == Prim::AsText && v.len() == 1 && matches!(v[0], Value::Thing(_)) {
+            return Ok(Value::text(&self.protocol_text(&v[0], false)?));
+        }
+        if matches!(op, Prim::Listed | Prim::Iterated) && v.len() == 1 {
+            if let Some(answer) = self.protocol_value(&v[0], 4, &[])? { return Ok(answer); }
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -4336,6 +4445,23 @@ impl<'a> Machine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Prim::SinceEpoch => {
+                if v.len() == 1 && self.table.flag("ext.builtin.clock.parts") {
+                    let steady = match v.first() {
+                        Some(Value::Flag(choice)) => *choice,
+                        _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                    };
+                    let elapsed = if steady {
+                        static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                        let origin = ORIGIN.get_or_init(std::time::Instant::now);
+                        origin.elapsed()
+                    } else {
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                    };
+                    let digits = self.table.count("ext.system.real.digits").unwrap_or(15);
+                    let mut answer = crate::data::worth_of_binary(elapsed.as_secs_f64(), digits);
+                    if let Value::Frac(ratio) = &mut answer { Rc::make_mut(ratio).float_style = true; }
+                    return Ok(answer);
+                }
                 n(0)?;
                 let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(gone.map_or(0, |since| since.as_secs() as i64))

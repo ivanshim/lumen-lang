@@ -497,6 +497,26 @@ only. The extension labels so far, all from PHP:
   this one, as the system knows it, for a program that wants to find
   itself again. It stands beside `ext.system.source.file` and comes the
   same way, from the request the host carried in.
+- `ext.op.object.protocol`: seven method names, in order: an object's
+  representation, equality, subscription, a class's value lookup, its
+  member walk, its inherited preparation method, and its plain text. A missing method
+  leaves the ordinary operation in place. Preparation receives the new
+  class and its shared members before it is bound to its name.
+- `ext.stmt.class.annotations`: two names: the shared member holding a map of
+  annotated field names, and the class name. At this stage their type expressions are read
+  and put aside; the map keeps an empty value for each name. Defaults
+  remain ordinary shared members.
+- `ext.system.fault.class.key`: the class name for an absent map key.
+  Where spelled, a plain class of that name is bound before the program
+  starts, and context managers receive its object for such a fault.
+- `ext.builtin.print.redirect`: three names, for the module, its output
+  stream and the stream's writing method. Print asks that method to
+  write its completed text. A print within the writer reaches the host
+  so the ordinary stream need not call itself without end.
+- `ext.builtin.clock.parts`: a switch allowing the clock to take one
+  truth value and return fractional seconds. True asks for a steady
+  clock with an arbitrary fixed origin; false asks for wall time. With
+  no argument the older whole-second answer remains.
 - `ext.builtin.clock`: a builtin answering with how many seconds have
   passed since the start of the year the system counts from. Turning that
   into a date, and a date back into it, is arithmetic and belongs in a
@@ -2113,12 +2133,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
-| `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
+| `ext.builtin.class.beneath` | - | - | `__class_beneath` | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
-| `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
@@ -2160,6 +2181,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.file.output` | - | - | `sys.stdout` | - | - | - | - | - | - | - |
 | `ext.builtin.print.file.unready` | - | - | `NotImplementedError: print file objects are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.print.flush` | - | - | `flush` | - | - | - | - | - | - | - |
+| `ext.builtin.print.redirect` | - | - | `sys` `stdout` `write` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
@@ -2297,6 +2319,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
+| `ext.op.object.protocol` | - | - | `__repr__` `__eq__` `__getitem__` `__class_call__` `__class_iter__` `__init_subclass__` `__str__` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
@@ -2346,6 +2369,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
+| `ext.stmt.class.annotations` | - | - | `__annotations__` `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
@@ -2461,6 +2485,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
+| `ext.system.fault.class.key` | - | - | `KeyError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
