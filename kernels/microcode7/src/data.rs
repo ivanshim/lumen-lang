@@ -774,6 +774,21 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    pub fn permitted_slots(&self, label: &str, dict: &str) -> Option<Vec<String>> {
+        if self.constants.iter().any(|entry| entry.0 == "\0native-parent") { return Some(vec![]); }
+        let own = self.shared.borrow().iter().find(|entry| entry.0 == label).map(|entry| entry.1.settled())?;
+        let mut names = Vec::new();
+        match own {
+            Value::Text(word) => names.push(word.to_string()),
+            Value::Tuple(row) | Value::Vector(row) => names.extend(row.iter().map(Value::bare)),
+            _ => return None,
+        }
+        if names.iter().any(|word| word == dict) { return None; }
+        if let Some(parent) = &self.under { names.extend(parent.permitted_slots(label, dict)?); }
+        for parent in &self.answers { names.extend(parent.permitted_slots(label, dict)?); }
+        Some(names)
+    }
+
     pub fn native_parent(&self) -> Option<Value> {
         if let Some((_, value)) = self.constants.iter().find(|entry| entry.0 == "\0native-parent") { return Some(value.clone()); }
         self.under.as_ref().and_then(|parent| parent.native_parent())

@@ -1333,6 +1333,9 @@
   "ext.stmt.class.property.setter": [
     "setter"
   ],
+  "ext.stmt.class.slots": [
+    "__slots__"
+  ],
   "ext.stmt.class.static": [
     "staticmethod"
   ],

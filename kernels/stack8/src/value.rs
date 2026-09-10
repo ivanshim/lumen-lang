@@ -808,6 +808,19 @@ pub struct Class {
 }
 
 impl Class {
+    pub fn slots(&self, word: &str, dictionary: &str) -> Option<Vec<String>> {
+        if self.constants.iter().any(|(n, _)| n == "\0builtin-base") { return Some(Vec::new()); }
+        let value = self.shared.borrow().iter().find(|(n, _)| n == word).map(|(_, v)| v.contents())?;
+        let mut slots = match value {
+            Value::Text(name) => vec![name.to_string()],
+            Value::Tuple(names) | Value::Array(names) => names.iter().map(Value::plain).collect(),
+            _ => return None,
+        };
+        if slots.iter().any(|n| n == dictionary) { return None; }
+        for base in self.base.iter().chain(self.answers.iter()) { slots.extend(base.slots(word, dictionary)?); }
+        Some(slots)
+    }
+
     pub fn builtin_base(&self) -> Option<Value> {
         self.constants.iter().find(|(n, _)| n == "\0builtin-base").map(|(_, v)| v.clone())
             .or_else(|| self.base.as_ref().and_then(|c| c.builtin_base()))

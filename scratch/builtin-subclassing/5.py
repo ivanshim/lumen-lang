@@ -4,6 +4,7 @@ class L(list):
         self.note = "list"
 l = L([2, 1])
 l.append(3)
+l[0] = 4
 print(l, l.note)
 class S(str):
     def __new__(cls, value):

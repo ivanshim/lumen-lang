@@ -2993,7 +2993,9 @@ impl<'a> Engine<'a> {
                 if !self.lang.subclass_builtin.is_empty() {
                     let kinds: Vec<Value> = base.iter().chain(answers.iter()).filter_map(|c| c.builtin_base()).collect();
                     if kinds.iter().skip(1).any(|v| !v.equals(&kinds[0])) {
-                        return Err(self.lang.subclass_layout.first().cloned().unwrap_or_default().into());
+                        let words = self.lang.subclass_layout.first().cloned().unwrap_or_default();
+                        if let Some(raised) = self.as_fault(&words) { return Err(Fault::Thrown(raised)); }
+                        return Err(words.into());
                     }
                 }
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
@@ -3059,9 +3061,10 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag((matches!(&held, Value::Native(..)) && !self.lang.subclass_builtin.is_empty() && self.native_member(name).is_some()) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag((matches!(&held, Value::Native(..)) && !self.lang.subclass_builtin.is_empty() && (self.native_member(name).is_some() || self.lang.class_name.as_deref() == Some(name.as_ref()))) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
                 Value::Native(b, word) if !self.lang.subclass_builtin.is_empty() && self.native_member(name).is_some() => {
                     Value::ValueMethod(Rc::new((Value::Native(b, word), self.native_member(name).expect("a native member"))))
                 }
@@ -3118,7 +3121,7 @@ impl<'a> Engine<'a> {
                         None if o.class.builtin_base().is_some() && self.lang.value_methods.contains_key(name.as_ref()) => {
                             Value::ValueMethod(Rc::new((Value::Object(o), self.lang.value_methods[name.as_ref()].clone())))
                         }
-                        None if o.class.builtin_base().is_some() && self.lang.subclass_dictionary.first().map_or(false, |n| n == name.as_ref()) => {
+                        None if o.class.builtin_base().is_some() && self.lang.subclass_dictionary.first().map_or(false, |n| n == name.as_ref()) && self.lang.subclass_slots.first().map_or(true, |word| o.class.slots(word, name).is_none()) => {
                             Value::Map(Rc::new(o.fields.borrow().iter().filter(|(n, _)| !n.starts_with('\0')).map(|(n, v)| (Value::text(n), v.clone())).collect()))
                         }
                         None if self.reads_for(&o).is_some() => {
@@ -3145,6 +3148,7 @@ impl<'a> Engine<'a> {
             Action::BondField(name) => {
                 match self.drop_top()? {
                     Value::Object(o) => {
+                        self.slot_write(&o.class, name)?;
                         let mut held = o.fields.borrow_mut();
                         let at = match self.member_at(&held, name) {
                             Some(at) => at,
@@ -3212,6 +3216,7 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     Value::Object(o) => {
+                        self.slot_write(&o.class, name)?;
                         if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
                             let row = match &value {
                                 Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
@@ -5125,6 +5130,12 @@ impl<'a> Engine<'a> {
 
     fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if matches!(builtin, Builtin::Append | Builtin::Replace) {
+            if let Some(original) = args.last().cloned().filter(|v| v.builtin_value().is_some()) {
+                let last = args.len() - 1;
+                args[last] = original.builtin_value().expect("the carried worth");
+                self.builtin_values(builtin, name, args)?;
+                return Ok(original);
+            }
             if let Some(original @ Value::Collection(..)) = args.last().cloned() {
                 let Value::Collection(cell, _) = &original else { unreachable!() };
                 let last = args.len()-1;
@@ -6766,6 +6777,17 @@ impl Engine<'_> {
         }
     }
 
+    fn slot_write(&self, class: &Class, name: &str) -> Res<()> {
+        if class.builtin_base().is_none() { return Ok(()); }
+        if let (Some(word), Some(dict)) = (self.lang.subclass_slots.first(), self.lang.subclass_dictionary.first()) {
+            if class.slots(word, dict).map_or(false, |slots| !slots.iter().any(|s| s == name)) {
+                let words = &self.lang.core_words["core.attribute"];
+                return Err(format!("{}{}{}{}{}", words[0], class.name, words[1], name, words[2]));
+            }
+        }
+        Ok(())
+    }
+
     fn native_member(&self, name: &str) -> Option<String> {
         let pairs = [(&self.lang.subclass_allocate, "\0allocate"), (&self.lang.subclass_equal, "\0equal"),
             (&self.lang.subclass_item, "\0item"), (&self.lang.subclass_add, "\0add"), (&self.lang.subclass_string, "\0string")];
@@ -6851,7 +6873,7 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
-        if !matches!(b, Builtin::InstanceOf | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::Identity) { for value in &mut args { *value = value.contents(); } }
+        for value in &mut args { if !matches!(value, Value::Object(_)) || !matches!(b, Builtin::InstanceOf | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::Identity) { *value = value.contents(); } }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
         let mut reverse = false;
@@ -6887,7 +6909,7 @@ impl Engine<'_> {
                     else if label == "core.arity.exact" { format!("{}{}{}{}{}{}",words[0],name,words[1],lo,words[2],args.len()) }
                     else { self.core_fault(label,name) })
             };
-        let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
+        let number = |v: &Value| match v.contents() { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
         let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.integer", &v.core_kind())) };
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
@@ -7000,11 +7022,11 @@ impl Engine<'_> {
                     let k = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
                     let mut at = ranked.len();
                     while at > 0 {
-                        let less = match (&k, &ranked[at-1].0) {
+                        let less = match (&k.contents(), &ranked[at-1].0.contents()) {
                             (Value::Text(a), Value::Text(z)) => a < z,
                             (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Less,
                         };
-                        let greater = match (&k, &ranked[at-1].0) {
+                        let greater = match (&k.contents(), &ranked[at-1].0.contents()) {
                             (Value::Text(a), Value::Text(z)) => a > z,
                             (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Greater,
                         };

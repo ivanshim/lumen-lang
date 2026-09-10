@@ -1055,7 +1055,9 @@ only. The extension labels so far, all from PHP:
   a thing before its constructor runs. `ext.stmt.class.string`, `.equal`,
   `.item`, `.missing` and `.add` name its own answers for text, equality,
   indexing, an absent mapping key and addition. `.dictionary` names the
-  mapping of its own attributes.
+  mapping of its own attributes. `ext.stmt.class.slots` names the list
+  of attributes which may be kept without that mapping; a base which
+  already has the mapping keeps it for its descendants.
 - `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
   for its object first, rather than having an unwritten parameter put there.
   Calling a class makes its object without a word for making; assignments
@@ -3487,6 +3489,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
+| `ext.stmt.class.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.static` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.string` | - | - | `__str__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |

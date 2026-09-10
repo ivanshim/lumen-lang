@@ -2533,7 +2533,9 @@ impl<'a> Machine<'a> {
                     for kind in under.iter().chain(answers.iter()) {
                         if let Some(native) = kind.native_parent() {
                             if layout.as_ref().map_or(false, |old: &Value| !old.equals(&native)) {
-                                return Err(self.table.single("ext.stmt.class.layout").unwrap_or_default().to_string().into());
+                                let words = self.table.single("ext.stmt.class.layout").unwrap_or_default().to_string();
+                                if let Some(value) = self.as_raised(&words) { return Err(Escape::Thrown(value)); }
+                                return Err(words.into());
                             }
                             layout = Some(native);
                         }
@@ -3186,6 +3188,20 @@ impl<'a> Machine<'a> {
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
+    fn slot_accepts(&self, kind: &Blueprint, word: &str) -> Result<(), String> {
+        if kind.native_parent().is_some() {
+            if let (Some(slots), Some(dict)) = (self.table.single("ext.stmt.class.slots"), self.table.single("ext.stmt.class.dictionary")) {
+                if let Some(names) = kind.permitted_slots(slots, dict) {
+                    if !names.iter().any(|n| n == word) {
+                        let pieces = self.table.strings("ext.builtin.core.attribute");
+                        return Err(format!("{}{}{}{}{}", pieces[0], kind.name, pieces[1], word, pieces[2]));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn native_member_name(&self, word: &str) -> Option<String> {
         for (label, meaning) in [("ext.stmt.class.allocate", "\0new-worth"), ("ext.stmt.class.constructor", "\0fill-worth"),
             ("ext.stmt.class.equal", "\0same-worth"), ("ext.stmt.class.add", "\0join-worth"),
@@ -3202,6 +3218,7 @@ impl<'a> Machine<'a> {
         }
         if self.table.single("ext.builtin.class.name") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
+            if let Value::Intrinsic(word) = value { return Some(Value::text(word)); }
         }
         let class = match value {
             Value::Thing(thing) => {
@@ -3243,7 +3260,7 @@ impl<'a> Machine<'a> {
         }
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         if class.program(name).is_none() && class.native_parent().is_some() {
-            if self.table.single("ext.stmt.class.dictionary") == Some(name) {
+            if self.table.single("ext.stmt.class.dictionary") == Some(name) && self.table.single("ext.stmt.class.slots").map_or(true, |slots| class.permitted_slots(slots, name).is_none()) {
                 if let Value::Thing(thing) = value {
                     return Some(Value::Dict(Rc::new(thing.holds.borrow().iter().filter(|entry| !entry.0.starts_with('\0')).map(|(key, worth)| (Value::text(key), worth.clone())).collect())));
                 }
@@ -4347,6 +4364,12 @@ impl<'a> Machine<'a> {
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if matches!(op, Prim::Added | Prim::Placed) {
+            if let Some(worth) = v.first().and_then(Value::native_worth) {
+                let mut row = v.to_vec();
+                row[0] = worth;
+                self.prim_values(op, name, &row)?;
+                return Ok(v[0].clone());
+            }
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
                 arguments[0] = v[0].settled();
@@ -4370,7 +4393,7 @@ impl<'a> Machine<'a> {
         if let Some(Value::Thing(thing)) = v.first() {
             if thing.of.native_parent().is_some() && v.len() == 2 {
                 let label = match op { Prim::At => "ext.stmt.class.item", Prim::Plus => "ext.stmt.class.add", Prim::Eq => "ext.stmt.class.equal", _ => "" };
-                let mut body = self.table.single(label).and_then(|n| thing.of.program(n)).cloned();
+                let mut body = if label.is_empty() { None } else { self.table.single(label).and_then(|n| thing.of.program(n)).cloned() };
                 if op == Prim::At && body.is_none() {
                     if let Value::Dict(pairs) = v[0].settled() {
                         if !pairs.iter().any(|pair| pair.0.equals(&v[1])) {
@@ -4383,7 +4406,10 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if !matches!(op, Prim::Of | Prim::Pluck | Prim::SortOf | Prim::Belongs | Prim::Say | Prim::Out | Prim::HasMember | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::IdentityOf)
+        if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
+            | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+            | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown
+            | Prim::At | Prim::Membership | Prim::Length | Prim::AsInt | Prim::AsReal | Prim::AsText | Prim::Listed)
             && v.iter().any(|worth| worth.native_worth().is_some()) {
             let row = v.iter().map(Value::settled).collect::<Vec<_>>();
             return self.prim(op, name, &row);
@@ -4698,7 +4724,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag((matches!(&v[0], Value::Intrinsic(_)) && self.table.has_any("ext.stmt.class.builtin") && self.native_member_name(&word).is_some()) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag((matches!(&v[0], Value::Intrinsic(_)) && self.table.has_any("ext.stmt.class.builtin") && (self.native_member_name(&word).is_some() || self.table.single("ext.builtin.class.name") == Some(word.as_str()))) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -4767,6 +4793,7 @@ impl<'a> Machine<'a> {
                 }
                 match &v[0] {
                     Value::Thing(thing) => {
+                        self.slot_accepts(&thing.of, &called)?;
                         if self.is_fault_kind(&thing.of) && self.table.single("ext.builtin.exceptions.args") == Some(called.as_str()) {
                             let contents = match &v[2] {
                                 Value::Arguments(r) | Value::Vector(r) => Value::Arguments(r.clone()),
@@ -7396,7 +7423,7 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        if !matches!(op, Prim::Belongs | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::IdentityOf) { for item in &mut input { *item = item.settled(); } }
+        for item in &mut input { if !matches!(item, Value::Thing(_)) || !matches!(op, Prim::Belongs | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::IdentityOf) { *item = item.settled(); } }
         if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};
         use num_integer::Integer;
@@ -7442,7 +7469,7 @@ impl Machine<'_> {
                 Err(complaint)
             } else { Ok(()) }
         };
-        let as_number = |v: &Value| if let Value::Flag(b) = v { Value::Small(*b as i64) } else { v.clone() };
+        let as_number = |v: &Value| match v.settled() { Value::Flag(b) => Value::Small(b as i64), worth => worth };
         let whole = |v: &Value| -> Result<BigInt, String> {
             if matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { v.as_big() } else { Err(self.core_complaint("core.integer", &v.kind_word())) }
         };
@@ -7574,7 +7601,7 @@ impl Machine<'_> {
                 }
                 let mut failure = None;
                 decorated.sort_by(|a, b| {
-                    let answer = match (&a.0, &b.0) {
+                    let answer = match (&a.0.settled(), &b.0.settled()) {
                         (Value::Text(x), Value::Text(y)) => x.cmp(y),
                         (x, y) => match (math::below(&as_number(x), &as_number(y)), math::below(&as_number(y), &as_number(x))) {
                             (Some(true), _) => std::cmp::Ordering::Less, (_, Some(true)) => std::cmp::Ordering::Greater,
