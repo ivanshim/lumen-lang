@@ -286,7 +286,8 @@ class _Reader:
         text = self.text[start:self.at]
         if not real:
             return int(text)
-        number = float(text)
+        # The floating primitive rounds the parsed real to binary64.
+        number = __math('fdiv', float(text), 1.0)
         if number == 0 and text[:1] == '-':
             return __math('fdiv', -0.0, 1.0)
         return number

@@ -463,7 +463,6 @@
   "ext.builtin.to_int.text.required": [
     "TypeError: int() can't convert non-string with explicit base"
   ],
-  "ext.builtin.to_real.floating": true,
   "ext.builtin.to_real.text": true,
   "ext.builtin.to_real.text.amiss": [
     "ValueError: could not convert string to float"

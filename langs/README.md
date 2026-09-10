@@ -1616,9 +1616,6 @@ only. The extension labels so far, all from PHP:
   answer or raised value, and the complaint's text. A library can thus
   count failures and errors itself. An ending of the run or exhaustion
   of its allotted time or room is carried onward, never counted as a test.
-- `ext.builtin.to_real.floating`: a switch; conversion to a real keeps
-  floating-point spelling, even where the answer has no fractional part.
-  A decoder may thus return a real without disguising it as a whole number.
 - `ext.op.index.from_end`: a switch; a negative index reading a list or
   text counts back from its end. Map keys retain their signs. This switch
   does not yet extend writing or removal through negative indices.
@@ -2223,7 +2220,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.required` | - | - | `TypeError: int() can't convert non-string with explicit base` | - | - | - | - | - | - | - |
-| `ext.builtin.to_real.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
