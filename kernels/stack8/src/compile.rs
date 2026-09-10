@@ -5707,12 +5707,12 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
-        if Lang::spells(&lang.identity_words["ext.literal.unimplemented"], &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.identity_words["ext.literal.unimplemented"], &tok.lexeme) {
             self.take();
             self.constant(Value::Unimplemented(Rc::from(lang.identity_words["ext.literal.unimplemented"][0].as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
             return self.indexing(from);

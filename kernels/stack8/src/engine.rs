@@ -2758,7 +2758,7 @@ impl<'a> Engine<'a> {
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
-                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    for (key, value) in new_pairs { self.replace_item(&mut pairs, key, value)?; }
                     Value::Map(Rc::new(pairs))
                 } else {
                     let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) | Value::Set(a) => a.as_ref().clone(), _ => unreachable!() };
@@ -4858,12 +4858,21 @@ impl<'a> Engine<'a> {
         } else { Ok(self.keep_collection(result)) }
     }
 
-    fn replace_item(&self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
-        if self.lang.bind_names {
-            if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
-                *old = value;
-            } else { pairs.push((key, value)); }
+    fn replace_item(&mut self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) -> Res<()> {
+        if !self.identity_word("ext.builtin.hash.method").is_empty() {
+            let hash = self.value_hash(&key)?;
+            for (old, held) in pairs.iter_mut() {
+                if old.same_identity(&key) || self.value_hash(old)? == hash && self.values_equal(old, &key, true)? {
+                    *held = value;
+                    return Ok(());
+                }
+            }
+            pairs.push((key, value));
+        } else if self.lang.bind_names {
+            if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| k.equals(&key)) { *old = value; }
+            else { pairs.push((key, value)); }
         } else { put_key(pairs, key, value); }
+        Ok(())
     }
 
     fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
@@ -5698,11 +5707,11 @@ impl<'a> Engine<'a> {
                     Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
-                        self.replace_item(&mut pairs, at, v);
+                        self.replace_item(&mut pairs, at, v)?;
                         Value::Map(Rc::new(pairs))
                     }
                     Value::Map(mut pairs) => {
-                        self.replace_item(Rc::make_mut(&mut pairs), at, v);
+                        self.replace_item(Rc::make_mut(&mut pairs), at, v)?;
                         Value::Map(pairs)
                     }
                     _ => return Err(self.not_an_array()),
@@ -6580,6 +6589,7 @@ impl Engine<'_> {
                 Ok(true)
             }
             (Value::Unimplemented(_), Value::Unimplemented(_)) => Ok(true),
+            (Value::Class(_), Value::Class(_)) => Ok(a.same_identity(&b)),
             _ => Ok(self.mapping_equality(&a, &b)),
         }
     }
@@ -6600,8 +6610,10 @@ impl Engine<'_> {
         }
         if matches!(op, Action::At) {
             if let Value::Map(entries) = &x {
-                self.value_hash(&y)?;
-                for (key, value) in entries.iter() { if self.values_equal(key, &y, true)? { return Ok(value.clone()); } }
+                let hash = self.value_hash(&y)?;
+                for (key, value) in entries.iter() {
+                    if key.same_identity(&y) || self.value_hash(key)? == hash && self.values_equal(key, &y, true)? { return Ok(value.clone()); }
+                }
                 return Err(format!("{}{}", self.lang.method_errors["key"], y.core_repr()));
             }
         }
@@ -6810,7 +6822,14 @@ impl Engine<'_> {
                 let mut items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
                 if b == Builtin::Set {
                     let mut unique = Vec::new();
-                    for v in items { if v.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &v.core_kind())); } if !unique.iter().any(|x: &Value| number(x).equals(&number(&v))) { unique.push(v); } }
+                    for v in items {
+                        let hash = self.value_hash(&v)?;
+                        let mut exists = false;
+                        for old in &unique {
+                            if self.value_hash(old)? == hash && self.values_equal(old, &v, true)? { exists = true; break; }
+                        }
+                        if !exists { unique.push(v); }
+                    }
                     items = unique;
                 }
                 if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(items)) }
@@ -6833,8 +6852,7 @@ impl Engine<'_> {
                 pairs.extend(dict_kw);
                 let mut made: Vec<(Value, Value)> = Vec::new();
                 for (k,v) in pairs {
-                    if k.core_hash().is_none() && !matches!(k, Value::Null | Value::Real(_)) { return Err(self.core_fault("core.unhashable", &k.core_kind())); }
-                    if let Some(p) = made.iter_mut().find(|(old,_)| number(old).equals(&number(&k))) { p.1 = v; } else { made.push((k,v)); }
+                    self.replace_item(&mut made, k, v)?;
                 }
                 Value::Map(Rc::new(made))
             }

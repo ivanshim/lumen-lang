@@ -71,8 +71,14 @@ impl Value {
     pub fn identity_mark(&self) -> Option<(String, u64)> {
         use std::rc::Rc;
         let place = match self {
-            Value::Bond(c) | Value::Binding(c) => return c.borrow().identity_mark(),
-            Value::Collection(c, _) => Rc::as_ptr(c) as usize as u64,
+            Value::Binding(c) => return c.borrow().identity_mark(),
+            Value::Bond(c) => {
+                if matches!(&*c.borrow(), Value::Array(_) | Value::Map(_)) {
+                    return Some((String::from("collection"), Rc::as_ptr(c) as usize as u64));
+                }
+                return c.borrow().identity_mark();
+            }
+            Value::Collection(c, _) => return Some((String::from("collection"), Rc::as_ptr(c) as usize as u64)),
             Value::Array(p) | Value::Tuple(p) | Value::Set(p) => Rc::as_ptr(p) as usize as u64,
             Value::Map(p) => Rc::as_ptr(p) as usize as u64,
             Value::Text(p) => p.as_ptr() as usize as u64,
@@ -96,7 +102,7 @@ impl Value {
             Value::SortOf(sort) => *sort as u64,
             _ => return None,
         };
-        let kind = if matches!(self, Value::Ellipsis) { "ellipsis".into() } else { self.core_kind() };
+        let kind = format!("{:?}:{}", std::mem::discriminant(self), self.core_kind());
         Some((kind, place))
     }
 

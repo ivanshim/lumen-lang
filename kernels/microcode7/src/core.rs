@@ -69,8 +69,14 @@ impl Value {
         use std::rc::Rc;
         let address: u64;
         match self {
-            Self::Shared(cell) => return cell.borrow().identity_stamp(),
-            Self::Mutable(cell, _) => address = Rc::as_ptr(cell) as usize as u64,
+            Self::Shared(cell) => {
+                let value = cell.borrow();
+                match &*value {
+                    Self::Vector(_) | Self::Dict(_) => return Some(("held".to_owned(), Rc::as_ptr(cell) as usize as u64)),
+                    _ => return value.identity_stamp(),
+                }
+            }
+            Self::Mutable(cell, _) => return Some(("held".to_owned(), Rc::as_ptr(cell) as usize as u64)),
             Self::Small(n) => address = *n as u64,
             Self::Flag(b) => address = if *b { 1 } else { 0 },
             Self::Nil | Self::Ellipsis => address = 0,
@@ -91,7 +97,7 @@ impl Value {
             Self::Adorned(p) => address = Rc::as_ptr(p) as usize as u64,
             _ => return None,
         }
-        let category = match self { Self::Ellipsis => String::from("ellipsis"), _ => self.kind_word() };
+        let category = format!("{}:{:?}", self.kind_word(), std::mem::discriminant(self));
         Some((category, address))
     }
 

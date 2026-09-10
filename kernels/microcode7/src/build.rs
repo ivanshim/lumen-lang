@@ -5359,12 +5359,12 @@ impl<'a> Builder<'a> {
             }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
-        if table.spells("ext.literal.unimplemented", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.lexeme) {
             self.advance();
             let word = table.single("ext.literal.unimplemented").unwrap_or_default();
             return self.subscript(constant(Value::Declined(Rc::from(word))));
         }
-        if table.spells("ext.literal.ellipsis", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
         }

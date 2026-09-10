@@ -2739,6 +2739,17 @@ impl<'a> Machine<'a> {
                         Value::Shared(cell) => Some(cell.clone()),
                         _ => None,
                     };
+                    if self.table.has_any("ext.builtin.hash.method") {
+                        let old = shared.as_ref().map(|cell| cell.borrow().clone()).unwrap_or_else(|| f.cells.borrow()[i].clone());
+                        if let (Value::Dict(entries), Some(key)) = (old, key.as_ref()) {
+                            let mut next = entries.as_ref().clone();
+                            self.insert_pair(&mut next, key.clone(), value)?;
+                            let made = Value::Dict(Rc::new(next));
+                            if let Some(cell) = shared { *cell.borrow_mut() = made; }
+                            else { f.cells.borrow_mut()[i] = made; }
+                            return Ok(Value::Nil);
+                        }
+                    }
                     let over = match shared {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
@@ -4076,8 +4087,10 @@ impl<'a> Machine<'a> {
             }
             if op == Prim::At {
                 if let Value::Dict(entries) = &v[0] {
-                    self.hashed_value(&v[1])?;
-                    for (key, item) in entries.iter() { if self.equal_values(key, &v[1], true)? { return Ok(item.clone()); } }
+                    let hash = self.hashed_value(&v[1])?;
+                    for (key, item) in entries.iter() {
+                        if key.shares_identity(&v[1]) || self.hashed_value(key)? == hash && self.equal_values(key, &v[1], true)? { return Ok(item.clone()); }
+                    }
                     return Err(format!("{}{}", self.method_fault("key"), v[1].quoted()));
                 }
             }
@@ -4278,7 +4291,7 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
                     };
                     let mut combined = prior.to_vec();
-                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    for entry in incoming { self.insert_pair(&mut combined, entry.0, entry.1)?; }
                     Value::Dict(Rc::new(combined))
                 }
             }
@@ -4604,12 +4617,12 @@ impl<'a> Machine<'a> {
                     Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => {
                         let mut all: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
-                        set_key(&mut all, v[1].clone(), v[2].clone());
+                        self.insert_pair(&mut all, v[1].clone(), v[2].clone())?;
                         Value::Dict(Rc::new(all))
                     }
                     Value::Dict(entries) => {
                         let mut all = entries.as_ref().clone();
-                        set_key(&mut all, v[1].clone(), v[2].clone());
+                        self.insert_pair(&mut all, v[1].clone(), v[2].clone())?;
                         Value::Dict(Rc::new(all))
                     }
                     _ => return Err(self.no_places()),
@@ -6938,6 +6951,18 @@ fn suspension_within(form: &Form) -> bool {
 // Each primitive is given the values already worked out by the caller.
 // Only the few names belonging to that primitive may fill its places.
 impl Machine<'_> {
+    fn insert_pair(&mut self, entries: &mut Vec<(Value, Value)>, key: Value, value: Value) -> Result<(), String> {
+        if !self.table.has_any("ext.builtin.hash.method") { set_key(entries, key, value); return Ok(()); }
+        let hash = self.hashed_value(&key)?;
+        let mut found = None;
+        for (index, (prior, _)) in entries.iter().enumerate() {
+            if prior.shares_identity(&key) || self.hashed_value(prior)? == hash && self.equal_values(prior, &key, true)? { found = Some(index); break; }
+        }
+        if let Some(index) = found { entries[index].1 = value; }
+        else { entries.push((key, value)); }
+        Ok(())
+    }
+
     fn protocol_complaint(&self, words: &str) -> Option<(String, String)> {
         if !self.table.has_any("ext.op.eq.method") { return None; }
         let labels = ["ext.builtin.core.unhashable", "ext.builtin.core.uncallable", "ext.builtin.hash.result", "ext.builtin.bool.result", "ext.builtin.bool.base", "ext.builtin.len.negative", "ext.op.order.unsupported"];
@@ -7106,6 +7131,7 @@ impl Machine<'_> {
                 Ok(true)
             }
             (Value::Declined(_), Value::Declined(_)) => Ok(true),
+            (Value::Blueprint(_), Value::Blueprint(_)) => Ok(a.shares_identity(&b)),
             _ => Ok(self.equal_contents(&a, &b)),
         }
     }
@@ -7329,8 +7355,12 @@ impl Machine<'_> {
                 if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
                 let mut distinct: Vec<Value> = Vec::new();
                 for entry in entries {
-                    if entry.hash_number().is_none() { return Err(self.core_complaint("core.unhashable", &entry.kind_word())); }
-                    if distinct.iter().all(|old| !as_number(old).equals(&as_number(&entry))) { distinct.push(entry); }
+                    let hash = self.hashed_value(&entry)?;
+                    let mut already = false;
+                    for prior in distinct.iter() {
+                        if self.hashed_value(prior)? == hash && self.equal_values(prior, &entry, true)? { already = true; break; }
+                    }
+                    if !already { distinct.push(entry); }
                 }
                 Ok(Value::Set(Rc::new(distinct)))
             }
@@ -7353,8 +7383,7 @@ impl Machine<'_> {
                 incoming.extend(additions);
                 let mut entries: Vec<(Value, Value)> = Vec::new();
                 for pair in incoming {
-                    if pair.0.hash_number().is_none() && !matches!(pair.0, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &pair.0.kind_word())); }
-                    if let Some(index) = entries.iter().position(|(key,_)| as_number(key).equals(&as_number(&pair.0))) { entries[index].1 = pair.1; } else { entries.push(pair); }
+                    self.insert_pair(&mut entries, pair.0, pair.1)?;
                 }
                 Ok(Value::Dict(Rc::new(entries)))
             }
