@@ -4500,7 +4500,11 @@ impl<'a> Engine<'a> {
             if !matches!(&args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(bad()); }
             let number = args[0].as_big()?;
             if !signed && number.is_negative() { return Err(self.byte_fault("unsigned")); }
-            let width = match args.get(1) { None => 1, Some(n) => n.as_big()?.to_usize().ok_or_else(bad)? };
+            let width = match args.get(1) {
+                None => 1,
+                Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => n.as_big()?.to_usize().ok_or_else(bad)?,
+                _ => return Err(bad()),
+            };
             let mut row = if signed { number.to_signed_bytes_le() } else { number.to_bytes_le().1 };
             if number.is_zero() { row.clear(); }
             if row.len() > width { return Err(self.byte_fault("overflow")); }
@@ -4513,7 +4517,16 @@ impl<'a> Engine<'a> {
         let row = cell.borrow().clone();
         let given = &args[1..];
         let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
-        let count = |v: Option<&Value>| -> Res<usize> { match v { None => Ok(usize::MAX), Some(v) => { let n = v.as_big()?; Ok(if n.is_negative() { usize::MAX } else { n.to_usize().unwrap_or(usize::MAX) }) } } };
+        let count = |v: Option<&Value>| -> Res<usize> {
+            match v {
+                None => Ok(usize::MAX),
+                Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                    let n = v.as_big()?;
+                    Ok(n.to_usize().unwrap_or(usize::MAX))
+                }
+                _ => Err(bad()),
+            }
+        };
         let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
         let result = match task {
             3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),

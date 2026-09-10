@@ -317,8 +317,8 @@ only. The extension labels so far, all from PHP:
   numbers supplies the bytes. Text with an encoding is encoded. A mutable
   row shares its places when bound under another name; copying and slicing
   make a fresh row. Compound joining and repetition write through the
-  mutable row, so its other names see the change. Byte prefixes make the immutable value, whose places
-  hold whole numbers. Rows admit joining, repetition, ordering, membership
+  mutable row, so its other names see the change. Byte prefixes make the
+  immutable value, whose places hold whole numbers. Rows admit joining, repetition, ordering, membership
   and equality; a byte row and text are never equal.
 - `ext.builtin.bytes.encode` and `.decode`: the methods taking text to
   bytes and bytes to text. `ext.system.bytes.encodings` names the wide
@@ -378,14 +378,16 @@ only. The extension labels so far, all from PHP:
   letters before a quote that ask for raw text, byte text, plain text,
   or text with expressions between braces. A raw letter may stand on
   either side of a byte or format letter. Raw text keeps its backslashes,
-  even one shielding a quote. Byte text is read whole and keeps its distinct value. Doubled braces in formatted text stand for single braces;
+  even one shielding a quote. Byte text is read whole and keeps its distinct
+  value. Doubled braces in formatted text stand for single braces;
   fields may carry conversions, format specifications and a debug equals
   sign. Each field and each field in its specification is read as code.
   Plain fields and whole-number debug fields run. Further conversions
   and nonempty specifications stop with `ext.lexical.string.value.unready`.
-- `ext.lexical.string.value.unready`: what is said upon reaching a field presentation the run cannot honour. Reading continues
-  through these forms even in the bodies of routines never called.
- Doubled braces in formatted text stand for single braces;
+- `ext.lexical.string.value.unready`: what is said upon reaching a field
+  presentation the run cannot honour. Reading continues through these
+  forms even in the bodies of routines never called.
+  Doubled braces in formatted text stand for single braces;
   fields may carry conversions, format specifications and a debug equals
   sign. Each field and each field in its specification is read as code.
   Text conversions quote strings and make escapes visible; simple field
