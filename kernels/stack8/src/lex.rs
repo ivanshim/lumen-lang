@@ -528,11 +528,20 @@ impl<'a> Cursor<'a> {
         let lang = self.lang;
         let known = lang.escape_letters.contains(&next) || lang.control_escapes.contains(&next)
             || lang.quotes.contains(&next) || next == '\\' || next.is_digit(8)
-            || [lang.named_letter, lang.codepoint_letter, lang.wide_letter, lang.byte_letter].contains(&Some(next))
+            || Some(next) == lang.byte_letter
+            || (!bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)))
             || matches!(next, '\n' | '\r');
         if !known {
             if let [head, middle, tail] = lang.escape_warning.as_slice() {
                 self.push(Shape::Warning, format!("{head}{next}{middle}{next}{tail}"), 0, self.row, self.column);
+            }
+        }
+        if next.is_digit(8) {
+            let figures: String = (1..=3).filter_map(|n| self.look(n)).take_while(|c| c.is_digit(8)).collect();
+            if u32::from_str_radix(&figures, 8).map_or(false, |n| n > 255) {
+                if let [first, second, third] = lang.octal_warning.as_slice() {
+                    self.push(Shape::Warning, format!("{first}{figures}{second}{figures}{third}"), 0, self.row, self.column);
+                }
             }
         }
         if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {

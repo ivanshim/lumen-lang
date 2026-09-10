@@ -589,6 +589,7 @@ class _Warns:
         import warnings
         self.manager = warnings.catch_warnings(record=True, _internal=True)
         self.records = self.manager.__enter__()
+        self.warnings = self.records
         warnings.simplefilter('always', self.expected)
         return self
 

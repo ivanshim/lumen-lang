@@ -585,6 +585,11 @@
     "N"
   ],
   "ext.lexical.escape.octal": true,
+  "ext.lexical.escape.octal.warning": [
+    "\"\\",
+    "\" is an invalid octal escape sequence. Such sequences will not work in the future. Did you mean \"\\\\",
+    "\"? A raw string is also an option."
+  ],
   "ext.lexical.escape.unavailable": [
     "Unicode escape cannot be represented"
   ],

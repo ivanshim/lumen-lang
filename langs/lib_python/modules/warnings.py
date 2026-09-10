@@ -62,13 +62,15 @@ def _check(action, category, lineno):
         raise AssertionError('invalid action: ' + repr(action))
     if not isinstance(category(), Warning):
         raise AssertionError('category must be a Warning subclass')
-    if lineno < 0:
+    if (type(lineno) != type(0) and type(lineno) != type(True)) or lineno < 0:
         raise AssertionError('lineno must be an int >= 0')
 
 
 def filterwarnings(action, message='', category=Warning, module='', lineno=0, append=False):
     global filters
     _check(action, category, lineno)
+    if type(message) != type('') or type(module) != type(''):
+        raise AssertionError('warning filter patterns must be strings')
     _matches(message, '', True)
     _matches(module, '')
     rule = [action, message, category, module, lineno]
@@ -91,6 +93,8 @@ def resetwarnings():
 
 
 def _location(stacklevel):
+    if type(stacklevel) != type(0) and type(stacklevel) != type(True):
+        raise TypeError('stacklevel must be an integer')
     calls = __warning_calls()
     if stacklevel < 1:
         stacklevel = 1
@@ -150,18 +154,21 @@ def _warn(message, category, filename, lineno, module, source):
     if action == 'error':
         raise message
     if action != 'always':
-        key = [str(message), category]
+        key = [str(message)]
         if action != 'once':
             key = [*key, module]
         if action == 'default':
             key = [*key, lineno]
-        if key in _state.seen:
-            return None
-        _state.seen = [*_state.seen, key]
+        for prior in _state.seen:
+            if prior[0] is category and prior[1] == key:
+                return None
+        _state.seen = [*_state.seen, [category, key]]
     context = _state.context
     if context is not None and context.record:
         __shared_append(context.records, WarningMessage(message, category, filename, lineno, source=source))
     else:
+        if source is not None:
+            raise NotImplementedError('warning allocation traceback cannot run yet')
         showwarning(message, category, filename, lineno)
 
 

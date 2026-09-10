@@ -1785,6 +1785,21 @@ impl<'a> Engine<'a> {
         if plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
+        // A value with no leaving method has no keeper to receive a
+        // raised value. Its body keeps the ordinary course of faults.
+        if let Some(cell) = &plan.context {
+            let manager = self.load_cell(cell, frame)?;
+            let leaves = match &manager {
+                Value::Object(object) => self.lang.with_leave.as_ref().and_then(|name| object.class.method(name)).is_some(),
+                _ => false,
+            };
+            if !leaves {
+                return self.run_span(program, frame, instrs, plan.body).map(|end| match end {
+                    Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after),
+                    other => other,
+                });
+            }
+        }
         let depth = self.data.len();
         let active = self.caught.len();
         let ending = match self.run_span(program, frame, instrs, plan.body) {

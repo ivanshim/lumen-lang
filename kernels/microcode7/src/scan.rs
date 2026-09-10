@@ -624,7 +624,7 @@ impl Quotation<'_> {
     fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool) -> Result<(), String> {
         let begin = self.next;
         let ch = *self.source.get(begin + 1).ok_or_else(|| self.bad())?;
-        if raw || fields && matches!(ch, '{' | '}') {
+        if raw {
             text.push('\\');
             self.forward(1);
             if raw && !(fields && matches!(ch, '{' | '}')) { text.push(ch); self.forward(1); }
@@ -636,8 +636,20 @@ impl Quotation<'_> {
             let listed = ["lexical.string_escapes", "ext.lexical.escape.controls", "ext.lexical.escape.named",
                 "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide", "ext.lexical.escape.byte",
                 "lexical.string_quotes"].iter().any(|label| table.spells(label, &letter));
-            if !listed && !ch.is_digit(8) && !matches!(ch, '\\' | '\r' | '\n') {
+            let wide_byte = bytes && ["ext.lexical.escape.named", "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter().any(|key| table.spells(key, &letter));
+            if wide_byte || (!listed && !ch.is_digit(8) && !matches!(ch, '\\' | '\r' | '\n')) {
                 self.token(Shape::Caution, format!("{opening}{letter}{between}{letter}{closing}"));
+            }
+        }
+        if fields && matches!(ch, '{' | '}') {
+            text.push('\\');
+            self.forward(1);
+            return Ok(());
+        }
+        let octal: String = self.source.iter().skip(begin + 1).take(3).take_while(|c| c.is_digit(8)).collect();
+        if octal.len() == 3 && octal.as_bytes()[0] >= b'4' {
+            if let [a, b, c] = table.strings("ext.lexical.escape.octal.warning") {
+                self.token(Shape::Caution, format!("{a}{octal}{b}{octal}{c}"));
             }
         }
         if bytes && ["ext.lexical.escape.named", "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter().any(|key| table.spells(key, &letter)) {

@@ -1591,6 +1591,9 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.escape.warning`: three pieces of a warning for an unknown
   backslash escape; its following character stands between each pair.
   Raw strings keep quiet. The reader carries the warning beside its tokens.
+  `ext.lexical.escape.octal.warning` has the same three-piece shape, with
+  the octal figures put between the pieces when their number exceeds 255.
+  A Unicode escape in a byte string is an unknown escape too.
 - `ext.system.warning.reader`: the module, routine and warning class which
   receive warnings found while reading. The routine takes the message,
   class, filename and line; thus imported source obeys the filters already
@@ -2302,6 +2305,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.deferred` | - | - | `u` `U` `N` `x` `0` `1` `2` `3` `4` `5` `6` `7` `r` `a` `b` `f` `v` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.named` | - | - | `N` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
+| `ext.lexical.escape.octal.warning` | - | - | `"\` `" is an invalid octal escape sequence. Such sequences will not work in the future. Did you mean "\\` `"? A raw string is also an option.` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.warning` | - | - | `"\` `" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\` `"? A raw string is also an option.` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
