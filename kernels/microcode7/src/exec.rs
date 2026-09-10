@@ -1202,7 +1202,7 @@ impl<'a> Machine<'a> {
                 None => holds.push((key.to_string(), value)),
             }
         }
-        Some(Value::Thing(Rc::new(Thing { of, holds: RefCell::new(holds), turn: self.made })))
+        Some(Value::Thing(Rc::new(Thing { entries: RefCell::new(None), of, holds: RefCell::new(holds), turn: self.made })))
     }
 
     /// What a complaint calls a value where it names its kind. A flag
@@ -2034,7 +2034,7 @@ impl<'a> Machine<'a> {
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
                 };
                 self.raised_on = self.row;
-                Err(Escape::Thrown(Value::Thing(Rc::new(Thing {
+                Err(Escape::Thrown(Value::Thing(Rc::new(Thing { entries: RefCell::new(None),
                     of: Rc::new(kind), turn: 0,
                     holds: RefCell::new(vec![("message".to_string(), held)]),
                 }))))
@@ -2363,7 +2363,7 @@ impl<'a> Machine<'a> {
                         return Err("Only a class can be made into a thing".to_string().into());
                     };
                     self.made += 1;
-                    let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
+                    let thing = Rc::new(Thing { entries: RefCell::new(None), of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
                     if self.table.single("ext.stmt.class.destructor").is_some() {
                         self.things.borrow_mut().push(Rc::downgrade(&thing));
                     }
@@ -2477,14 +2477,14 @@ impl<'a> Machine<'a> {
                         }
                         if let (Some(key), Value::Thing(object)) = (&key, &target) {
                             if self.appointment(&target, 12).is_none() {
-                                let contents = object.holds.borrow().iter().find(|(n, _)| n.is_empty()).map(|(_, v)| collection_read(v));
+                                let contents = object.entries.borrow().clone();
                                 if let Some(Value::Dict(entries)) = contents {
                                     let mut entries = entries.to_vec();
                                     let wanted = self.hash_key(key)?;
                                     let mut at = 0;
                                     while at < entries.len() && !self.keys_agree(&entries[at].0, &wanted)? { at += 1; }
                                     if at == entries.len() { entries.push((wanted, value)); } else { entries[at].1 = value; }
-                                    object.holds.borrow_mut().iter_mut().find(|(n, _)| n.is_empty()).unwrap().1 = Value::Dict(Rc::new(entries));
+                                    *object.entries.borrow_mut() = Some(Value::Dict(Rc::new(entries)));
                                     return Ok(Value::Nil);
                                 }
                             }
@@ -2801,12 +2801,19 @@ impl<'a> Machine<'a> {
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
         self.made += 1;
         let fields = class.every_field();
-        let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
+        let object = Rc::new(Thing { entries: RefCell::new(None), of: class.clone(), holds: RefCell::new(fields), turn: self.made });
+        if self.table.strings("ext.stmt.class.special").len() > 77 {
+            let marker = object.holds.borrow().iter().position(|(name, _)| name.is_empty());
+            if let Some(at) = marker { *object.entries.borrow_mut() = Some(object.holds.borrow_mut().remove(at).1); }
+        }
         if let Some(body) = self.table.single("ext.stmt.class.constructor").and_then(|word| class.program(word)).cloned() {
             let mut given = Vec::with_capacity(args.len() + 1);
             given.push(Value::Thing(object.clone()));
             given.extend(args);
             self.invoke(body, self.outermost.clone(), given)?;
+        } else if object.entries.borrow().is_some() {
+            let (plain, named) = self.open_arguments(args)?;
+            *object.entries.borrow_mut() = Some(self.dictionary(&plain, named)?);
         } else if !args.is_empty() {
             return Err(format!("Class {} takes no arguments when it is made", class.name).into());
         }
@@ -3708,6 +3715,10 @@ impl<'a> Machine<'a> {
                 self.object_words(&Value::Dict(Rc::new(pairs)), true)
             }
             Value::Thing(t) => {
+                if self.appointment(subject, 0).is_none() && self.appointment(subject, 1).is_none() {
+                    let contents = t.entries.borrow().clone();
+                    if let Some(contents) = contents { return self.object_words(&contents, true); }
+                }
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
                     None => Ok(format!("<{} object>", t.of.name)),
@@ -3755,6 +3766,9 @@ impl<'a> Machine<'a> {
             if number < BigInt::from(0) { return Err(self.bad_answer()); }
             return Ok(number != BigInt::from(0));
         }
+        if let Value::Thing(object) = subject {
+            if let Some(Value::Dict(entries)) = object.entries.borrow().as_ref() { return Ok(!entries.is_empty()); }
+        }
         Ok(self.stands_true(subject))
     }
 
@@ -3798,8 +3812,9 @@ impl<'a> Machine<'a> {
 
     fn index_answer(&mut self, item: &Value) -> Result<Value, String> {
         match self.ask_special(item, 38, &[])? {
-            None => Ok(item.clone()),
-            Some(number @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => Ok(number),
+            None => Ok(if let Value::Flag(b) = item { Value::Small(if *b { 1 } else { 0 }) } else { item.clone() }),
+            Some(Value::Flag(b)) => Ok(Value::Small(if b { 1 } else { 0 })),
+            Some(number @ (Value::Small(_) | Value::Huge(_))) => Ok(number),
             Some(other) => {
                 let pieces = self.table.strings("ext.stmt.class.index.amiss");
                 let mut message = pieces.first().cloned().unwrap_or_default();
@@ -3871,6 +3886,7 @@ impl<'a> Machine<'a> {
                 return Err([fragments[0].clone(), self.written_as(&operation), fragments[1].clone(), self.operand_name(left), fragments[2].clone(), self.operand_name(right), fragments[3].clone()].concat());
             }
         }
+        if operation == Prim::ComplexCall { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()); }
         let slot = match operation {
             Prim::AsInt => Some(39), Prim::AsReal => Some(40), Prim::ComplexCall => Some(41),
             Prim::Absolute => Some(46), Prim::Positive | Prim::NumberAlone => Some(47), Prim::BitsOver => Some(48),
@@ -3881,6 +3897,23 @@ impl<'a> Machine<'a> {
         if let (Some(slot), Some(subject)) = (slot, operands.first()) {
             if let Some(result) = self.ask_special(subject, slot, &operands[1..])? {
                 if matches!(operation, Prim::AsInt | Prim::SizeCall) && !matches!(result, Value::Small(_) | Value::Huge(_)) { return Err(self.bad_answer()); }
+                if operation == Prim::AsReal && !matches!(&result, Value::Frac(n) if n.places.is_some()) { return Err(self.bad_answer()); }
+                if operation == Prim::DirCall {
+                    let entries = self.object_members(&result)?;
+                    let mut words = Vec::new();
+                    for entry in entries { if let Value::Text(word) = entry { words.push(word); } else { return Err(self.bad_answer()); } }
+                    words.sort();
+                    return Ok(Some(Value::Vector(Rc::new(words.into_iter().map(Value::Text).collect()))));
+                }
+                if operation == Prim::PowerCall && matches!(result, Value::Refusal(_)) {
+                    if operands.len() >= 2 {
+                        let tail = std::iter::once(operands[0].clone()).chain(operands[2..].iter().cloned()).collect::<Vec<_>>();
+                        if let Some(answer) = self.ask_special(&operands[1], 32, &tail)? {
+                            if !matches!(answer, Value::Refusal(_)) { return Ok(Some(answer)); }
+                        }
+                    }
+                    return Err(self.bad_answer());
+                }
                 return Ok(Some(result));
             }
             if matches!(operation, Prim::AsInt | Prim::AsReal) && self.appointment(subject, 38).is_some() {
@@ -3892,7 +3925,8 @@ impl<'a> Machine<'a> {
             (Prim::ClassReady, [subject @ Value::Blueprint(class), rest @ ..]) => {
                 let members = class.shared.borrow().clone();
                 for (word, member) in members { self.ask_special(&member, 79, &[subject.clone(), Value::text(&word)])?; }
-                let inherited = class.under.as_ref().and_then(|parent| self.appointed(&Value::Blueprint(parent.clone()), 80));
+                let inherited = class.under.as_ref().and_then(|parent| self.appointment(&Value::Blueprint(parent.clone()), 80));
+                let inherited = match inherited { None => None, Some(Value::Routine(body) | Value::Bound(body, _)) => Some(body), _ => return Err(self.bad_answer()) };
                 if let Some(body) = inherited {
                     let given = std::iter::once(subject.clone()).chain(rest.iter().cloned()).collect();
                     match self.invoke(body, self.outermost.clone(), given) {
@@ -3907,7 +3941,7 @@ impl<'a> Machine<'a> {
                 match self.ask_special(subject, 81, std::slice::from_ref(key))? { Some(value) => value, None => return Ok(None) }
             }
             (Prim::At | Prim::Fetch, [subject @ Value::Thing(object), key]) if self.appointment(subject, 11).is_none() => {
-                let contents = object.holds.borrow().iter().find(|(name, _)| name.is_empty()).map(|(_, value)| collection_read(value));
+                let contents = object.entries.borrow().clone();
                 if let Some(Value::Dict(entries)) = contents {
                     let sought = self.hash_key(key)?;
                     for (stored, item) in entries.iter() { if self.keys_agree(stored, &sought)? { return Ok(Some(item.clone())); } }
@@ -3935,12 +3969,16 @@ impl<'a> Machine<'a> {
             (Prim::RenderField, [item, spec, conversion]) => self.format_answer(item, &spec.bare(), &conversion.bare())?,
             (Prim::FormatCall, [item]) => self.format_answer(item, "", "")?,
             (Prim::FormatCall, [item, Value::Text(spec)]) => self.format_answer(item, spec, "")?,
-            (Prim::IndexCall, [item]) => self.index_answer(item)?,
+            (Prim::IndexCall, [item]) => {
+                let result = self.index_answer(item)?;
+                match result { Value::Small(_) | Value::Huge(_) => result, _ => return Err(self.bad_answer()) }
+            }
             (Prim::BinaryText | Prim::HexText | Prim::OctalText, [item]) => {
                 let whole = self.index_answer(item)?;
                 if !matches!(whole, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.bad_answer()); }
                 let radix = if operation == Prim::BinaryText { 2 } else if operation == Prim::HexText { 16 } else { 8 };
-                let prefix = match radix { 2 => "0b", 16 => "0x", _ => "0o" };
+                let prefix_label = match radix { 2 => "ext.lexical.number.binary_prefix", 16 => "lexical.number.hex_prefix", _ => "ext.lexical.number.octal_prefix" };
+                let prefix = self.table.single(prefix_label).ok_or_else(|| self.bad_answer())?;
                 let digits = whole.as_big()?.to_str_radix(radix);
                 let (sign, magnitude) = if digits.starts_with('-') { ("-", &digits[1..]) } else { ("", digits.as_str()) };
                 Value::text(&[sign, prefix, magnitude].concat())
@@ -4029,11 +4067,15 @@ impl<'a> Machine<'a> {
                 if !matches!(length, Value::Small(_) | Value::Huge(_)) || length.as_big()? < BigInt::from(0) { return Err(self.bad_answer()); }
                 length
             }
+            (Prim::Length, [Value::Thing(object)]) => {
+                let held = object.entries.borrow();
+                match held.as_ref() { Some(Value::Dict(entries)) => Value::Small(entries.len() as i64), _ => return Err(self.bad_answer()) }
+            }
             (Prim::SpecialHash, [one]) => match self.ask_special(one, 8, &[])? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
                 Some(_) => return Err(self.bad_answer()),
                 None => match one {
-                    Value::Thing(t) if self.appointed(one, 2).is_none() => Value::Small(t.turn as i64),
+                    Value::Thing(t) if self.appointed(one, 2).is_none() && t.entries.borrow().is_none() => Value::Small(t.turn as i64),
                     Value::Small(_) | Value::Huge(_) => one.clone(),
                     Value::Flag(b) => Value::Small(*b as i64),
                     _ => return Err(self.bad_answer()),
@@ -4081,7 +4123,7 @@ impl<'a> Machine<'a> {
                         under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![],
                     };
                     self.made += 1;
-                    let value = Value::Thing(Rc::new(Thing { of: Rc::new(class), holds: RefCell::new(vec![]), turn: self.made }));
+                    let value = Value::Thing(Rc::new(Thing { entries: RefCell::new(None), of: Rc::new(class), holds: RefCell::new(vec![]), turn: self.made }));
                     self.got_away = Some(Escape::Thrown(value));
                     return Err(self.table.single("ext.stmt.class.special.stop").unwrap_or_default().to_string());
                 }

@@ -945,6 +945,11 @@ only. The extension labels so far, all from PHP:
   remainder and its reflection; the five bit operations and their
   reflections; formatting, missing keys, reverse walking, naming a
   member, beginning a subclass, class subscripting, size and directory.
+  A map-derived thing keeps its entries apart from its named attributes;
+  its missing-key method is asked only when ordinary subscripting finds
+  no entry. Naming members precedes the parent's subclass hook, whose
+  receiver is the new class and whose remaining arguments retain their
+  written names. A complex conversion is read but cannot yet be run.
 - `ext.stmt.class.index.amiss` encloses the kind returned by an index
   method which failed to give a whole number.
   `ext.stmt.class.binary.amiss` supplies four pieces enclosing the sign

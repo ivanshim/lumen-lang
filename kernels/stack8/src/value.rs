@@ -720,6 +720,8 @@ pub fn who_keeps(filed: &str) -> (&str, Option<&str>) {
 /// handle, so two names for it see one another's writes.
 #[derive(Debug)]
 pub struct Instance {
+    /// A map beneath an object is kept apart from its named attributes.
+    pub mapping: RefCell<Option<Value>>,
     pub class: Rc<Class>,
     pub fields: RefCell<Vec<(String, Value)>>,
     /// Which object this is by the order it was made, counting from

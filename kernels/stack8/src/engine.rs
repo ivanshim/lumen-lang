@@ -893,7 +893,7 @@ impl<'a> Engine<'a> {
                 None => fields.push((named.to_string(), held)),
             }
         }
-        Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+        Some(Value::Object(Rc::new(Instance { mapping: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
     }
 
     /// Offer a fault of the kernel's own to the innermost guard as a
@@ -2163,6 +2163,10 @@ impl<'a> Engine<'a> {
         if let Value::Trace(words) = value { return Err(words.to_string()); }
         if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(value.display(&self.wording())); }
         if let Value::Object(object) = value {
+            if self.special_value(value, 0).is_none() && self.special_value(value, 1).is_none() {
+                let contents = object.mapping.borrow().clone();
+                if let Some(contents) = contents { return self.special_text(&contents, true); }
+            }
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
                 Some(Value::Text(text)) => Ok(text.to_string()),
@@ -2206,6 +2210,9 @@ impl<'a> Engine<'a> {
                 _ => Err(self.special_fault()),
             };
         }
+        if let Value::Object(object) = value {
+            if let Some(Value::Map(entries)) = object.mapping.borrow().as_ref() { return Ok(!entries.is_empty()); }
+        }
         Ok(self.truth(value))
     }
 
@@ -2214,8 +2221,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_index(&mut self, value: &Value) -> Res<Value> {
-        let Some(answer) = self.special_call(value, 38, Vec::new())? else { return Ok(value.clone()) };
-        if matches!(answer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Ok(answer); }
+        let Some(answer) = self.special_call(value, 38, Vec::new())? else {
+            return Ok(match value { Value::Flag(b) => Value::Small(i64::from(*b)), _ => value.clone() });
+        };
+        if let Value::Flag(b) = answer { return Ok(Value::Small(i64::from(b))); }
+        if matches!(answer, Value::Small(_) | Value::Huge(_)) { return Ok(answer); }
         let words = &self.lang.index_amiss;
         Err(format!("{}{}{}", words.first().cloned().unwrap_or_default(), self.special_kind(&answer), words.get(1).cloned().unwrap_or_default()))
     }
@@ -2248,7 +2258,7 @@ impl<'a> Engine<'a> {
         }
         if matches!(op, Action::At | Action::Nested) && self.special_value(a, 11).is_none() {
             if let Value::Object(object) = a {
-                let contents = object.fields.borrow().iter().find(|(key, _)| key.is_empty()).map(|(_, value)| collection_contents(value));
+                let contents = object.mapping.borrow().clone();
                 if let Some(Value::Map(entries)) = contents {
                     let key = self.special_key(b)?;
                     for (candidate, value) in entries.iter() { if self.special_keys_equal(candidate, &key)? { return Ok(value.clone()); } }
@@ -2336,6 +2346,7 @@ impl<'a> Engine<'a> {
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
+        if op == Builtin::ComplexCall { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
         let first = args.first();
         let method = match op {
             Builtin::ToInt => Some(39), Builtin::AsReal => Some(40), Builtin::ComplexCall => Some(41),
@@ -2347,7 +2358,21 @@ impl<'a> Engine<'a> {
         if let (Some(place), Some(value)) = (method, first) {
             if let Some(answer) = self.special_call(value, place, args[1..].to_vec())? {
                 if matches!(op, Builtin::ToInt | Builtin::SizeCall) && !matches!(answer, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
-                return Ok(Some(answer));
+                if op == Builtin::AsReal && !matches!(answer, Value::Real(_)) { return Err(self.special_fault()); }
+                if op == Builtin::DirCall {
+                    let mut names = self.special_items(&answer)?;
+                    if names.iter().any(|v| !matches!(v, Value::Text(_))) { return Err(self.special_fault()); }
+                    names.sort_by_key(Value::plain);
+                    return Ok(Some(Value::array(names)));
+                }
+                if op != Builtin::PowerCall || !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); }
+                if args.len() >= 2 {
+                    let mut reflected = vec![args[0].clone()]; reflected.extend_from_slice(&args[2..]);
+                    if let Some(result) = self.special_call(&args[1], 32, reflected)? {
+                        if !matches!(result, Value::Declined(_)) { return Ok(Some(result)); }
+                    }
+                }
+                return Err(self.special_fault());
             }
             if matches!(op, Builtin::ToInt | Builtin::AsReal) && self.special_value(value, 38).is_some() {
                 let index = self.special_index(value)?;
@@ -2359,12 +2384,17 @@ impl<'a> Engine<'a> {
                 let spec = match args.get(1) { Some(Value::Text(s)) => s.to_string(), None => String::new(), _ => return Err(self.special_fault()) };
                 Value::text(&self.special_format(&args[0], &spec, "")?)
             }
-            Builtin::IndexCall if args.len() == 1 => self.special_index(&args[0])?,
+            Builtin::IndexCall if args.len() == 1 => {
+                let value = self.special_index(&args[0])?;
+                if !matches!(value, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
+                value
+            }
             Builtin::BinaryText | Builtin::HexText | Builtin::OctalText if args.len() == 1 => {
                 let index = self.special_index(&args[0])?;
                 if !matches!(index, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.special_fault()); }
                 let whole = arith::whole_of(&index).ok_or_else(|| self.special_fault())?;
-                let (radix, prefix) = match op { Builtin::BinaryText => (2, "0b"), Builtin::HexText => (16, "0x"), _ => (8, "0o") };
+                let radix = match op { Builtin::BinaryText => 2, Builtin::HexText => 16, _ => 8 };
+                let prefix = self.lang.base_prefixes.iter().find(|(_, base)| *base == radix).map(|(word, _)| word.as_str()).ok_or_else(|| self.special_fault())?;
                 let digits = whole.to_str_radix(radix);
                 Value::text(&match digits.strip_prefix('-') { Some(tail) => format!("-{}{}", prefix, tail), None => format!("{}{}", prefix, digits) })
             }
@@ -2421,14 +2451,14 @@ impl<'a> Engine<'a> {
             Builtin::Fetch if args.len() == 2 => self.special_dyad(&Action::At, &args[0], &args[1])?,
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Object(_)) && self.special_value(&args[2], 12).is_none() => {
                 let Value::Object(object) = &args[2] else { unreachable!() };
-                let contents = object.fields.borrow().iter().find(|(name, _)| name.is_empty()).map(|(_, value)| collection_contents(value));
+                let contents = object.mapping.borrow().clone();
                 let Some(Value::Map(entries)) = contents else { return Err(self.special_fault()); };
                 let mut pairs = entries.as_ref().clone();
                 let key = self.special_key(&args[0])?;
                 let mut found = None;
                 for (at, (old, _)) in pairs.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
                 match found { Some(at) => pairs[at].1 = args[1].clone(), None => pairs.push((key, args[1].clone())) }
-                object.fields.borrow_mut().iter_mut().find(|(name, _)| name.is_empty()).unwrap().1 = Value::Map(Rc::new(pairs));
+                *object.mapping.borrow_mut() = Some(Value::Map(Rc::new(pairs)));
                 args[2].clone()
             }
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Fields(_)) => {
@@ -2454,13 +2484,19 @@ impl<'a> Engine<'a> {
                     _ => return Err(self.special_fault()),
                 }
             }
+            Builtin::Length if args.len() == 1 && matches!(&args[0], Value::Object(_)) => {
+                let Value::Object(object) = &args[0] else { unreachable!() };
+                let contents = object.mapping.borrow();
+                let Some(Value::Map(entries)) = contents.as_ref() else { return Err(self.special_fault()); };
+                Value::Small(entries.len() as i64)
+            }
             Builtin::Hash if args.len() == 1 => {
                 if let Some(answer) = self.special_call(&args[0], 8, Vec::new())? {
                     if !matches!(answer, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
                     answer
                 } else {
                     match &args[0] {
-                        Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
+                        Value::Object(object) if self.special_method(&args[0], 2).is_none() && object.mapping.borrow().is_none() => Value::Small(object.mark as i64),
                         Value::Small(_) | Value::Huge(_) => args[0].clone(),
                         Value::Flag(flag) => Value::Small(i64::from(*flag)),
                         _ => return Err(self.special_fault()),
@@ -2495,7 +2531,7 @@ impl<'a> Engine<'a> {
                     let Some(value) = walk.0.get(walk.1).cloned() else {
                         let class = Class { name: self.lang.special_stop.first().cloned().unwrap_or_default(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
                         self.made += 1;
-                        self.carried = Some(Fault::Thrown(Value::Object(Rc::new(Instance { class: Rc::new(class), fields: RefCell::new(Vec::new()), mark: self.made }))));
+                        self.carried = Some(Fault::Thrown(Value::Object(Rc::new(Instance { mapping: RefCell::new(None), class: Rc::new(class), fields: RefCell::new(Vec::new()), mark: self.made }))));
                         return Err(self.lang.special_stop.first().cloned().unwrap_or_default());
                     };
                     walk.1 += 1;
@@ -3062,7 +3098,8 @@ impl<'a> Engine<'a> {
                 for (name, member) in members {
                     self.special_call(&member, 79, vec![value.clone(), Value::text(&name)])?;
                 }
-                let method = class.base.as_ref().and_then(|base| self.special_method(&Value::Class(base.clone()), 80));
+                let declared = class.base.as_ref().and_then(|base| self.special_value(&Value::Class(base.clone()), 80));
+                let method = match declared { Some(Value::Routine(method)) => Some(method), None => None, _ => return Err(self.special_fault().into()) };
                 if let Some(method) = method {
                     given.insert(0, value.clone());
                     self.invoke(&method, given)?;
@@ -3160,7 +3197,11 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 self.made += 1;
-                let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                let object = Rc::new(Instance { mapping: RefCell::new(None), class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                if self.lang.class_special.len() > 77 {
+                    let marker = object.fields.borrow().iter().position(|(name, _)| name.is_empty());
+                    if let Some(at) = marker { *object.mapping.borrow_mut() = Some(object.fields.borrow_mut().remove(at).1); }
+                }
                 if self.lang.destructor.is_some() {
                     self.things_made.borrow_mut().push(Rc::downgrade(&object));
                 }
@@ -3172,6 +3213,10 @@ impl<'a> Engine<'a> {
                         self.invoke(&maker, all)?;
                         // What the maker leaves is not the object.
                         self.drop_top()?;
+                    }
+                    None if object.mapping.borrow().is_some() => {
+                        let items = self.call_items(args)?;
+                        *object.mapping.borrow_mut() = Some(self.map_from(items)?);
                     }
                     None if !args.is_empty() => {
                         return Err(format!("Class {} takes no arguments when it is made", class.name).into());
@@ -3548,7 +3593,7 @@ impl<'a> Engine<'a> {
                 let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
                     Vec::new()
                 } else { vec![("message".to_string(), message)] };
-                let raised = Value::Object(Rc::new(Instance {
+                let raised = Value::Object(Rc::new(Instance { mapping: RefCell::new(None),
                     class, fields: RefCell::new(fields), mark: self.made,
                 }));
                 self.hurled_at.set(self.line);

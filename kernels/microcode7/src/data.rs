@@ -696,6 +696,8 @@ pub fn holder_of(filed: &str) -> (&str, Option<&str>) {
 /// both.
 #[derive(Debug)]
 pub struct Thing {
+    /// Inherited dictionary entries do not belong to the attribute list.
+    pub entries: RefCell<Option<Value>>,
     pub of: Rc<Blueprint>,
     pub holds: RefCell<Vec<(String, Value)>>,
     /// Which thing this is by the turn it was made in, counting from
