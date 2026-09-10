@@ -1,1 +1,1 @@
-PythonError: tuples cannot be run
+PythonError: NotImplementedError: tuples are not supported

@@ -3307,7 +3307,14 @@ impl<'a> Builder<'a> {
                             let first = prim_call(Prim::Of, vec![self.read(&name), constant(Value::text(&names[0]))]);
                             let stop = prim_call(Prim::Of, vec![self.read(&name), constant(Value::text(&names[1]))]);
                             self.address_to_write(&var);
-                            let body = self.count_loop(&var, first, stop, |reader| reader.body())?;
+                            let counting = self.gensym("place").ident.to_string();
+                            let counter = counting.clone();
+                            let body = self.count_loop(&counting, first, stop, |reader| {
+                                let value = reader.read(&counter);
+                                let bind = reader.write(&var, value);
+                                let body = reader.body()?;
+                                Ok(sequence(vec![bind, body]))
+                            })?;
                             return Ok(sequence(vec![save, body]));
                         }
                     }

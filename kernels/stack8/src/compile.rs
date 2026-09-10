@@ -2734,14 +2734,15 @@ impl<'a> Compiler<'a> {
                         && !words.iter().any(|w| matches!(w, Instr::Act(Action::Tie, _))) {
                         let bag = self.gensym("range");
                         let bound = self.gensym("end");
+                        let counter = self.gensym("position");
                         self.write(&bag);
                         self.read(&bag);
                         self.act(Action::Grab(lang.range_members[0].as_str().into()), 1);
-                        self.write(&var);
+                        self.write(&counter);
                         self.read(&bag);
                         self.act(Action::Grab(lang.range_members[1].as_str().into()), 1);
                         self.write(&bound);
-                        return self.count_loop(&var, &bound, false);
+                        return self.count_loop_as(&counter, &bound, false, Some(&var));
                     }
                 }
                 let bag = self.gensym("bag");
@@ -2763,9 +2764,14 @@ impl<'a> Compiler<'a> {
 
     /// The loop itself, the variable holding the start and the bound stored.
     fn count_loop(&mut self, var: &str, bound: &str, postfix: bool) -> Res<()> {
+        self.count_loop_as(var, bound, postfix, None)
+    }
+
+    fn count_loop_as(&mut self, var: &str, bound: &str, postfix: bool, item: Option<&str>) -> Res<()> {
         let to_test = self.leap();
         let top = self.mark();
         self.enter_cycle(None);
+        if let Some(item) = item { self.read(var); self.write(item); }
         if postfix {
             self.rpn_block()?;
         } else {

@@ -5493,7 +5493,7 @@ impl<'a> Machine<'a> {
                     gathered.push(Value::from_big(row.first.clone()));
                     row.first = &row.first + &row.stride;
                 }
-                Ok(gathered)
+                gathered
             }
             Value::Progression(walk) => {
                 let mut values = Vec::new();
