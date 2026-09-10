@@ -3275,8 +3275,33 @@ impl<'a> Engine<'a> {
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
         if self.lang.sequence_values && Self::sequence_unshown(value, 0) { return Err(self.lang.sequence_unready[0].clone()); }
-        Ok(match value {
-            Value::List(_) | Value::Tuple(_) | Value::Set(_) => value.display(&self.wording()),
+        self.rem_repr_inside(value, &mut Vec::new())
+    }
+
+    fn rem_repr_inside(&self, value: &Value, path: &mut Vec<usize>) -> Res<String> {
+        let holder = match value {
+            Value::List(items) => Some((Rc::as_ptr(items) as usize, "[...]")),
+            Value::Tuple(items) => Some((Rc::as_ptr(items) as usize, "(...)")),
+            Value::Set(items) => Some((Rc::as_ptr(items) as usize, "{...}")),
+            Value::Array(items) => Some((Rc::as_ptr(items) as usize, "[...]")),
+            Value::Map(items) => Some((Rc::as_ptr(items) as usize, "{...}")),
+            _ => None,
+        };
+        if let Some((identity, mark)) = holder {
+            if path.contains(&identity) { return Ok(mark.to_string()); }
+            path.push(identity);
+        }
+        let shown = match value {
+            Value::List(_) | Value::Tuple(_) | Value::Set(_) => {
+                let items = value.sequence_items().unwrap();
+                let parts = items.iter().map(|v| self.rem_repr_inside(v, path)).collect::<Res<Vec<_>>>()?;
+                match value {
+                    Value::Tuple(_) => format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }),
+                    Value::Set(_) if items.is_empty() => "set()".to_string(),
+                    Value::Set(_) => format!("{{{}}}", parts.join(", ")),
+                    _ => format!("[{}]", parts.join(", ")),
+                }
+            },
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);
@@ -3295,12 +3320,12 @@ impl<'a> Engine<'a> {
                 out
             }
             Value::Array(items) => {
-                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                let parts = items.iter().map(|v| self.rem_repr_inside(v, path)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
             }
             Value::Map(entries) => {
                 let mut parts = Vec::new();
-                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
+                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr_inside(key, path)?, self.rem_repr_inside(worth, path)?)); }
                 format!("{{{}}}", parts.join(", "))
             }
             Value::Real(real) => {
@@ -3310,7 +3335,9 @@ impl<'a> Engine<'a> {
             }
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => value.display(&self.wording()),
             _ => return Err(self.lang.format_unsupported.clone().unwrap_or_default()),
-        })
+        };
+        if holder.is_some() { path.pop(); }
+        Ok(shown)
     }
 
     /// Remainder over text fills one mark at a time. A list supplies

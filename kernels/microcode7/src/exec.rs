@@ -5130,6 +5130,9 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
+                if self.table.flag("ext.op.sequence.values") && matches!(v[0], Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_)) {
+                    self.quoted_remainder(&v[0])?;
+                }
                 if let Value::Thing(raised) = &v[0] {
                     if raised.of.fields.iter().any(|(key, _)| key == SEQUENCE_FAULT_MARK) {
                         return Ok(raised.holds.borrow().iter().find(|(key, _)| key == "message").map(|(_, text)| text.clone()).unwrap_or_else(|| Value::text("")));
@@ -5890,6 +5893,9 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> Result<String, String> {
         let w = self.wording();
         let argument = |x: &Value| -> Result<String, String> {
+            if self.table.flag("ext.op.sequence.values") && matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_) | Value::Reverse(..)) {
+                self.quoted_remainder(x)?;
+            }
             let text = x.render(w);
             Ok(match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
