@@ -79,7 +79,7 @@ pub fn work(lang: &Lang, op: &Action, left: &Value, right: &Value) -> Result<Val
     let r = matches!(right, Value::Complex(_));
     if [a,b,c,d].iter().any(|x| !x.is_finite())
         && (matches!(op, Action::Mul) && l && r || matches!(op, Action::Div | Action::DivReal) && r
-            || matches!(op, Action::Power) && c != 0.0 && c != 1.0) { return Err(fault(lang, "unready")); }
+            || matches!(op, Action::Power) && (d != 0.0 || c != 0.0 && c != 1.0)) { return Err(fault(lang, "unready")); }
     let (x,y) = match op {
         Action::Add if !r => (a+c,b),
         Action::Add if !l => (a+c,d),
@@ -99,13 +99,12 @@ pub fn work(lang: &Lang, op: &Action, left: &Value, right: &Value) -> Result<Val
             divided(a,b,c,d)
         }
         Action::Power => {
-            if d != 0.0 { return Err(fault(lang, "unready")); }
-            if c == 0.0 { (1.0, 0.0) }
-            else if c == 1.0 { (a,b) }
+            if c == 0.0 && d == 0.0 { (1.0, 0.0) }
+            else if c == 1.0 && d == 0.0 { (a,b) }
             else if a == 0.0 && b == 0.0 {
-                if c < 0.0 { return Err(fault(lang, "power.zero")); }
+                if c < 0.0 || d != 0.0 { return Err(fault(lang, "power.zero")); }
                 (0.0,0.0)
-            } else if c.fract() == 0.0 && c.abs() <= 100.0 {
+            } else if d == 0.0 && c.fract() == 0.0 && c.abs() <= 100.0 {
                 let (mut x,mut y) = (1.0,0.0);
                 let (mut u,mut v) = (a,b);
                 let mut n = c.abs() as u32;
@@ -116,8 +115,14 @@ pub fn work(lang: &Lang, op: &Action, left: &Value, right: &Value) -> Result<Val
                 }
                 if c < 0.0 { divided(1.0,0.0,x,y) } else { (x,y) }
             } else {
-                let length = a.hypot(b).powf(c);
-                let angle = b.atan2(a)*c;
+                let magnitude = a.hypot(b);
+                let argument = b.atan2(a);
+                let mut length = magnitude.powf(c);
+                let mut angle = argument*c;
+                if d != 0.0 {
+                    length *= (-argument*d).exp();
+                    angle += d*magnitude.ln();
+                }
                 (length*angle.cos(), length*angle.sin())
             }
         }

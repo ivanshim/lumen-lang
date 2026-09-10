@@ -90,7 +90,7 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
         let owed = match op {
             Prim::Times => lhs_complex && rhs_complex,
             Prim::Over | Prim::OverReal => rhs_complex,
-            Prim::Power => y.0 != 0.0 && y.0 != 1.0,
+            Prim::Power => y.1 != 0.0 || y.0 != 0.0 && y.0 != 1.0,
             _ => false,
         };
         if owed { return Err(complaint(t,"unready")); }
@@ -104,14 +104,13 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
             if rhs_complex { quotient(x,y) } else { (x.0/y.0,x.1/y.0) }
         }
         Prim::Power => {
-            if y.1 != 0.0 { return Err(complaint(t,"unready")); }
             let exponent = y.0;
-            if exponent == 0.0 { (1.0,0.0) }
-            else if exponent == 1.0 { x }
+            if y == (0.0,0.0) { (1.0,0.0) }
+            else if y == (1.0,0.0) { x }
             else if x == (0.0,0.0) {
-                if exponent < 0.0 { return Err(complaint(t,"power.zero")); }
+                if exponent < 0.0 || y.1 != 0.0 { return Err(complaint(t,"power.zero")); }
                 (0.0,0.0)
-            } else if exponent.abs() <= 100.0 && exponent == exponent.trunc() {
+            } else if y.1 == 0.0 && exponent.abs() <= 100.0 && exponent == exponent.trunc() {
                 let mut answer = (1.0,0.0);
                 let mut factor = x;
                 let mut count = exponent.abs() as u64;
@@ -123,8 +122,13 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
                 }
                 if exponent.is_sign_negative() { quotient((1.0,0.0),answer) } else { answer }
             } else {
-                let radius = x.0.hypot(x.1).powf(exponent);
-                let direction = exponent*x.1.atan2(x.0);
+                let distance = x.0.hypot(x.1);
+                let bearing = x.1.atan2(x.0);
+                let (mut radius,mut direction) = (distance.powf(exponent),exponent*bearing);
+                if y.1 != 0.0 {
+                    radius *= (-y.1*bearing).exp();
+                    direction += distance.ln()*y.1;
+                }
                 (radius*direction.cos(),radius*direction.sin())
             }
         }
