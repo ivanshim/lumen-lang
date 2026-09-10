@@ -334,14 +334,44 @@
   "system.kind.array": [],
   "system.kind.null": [],
   "ext.block.lone_statement": true,
+  "ext.builtin.abs": [
+    "abs"
+  ],
   "ext.builtin.any": [
     "any"
+  ],
+  "ext.builtin.bin": [
+    "bin"
   ],
   "ext.builtin.bool": [
     "bool"
   ],
+  "ext.builtin.ceil": [
+    "ceil"
+  ],
+  "ext.builtin.complex": [
+    "complex"
+  ],
+  "ext.builtin.dir": [
+    "dir"
+  ],
+  "ext.builtin.divmod": [
+    "divmod"
+  ],
+  "ext.builtin.floor": [
+    "floor"
+  ],
+  "ext.builtin.format": [
+    "format"
+  ],
   "ext.builtin.hash": [
     "hash"
+  ],
+  "ext.builtin.hex": [
+    "hex"
+  ],
+  "ext.builtin.index": [
+    "index"
   ],
   "ext.builtin.isinstance": [
     "isinstance"
@@ -360,10 +390,15 @@
   ],
   "ext.builtin.map.pair.amiss": [
     "ValueError: dictionary update sequence element must have length 2"
-
   ],
   "ext.builtin.next": [
     "next"
+  ],
+  "ext.builtin.oct": [
+    "oct"
+  ],
+  "ext.builtin.pow": [
+    "pow"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -419,6 +454,15 @@
   "ext.builtin.repr": [
     "repr"
   ],
+  "ext.builtin.reversed": [
+    "reversed"
+  ],
+  "ext.builtin.round": [
+    "round"
+  ],
+  "ext.builtin.sizeof": [
+    "getsizeof"
+  ],
   "ext.builtin.sorted": [
     "sorted"
   ],
@@ -455,6 +499,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.trunc": [
+    "trunc"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -846,8 +893,22 @@
   "ext.stmt.class.bases.open": [
     "("
   ],
+  "ext.stmt.class.binary.amiss": [
+    "TypeError: unsupported operand type(s) for ",
+    ": '",
+    "' and '",
+    "'"
+  ],
   "ext.stmt.class.constructor": [
     "__init__"
+  ],
+  "ext.stmt.class.format.amiss": [
+    "TypeError: unsupported format string passed to ",
+    ".__format__"
+  ],
+  "ext.stmt.class.index.amiss": [
+    "TypeError: __index__ returned non-int (type ",
+    ")"
   ],
   "ext.stmt.class.parent": [
     "super"
@@ -893,7 +954,53 @@
     "__exit__",
     "__class__",
     "__dict__",
-    "__name__"
+    "__name__",
+    "__index__",
+    "__int__",
+    "__float__",
+    "__complex__",
+    "__round__",
+    "__trunc__",
+    "__floor__",
+    "__ceil__",
+    "__abs__",
+    "__pos__",
+    "__invert__",
+    "__matmul__",
+    "__rmatmul__",
+    "__iadd__",
+    "__isub__",
+    "__imul__",
+    "__itruediv__",
+    "__ifloordiv__",
+    "__imod__",
+    "__ipow__",
+    "__imatmul__",
+    "__ilshift__",
+    "__irshift__",
+    "__iand__",
+    "__ior__",
+    "__ixor__",
+    "__divmod__",
+    "__rdivmod__",
+    "__lshift__",
+    "__rshift__",
+    "__and__",
+    "__or__",
+    "__xor__",
+    "__rlshift__",
+    "__rrshift__",
+    "__rand__",
+    "__ror__",
+    "__rxor__",
+    "__format__",
+    "__missing__",
+    "__reversed__",
+    "__set_name__",
+    "__init_subclass__",
+    "__class_getitem__",
+    "__sizeof__",
+    "__dir__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
@@ -1123,6 +1230,15 @@
   ],
   "ext.system.fault.shift": [
     "negative shift count"
+  ],
+  "ext.system.kind.brief": [
+    "int",
+    "float",
+    "float",
+    "str",
+    "bool",
+    "list",
+    "NoneType"
   ],
   "ext.system.module.name": [
     "__name__"

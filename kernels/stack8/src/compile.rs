@@ -4576,6 +4576,7 @@ impl<'a> Compiler<'a> {
     /// The newer compound forms keep a real's point; a plain working
     /// keeps the spelling it had before these forms were read.
     fn compound_act(&mut self, op: Action) {
+        let op = if self.lang.class_special.len() > 51 { Action::InPlace(Box::new(op)) } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
@@ -5508,9 +5509,15 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.lexeme) {
+        if Lang::spells(&lang.special_stop, &tok.lexeme)
+            || (lang.class_special.len() > 77 && lang.builtins.get(&tok.lexeme) == Some(&Builtin::MapFrom)
+                && !lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).lexeme == c.open)) {
             self.take();
             let class = crate::value::Class { name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
+            let mut class = class;
+            if lang.builtins.get(&tok.lexeme) == Some(&Builtin::MapFrom) {
+                class.fields.push((String::new(), Value::Map(Rc::new(Vec::new()))));
+            }
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }

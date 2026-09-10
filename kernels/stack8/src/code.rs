@@ -165,6 +165,7 @@ pub enum Action {
     Match(Rc<Pattern>, Vec<String>, bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
+    InPlace(Box<Action>),
     ContextEnter,
     SettleObjects,
     Add,
@@ -422,6 +423,7 @@ pub enum Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     MapFrom,
+    Absolute, BinaryText, HexText, OctalText, PowerCall, DividePair, FormatCall, RoundCall, ReversedCall, SizeCall, DirCall, ComplexCall, IndexCall, TruncCall, FloorCall, CeilCall,
     Repr, Hash, Bool, Sorted, Iter, Next, IsInstance,
     Sum,
     List,

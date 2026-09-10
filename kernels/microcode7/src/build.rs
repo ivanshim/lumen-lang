@@ -4341,6 +4341,21 @@ impl<'a> Builder<'a> {
 
     /// The same for the value the place holds once the step is done.
     fn kept_after(&mut self, made: Form) -> Form {
+        let made = if self.table.strings("ext.stmt.class.special").len() > 51 {
+            match made {
+                Form::Apply(Callee::Prim(op, name), args) => {
+                    let index = match op {
+                        Prim::Plus => Some(0), Prim::Minus => Some(1), Prim::Times => Some(2),
+                        Prim::Over | Prim::OverReal => Some(3), Prim::IntDiv => Some(4), Prim::Mod => Some(5),
+                        Prim::Power => Some(6), Prim::MatrixProduct => Some(7), Prim::BitsUp => Some(8),
+                        Prim::BitsDown => Some(9), Prim::BitsBoth => Some(10), Prim::BitsEither => Some(11), Prim::BitsOne => Some(12),
+                        _ => None,
+                    };
+                    Form::Apply(Callee::Prim(index.map(Prim::UpdateBy).unwrap_or(op), name), args)
+                }
+                other => other,
+            }
+        } else { made };
         // Only a compound form asks for the newer spelling. A plain
         // working has no call here and retains its former words.
         let made = if self.stepping.is_none() && self.table.flag("ext.builtin.print.real_point") {
@@ -5163,12 +5178,18 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.stmt.class.special.stop", &t.lexeme) {
+        if table.spells("ext.stmt.class.special.stop", &t.lexeme)
+            || (table.strings("ext.stmt.class.special").len() > 77 && table.spells("ext.builtin.map", &t.lexeme)
+                && !table.spells("syntax.call.open", &self.glance(1).lexeme)) {
             self.advance();
             let plan = crate::data::Blueprint {
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
                 fields: vec![], constants: vec![], reaches: vec![], answers: vec![],
             };
+            let mut plan = plan;
+            if table.spells("ext.builtin.map", &t.lexeme) {
+                plan.fields = vec![(String::new(), Value::Dict(Rc::new(vec![])))];
+            }
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
         if table.spells("ext.literal.ellipsis", &t.lexeme) {

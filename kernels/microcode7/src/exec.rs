@@ -3658,6 +3658,7 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if let Value::Shared(cell) = subject { return self.object_words(&cell.borrow(), quoted); }
         if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
         if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(subject.render(self.wording())); }
         match subject {
@@ -3750,12 +3751,55 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn operand_name(&self, item: &Value) -> String {
+        if let Value::Thing(instance) = item { instance.of.name.clone() }
+        else { self.kind_called(item) }
+    }
+
+    fn index_answer(&mut self, item: &Value) -> Result<Value, String> {
+        match self.ask_special(item, 38, &[])? {
+            None => Ok(item.clone()),
+            Some(number @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => Ok(number),
+            Some(other) => {
+                let pieces = self.table.strings("ext.stmt.class.index.amiss");
+                let mut message = pieces.first().cloned().unwrap_or_default();
+                message.push_str(&self.operand_name(&other));
+                message.push_str(pieces.get(1).map(String::as_str).unwrap_or_default());
+                Err(message)
+            }
+        }
+    }
+
+    fn format_answer(&mut self, item: &Value, spec: &str, conversion: &str) -> Result<Value, String> {
+        if matches!(item, Value::Thing(_)) {
+            if conversion.is_empty() {
+                match self.ask_special(item, 76, &[Value::text(spec)])? {
+                    Some(text @ Value::Text(_)) => return Ok(text),
+                    Some(_) => return Err(self.bad_answer()),
+                    None if spec.is_empty() => return Ok(Value::text(&self.object_words(item, false)?)),
+                    None => {
+                        let pieces = self.table.strings("ext.stmt.class.format.amiss");
+                        return Err([pieces.first().cloned().unwrap_or_default(), self.operand_name(item), pieces.get(1).cloned().unwrap_or_default()].concat());
+                    }
+                }
+            }
+            let text = Value::text(&self.object_words(item, conversion != "s")?);
+            return self.format_answer(&text, spec, "");
+        }
+        item.in_field(self.wording(), spec, conversion).map(|text| Value::text(&text))
+            .ok_or_else(|| self.table.single("ext.lexical.string.format.unavailable").unwrap_or_default().to_owned())
+    }
+
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
         if self.table.strings("ext.stmt.class.special").is_empty() { return Ok(None); }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),
             Prim::Over | Prim::OverReal => Some((21, 29)), Prim::IntDiv => Some((22, 30)),
             Prim::Mod => Some((23, 31)), Prim::Power => Some((24, 32)),
+            Prim::MatrixProduct => Some((49, 50)),
+            Prim::BitsBoth => Some((68, 73)), Prim::BitsEither => Some((69, 74)), Prim::BitsOne => Some((70, 75)),
+            Prim::BitsUp => Some((66, 71)), Prim::BitsDown => Some((67, 72)),
+            Prim::DividePair => Some((64, 65)),
             Prim::Lt => Some((4, 6)), Prim::Gt => Some((6, 4)), Prim::Le => Some((5, 7)), Prim::Ge => Some((7, 5)),
             Prim::Eq => Some((2, 2)), Prim::Ne => Some((3, 3)), Prim::At => Some((11, usize::MAX)),
             _ => None,
@@ -3781,8 +3825,80 @@ impl<'a> Machine<'a> {
                 }
             }
 
+            if forward >= 18 && (matches!(left, Value::Thing(_)) || matches!(right, Value::Thing(_))) {
+                let fragments = self.table.strings("ext.stmt.class.binary.amiss");
+                if fragments.len() != 4 { return Err(self.bad_answer()); }
+                return Err([fragments[0].clone(), self.written_as(&operation), fragments[1].clone(), self.operand_name(left), fragments[2].clone(), self.operand_name(right), fragments[3].clone()].concat());
+            }
+        }
+        let slot = match operation {
+            Prim::AsInt => Some(39), Prim::AsReal => Some(40), Prim::ComplexCall => Some(41),
+            Prim::Absolute => Some(46), Prim::Positive | Prim::NumberAlone => Some(47), Prim::BitsOver => Some(48),
+            Prim::RoundCall => Some(42), Prim::TruncCall => Some(43), Prim::FloorCall => Some(44), Prim::CeilCall => Some(45),
+            Prim::PowerCall => Some(24), Prim::ReversedCall => Some(78), Prim::SizeCall => Some(82), Prim::DirCall => Some(83),
+            _ => None,
+        };
+        if let (Some(slot), Some(subject)) = (slot, operands.first()) {
+            if let Some(result) = self.ask_special(subject, slot, &operands[1..])? {
+                if matches!(operation, Prim::AsInt | Prim::SizeCall) && !matches!(result, Value::Small(_) | Value::Huge(_)) { return Err(self.bad_answer()); }
+                return Ok(Some(result));
+            }
+            if matches!(operation, Prim::AsInt | Prim::AsReal) && self.appointment(subject, 38).is_some() {
+                let whole = self.index_answer(subject)?;
+                return self.prim(operation, "", &[whole]).map(Some);
+            }
         }
         let value = match (operation, operands) {
+            (Prim::At | Prim::Fetch, [subject @ Value::Thing(object), key]) if self.appointment(subject, 11).is_none() => {
+                let contents = object.holds.borrow().iter().find(|(name, _)| name.is_empty()).map(|(_, value)| collection_read(value));
+                if let Some(Value::Dict(entries)) = contents {
+                    let sought = self.hash_key(key)?;
+                    for (stored, item) in entries.iter() { if self.keys_agree(stored, &sought)? { return Ok(Some(item.clone())); } }
+                    match self.ask_special(subject, 77, std::slice::from_ref(key))? {
+                        Some(value) => value,
+                        None => self.element(&Value::Dict(entries), key, Reading::Plain)?,
+                    }
+                } else { return Ok(None); }
+            }
+            (Prim::UpdateBy(index), [left, right]) => {
+                if let Some(answer) = self.ask_special(left, 51 + index, std::slice::from_ref(right))? {
+                    if !matches!(answer, Value::Refusal(_)) { return Ok(Some(answer)); }
+                }
+                let working = [Prim::Plus, Prim::Minus, Prim::Times, Prim::OverReal, Prim::IntDiv, Prim::Mod, Prim::Power, Prim::MatrixProduct, Prim::BitsUp, Prim::BitsDown, Prim::BitsBoth, Prim::BitsEither, Prim::BitsOne];
+                self.prim(working[index], "", operands)?
+            }
+            (Prim::At | Prim::Fetch, [container @ (Value::Vector(_) | Value::Text(_) | Value::Progression(_)), key]) => {
+                let key = if let Value::Span(bounds) = key {
+                    let mut found = Vec::new();
+                    for bound in bounds.iter() { found.push(self.index_answer(bound)?); }
+                    Value::Span(Rc::new(found))
+                } else { self.index_answer(key)? };
+                self.element(container, &key, Reading::Plain)?
+            }
+            (Prim::RenderField, [item, spec, conversion]) => self.format_answer(item, &spec.bare(), &conversion.bare())?,
+            (Prim::FormatCall, [item]) => self.format_answer(item, "", "")?,
+            (Prim::FormatCall, [item, Value::Text(spec)]) => self.format_answer(item, spec, "")?,
+            (Prim::IndexCall, [item]) => self.index_answer(item)?,
+            (Prim::BinaryText | Prim::HexText | Prim::OctalText, [item]) => {
+                let whole = self.index_answer(item)?;
+                if !matches!(whole, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.bad_answer()); }
+                let radix = if operation == Prim::BinaryText { 2 } else if operation == Prim::HexText { 16 } else { 8 };
+                let prefix = match radix { 2 => "0b", 16 => "0x", _ => "0o" };
+                let digits = whole.as_big()?.to_str_radix(radix);
+                let (sign, magnitude) = if digits.starts_with('-') { ("-", &digits[1..]) } else { ("", digits.as_str()) };
+                Value::text(&[sign, prefix, magnitude].concat())
+            }
+            (Prim::PowerCall, [_, _]) => self.prim(Prim::Power, "", operands)?,
+            (Prim::Absolute, [item]) => {
+                let negative = self.prim(Prim::Lt, "", &[item.clone(), Value::Small(0)])?;
+                if self.object_truth(&negative)? { self.prim(Prim::Negate, "", operands)? } else { item.clone() }
+            }
+            (Prim::ReversedCall, [item]) => {
+                let mut values = self.object_members(item)?;
+                values.reverse();
+                Value::Cursor(Rc::new(RefCell::new(values.into())))
+            }
+            (Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::RoundCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_), _) => return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()),
             (Prim::Of | Prim::HasMember, [Value::Backtrace(words), _]) => return Err(words.to_string()),
             (Prim::StartContext, [manager]) => {
                 if matches!(manager, Value::Thing(_)) {
@@ -4065,6 +4181,7 @@ impl<'a> Machine<'a> {
                 return Err(words.to_owned());
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
+            Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::RoundCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
             Prim::StartContext | Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -5442,6 +5559,9 @@ impl<'a> Machine<'a> {
                 })?
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
+                let mut converted = Vec::new();
+                for item in v { converted.push(self.index_answer(item)?); }
+                let v = converted.as_slice();
                 let wrong = || self.argument_fault("ext.syntax.call.amiss", None);
                 if !(1..=3).contains(&v.len()) { return Err(wrong()); }
                 let integer = |item: &Value| match item {

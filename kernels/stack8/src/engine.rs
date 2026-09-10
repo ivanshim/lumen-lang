@@ -2158,6 +2158,7 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if let Value::Bond(cell) = value { return self.special_text(&cell.borrow(), representation); }
         if let Value::Trace(words) = value { return Err(words.to_string()); }
         if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(value.display(&self.wording())); }
         if let Value::Object(object) = value {
@@ -2207,8 +2208,57 @@ impl<'a> Engine<'a> {
         Ok(self.truth(value))
     }
 
+    fn special_kind(&self, value: &Value) -> String {
+        match value { Value::Object(o) => o.class.name.clone(), _ => self.kind_named(value) }
+    }
+
+    fn special_index(&mut self, value: &Value) -> Res<Value> {
+        let Some(answer) = self.special_call(value, 38, Vec::new())? else { return Ok(value.clone()) };
+        if matches!(answer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Ok(answer); }
+        let words = &self.lang.index_amiss;
+        Err(format!("{}{}{}", words.first().cloned().unwrap_or_default(), self.special_kind(&answer), words.get(1).cloned().unwrap_or_default()))
+    }
+
+    fn special_format(&mut self, value: &Value, spec: &str, conversion: &str) -> Res<String> {
+        if conversion.is_empty() && matches!(value, Value::Object(_)) {
+            if let Some(answer) = self.special_call(value, 76, vec![Value::text(spec)])? {
+                return match answer { Value::Text(text) => Ok(text.to_string()), _ => Err(self.special_fault()) };
+            }
+            if spec.is_empty() { return self.special_text(value, false); }
+            let words = &self.lang.format_amiss;
+            return Err(format!("{}{}{}", words.first().cloned().unwrap_or_default(), self.special_kind(value), words.get(1).cloned().unwrap_or_default()));
+        }
+        let converted;
+        let converted_object = matches!(value, Value::Object(_));
+        let value = if converted_object {
+            converted = Value::text(&self.special_text(value, conversion != "s")?);
+            &converted
+        } else { value };
+        value.string_field(&self.wording(), spec, if converted_object { "" } else { conversion })
+            .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_default())
+    }
+
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        let a = &collection_contents(a);
+        let b = &collection_contents(b);
+        if matches!(op, Action::At | Action::Nested) && self.special_value(a, 11).is_none() {
+            if let Value::Object(object) = a {
+                let contents = object.fields.borrow().iter().find(|(key, _)| key.is_empty()).map(|(_, value)| collection_contents(value));
+                if let Some(Value::Map(entries)) = contents {
+                    let key = self.special_key(b)?;
+                    for (candidate, value) in entries.iter() { if self.special_keys_equal(candidate, &key)? { return Ok(value.clone()); } }
+                    if let Some(value) = self.special_call(a, 77, vec![b.clone()])? { return Ok(value); }
+                    return self.element(&Value::Map(entries), b, Reading::Plain);
+                }
+            }
+        }
+        if matches!(op, Action::At | Action::Nested) && matches!(a, Value::Array(_) | Value::Text(_) | Value::Counted(_)) {
+            let key = if let Value::Slice(parts) = b {
+                Value::Slice(Rc::new([self.special_index(&parts[0])?, self.special_index(&parts[1])?, self.special_index(&parts[2])?]))
+            } else { self.special_index(b)? };
+            return self.dyadic(op, a, &key);
+        }
         if let Value::Fields(o) = a {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
@@ -2221,6 +2271,9 @@ impl<'a> Engine<'a> {
             Action::Mul => Some((20, 28)), Action::Div | Action::DivReal => Some((21, 29)),
             Action::IntDiv => Some((22, 30)), Action::Mod => Some((23, 31)),
             Action::Power => Some((24, 32)),
+            Action::Matrix => Some((49, 50)),
+            Action::BitUp => Some((66, 71)), Action::BitDown => Some((67, 72)),
+            Action::BitBoth => Some((68, 73)), Action::BitEither => Some((69, 74)), Action::BitOne => Some((70, 75)),
             Action::At | Action::Apart | Action::Toward => Some((11, usize::MAX)),
             _ => None,
         };
@@ -2248,7 +2301,15 @@ impl<'a> Engine<'a> {
                 if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
             }
 
+            if direct >= 18 && (matches!(a, Value::Object(_)) || matches!(b, Value::Object(_))) {
+                let words = &self.lang.binary_amiss;
+                if words.len() == 4 {
+                    return Err(format!("{}{}{}{}{}{}{}", words[0], self.written_as(op), words[1], self.special_kind(a), words[2], self.special_kind(b), words[3]));
+                }
+                return Err(self.special_fault());
+            }
         }
+        if matches!(op, Action::Matrix) { return Err(self.lang.matrix_unready.clone().unwrap_or_default()); }
         if matches!(op, Action::Contains | Action::Lacks) {
             if let Value::Map(entries) = b {
                 let wanted = self.special_key(a)?;
@@ -2272,7 +2333,47 @@ impl<'a> Engine<'a> {
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         let first = args.first();
+        let method = match op {
+            Builtin::ToInt => Some(39), Builtin::AsReal => Some(40), Builtin::ComplexCall => Some(41),
+            Builtin::RoundCall => Some(42), Builtin::TruncCall => Some(43), Builtin::FloorCall => Some(44),
+            Builtin::CeilCall => Some(45), Builtin::Absolute => Some(46), Builtin::ReversedCall => Some(78),
+            Builtin::SizeCall => Some(82), Builtin::DirCall => Some(83), Builtin::PowerCall => Some(24),
+            _ => None,
+        };
+        if let (Some(place), Some(value)) = (method, first) {
+            if let Some(answer) = self.special_call(value, place, args[1..].to_vec())? {
+                if matches!(op, Builtin::ToInt | Builtin::SizeCall) && !matches!(answer, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
+                return Ok(Some(answer));
+            }
+            if matches!(op, Builtin::ToInt | Builtin::AsReal) && self.special_value(value, 38).is_some() {
+                let index = self.special_index(value)?;
+                return self.builtin_values(op, "", &mut vec![index]).map(Some);
+            }
+        }
         let answer = match op {
+            Builtin::FormatCall if (1..=2).contains(&args.len()) => {
+                let spec = match args.get(1) { Some(Value::Text(s)) => s.to_string(), None => String::new(), _ => return Err(self.special_fault()) };
+                Value::text(&self.special_format(&args[0], &spec, "")?)
+            }
+            Builtin::IndexCall if args.len() == 1 => self.special_index(&args[0])?,
+            Builtin::BinaryText | Builtin::HexText | Builtin::OctalText if args.len() == 1 => {
+                let index = self.special_index(&args[0])?;
+                if !matches!(index, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.special_fault()); }
+                let whole = arith::whole_of(&index).ok_or_else(|| self.special_fault())?;
+                let (radix, prefix) = match op { Builtin::BinaryText => (2, "0b"), Builtin::HexText => (16, "0x"), _ => (8, "0o") };
+                let digits = whole.to_str_radix(radix);
+                Value::text(&match digits.strip_prefix('-') { Some(tail) => format!("-{}{}", prefix, tail), None => format!("{}{}", prefix, digits) })
+            }
+            Builtin::PowerCall if args.len() == 2 => self.special_dyad(&Action::Power, &args[0], &args[1])?,
+            Builtin::Absolute if args.len() == 1 => {
+                let value = &args[0];
+                if self.special_truth(&self.dyadic(&Action::Lt, value, &Value::Small(0))?)? { self.dyadic(&Action::Sub, &Value::Small(0), value)? } else { value.clone() }
+            }
+            Builtin::ReversedCall if args.len() == 1 => {
+                let mut items = self.special_items(&args[0])?; items.reverse();
+                Value::Walk(Rc::new(RefCell::new((items, 0))))
+            }
+            Builtin::Absolute | Builtin::BinaryText | Builtin::HexText | Builtin::OctalText | Builtin::PowerCall | Builtin::DividePair | Builtin::FormatCall | Builtin::RoundCall | Builtin::ReversedCall | Builtin::SizeCall | Builtin::DirCall | Builtin::ComplexCall | Builtin::IndexCall | Builtin::TruncCall | Builtin::FloorCall | Builtin::CeilCall => return Err(self.lang.special_unready.first().cloned().unwrap_or_default()),
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
             Builtin::ToText if args.len() == 1 => Value::text(&self.special_text(&args[0], false)?),
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
@@ -2668,6 +2769,7 @@ impl<'a> Engine<'a> {
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;
+                if let Some(answer) = self.special_call(&v, 48, Vec::new())? { self.data.push(answer); return Ok(()); }
                 match &v {
                     _ if self.lang.whole_bits => Value::of_big(!self.whole_for_bits(&v)?),
                     Value::Text(s) => {
@@ -2678,7 +2780,9 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::Positive => {
-                match self.drop_top()? {
+                let value = self.drop_top()?;
+                if let Some(answer) = self.special_call(&value, 47, Vec::new())? { self.data.push(answer); return Ok(()); }
+                match value {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
                     number @ (Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
@@ -2917,7 +3021,22 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
-            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_default().into()),
+            Action::InPlace(op) => {
+                let right = self.drop_top()?;
+                let left = self.drop_top()?;
+                let place = match op.as_ref() {
+                    Action::Add => 51, Action::Sub => 52, Action::Mul => 53,
+                    Action::Div | Action::DivReal => 54, Action::IntDiv => 55,
+                    Action::Mod => 56, Action::Power => 57, Action::Matrix => 58,
+                    Action::BitUp => 59, Action::BitDown => 60,
+                    Action::BitBoth => 61, Action::BitEither => 62, Action::BitOne => 63,
+                    _ => usize::MAX,
+                };
+                match self.special_call(&left, place, vec![right.clone()])? {
+                    Some(answer) if !matches!(answer, Value::Declined(_)) => answer,
+                    _ => self.special_dyad(op, &left, &right)?,
+                }
+            }
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {
                 let step = self.drop_top()?;
@@ -3613,8 +3732,7 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
-                let rendered = value.string_field(&self.wording(), &specification, &conversion)
-                    .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_else(|| "This formatted value is not supported".into()))?;
+                let rendered = self.special_format(&value, &specification, &conversion)?;
                 Value::text(&rendered)
             }
             Action::Builtin(builtin, name) => {
@@ -4885,6 +5003,7 @@ impl<'a> Engine<'a> {
         };
         Ok(match builtin {
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
+            Builtin::Absolute | Builtin::BinaryText | Builtin::HexText | Builtin::OctalText | Builtin::PowerCall | Builtin::DividePair | Builtin::FormatCall | Builtin::RoundCall | Builtin::ReversedCall | Builtin::SizeCall | Builtin::DirCall | Builtin::ComplexCall | Builtin::IndexCall | Builtin::TruncCall | Builtin::FloorCall | Builtin::CeilCall |
             Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::IsInstance => return Err(self.special_fault()),
             Builtin::Echo => {
                 arity(1)?;
@@ -5418,8 +5537,9 @@ impl<'a> Engine<'a> {
             Builtin::Span if self.lang.range_value => {
                 if args.is_empty() || args.len() > 3 { return Err(self.lang.call_amiss[0].clone()); }
                 let mut bounds = Vec::new();
-                for v in args.iter() {
-                    bounds.push(match v {
+                for original in args.iter() {
+                    let value = self.special_index(original)?;
+                    bounds.push(match &value {
                         Value::Small(n) => BigInt::from(*n),
                         Value::Huge(n) => (**n).clone(),
                         Value::Flag(b) => BigInt::from(i64::from(*b)),
