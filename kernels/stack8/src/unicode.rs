@@ -6918,3 +6918,23 @@ pub fn quoted_points(points: &[u32], ascii: bool) -> String {
     result.push(mark);
     result
 }
+
+pub fn escaped_bytes(bytes: &[u8], ascii: bool) -> Vec<u32> {
+    let mut row = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if ascii { row.push(if bytes[at] < 128 { bytes[at] as u32 } else { 0xdc00 + bytes[at] as u32 }); at += 1; continue; }
+        match std::str::from_utf8(&bytes[at..]) {
+            Ok(text) => { row.extend(text.chars().map(|c| c as u32)); break; }
+            Err(error) => {
+                let end = at + error.valid_up_to();
+                row.extend(std::str::from_utf8(&bytes[at..end]).expect("the valid prefix").chars().map(|c| c as u32));
+                at = end;
+                let count = error.error_len().unwrap_or(bytes.len() - at);
+                row.extend(bytes[at..at + count].iter().map(|b| 0xdc00 + u32::from(*b)));
+                at += count;
+            }
+        }
+    }
+    row
+}

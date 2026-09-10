@@ -4498,7 +4498,7 @@ impl<'a> Machine<'a> {
                             5 => result.extend_from_slice(format!("&#{};", number).as_bytes()),
                             4 if number >= 0xdc80 && number <= 0xdcff => result.push((number & 255) as u8),
                             _ => {
-                                let count = numbers[position..].iter().take_while(|n| (0xd800..=0xdfff).contains(n)).count();
+                                let count = numbers[position..].iter().take_while(|n| (0xd800..=0xdfff).contains(*n)).count();
                                 let location = if count == 1 { format!("character '\\u{:04x}' in position {}", number, position) } else { format!("characters in position {}-{}", position, position + count - 1) };
                                 let why = if alphabet == 0 { "surrogates not allowed" } else { "ordinal not in range(128)" };
                                 return Err(format!("{}'{}' codec can't encode {}: {}", self.octet_error("encode"), self.table.strings("ext.system.bytes.encodings")[alphabet * 2], location, why));
@@ -4520,6 +4520,7 @@ impl<'a> Machine<'a> {
                     if let Some(numbers) = crate::unicode::encode(chars, restricted, handling) { return Ok(self.octets(numbers, false)); }
                 }
                 Value::Octets { cell, .. } if operation == 3 => {
+                    if handling == 4 { return Ok(Value::points(crate::unicode::escaped_bytes(&cell.borrow(), restricted))); }
                     if let Some(chars) = crate::unicode::decode(&cell.borrow(), restricted, handling) { return Ok(Value::text(&chars)); }
                     if handling > 0 { return Err(self.octet_error("unready")); }
                 }

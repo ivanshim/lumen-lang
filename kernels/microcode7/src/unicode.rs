@@ -6922,3 +6922,21 @@ pub fn quoted_points(ordinals: &[u32], limited: bool) -> String {
     }).collect();
     format!("{}{}{}", quotation, middle, quotation)
 }
+
+pub fn escaped_bytes(input: &[u8], restricted: bool) -> Vec<u32> {
+    if restricted { return input.iter().map(|&n| u32::from(n) + if n < 128 { 0 } else { 0xdc00 }).collect(); }
+    let mut rest = input;
+    let mut values = Vec::new();
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => { values.extend(valid.chars().map(u32::from)); return values; }
+            Err(bad) => {
+                let (prefix, suffix) = rest.split_at(bad.valid_up_to());
+                for letter in std::str::from_utf8(prefix).unwrap().chars() { values.push(u32::from(letter)); }
+                let size = bad.error_len().unwrap_or(suffix.len());
+                for &byte in &suffix[..size] { values.push(0xdc00 | u32::from(byte)); }
+                rest = &suffix[size..];
+            }
+        }
+    }
+}

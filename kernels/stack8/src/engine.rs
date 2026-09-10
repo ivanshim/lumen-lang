@@ -5242,6 +5242,10 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Codepoints(row) = target {
+            if let Value::Slice(parts) = at { return self.read_slice(target, parts); }
+            return Ok(Value::points(vec![row[self.byte_position(at, row.len())?]]));
+        }
         if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Some(cell) = self.walked_set(target)? {
             let held = cell.borrow();
@@ -6077,6 +6081,7 @@ impl<'a> Engine<'a> {
                 if let Some(row) = crate::unicode::encode(text, ascii, policy) { return Ok(self.byte_make(row, false)); }
             } else {
                 let Value::Bytes(row, ..) = &args[0] else { return Err(self.byte_fault("arguments")); };
+                if policy == 4 { return Ok(Value::points(crate::unicode::escaped_bytes(&row.borrow(), ascii))); }
                 if let Some(text) = crate::unicode::decode(&row.borrow(), ascii, policy) { return Ok(Value::text(&text)); }
                 if policy != 0 { return Err(self.byte_fault("unready")); }
             }
