@@ -140,7 +140,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 177] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 178] = [
             ("ext.builtin.isinstance", Prim::Belongs),
             ("ext.builtin.tuple", Prim::Tupling),
             ("ext.builtin.set", Prim::Uniques),
