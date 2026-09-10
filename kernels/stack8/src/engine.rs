@@ -876,6 +876,20 @@ impl<'a> Engine<'a> {
     }
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
+        if self.lang.map_pairs_amiss.first().map(String::as_str) == Some(told) {
+            let (name, message) = told.split_once(": ")?;
+            let class = Rc::new(Class {
+                name: name.to_string(), base: None, answers: Vec::new(),
+                fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                constants: Vec::new(), shared: RefCell::new(Vec::new()),
+            });
+            self.made += 1;
+            self.hurled_at.set(self.line);
+            return Some(Value::Object(Rc::new(Instance {
+                class, mark: self.made,
+                fields: RefCell::new(vec![("message".to_string(), Value::text(message))]),
+            })));
+        }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
@@ -1670,7 +1684,13 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(told)) => match self.as_fault(&told) {
+                Some(raised) => Err(Fault::Thrown(raised)),
+                None => Err(Fault::Note(told)),
+            },
+            other => other,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -3271,21 +3291,22 @@ impl<'a> Engine<'a> {
     }
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
-        self.nested_repr(value, &mut Vec::new())
+        self.nested_repr(value, &mut Vec::new(), false)
     }
 
-    fn nested_repr(&self, value: &Value, path: &mut Vec<usize>) -> Res<String> {
+    fn nested_repr(&self, value: &Value, path: &mut Vec<usize>, printed: bool) -> Res<String> {
         if let Value::Bond(cell) = value {
             let identity = Rc::as_ptr(cell) as usize;
             if path.contains(&identity) {
-                return Ok(if matches!(*cell.borrow(), Value::Map(_)) { "{...}" } else { "[...]" }.to_string());
+                return Ok(if !printed && matches!(*cell.borrow(), Value::Map(_)) { "{...}" } else { "[...]" }.to_string());
             }
             path.push(identity);
-            let shown = self.nested_repr(&cell.borrow(), path);
+            let shown = self.nested_repr(&cell.borrow(), path, printed);
             path.pop();
             return shown;
         }
         Ok(match value {
+            Value::Text(s) if printed => s.to_string(),
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);
@@ -3304,23 +3325,25 @@ impl<'a> Engine<'a> {
                 out
             }
             Value::Tuple(items) => {
-                let parts = items.iter().map(|v| self.nested_repr(v, path)).collect::<Res<Vec<_>>>()?;
-                format!("({}{})", parts.join(", "), if parts.len() == 1 { "," } else { "" })
+                let parts = items.iter().map(|v| self.nested_repr(v, path, printed)).collect::<Res<Vec<_>>>()?;
+                if printed { format!("[{}]", parts.join(", ")) }
+                else { format!("({}{})", parts.join(", "), if parts.len() == 1 { "," } else { "" }) }
             }
             Value::MapView(view) if view.1 == 4 => {
-                let pieces = view.0.map_projection(4).iter().map(|item| self.nested_repr(item, path)).collect::<Res<Vec<_>>>()?;
+                let pieces = view.0.map_projection(4).iter().map(|item| self.nested_repr(item, path, printed)).collect::<Res<Vec<_>>>()?;
                 if pieces.is_empty() { view.2.clone() } else { format!("{{{}}}", pieces.join(", ")) }
             }
-            Value::MapView(view) => format!("{}({})", view.2, self.nested_repr(&Value::array(view.0.map_projection(view.1)), path)?),
+            Value::MapView(view) => format!("{}({})", view.2, self.nested_repr(&Value::array(view.0.map_projection(view.1)), path, printed)?),
             Value::Array(items) => {
-                let parts = items.iter().map(|v| self.nested_repr(v, path)).collect::<Res<Vec<_>>>()?;
+                let parts = items.iter().map(|v| self.nested_repr(v, path, printed)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
             }
             Value::Map(entries) => {
                 let mut parts = Vec::new();
-                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.nested_repr(key, path)?, self.nested_repr(worth, path)?)); }
-                format!("{{{}}}", parts.join(", "))
+                for (key, worth) in entries.iter() { parts.push(format!("{}{}{}", self.nested_repr(key, path, printed)?, if printed { " => " } else { ": " }, self.nested_repr(worth, path, printed)?)); }
+                if printed { format!("[{}]", parts.join(", ")) } else { format!("{{{}}}", parts.join(", ")) }
             }
+            Value::Real(_) if printed => value.display(&self.wording()),
             Value::Real(real) => {
                 let mut text = value.display(&self.wording());
                 if !real.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
@@ -4490,7 +4513,7 @@ impl<'a> Engine<'a> {
         let sp = self.wording();
         let printed = |v: &Value| {
             if self.lang.print_collections && matches!(collection_contents(v), Value::Array(_) | Value::Map(_) | Value::MapView(_) | Value::Tuple(_)) {
-                return self.rem_repr(v).unwrap_or_else(|_| v.display(&sp));
+                return self.nested_repr(v, &mut Vec::new(), true).unwrap_or_else(|_| v.display(&sp));
             }
             let mut said = v.display(&sp);
             if self.lang.print_real_point && v.keeps_point()

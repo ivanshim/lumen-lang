@@ -1227,52 +1227,55 @@ impl<'a> Machine<'a> {
     }
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
-        self.shown_within(item, &mut Vec::new())
+        self.shown_within(item, &mut Vec::new(), false)
     }
 
-    fn shown_within(&self, item: &Value, earlier: &mut Vec<*const RefCell<Value>>) -> Result<String, String> {
+    fn shown_within(&self, item: &Value, earlier: &mut Vec<*const RefCell<Value>>, printed: bool) -> Result<String, String> {
         if let Value::Shared(held) = item {
             let address = Rc::as_ptr(held);
             let contents = held.borrow();
             if earlier.iter().any(|prior| *prior == address) {
-                let mark = match &*contents { Value::Dict(_) => "{...}", _ => "[...]" };
+                let mark = match &*contents { Value::Dict(_) if !printed => "{...}", _ => "[...]" };
                 return Ok(mark.to_string());
             }
             earlier.push(address);
-            let answer = self.shown_within(&contents, earlier);
+            let answer = self.shown_within(&contents, earlier, printed);
             earlier.truncate(earlier.len() - 1);
             return answer;
         }
         match item {
+            Value::Text(text) if printed => return Ok(text.to_string()),
             Value::Record(items) => {
                 let mut rendered = Vec::new();
-                for part in items.iter() { rendered.push(self.shown_within(part, earlier)?); }
+                for part in items.iter() { rendered.push(self.shown_within(part, earlier, printed)?); }
+                if printed { return Ok(format!("[{}]", rendered.join(", "))); }
                 let tail = if items.len() == 1 { ",)" } else { ")" };
                 return Ok("(".to_string() + &rendered.join(", ") + tail);
             }
             Value::Projection(source, 4, title) => {
                 let mut parts = Vec::new();
-                for member in source.projected(4) { parts.push(self.shown_within(&member, earlier)?); }
+                for member in source.projected(4) { parts.push(self.shown_within(&member, earlier, printed)?); }
                 return Ok(if parts.is_empty() { title.to_string() } else { format!("{{{}}}", parts.join(", ")) });
             }
             Value::Projection(source, keys, title) => {
                 let row = Value::Vector(Rc::new(source.projected(*keys)));
-                return Ok(format!("{title}({})", self.shown_within(&row, earlier)?));
+                return Ok(format!("{title}({})", self.shown_within(&row, earlier, printed)?));
             }
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
-                for element in elements.iter() { shown.push(self.shown_within(element, earlier)?); }
+                for element in elements.iter() { shown.push(self.shown_within(element, earlier, printed)?); }
                 return Ok(format!("[{}]", shown.join(", ")));
             }
             Value::Dict(entries) => {
                 let mut shown = Vec::new();
                 for (key, value) in entries.iter() {
-                    let key = self.shown_within(key, earlier)?;
-                    let value = self.shown_within(value, earlier)?;
-                    shown.push(format!("{}: {}", key, value));
+                    let key = self.shown_within(key, earlier, printed)?;
+                    let value = self.shown_within(value, earlier, printed)?;
+                    shown.push(format!("{}{}{}", key, if printed { " => " } else { ": " }, value));
                 }
-                return Ok(format!("{{{}}}", shown.join(", ")));
+                return Ok(if printed { format!("[{}]", shown.join(", ")) } else { format!("{{{}}}", shown.join(", ")) });
             }
+            Value::Frac(_) if printed => return Ok(item.render(self.wording())),
             Value::Frac(n) if n.places.is_some() => {
                 let mut shown = item.render(self.wording());
                 if !n.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown += ".0"; }
@@ -1427,6 +1430,20 @@ impl<'a> Machine<'a> {
     }
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
+        if self.table.single("ext.builtin.map.pairs.amiss") == Some(told) {
+            let (name, message) = told.split_once(": ")?;
+            let of = Rc::new(Blueprint {
+                name: name.to_string(), fields: Vec::new(), methods: Vec::new(),
+                constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                reaches: Vec::new(), under: None, answers: Vec::new(),
+            });
+            self.made += 1;
+            self.raised_on = self.row;
+            return Some(Value::Thing(Rc::new(Thing {
+                of, turn: self.made,
+                holds: RefCell::new(vec![("message".to_string(), Value::text(message))]),
+            })));
+        }
         let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
@@ -5802,7 +5819,7 @@ impl<'a> Machine<'a> {
         let argument = |x: &Value| {
             if self.table.flag("ext.builtin.print.collections") {
                 if matches!(collection_read(x), Value::Dict(_) | Value::Vector(_) | Value::Projection(..) | Value::Record(_)) {
-                    return self.quoted_remainder(x).unwrap_or_else(|_| x.render(w));
+                    return self.shown_within(x, &mut Vec::new(), true).unwrap_or_else(|_| x.render(w));
                 }
             }
             let text = x.render(w);

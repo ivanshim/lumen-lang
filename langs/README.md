@@ -904,9 +904,10 @@ only. The extension labels so far, all from PHP:
   tuples, distinct from arrays, and an empty group holds an empty tuple.
   Tuples can name map keys when each of their items can name a key.
 - `ext.builtin.print.collections`: a switch; printed arrays and maps
-  show the representation of each item, quoting text even within nested
-  containers. Arrays use square brackets and maps use braces and a
-  colon between each key and value. Text printed on its own stays bare.
+  keep the established kernel rendering, including nested values: text
+  stays bare, arrays and tuples use square brackets, and maps use square
+  brackets with `=>` between each key and value. Cycles show `[...]`.
+  Explicit representations used by string formatting keep their quotes.
 - `ext.builtin.map.new`: a constructor taking at most one map or walk
   of pairs, followed by named values. A fresh map keeps the order of
   its source; named values prevail over those already there.
