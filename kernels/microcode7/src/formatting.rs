@@ -36,7 +36,23 @@ impl Layout<'_> {
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
         Ok(match item {
             Value::Shared(cell) => return self.quote(&cell.borrow(), escaped),
-            Value::Text(_) => item.in_field(self.names, "", if escaped { "a" } else { "r" }),
+            Value::Text(_) => {
+                let original = item.in_field(self.names, "", if escaped { "a" } else { "r" });
+                original.chars().map(|letter| {
+                    if letter.is_ascii() { return Ok(letter.to_string()); }
+                    if letter.is_whitespace() {
+                        let ordinal = u32::from(letter);
+                        return Ok(match ordinal {
+                            0..=0xff => format!("\\x{:02x}", ordinal),
+                            0x100..=0xffff => format!("\\u{:04x}", ordinal),
+                            _ => format!("\\U{:08x}", ordinal),
+                        });
+                    }
+                    let with_base = ['a', letter].iter().collect::<String>();
+                    if with_base.escape_debug().skip(1).next() == Some('\\') { return Err(self.refused()); }
+                    Ok(letter.to_string())
+                }).collect::<Result<String, String>>()?
+            }
             Value::Dict(entries) => {
                 let rendered = entries.iter().map(|(a, b)| {
                     Ok(format!("{}: {}", self.quote(a, escaped)?, self.quote(b, escaped)?))
@@ -179,8 +195,10 @@ impl Layout<'_> {
     }
 
     fn character(&self, item: &Value) -> Answer {
-        item.as_big()?.to_u32().and_then(char::from_u32).map(|c| c.to_string())
-            .ok_or_else(|| self.complain("ext.text.format.character", &[]))
+        match item.as_big()?.to_u32() {
+            Some(n @ 0..=0x10ffff) => char::from_u32(n).map(String::from).ok_or_else(|| self.refused()),
+            _ => Err(self.complain("ext.text.format.character", &[])),
+        }
     }
 
     pub fn interpolate(&self, pattern: &str, positions: &[Value], names: &[(String, Value)]) -> Answer {

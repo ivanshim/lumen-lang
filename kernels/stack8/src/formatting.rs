@@ -71,7 +71,26 @@ impl Writer<'_> {
 
     pub fn representation(&self, value: &Value, ascii: bool) -> Result<String> {
         match value {
-            Value::Text(_) => Ok(value.string_field(&self.words, "", if ascii { "a" } else { "r" })),
+            Value::Text(_) => {
+                let quoted = value.string_field(&self.words, "", if ascii { "a" } else { "r" });
+                let mut out = String::new();
+                for c in quoted.chars() {
+                    if !c.is_ascii() && c.is_whitespace() {
+                        let n = c as u32;
+                        if n <= 255 { out.push_str(&format!("\\x{n:02x}")); }
+                        else if n <= 65535 { out.push_str(&format!("\\u{n:04x}")); }
+                        else { out.push_str(&format!("\\U{n:08x}")); }
+                    } else {
+                        // A preceding letter keeps combining marks ordinary.
+                        let probe = format!("a{c}");
+                        if !c.is_ascii() && probe.escape_debug().skip(1).take(3).collect::<String>() == "\\u{" {
+                            return Err(self.fault("ext.text.format.unready", &[]));
+                        }
+                        out.push(c);
+                    }
+                }
+                Ok(out)
+            }
             Value::Array(items) => {
                 let parts = items.iter().map(|v| self.representation(v, ascii)).collect::<Result<Vec<_>>>()?;
                 Ok(format!("[{}]", parts.join(", ")))
@@ -129,8 +148,7 @@ impl Writer<'_> {
                 if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.character", &[])); }
                 if rule.alternate { return Err(self.fault("ext.text.format.alternate.character", &[])); }
                 if rule.group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
-                let c = number.to_u32().and_then(char::from_u32).ok_or_else(|| self.fault("ext.text.format.character", &[]))?;
-                return Ok(rule.pad("", &c.to_string(), '>'));
+                return Ok(rule.pad("", &self.character(value)?, '>'));
             }
             let base = match kind { 'b' => 2, 'o' => 8, 'x' | 'X' => 16, _ => 10 };
             if rule.fraction_group != '\0' || rule.group == ',' && base != 10 { return Err(self.fault("ext.text.format.invalid", &[])); }
@@ -384,8 +402,7 @@ impl Writer<'_> {
             } else if code == 'c' {
                 let shown = match value {
                     Value::Text(s) if s.chars().count() == 1 => s.to_string(),
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big()?.to_u32().and_then(char::from_u32)
-                        .ok_or_else(|| self.fault("ext.text.format.character", &[]))?.to_string(),
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value)?,
                     _ => return Err(self.fault("ext.op.rem.format.character", &[])),
                 };
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
@@ -423,6 +440,12 @@ impl Writer<'_> {
         }
         if !mapped && used != args.len() && !matches!(argument, Value::Map(_)) { return Err(self.fault("ext.op.rem.format.many", &[])); }
         Ok(out)
+    }
+
+    fn character(&self, value: &Value) -> Result<String> {
+        let n = value.as_big()?.to_u32().filter(|n| *n <= 0x10ffff)
+            .ok_or_else(|| self.fault("ext.text.format.character", &[]))?;
+        char::from_u32(n).map(|c| c.to_string()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))
     }
 
     fn star(&self, args: &[&Value], used: &mut usize) -> Result<i64> {

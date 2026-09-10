@@ -1729,8 +1729,8 @@ only. The extension labels so far, all from PHP:
 - `ext.text.format.unready`: what is said when the requested presentation
   cannot be provided: country-dependent numbers, objects needing their own
   formatter, a format method kept apart from its receiver, a starred count
-  beside a mapping key, or a width or precision
-  beyond one hundred thousand. Such requests are read, but never answered
+  beside a mapping key, a surrogate character, Unicode printability not
+  known to the held tables, or a width or precision beyond one hundred thousand. Such requests are read, but never answered
   with an ordinary rendering in place of the requested one.
 - `ext.text.format.zero.integer` and `.zero.string`: complaints for the
   suppression of negative zero on an integer presentation or on text.
