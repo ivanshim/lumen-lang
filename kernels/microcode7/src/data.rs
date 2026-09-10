@@ -275,6 +275,7 @@ pub struct Names<'a> {
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
     pub bit_reals: bool,
+    pub brief_reals: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -640,6 +641,7 @@ impl Value {
                 let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
                 format!("{number:?}").to_lowercase()
             }
+            Value::Frac(e) if w.brief_reals && e.places.is_some() => decimal_roundtrip(if e.under && e.above.is_zero() && !e.past_numbers() { -0.0 } else { nearest_binary(&e.above, &e.beneath) }),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -661,7 +663,7 @@ impl Value {
         }
         let mut result = self.render(names);
         if let Self::Frac(ratio) = self {
-            if ratio.places.is_some() {
+            if ratio.places.is_some() && !names.brief_reals {
                 let mut worth = nearest_binary(&ratio.above, &ratio.beneath);
                 if ratio.under && worth == 0.0 { worth = -0.0; }
                 let raw = format!("{:?}", worth).to_lowercase();
@@ -1119,7 +1121,17 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
 /// A real brought to the nearest of a width of bits, held exactly.
 /// Where the language holds no width, or the number stands past every
 /// one of that width, it is left as it is.
-pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
+pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: bool) -> Value {
+    if brief {
+        return match &v {
+            Value::Frac(r) if r.places.is_some() => {
+                let mut worth = rounded_binary(&r.above, &r.beneath);
+                if r.under && worth == 0.0 { worth = -0.0; }
+                worth_of_binary(worth, figures).keeping_point(r.pointed)
+            }
+            _ => v,
+        };
+    }
     if bits.is_none() {
         return v;
     }
@@ -1294,4 +1306,65 @@ fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
     pieces.push((mark as char).to_string());
     if changing { pieces.push(")".to_owned()); }
     pieces.concat()
+}
+/// A decimal keeps only the figures needed to name its binary worth.
+pub(crate) fn decimal_roundtrip(worth: f64) -> String {
+    match (worth.is_nan(), worth.is_infinite(), worth.is_sign_negative()) {
+        (true, _, _) => return String::from("nan"),
+        (_, true, true) => return String::from("-inf"),
+        (_, true, false) => return String::from("inf"),
+        _ => (),
+    }
+    let chosen = (1..=17).map(|count| format!("{:.*e}", count - 1, worth))
+        .find(|candidate| candidate.parse::<f64>().map(f64::to_bits).ok() == Some(worth.to_bits()))
+        .expect("seventeen figures name every binary real");
+    let cut = chosen.find('e').unwrap();
+    let order = chosen[cut + 1..].parse::<i32>().unwrap();
+    let mut coefficient = chosen[..cut].to_owned();
+    if coefficient.contains('.') {
+        while coefficient.ends_with('0') { coefficient.pop(); }
+        if coefficient.ends_with('.') { coefficient.pop(); }
+    }
+    if order < -4 || order >= 16 { return format!("{coefficient}e{order:+03}"); }
+    let sign = if coefficient.starts_with('-') { "-" } else { "" };
+    let mut figures = coefficient.trim_start_matches('-').replace('.', "");
+    let split = order + 1;
+    if split <= 0 {
+        figures = format!("0.{}{figures}", "0".repeat((-split) as usize));
+    } else if (split as usize) < figures.len() {
+        figures.insert(split as usize, '.');
+    } else {
+        figures.push_str(&"0".repeat(split as usize - figures.len()));
+        figures.push_str(".0");
+    }
+    format!("{sign}{figures}")
+}
+
+/// Keep fifty-three bits, or the fewer bits left near nought, and let
+/// the exact remainder choose the last one. No rounded quotient is used.
+fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
+    if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
+    let positive = above.abs();
+    let divisor = beneath.abs();
+    let guessed = positive.bits() as i64 - divisor.bits() as i64;
+    match guessed {
+        ..=-1076 => return f64::from_bits(signed),
+        1025.. => return f64::from_bits(signed + (2047u64 << 52)),
+        _ => (),
+    }
+    let reaches = if guessed >= 0 { positive >= (&divisor << guessed as usize) }
+        else { (&positive << guessed.unsigned_abs() as usize) >= divisor };
+    let mut power = guessed - if reaches { 0 } else { 1 };
+    let shift = 52 - power.max(-1022);
+    let scaled_top = if shift > 0 { &positive << shift as usize } else { positive };
+    let scaled_bottom = if shift < 0 { &divisor << shift.unsigned_abs() as usize } else { divisor };
+    let (mut quotient, residue) = scaled_top.div_rem(&scaled_bottom);
+    let twice = residue << 1usize;
+    if twice > scaled_bottom || twice == scaled_bottom && quotient.is_odd() { quotient += 1; }
+    let mut significand = quotient.to_u64().unwrap();
+    if significand == 0x20000000000000 { power += 1; significand /= 2; }
+    let field = if significand < 0x10000000000000 { 0 } else { power.max(-1022) + 1023 };
+    if field >= 2047 { return f64::from_bits(signed + (2047u64 << 52)); }
+    f64::from_bits(signed + ((field as u64) << 52) + (significand & 0xfffffffffffff))
 }

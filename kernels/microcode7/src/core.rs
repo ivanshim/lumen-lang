@@ -22,20 +22,20 @@ impl Value {
         word.to_owned()
     }
 
-    pub fn quoted(&self) -> String {
-        fn surround(items: &[Value], left: &str, right: &str) -> String {
-            let parts: Vec<_> = items.iter().map(Value::quoted).collect();
+    pub fn quoted(&self, brief: bool) -> String {
+        fn surround(items: &[Value], left: &str, right: &str, brief: bool) -> String {
+            let parts: Vec<_> = items.iter().map(|item| item.quoted(brief)).collect();
             format!("{}{}{}", left, parts.join(", "), right)
         }
         match self {
             Self::Nil => String::from("None"),
             Self::Flag(true) => String::from("True"), Self::Flag(false) => String::from("False"),
-            Self::Vector(v) => surround(v, "[", "]"),
-            Self::Tuple(v) | Self::Row(v) => surround(v, "(", if v.len() == 1 { ",)" } else { ")" }),
-            Self::Set(v) => v.borrow().written(Value::quoted),
+            Self::Vector(v) => surround(v, "[", "]", brief),
+            Self::Tuple(v) | Self::Row(v) => surround(v, "(", if v.len() == 1 { ",)" } else { ")" }, brief),
+            Self::Set(v) => v.borrow().written(|item| item.quoted(brief)),
             Self::Dict(pairs) => {
                 let mut rendered = Vec::new();
-                for (key, value) in pairs.iter() { rendered.push(format!("{}: {}", key.quoted(), value.quoted())); }
+                for (key, value) in pairs.iter() { rendered.push(format!("{}: {}", key.quoted(brief), value.quoted(brief))); }
                 format!("{{{}}}", rendered.join(", "))
             }
             Self::Text(text) => {
@@ -55,10 +55,11 @@ impl Value {
                 quoted.push(mark);
                 quoted
             }
-            Self::Shared(cell) | Self::Mutable(cell, _) => cell.borrow().quoted(),
+            Self::Shared(cell) | Self::Mutable(cell, _) => cell.borrow().quoted(brief),
             Self::Frac(r) if r.places.is_some() => {
                 if r.under && r.above == BigInt::from(0) { return String::from("-0.0"); }
                 let f = crate::data::nearest_binary(&r.above, &r.beneath);
+                if brief { return crate::data::decimal_roundtrip(f); }
                 match f { f if f.is_nan() => "nan".to_owned(), f if f.is_infinite() => if f.is_sign_negative() { "-inf" } else { "inf" }.to_owned(), f => format!("{f:?}") }
             }
             value => value.bare(),

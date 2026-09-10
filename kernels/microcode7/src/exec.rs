@@ -1158,7 +1158,7 @@ impl<'a> Machine<'a> {
                 return math::make_number((**n).clone(), BigInt::from(1), Some(self.real_figures()));
             }
         }
-        crate::data::at_binary_width(v, self.table.count("ext.system.real.bits"), self.real_figures())
+        crate::data::at_binary_width(v, self.table.count("ext.system.real.bits"), self.real_figures(), self.table.lone("system.real.render") == Some("shortest"))
     }
 
     /// The number a piece of text says, brought to the width the
@@ -1275,6 +1275,7 @@ impl<'a> Machine<'a> {
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
             flag_counted: self.table.flag("system.flag.counts"),
+            brief_reals: self.table.lone("system.real.render") == Some("shortest"),
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
@@ -7330,6 +7331,14 @@ impl<'a> Machine<'a> {
                         let x = if !infinity { f64::NAN } else if lower.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
                         return Ok(crate::data::past_the_numbers(x, math::DEFAULT_PLACES));
                     }
+                    }
+                if let Some(Value::Text(chars)) = v.first() {
+                    if let Ok(binary) = chars.trim().to_ascii_lowercase().parse::<f64>() {
+                        if self.table.lone("system.real.render") == Some("shortest") {
+                            return Ok(crate::data::worth_of_binary(binary, math::DEFAULT_PLACES));
+                        }
+                        if !binary.is_finite() { return Ok(crate::data::past_the_numbers(binary, math::DEFAULT_PLACES)); }
+                    }
                 }
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 self.at_width(math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?)
@@ -9089,7 +9098,7 @@ impl Machine<'_> {
         let cursor = |values: Vec<Value>| Self::cursor_value(IteratorKind::Stored(values.into_iter().collect()));
         match op {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
-            Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted())) }
+            Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted(self.table.lone("system.real.render") == Some("shortest")))) }
             Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
@@ -9312,6 +9321,20 @@ impl Machine<'_> {
                 let exponent = u32::try_from(places.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let value = as_number(&input[0]);
                 let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;
+                if self.table.lone("system.real.render") == Some("shortest") && fraction.places.is_some() {
+                    let factor = BigInt::from(10).pow(places.unsigned_abs().min(100000) as u32);
+                    let negative = fraction.above.is_negative();
+                    let mut numerator = fraction.above.abs();
+                    let mut denominator = fraction.beneath;
+                    if places < 0 { denominator *= &factor; } else { numerator *= &factor; }
+                    let mut rounded = &numerator / &denominator;
+                    if (&numerator % &denominator) * 2 >= denominator { rounded += 1; }
+                    if negative { rounded = -rounded; }
+                    if input.len() < 2 || matches!(input[1], Value::Nil) { return Ok(Value::from_big(rounded)); }
+                    let worth = if places < 0 { crate::data::nearest_binary(&(rounded * factor), &BigInt::from(1)) }
+                        else { crate::data::nearest_binary(&rounded, &factor) };
+                    return Ok(crate::data::worth_of_binary(if negative && worth == 0.0 { -0.0 } else { worth }, math::DEFAULT_PLACES));
+                }
                 // Follow the arithmetic of the shared library at each step.
                 let factor = Value::from_big(BigInt::from(10).pow(exponent));
                 let scaled = self.prim(Times, name, &[value, factor.clone()])?;

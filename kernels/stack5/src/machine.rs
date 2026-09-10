@@ -207,9 +207,15 @@ impl<'a> Machine<'a> {
             Op::Neg => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.pop()?;
-                match numbers::compute(Calc::Sub, &Value::Int(0), &v) {
+                match &v {
+                    Value::Real(real) if crate::binary::short() => {
+                        let (p, q) = crate::binary::as_ratio(-crate::binary::from_ratio(&real.p, &real.q));
+                        Value::Real(Rc::new(crate::values::Real { p, q, places: real.places }))
+                    }
+                    _ => match numbers::compute(Calc::Sub, &Value::Int(0), &v) {
                     Some(r) => r?,
                     None => return Err("Cannot negate non-numeric value".to_string()),
+                    },
                 }
             }
             Op::Call(name) => {

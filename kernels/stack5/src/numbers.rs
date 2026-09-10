@@ -46,6 +46,10 @@ impl Frac {
 /// A value from p/q: reduced; an integer when it divides out and nothing
 /// was real; a real at the given precision otherwise.
 pub fn form(p: BigInt, q: BigInt, places: Option<usize>) -> Value {
+    if let Some(places) = places.filter(|_| crate::binary::short()) {
+        let (p, q) = crate::binary::as_ratio(crate::binary::from_ratio(&p, &q));
+        return Value::Real(Rc::new(Real { p, q, places }));
+    }
     if p.is_zero() {
         return match places {
             Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places })),
@@ -101,6 +105,19 @@ pub fn compute(calc: Calc, a: &Value, b: &Value) -> Option<Result<Value, String>
 
 fn exact(calc: Calc, a: &Frac, b: &Frac) -> Result<Value, String> {
     let places = a.places.or(b.places);
+    if crate::binary::short() && places.is_some() {
+        let (x, y) = (crate::binary::from_ratio(&a.p, &a.q), crate::binary::from_ratio(&b.p, &b.q));
+        let worth = match calc {
+            Calc::Add => x + y, Calc::Sub => x - y, Calc::Mul => x * y,
+            Calc::Pow => x.powf(y.trunc()),
+            _ => {
+                if y == 0.0 { return Err("Division by zero".to_owned()); }
+                match calc { Calc::Quot => (x / y).trunc(), Calc::Rem => x % y, _ => x / y }
+            }
+        };
+        let (p, q) = crate::binary::as_ratio(worth);
+        return Ok(Value::Real(Rc::new(Real { p, q, places: places.unwrap_or(PLACES) })));
+    }
     let cross = |sign: i32| &a.p * &b.q + sign * (&b.p * &a.q);
     if a.integral() && b.integral() {
         match calc {
@@ -150,7 +167,20 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     if let (Value::Int(x), Value::Int(y)) = (a, b) {
         return Some(x.cmp(y));
     }
-    Some(Frac::of(a)?.order(&Frac::of(b)?))
+    let mut first = Frac::of(a)?;
+    let mut second = Frac::of(b)?;
+    if first.q.is_zero() || second.q.is_zero() {
+        if first.q.is_zero() && first.p.is_zero() || second.q.is_zero() && second.p.is_zero() { return None; }
+        let sign = |p: &BigInt| if p.is_negative() { Ordering::Less } else { Ordering::Greater };
+        return Some(match (first.q.is_zero(), second.q.is_zero()) {
+            (true, true) => first.p.cmp(&second.p),
+            (true, false) => sign(&first.p),
+            _ => sign(&second.p).reverse(),
+        });
+    }
+    first.q = first.q.abs();
+    second.q = second.q.abs();
+    Some(first.order(&second))
 }
 
 /// Numerator and denominator; an integer is over one.
