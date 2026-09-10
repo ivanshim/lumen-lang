@@ -5822,13 +5822,23 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The member of a thing by name, or nothing where it has none.
+    /// The member of a thing by name, read as the program itself would
+    /// read it, so that a method comes bound to the thing and a property
+    /// is answered by its reader; nothing where the thing has no such
+    /// member.
     fn member_of(&mut self, owner: Value, member: &str) -> Res<Option<Value>> {
-        let mut asked = vec![owner, Value::text(member), Value::Blank];
-        Ok(match self.builtin(Builtin::MemberGet, member, &mut asked)? {
-            Value::Blank => None,
-            found => Some(found),
-        })
+        let mut asked = vec![owner.clone(), Value::text(member)];
+        let has = self.builtin(Builtin::HasAttr, "hasattr", &mut asked)?;
+        if !self.truth(&has) { return Ok(None); }
+        let floor = self.data.len();
+        self.data.push(owner);
+        let read = match self.perform(&Action::Grab(Rc::from(member)), 1) {
+            Ok(()) => self.drop_top(),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
+        };
+        self.data.truncate(floor);
+        read.map(Some)
     }
 
     /// Call a value the program could call, with these arguments, and
