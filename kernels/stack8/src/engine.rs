@@ -212,7 +212,7 @@ impl<'a> Engine<'a> {
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
-        Engine {
+        let mut engine = Engine {
             class_root: None, function_members: Vec::new(),
             lang,
             world: vec![Value::Blank; idents.len()],
@@ -251,7 +251,15 @@ impl<'a> Engine<'a> {
             memo_cell: find(&lang.memo_binding),
             reading_amiss: None,
             registry,
+        };
+        if engine.fuller_classes() {
+            let root=engine.root_class();
+            for (i,name) in engine.registry.idents.iter().enumerate() {
+                if name==engine.class_word("root"){engine.world[i]=Value::Class(root.clone());}
+                else if engine.lang.builtins.contains_key(name){engine.world[i]=Value::Adapter(Rc::new((8,vec![Value::text(name)])));}
+            }
         }
+        engine
     }
 
     /// Assemble source against the globals this run already has and run
@@ -1186,7 +1194,7 @@ impl<'a> Engine<'a> {
         }
         if matches!(self.world[slot.far], Value::Blank) && self.fuller_classes() {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
-            if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::text(&slot.ident)); }
+            if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
         }
         let g = &mut self.world[slot.far];
         match g {
@@ -2342,6 +2350,7 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Object(o) if self.fuller_classes() => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Object(o),args)?;self.data.push(v);Ok(())},
                     Value::Adapter(w) => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Adapter(w),args)?;self.data.push(v);Ok(())},
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
@@ -3983,6 +3992,11 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Tuple(items)=target {
+            if let Value::Slice(bounds)=at {let (_,_,_,chosen)=self.slice_places(bounds,items.len())?;return Ok(Value::Tuple(Rc::new(chosen.iter().map(|&i|items[i].clone()).collect())));}
+            let mut i=at.as_big()?;if i<BigInt::from(0){i+=items.len();}
+            return i.to_usize().and_then(|i|items.get(i)).cloned().ok_or_else(||self.class_word("unready").to_string());
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {

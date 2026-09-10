@@ -766,6 +766,9 @@
   "ext.stmt.class.detail.bases": [
     "__bases__"
   ],
+  "ext.stmt.class.detail.call": [
+    "__call__"
+  ],
   "ext.stmt.class.detail.code": [
     "__code__"
   ],
@@ -840,6 +843,9 @@
   ],
   "ext.stmt.class.parent": [
     "super"
+  ],
+  "ext.stmt.class.reader": [
+    "__getattr__"
   ],
   "ext.stmt.class.this.explicit": true,
   "ext.stmt.class.unready": [

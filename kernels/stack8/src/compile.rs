@@ -3142,7 +3142,7 @@ impl<'a> Compiler<'a> {
                 if keyword { self.take(); self.take(); unready = true; }
                 let from = self.mark();
                 self.expr(0)?;
-                if !keyword && !spread {
+                if !keyword && !spread && (count == 0 || lang.class_details.get("root").map_or(false,|v|!v.is_empty())) {
                     let held = self.gensym("base");
                     self.write(&held);
                     if count == 0 { base = Some(held); } else { further.push(held); }
@@ -3173,7 +3173,7 @@ impl<'a> Compiler<'a> {
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             let mut decorators=Vec::new();
-            while self.on_any(&lang.decorator_words) {
+            while lang.class_details.get("root").map_or(false,|v|!v.is_empty()) && self.on_any(&lang.decorator_words) {
                 self.take();self.expr(0)?;
                 let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
                 self.skip_seps();

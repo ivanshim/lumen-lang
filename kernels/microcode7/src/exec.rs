@@ -1532,7 +1532,7 @@ impl<'a> Machine<'a> {
         }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
-            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::text(&slot.ident));}
+            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)])));}
         }
         Err(format!("Undefined variable: {}", slot.ident))
     }
@@ -2179,7 +2179,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
-                if let Value::Wrapped(..)=&stands {let values=self.value_list(args,frame)?;return self.apply_class_member(stands,values);}
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {let values=self.value_list(args,frame)?;return self.apply_class_member(stands,values);}
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2757,7 +2757,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
-                if matches!(&stands,Value::Wrapped(..)){let given=self.value_list(args,frame)?;return Ok(Next::Value(self.apply_class_member(stands,given)?));}
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)){let given=self.value_list(args,frame)?;return Ok(Next::Value(self.apply_class_member(stands,given)?));}
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -5174,6 +5174,16 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Value::Tuple(values)=target {
+            let selected=if let Value::Span(bounds)=at {
+                let (_,places,_)=self.span_selection(bounds,values.len())?;
+                Value::Tuple(Rc::new(places.into_iter().map(|i|values[i].clone()).collect()))
+            }else{
+                let index=at.as_big()?;let index=if index<BigInt::from(0){index+values.len()}else{index};
+                index.to_usize().and_then(|i|values.get(i)).cloned().ok_or_else(||self.detail("unready").to_owned())?
+            };
+            return Ok(selected);
+        }
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
@@ -5368,7 +5378,7 @@ impl<'a> Machine<'a> {
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
-            Value::Vector(values) => values.to_vec(),
+            Value::Vector(values) | Value::Tuple(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
                 let mut values = Vec::new();

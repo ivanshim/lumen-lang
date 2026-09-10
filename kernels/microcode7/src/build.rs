@@ -2095,7 +2095,7 @@ impl<'a> Builder<'a> {
                 let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
                 if keyword { self.pos += 2; cannot = true; }
                 let value = self.expr(0)?;
-                if !keyword && !expanded {
+                if !keyword && !expanded && (first || table.has_any("ext.stmt.class.detail.root")) {
                     let slot = self.gensym("parent");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
                     if first { parent = Some(slot); } else { other_parents.push(slot); }
@@ -2129,7 +2129,7 @@ impl<'a> Builder<'a> {
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
             let mut wrappers=Vec::new();
-            while self.on_any("ext.stmt.decorator") {
+            while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
                 self.advance();let expression=self.expr(0)?;let address=self.gensym("member_wrapper");
                 setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
                 self.skip_line_ends();

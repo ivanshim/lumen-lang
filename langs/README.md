@@ -709,7 +709,9 @@ only. The extension labels so far, all from PHP:
   the full name, the map of own members and the class of an object.
   `allocate`, `subclass`, `slots`, `set`, `remove`, `get` and `getitem`
   name the hooks for making, inheriting, restricting members, writing,
-  removing, reading and subscripting a class. `doc`, `module`, `defaults`,
+  removing, reading and subscripting a class. `call` names the method
+  answering when an object is called. The existing class `reader` label
+  names the fallback for an absent member. `doc`, `module`, `defaults`,
   `code`, `argcount` and `varnames` name a routine's first string, module,
   spare arguments, code, positional count and kept local names. `receiver`
   and `function` take a bound method apart. Each takes a list of words.
@@ -727,9 +729,22 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.staticmethod`, `ext.builtin.classmethod` and
   `ext.builtin.property` make the corresponding member wrappers.
   These labels each take a list of builtin words.
+  The indented definition's ancestry and base lists are immutable tuples;
+  the ancestry call also yields a tuple at this stage. Ordinary tuple
+  expressions keep the earlier collection account. The namespace maps
+  are snapshots of own members, with inherited members left to lookup.
+  The directory lists stored own and inherited names, sorted and without
+  repeats; the common forebear's unwritten methods are not listed.
+  A class subscript yields the class where its subscript hook is declared;
+  it does not yet run that hook. A routine's code keeps the positional
+  argument count and its compiler's local names, hidden work slots omitted.
+  Nested routine names keep their enclosing functions. Defaults carried at
+  definition time may be read; method defaults still worked in the body,
+  and replacement of code, defaults or namespace maps, say the unready words.
 - `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close`: lists of
-  marks enclosing the classes a declaration stands on. The first base is
-  its parent; further bases are read and set aside, without running them.
+  marks enclosing the classes a declaration stands on. With the fuller
+  class details spelled, every base is kept and ordered by C3. Without
+  them the first base is its parent; further bases are read and set aside.
   A header may name a base by an expression, and may end with a separator.
 - `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
   for its object first, rather than having an unwritten parameter put there.
@@ -2440,6 +2455,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
@@ -2472,7 +2488,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
-| `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
+| `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |

@@ -61,6 +61,7 @@ impl<'a> Machine<'a> {
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
             Value::Method(code,thing)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
+            Value::Thing(t)=>{let called=self.inherited_entry(&t.of,self.detail("call")).ok_or_else(||self.class_unready())?;values.insert(0,Value::Thing(t));self.apply_class_member(called,values)},
             Value::Blueprint(c)=>self.construct_ordered(c,values),
             Value::Wrapped(tag,kept)=>{
                 match tag {
@@ -68,7 +69,7 @@ impl<'a> Machine<'a> {
                     1=>{if let Some(Value::Blueprint(c))=values.first(){self.made+=1;Ok(Value::Thing(Rc::new(Thing{of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))}else{Err(self.class_unready())}},
                     2=>Ok(Value::Nil),
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
-                    4=>self.apply_class_member(kept[0].clone(),values),
+                    4|8=>self.apply_class_member(kept[0].clone(),values),
                     10|11|12 if values.len()>=2=>{
                         let subject=values[0].clone();
                         let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
@@ -134,7 +135,7 @@ impl<'a> Machine<'a> {
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
-            if b.name==self.detail("root"){
+            {
                 let tag=if key==self.detail("allocate"){1}else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
                 if tag!=255{return Ok(Self::wrap(tag,Vec::new()));}
@@ -148,6 +149,7 @@ impl<'a> Machine<'a> {
             let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.of.clone());}
+            if !direct {let fallback=self.table.single("ext.stmt.class.reader").and_then(|n|self.inherited_entry(&t.of,n));if let Some(f)=fallback{return self.apply_class_member(f,vec![value.clone(),Value::text(key)]);}}
         }else if let Value::Method(code,t)=&value {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
             if key==self.detail("function"){return Ok(Value::Routine(code.clone()));}
@@ -164,10 +166,12 @@ impl<'a> Machine<'a> {
             if key==self.detail("namespace"){return Ok(self.routine_members.iter().find(|(f,_)|f.equals(&value)).map_or_else(||Self::member_map(&[]),|(_,m)|Self::member_map(m)));}
             if key==self.detail("defaults"){
                 let mut defaults=Vec::new();
-                if let Value::Bound(_,env)=&value {for slot in &code.carried{if code.formal_slots.contains(slot){defaults.push(env.cells.borrow()[*slot].clone());}}}
+                if let Value::Bound(_,env)=&value {for slot in &code.carried{if let Some(i)=code.formal_slots.iter().position(|at|at==slot){if code.taking.as_ref().map_or(true,|rules|matches!(rules[i],'b'|'p')){defaults.push(env.cells.borrow()[*slot].clone());}}}}
+                if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::Tuple(Rc::new(defaults))});
             }
         }else if let Value::Wrapped(tag,items)=&value {
+            if (*tag==4||*tag==5)&&key==self.detail("function"){return Ok(items[0].clone());}
             if *tag==3 {
                 if key==self.detail("receiver"){return Ok(items[1].clone());}
                 if key==self.detail("function"){return Ok(items[0].clone());}
@@ -203,11 +207,15 @@ impl<'a> Machine<'a> {
                         return Err(self.absent_attribute(&subject,key));
                     }
                 }
+                if key==self.detail("kind")||key==self.detail("namespace"){return Err(self.class_unready());}
                 if replacement.is_some()&&!self.allowed_slot(&t.of,key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
-            Value::Blueprint(b)=>Self::change_entry(&mut b.shared.borrow_mut(),key,replacement),
+            Value::Blueprint(b)=>{
+                if ["name","qualified","kind","bases","mro","namespace","order"].iter().any(|part|key==self.detail(part)){return Err(self.class_unready());}
+                Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
+            },
             Value::Routine(_)|Value::Bound(..)=>{
-                if key==self.detail("code")||key==self.detail("defaults"){return Err(self.class_unready());}
+                if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("namespace"){return Err(self.class_unready());}
                 let index=self.routine_members.iter().position(|(f,_)|f.equals(&subject)).unwrap_or_else(||{self.routine_members.push((subject.clone(),vec![]));self.routine_members.len()-1});
                 Self::change_entry(&mut self.routine_members[index].1,key,replacement)
             }
@@ -233,13 +241,23 @@ impl<'a> Machine<'a> {
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.of),_=>None};
                 Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
             }
-            Value::Text(word)=>Ok(!class_only&&self.table.prims.get(word.as_ref())==Some(&Prim::AsInt)&&matches!(subject,Value::Small(_)|Value::Huge(_))),
+            Value::Wrapped(8,names)=>{
+                let Value::Text(word)=&names[0] else{return Err(self.class_unready());};
+                if class_only{return Err(self.class_unready());}
+                match self.table.prims.get(word.as_ref()){
+                    Some(Prim::AsInt)=>Ok(matches!(subject,Value::Small(_)|Value::Huge(_)|Value::Flag(_))),
+                    Some(Prim::AsText)=>Ok(matches!(subject,Value::Text(_))),
+                    Some(Prim::AsReal)=>Ok(matches!(subject,Value::Frac(r) if r.places.is_some())),
+                    Some(Prim::Listed)=>Ok(matches!(subject,Value::Vector(_))),
+                    _=>Err(self.class_unready()),
+                }
+            },
             _=>Err(self.class_unready()),
         }
     }
     pub(super) fn work_on_class(&mut self,op:u8,values:Vec<Value>)->Res {
         if op<=1 && values.len()==2{return Ok(Value::Flag(self.is_beneath(&values[0],&values[1],op==1)?));}
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_)|Value::Wrapped(..))||matches!(&values[0],Value::Text(w) if self.table.prims.contains_key(w.as_ref()))));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8|10..=12))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
         if (op==3||op==6)&&values.len()>=2{
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
             return match self.read_class_member(values[0].clone(),key,false){
@@ -265,11 +283,12 @@ impl<'a> Machine<'a> {
         Err(self.class_unready())
     }
     pub(super) fn next_ancestor_call(&mut self,receiver:Value,declared:&str,key:&str,mut args:Vec<Value>)->Res {
-        let Value::Thing(t)=&receiver else{return Err(self.class_unready());};
-        let chain=std::iter::once(&t.of).chain(t.of.ancestry.iter()).collect::<Vec<_>>();
+        let class=match &receiver{Value::Thing(t)=>&t.of,Value::Blueprint(b)=>b,_=>return Err(self.class_unready())};
+        let chain=std::iter::once(class).chain(class.ancestry.iter()).collect::<Vec<_>>();
         let start=chain.iter().position(|b|b.name==declared).ok_or_else(||self.class_unready())?;
         for b in &chain[start+1..]{
-            if let Some(f)=Self::own_entry(b,key){args.insert(0,receiver.clone());return self.apply_class_member(f,args);}
+            if let Some(f)=Self::own_entry(b,key){if key!=self.detail("allocate"){args.insert(0,receiver.clone());}return self.apply_class_member(f,args);}
+            if b.name==self.detail("root") && key==self.detail("allocate"){let f=self.read_class_member(Value::Blueprint((*b).clone()),key,true)?;return self.apply_class_member(f,args);}
             if b.name==self.detail("root")&&self.table.single("ext.stmt.class.constructor")==Some(key){return Ok(Value::Nil);}
         }
         Err(self.absent_attribute(&receiver,key))
