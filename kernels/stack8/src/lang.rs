@@ -1629,7 +1629,7 @@ impl Lang {
             digit_separators: r.letters("ext.lexical.number.separator")?,
             integer_bits: r.count("ext.system.integer.bits")?,
             real_bits: r.count("ext.system.real.bits")?,
-            shortest_reals: r.text("system.real.render")? == "shortest",
+            shortest_reals: r.string("system.real.render")? == "shortest",
             real_digits: r.count("ext.system.real.digits")?,
             figures_binding: r.head("ext.system.real.figures")?,
             figures_shown_binding: r.head("ext.system.real.figures.shown")?,

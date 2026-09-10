@@ -23,7 +23,7 @@ pub fn from_ratio(p: &BigInt, q: &BigInt) -> f64 {
     let (dividend, divisor) = if scale < 0 { (top, bottom << (-scale) as usize) }
         else { (top << scale as usize, bottom) };
     let (whole, rest) = dividend.div_rem(&divisor);
-    let midway = (&rest * 2).cmp(&divisor);
+    let midway = (&rest * 2u8).cmp(&divisor);
     let round_up = midway.is_gt() || (midway.is_eq() && whole.is_odd());
     let mut figures = whole.to_u64().unwrap() + u64::from(round_up);
     let mut power = leading;
