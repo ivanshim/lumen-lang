@@ -948,7 +948,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && (lang.bare_number_point || lang.number_point_edge || lang.point_open || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.open_decimal_point || lang.bare_number_point || lang.number_point_edge || lang.point_open || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -1117,7 +1117,7 @@ impl<'a> Cursor<'a> {
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
             } else if c.is_ascii_digit()
-                || ((lang.bare_number_point || lang.number_point_edge || lang.point_open) && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit()))
+                || ((lang.open_decimal_point || lang.bare_number_point || lang.number_point_edge || lang.point_open) && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit()))
             {
                 self.number()?;
             } else if lang.quote_for_names == Some(c) {

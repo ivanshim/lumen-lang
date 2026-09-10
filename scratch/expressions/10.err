@@ -1,1 +1,1 @@
-PythonError: Unsupported string format
+ValueError: unsupported format character 'q' (0x71) at index 1

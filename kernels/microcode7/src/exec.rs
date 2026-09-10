@@ -1203,6 +1203,9 @@ impl<'a> Machine<'a> {
     }
 
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        if self.table.has_any("ext.builtin.format") {
+            return crate::formatting::Layout { table: self.table, names: self.wording() }.remainder(pattern, rhs);
+        }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
         let supplied = match rhs { Value::Vector(list) | Value::Tuple(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
@@ -2895,6 +2898,13 @@ impl<'a> Machine<'a> {
                         }
                         let fault = if self.table.spells("ext.stmt.yield.throw", &called) { "throw.unavailable" } else { "unsupported" };
                         return Err(self.generator_words(fault).into());
+                    }
+                    if self.table.spells("ext.text.format", &called) {
+                        if let Value::Text(pattern) = &subject {
+                            let (positions, keywords) = self.open_arguments(values)?;
+                            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+                            return Ok(Value::text(&layout.interpolate(pattern, &positions, &keywords)?));
+                        }
                     }
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
@@ -5190,6 +5200,9 @@ impl<'a> Machine<'a> {
                 if matches!(v[0], Value::Member(..)) {
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
+                if matches!(v[0], Value::Text(_)) && self.table.spells("ext.text.format", &called) {
+                    return Err(self.table.single("ext.text.format.unready").unwrap_or_default().to_owned());
+                }
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
                 }
@@ -6136,11 +6149,21 @@ impl<'a> Machine<'a> {
             Prim::AsChars => Value::text(&v[0].render(w)),
             Prim::UnheldText => return Err(v[0].bare()),
             Prim::RenderField => {
-                match v[0].in_field(w, &v[1].bare(), &v[2].bare()) {
-                    Some(text) => Value::text(&text),
-                    None => return Err(self.table.single("ext.lexical.string.format.unavailable").unwrap_or("This formatted value is not supported").to_owned()),
-                }
-            },
+                let result = if self.table.has_any("ext.builtin.format") {
+                    crate::formatting::Layout { table: self.table, names: w }.present(&v[0], &v[1].bare(), &v[2].bare())?
+                } else { v[0].in_field(w, &v[1].bare(), &v[2].bare()).ok_or_else(|| self.table.single("ext.lexical.string.format.unavailable").unwrap_or("This formatted value is not supported").to_owned())? };
+                Value::text(&result)
+            }
+            Prim::FormatValue => {
+                let layout = crate::formatting::Layout { table: self.table, names: w };
+                if v.is_empty() || v.len() > 2 { return Err(self.table.single("ext.syntax.call.amiss").unwrap_or_default().to_owned()); }
+                let spec = match v.get(1) {
+                    Some(Value::Text(s)) => s.as_ref(),
+                    Some(item) => return Err(layout.complain("ext.text.format.spec.type", &[layout.typename(item)])),
+                    None => "",
+                };
+                Value::text(&layout.present(&v[0], spec, "")?)
+            }
             Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
             Prim::AsNothing => Value::Nil,
             Prim::AsVector => match v[0].clone() {
@@ -6519,9 +6542,14 @@ impl<'a> Machine<'a> {
                     if let Some(real) = special { return Ok(crate::data::worth_of_binary(real, math::DEFAULT_PLACES)); }
                 }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
-                if let Some(Value::Text(chars)) = v.first() {
-                    if let Ok(binary) = chars.trim().to_ascii_lowercase().parse::<f64>() {
-                        if !binary.is_finite() { return Ok(crate::data::past_the_numbers(binary, math::DEFAULT_PLACES)); }
+                if let Some(Value::Text(text)) = v.first() {
+                    let lower = text.trim().to_ascii_lowercase();
+                    let letters = lower.trim_start_matches(['+', '-']);
+                    let sign_count = lower.len() - letters.len();
+                    let infinity = letters == "inf" || letters == "infinity";
+                    if sign_count <= 1 && (infinity || letters == "nan") {
+                        let x = if !infinity { f64::NAN } else if lower.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+                        return Ok(crate::data::past_the_numbers(x, math::DEFAULT_PLACES));
                     }
                 }
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };

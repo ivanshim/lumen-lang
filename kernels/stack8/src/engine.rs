@@ -3520,6 +3520,9 @@ impl<'a> Engine<'a> {
                     Value::Fields(o)
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
+                Value::Text(_) if Lang::spells(&self.lang.format_method, name) => {
+                    return Err(self.lang.fmt_text_format_unready.first().cloned().unwrap_or_default().into());
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -3753,6 +3756,14 @@ impl<'a> Engine<'a> {
                     };
                     self.data.push(result);
                     return Ok(());
+                }
+                if let Value::Text(text) = &subject {
+                    if Lang::spells(&self.lang.format_method, name) {
+                        let args = self.call_items(args)?;
+                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                        self.data.push(Value::text(&writer.template(text, &args)?));
+                        return Ok(());
+                    }
                 }
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
@@ -4201,9 +4212,14 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
+                if self.lang.format_builtin.is_empty() {
                 let rendered = value.string_field(&self.wording(), &specification, &conversion)
                     .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_else(|| "This formatted value is not supported".into()))?;
                 Value::text(&rendered)
+                } else {
+                    let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                    Value::text(&writer.field(&value, &specification, &conversion)?)
+                }
             }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
@@ -4316,6 +4332,9 @@ impl<'a> Engine<'a> {
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+        if !self.lang.format_builtin.is_empty() {
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments);
+        }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
         let values: Vec<&Value> = match arguments {
@@ -5833,6 +5852,16 @@ impl<'a> Engine<'a> {
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
             Builtin::SetMake | Builtin::SetAdd | Builtin::SetRemove | Builtin::SetDiscard | Builtin::SetPop | Builtin::SetClear | Builtin::SetCopy | Builtin::SetUpdate | Builtin::SetUnion | Builtin::SetIntersection | Builtin::SetDifference | Builtin::SetSymmetric | Builtin::SetSubset | Builtin::SetSuperset | Builtin::SetDisjoint | Builtin::SetMeetUpdate | Builtin::SetLessUpdate | Builtin::SetXorUpdate | Builtin::SetSorted => self.set_builtin(builtin, args)?,
+            Builtin::Format => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
+                let writer = crate::formatting::Writer { lang: self.lang, words: sp };
+                let spec = match args.get(1) {
+                    None => "",
+                    Some(Value::Text(s)) => s.as_ref(),
+                    Some(v) => return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(v)])),
+                };
+                Value::text(&writer.field(&args[0], spec, "")?)
+            }
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

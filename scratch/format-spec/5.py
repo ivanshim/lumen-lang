@@ -1,0 +1,6 @@
+print(format(-255, "#010x"), format(65535, "#_X"), format(65, "c"), format(-42, " =+8d"))
+print(format(2.5, ".0f"), format(3.5, ".0f"), format(1505.0, ".3g"), format(1505.0, "#.3g"))
+print(format(1e16, ".2e"), format(0.0000125, ".2G"), format(float("nan"), "F"), format(float("inf"), "+f"))
+print(format(1234567, "_"), format(65536, "_b"), format(1234.5, "012,.2f"))
+print(format("ab", "07s") + "|" + format("abcdef", "é^8.3s"))
+print("%+06i|%#06o|%#06X|%*.*f|%.3s|%c|%%" % (12, 9, 31, 8, 2, 3.5, "abcdef", 65))

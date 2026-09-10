@@ -457,6 +457,7 @@ pub enum Builtin {
     SetXorUpdate,
     SetSorted,
 
+    Format,
     Sum,
     List,
     Any,
