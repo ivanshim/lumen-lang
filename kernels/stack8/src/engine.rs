@@ -28,6 +28,7 @@ pub struct Engine<'a> {
     world: Vec<Value>,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
+    routing_output: bool,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -251,6 +252,7 @@ impl<'a> Engine<'a> {
             reading_amiss: None,
             module_sources: HashMap::new(),
             modules: HashMap::new(),
+            routing_output: false,
             registry,
         }
     }
@@ -2094,11 +2096,12 @@ impl<'a> Engine<'a> {
         }
         if matches!(value, Value::Object(_)) {
             let answer = if nested { None } else { self.object_answer(value, 6, vec![])? };
-            if let Some(answer) = answer.or(self.object_answer(value, 0, vec![])?) {
+            let answer = match answer { Some(value) => Some(value), None => self.object_answer(value, 0, vec![])? };
+            if let Some(answer) = answer {
                 return Ok(answer.display(&self.wording()));
             }
         }
-        if nested { self.rem_repr(value) } else { Ok(value.display(&self.wording())) }
+        Ok(value.display(&self.wording()))
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -4268,6 +4271,29 @@ impl<'a> Engine<'a> {
             let mut pieces = Vec::new();
             for value in &args { pieces.push(self.object_text(value, false)?); }
             let text = pieces.join(&between) + &ending;
+            if !error && !self.routing_output {
+                if let [owner, member, writer] = self.lang.print_redirect.as_slice() {
+                    let writer = writer.clone();
+                    let target = self.modules.get(owner).and_then(|module| match module {
+                        Value::Object(o) => o.fields.borrow().iter().find(|(n, _)| n == member).map(|(_, v)| match v {
+                            Value::Bond(cell) => cell.borrow().clone(), value => value.clone(),
+                        }),
+                        _ => None,
+                    });
+                    if let Some(Value::Object(stream)) = target {
+                        if let Some(method) = stream.class.method(&writer).cloned() {
+                            self.routing_output = true;
+                            let outcome = self.invoke(&method, vec![Value::Object(stream), Value::text(&text)]);
+                            self.routing_output = false;
+                            match outcome {
+                                Ok(()) => { self.drop_top()?; return Ok(Value::Null); }
+                                Err(Fault::Note(told)) => return Err(told),
+                                Err(fault) => { self.carried = Some(fault); return Err("the output method stopped the run".into()); }
+                            }
+                        }
+                    }
+                }
+            }
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
@@ -4763,6 +4789,19 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                if self.lang.clock_parts && args.len() == 1 {
+                    let seconds = match args[0] {
+                        Value::Flag(true) => {
+                            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                            START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64()
+                        }
+                        Value::Flag(false) => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()),
+                        _ => return Err(self.lang.module_helper_amiss.clone()),
+                    };
+                    let mut value = crate::value::real_of(seconds, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = true; }
+                    return Ok(value);
+                }
                 arity(0)?;
                 let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(since.map_or(0, |gone| gone.as_secs() as i64))

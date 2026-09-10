@@ -106,6 +106,7 @@ enum Next {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    in_output_method: bool,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -248,6 +249,7 @@ impl<'a> Machine<'a> {
         Machine {
             library_sources: HashMap::new(),
             imported: HashMap::new(),
+            in_output_method: false,
             table,
             outermost: Env::make(idents.len(), None),
             args_cell: find("system.args"),
@@ -2732,7 +2734,6 @@ impl<'a> Machine<'a> {
                     }
                     if let Some(value) = self.protocol_value(item, 0, &[])? { return Ok(value.render(self.wording())); }
                 }
-                Value::Text(text) if quoted => return Ok(format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))),
                 _ => (),
             }
         }
@@ -2914,6 +2915,21 @@ impl<'a> Machine<'a> {
                 written.push_str(&self.protocol_text(item, false)?);
             }
             written.push_str(&tail);
+            let route = table.strings("ext.builtin.print.redirect");
+            if channel == 1 && !self.in_output_method && route.len() == 3 {
+                let target = self.imported.get(&route[0]).and_then(|module| self.attribute(module, &route[1]));
+                if let Some(Value::Thing(thing)) = target {
+                    let routine = thing.of.program(&route[2]).cloned();
+                    if let Some(routine) = routine {
+                        self.in_output_method = true;
+                        let outer = self.outermost.clone();
+                        let done = self.invoke(routine, outer, vec![Value::Thing(thing), Value::text(&written)]);
+                        self.in_output_method = false;
+                        done?;
+                        return Ok(Some(Value::Nil));
+                    }
+                }
+            }
             match channel {
                 2 => eprint!("{}", written),
                 _ => self.utter(&written),
@@ -4404,6 +4420,23 @@ impl<'a> Machine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Prim::SinceEpoch => {
+                if v.len() == 1 && self.table.flag("ext.builtin.clock.parts") {
+                    let steady = match v.first() {
+                        Some(Value::Flag(choice)) => *choice,
+                        _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                    };
+                    let elapsed = if steady {
+                        static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                        let origin = ORIGIN.get_or_init(std::time::Instant::now);
+                        origin.elapsed()
+                    } else {
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                    };
+                    let digits = self.table.count("ext.system.real.digits").unwrap_or(15);
+                    let mut answer = crate::data::worth_of_binary(elapsed.as_secs_f64(), digits);
+                    if let Value::Frac(ratio) = &mut answer { Rc::make_mut(ratio).float_style = true; }
+                    return Ok(answer);
+                }
                 n(0)?;
                 let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(gone.map_or(0, |since| since.as_secs() as i64))

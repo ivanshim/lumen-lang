@@ -1,6 +1,6 @@
 # Wall time comes from the system clock.
 def time():
-    return float(__clock())
+    return __clock(False)
 
 # Stub: no waiting is performed by this small library.
 def sleep(seconds):
@@ -9,9 +9,9 @@ def sleep(seconds):
     if type(seconds) != type(0) and type(seconds) != type(0.0):
         raise 'TypeError: a number is required'
 
-# Stub: a wall clock must not pretend to be a steady clock.
+# A steady clock counts elapsed seconds from a fixed origin.
 def perf_counter():
-    raise 'NotImplementedError: a steady clock is not available'
+    return __clock(True)
 
 def monotonic():
-    raise 'NotImplementedError: a steady clock is not available'
+    return __clock(True)

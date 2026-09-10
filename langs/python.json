@@ -340,6 +340,7 @@
   "ext.builtin.clock": [
     "__clock"
   ],
+  "ext.builtin.clock.parts": true,
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -398,6 +399,11 @@
   ],
   "ext.builtin.print.flush": [
     "flush"
+  ],
+  "ext.builtin.print.redirect": [
+    "sys",
+    "stdout",
+    "write"
   ],
   "ext.builtin.print.sep": [
     "sep"

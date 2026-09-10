@@ -24,7 +24,10 @@ class _Reader:
     def sequence(self):
         nodes = []
         while self.i < len(self.pattern) and self.pattern[self.i] not in ')|':
+            before = self.i
             node = self.atom()
+            if self.i <= before:
+                raise 'RuntimeError: regular expression reader made no progress' 
             if self.i < len(self.pattern) and self.pattern[self.i] in '*+?{':
                 mark = self.pattern[self.i]
                 self.i += 1
@@ -222,8 +225,9 @@ class Match:
     def __init__(self, pattern, text, start, state):
         self.re = pattern
         self.string = text
-        self.captures = state[1]
-        self.captures[0] = [start, state[0]]
+        captures = __copy_value(state[1], False)
+        captures[0] = [start, state[0]]
+        self.captures = captures
 
     def group(self, *numbers):
         if len(numbers) == 0:
@@ -267,13 +271,25 @@ class Pattern:
         self.pattern = pattern
         self.flags = flags
 
+    def _check_text(self, string):
+        shorthand = False
+        for mark in ['\\w', '\\W', '\\d', '\\D', '\\s', '\\S', '\\b']:
+            if mark in self.pattern:
+                shorthand = True
+        if shorthand:
+            for letter in list(string):
+                if ord(letter) > 127:
+                    raise 'NotImplementedError: Unicode shorthand classes are not supported'
+
     def match(self, string, pos=0, endpos=None):
+        self._check_text(string)
         if endpos is not None:
             string = string[:endpos]
         states = _walk(self.tree, string, pos, {})
         return Match(self, string, pos, states[0]) if len(states) else None
 
     def fullmatch(self, string, pos=0, endpos=None):
+        self._check_text(string)
         if endpos is not None:
             string = string[:endpos]
         for state in _walk(self.tree, string, pos, {}):
@@ -291,12 +307,22 @@ class Pattern:
             pos += 1
         return None
 
+    def _next(self, string, pos, empty_at):
+        self._check_text(string)
+        while pos <= len(string):
+            for state in _walk(self.tree, string, pos, {}):
+                if pos != empty_at or state[0] != pos:
+                    return Match(self, string, pos, state)
+            pos += 1
+        return None
+
     def findall(self, string, pos=0, endpos=None):
         if endpos is not None:
             string = string[:endpos]
         result = []
+        empty_at = -1
         while pos <= len(string):
-            found = self.search(string, pos)
+            found = self._next(string, pos, empty_at)
             if found is None:
                 break
             if self.groups == 0:
@@ -307,8 +333,7 @@ class Pattern:
             else:
                 result.append(found.groups(''))
             pos = found.end()
-            if found.start() == pos:
-                pos += 1
+            empty_at = pos if found.start() == pos else -1
         return result
 
     def sub(self, repl, string, count=0):
@@ -318,15 +343,15 @@ class Pattern:
         previous = 0
         pos = 0
         used = 0
+        empty_at = -1
         while pos <= len(string) and (count == 0 or used < count):
-            found = self.search(string, pos)
+            found = self._next(string, pos, empty_at)
             if found is None:
                 break
             result += string[previous:found.start()] + repl
             previous = found.end()
             pos = previous
-            if pos == found.start():
-                pos += 1
+            empty_at = pos if pos == found.start() else -1
             used += 1
         return result + string[previous:]
 
@@ -335,16 +360,16 @@ class Pattern:
         previous = 0
         pos = 0
         used = 0
+        empty_at = -1
         while pos <= len(string) and (maxsplit == 0 or used < maxsplit):
-            found = self.search(string, pos)
+            found = self._next(string, pos, empty_at)
             if found is None:
                 break
             result.append(string[previous:found.start()])
             result = [*result, *found.groups()]
             previous = found.end()
             pos = previous
-            if pos == found.start():
-                pos += 1
+            empty_at = pos if pos == found.start() else -1
             used += 1
         result.append(string[previous:])
         return result

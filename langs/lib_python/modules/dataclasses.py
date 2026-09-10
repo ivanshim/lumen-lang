@@ -54,7 +54,9 @@ class _Record:
         return result + ')'
 
     def __eq__(self, other):
-        if self.__class__ is not other.__class__:
+        if not isinstance(other, _Record):
+            return False
+        if self._record_token is not other._record_token:
             return False
         for name in self._fields:
             if getattr(self, name) != getattr(other, name):
@@ -82,7 +84,7 @@ def dataclass(cls=None, frozen=False, **options):
             raise 'TypeError: non-default argument follows default argument'
         optional = optional or supplied
         defaults.append(specification)
-    return __derive_class(cls.__name__, _Record, {'_fields': names, '_defaults': defaults, '_record_name': cls.__name__})
+    return __derive_class(cls.__name__, _Record, {'_fields': names, '_defaults': defaults, '_record_name': cls.__name__, '_record_token': _Missing()})
 
 def asdict(obj):
     if not isinstance(obj, _Record):
