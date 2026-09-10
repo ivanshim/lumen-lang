@@ -17,6 +17,7 @@ pub mod lex;
 pub mod layout;
 pub mod value;
 pub mod code;
+mod core;
 
 use lang::Lang;
 use value::Value;

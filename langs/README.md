@@ -1412,6 +1412,79 @@ only. The extension labels so far, all from PHP:
   give the complaints for malformed fields, missing positional fields,
   and mixing automatic with explicit numbering. `.unready`, `.bytes`,
   `.spec` and `.unicode` say which work the values cannot yet carry out.
+- `ext.builtin.isinstance`: asks whether a value belongs to one kind,
+  or to any kind in a tuple. Builtin kinds are callable values; a class
+  stands for its own instances and those beneath it. The ordinary kind
+  reader may return these same values. Tuple expressions are gathered
+  when `ext.builtin.tuple` is spelled, since a tuple of kinds needs them.
+- `ext.builtin.tuple`, `.set` and `.dict`: gather a walk into a tuple,
+  a collection of distinct hashable members, or pairs under their keys.
+  Each holds an array or map in the kernel. A dictionary also takes
+  named arguments, later keys replacing earlier ones. A tuple keeps its
+  parentheses when written, and `ext.builtin.repr` quotes text and nested
+  collections with the language's words for nothing and truth.
+- `ext.builtin.sorted`, `.min` and `.max`: order a walk, or choose its
+  least or greatest member. The latter two also take several values.
+  `ext.builtin.key`, `.reverse` and `.default` name their optional key
+  routine, reversed order and answer for an empty walk. Ties keep their
+  first order. A key is worked once for each member.
+- `ext.builtin.reversed`, `.enumerate`, `.zip`, `.map` and `.filter`:
+  gather members backward, number them, join walks abreast, call a routine
+  on their members, or keep those for which a routine answers true.
+  Nothing as the filtering routine asks the member itself. These calls
+  hand out a cursor and ask their routines only as members are taken.
+  `ext.builtin.start` names the first number for enumeration and the
+  starting value for `ext.builtin.sum`.
+- `ext.builtin.all` asks whether every member holds true, including when
+  there are none. `ext.builtin.bool` asks truth of a value, and answers
+  false when given none. `ext.builtin.callable` asks whether the value is
+  a builtin, routine or class the run may call.
+- `ext.builtin.abs`, `.round`, `.divmod` and `.pow`: absolute worth,
+  rounding, quotient with remainder, and exponentiation. Rounding keeps
+  the shared library behavior: halfway values go away from zero, unlike
+  CPython, whose ties go to even. Negative decimal counts act as zero
+  places, as in the library; CPython instead rounds to tens or higher.
+  `ext.builtin.round.number` and `.ndigits` name the number and its places;
+  `ext.builtin.pow.base`, `.exp` and `.mod` name the power's arguments.
+  A modulus keeps whole powers bounded, and a negative exponent asks for
+  the modular inverse. `ext.builtin.hex`, `.oct` and `.bin` write whole
+  numbers with the proper base marks.
+- `ext.builtin.id` names a value's identity in this run. Unboxed integers
+  have identities of their worth; held objects have identities of their
+  handles. `ext.builtin.hash` hashes integers, text and tuples. Text hashes
+  need agree only within the run; no fixed hash is promised between runs.
+- `ext.builtin.iter` makes a cursor over array members or letters of text,
+  and keeps a cursor already given. `ext.builtin.next` takes one member,
+  or its second argument at the end. Cursors share their place when held
+  under several names; they do not resume generator bodies.
+- `ext.builtin.hasattr`, `.getattr`, `.setattr` and `.delattr` ask of,
+  read, write and remove an instance's named fields. `ext.builtin.vars`
+  is read but refuses to run until a live map of fields can be handed out.
+  Descriptor methods and bound method values remain wanting.
+- `ext.builtin.core.integer`, `.not_iterator` and `.dict.sequence`
+  hold words about a kind that cannot give an integer, a value that is
+  no cursor, and the numbered dictionary row that cannot give a pair.
+  `ext.builtin.core.power.integer` says that a modular power needs whole
+  numbers. `ext.builtin.core.attribute.name` surrounds the kind of a
+  field name which is not text.
+- `ext.builtin.core.unindexable` and `.immutable` put the kind between
+  the words for reading an unindexed value and writing an immutable one.
+  `ext.builtin.core.power.zero` and `.power.overflow` say that a negative
+  power of nought or an overflowing real power cannot be taken.
+  `ext.builtin.core.arity.one` and `.arity.exact` place the called name
+  and the given count in the complaint for the wrong number of arguments.
+- `ext.builtin.core.uniterable`, `.uncallable`, `.unhashable`, `.unready`,
+  `.empty` and `.arity`: words before and after the offending kind or
+  builtin name. The first three refuse a value of the wrong kind; the
+  next refuses a working the kernel cannot yet perform honestly.
+  `ext.builtin.core.attribute` holds three pieces around the class and
+  field names. `ext.builtin.core.vars`, `.exhausted`,
+  `.isinstance.amiss`, `.zero`, `.mod.zero`, `.inverse`, `.default.many`
+  give the plain complaints for an absent field map, finished walk,
+  bad kind, division by nought, zero modulus,
+  missing inverse and misplaced default respectively.
+  `ext.builtin.core.dict.pair` places the row number and its length
+  between three pieces of the complaint for an ill-shaped pair.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -2881,6 +2954,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | Label | lumen | rplumen | python | rust | php (extra) | c (extra) | javascript (extra) | pascal (extra) | ruby (extra) | swift (extra) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
+| `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
+| `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
 | `ext.builtin.args.all.outside` | - | - | - | - | `func_get_args() cannot be called from the global scope` | - | - | - | - | - |
@@ -2893,6 +2968,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
+| `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
+| `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
@@ -2901,10 +2979,41 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
+| `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
+| `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
+| `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.sequence` | - | - | `TypeError: cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
+| `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |
+| `ext.builtin.core.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.builtin.core.immutable` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
+| `ext.builtin.core.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
+| `ext.builtin.core.inverse` | - | - | `ValueError: base is not invertible for the given modulus` | - | - | - | - | - | - | - |
+| `ext.builtin.core.isinstance.amiss` | - | - | `TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union` | - | - | - | - | - | - | - |
+| `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
+| `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.overflow` | - | - | `OverflowError: math range error` | - | - | - | - | - | - | - |
+| `ext.builtin.core.power.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
+| `ext.builtin.core.uncallable` | - | - | `TypeError: '` `' object is not callable` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
+| `ext.builtin.core.uniterable` | - | - | `TypeError: '` `' object is not iterable` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unready` | - | - | `NotImplementedError: ` `() is not supported for these values` | - | - | - | - | - | - | - |
+| `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
+| `ext.builtin.core.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
+| `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
+| `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
+| `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
+| `ext.builtin.divmod` | - | - | `divmod` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
+| `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
@@ -2912,17 +3021,26 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
+| `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
+| `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
+| `ext.builtin.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.id` | - | - | `id` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
+| `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
-| `ext.builtin.map` | - | - | `dict` | - | - | - | - | - | - | - |
+| `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_length` | - | - | `bit_length` | - | - | - | - | - | - | - |
@@ -2992,13 +3110,19 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
 | `ext.builtin.method.values` | - | - | `values` | - | - | - | - | - | - | - |
 | `ext.builtin.method.zfill` | - | - | `zfill` | - | - | - | - | - | - | - |
+| `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
+| `ext.builtin.oct` | - | - | `oct` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
+| `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
+| `ext.builtin.pow.exp` | - | - | `exp` | - | - | - | - | - | - | - |
+| `ext.builtin.pow.mod` | - | - | `mod` | - | - | - | - | - | - | - |
 | `ext.builtin.print.end` | - | - | `end` | - | - | - | - | - | - | - |
 | `ext.builtin.print.end.amiss` | - | - | `TypeError: end must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.file` | - | - | `file` | - | - | - | - | - | - | - |
@@ -3019,16 +3143,25 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
+| `ext.builtin.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed` | - | - | `reversed` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
 | `ext.builtin.room.used` | - | - | - | - | `__room_used` | - | - | - | - | - |
+| `ext.builtin.round` | - | - | `round` | - | - | - | - | - | - | - |
+| `ext.builtin.round.ndigits` | - | - | `ndigits` | - | - | - | - | - | - | - |
+| `ext.builtin.round.number` | - | - | `number` | - | - | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
+| `ext.builtin.set` | - | - | `set` | - | - | - | - | - | - | - |
+| `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
@@ -3046,8 +3179,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
+| `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.builtin.zip` | - | - | `zip` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |

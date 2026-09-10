@@ -1115,6 +1115,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        if self.lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
         Ok(())
     }
 
@@ -4291,6 +4292,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        if self.lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1); }
         Ok(())
     }
 
@@ -5968,7 +5970,8 @@ impl<'a> Compiler<'a> {
                             self.lazy_comprehension(&group, clause)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
-                                self.act(Action::MakeArray, 0);
+                                if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::Tuple(Rc::new(Vec::new()))); }
+                                else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;

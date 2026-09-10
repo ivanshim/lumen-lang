@@ -142,11 +142,31 @@ impl Generator {
     }
 }
 
+/// A cursor keeps one pending item for a loop's question about its end.
+#[derive(Debug, Clone)]
+pub struct CursorState {
+    pub source: CursorSource,
+    pub pending: Option<Value>,
+    pub finished: bool,
+    pub busy: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum CursorSource {
+    Items(Vec<Value>, usize),
+    Numbered(Value, BigInt),
+    Combined(Vec<Value>, Option<Value>),
+    Selected(Value, Value),
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
+    Native(crate::code::Builtin, Rc<str>),
+    Set(Rc<Vec<Value>>),
+    Cursor(Rc<RefCell<CursorState>>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -279,7 +299,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
+            Value::Set(_) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
             Value::View(_) => Sort::Array,
             Value::Bond(shared) | Value::Binding(shared) => return shared.borrow().sort(),
@@ -314,6 +334,8 @@ impl Value {
             Value::Collection(cell, _) => cell.borrow().is_true(),
             Value::ValueMethod(_) => true,
             Value::View(_) => if let Value::Array(row) = self.contents() { !row.is_empty() } else { false },
+            Value::Native(..) | Value::Cursor(_) => true,
+            Value::Set(v) => !v.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -346,13 +368,13 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
             Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
-            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -370,6 +392,8 @@ impl Value {
         match (self, other) {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
+            (Value::Native(a,_), Value::Native(b,_)) => a == b,
+            (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a,b),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -384,6 +408,7 @@ impl Value {
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
@@ -411,7 +436,8 @@ impl Value {
             return self.identical(&held);
         }
         match (self, other) {
-            (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.identical(k) && x.identical(y))
             }
@@ -566,6 +592,9 @@ impl Value {
             Value::Collection(cell, _) => cell.borrow().plain(),
             Value::ValueMethod(_) => "<built-in method>".to_string(),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
+            Value::Native(_, word) => format!("<built-in function {}>", word),
+            Value::Cursor(_) => "<iterator>".to_string(),
+            Value::Set(_) => self.core_repr(),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },

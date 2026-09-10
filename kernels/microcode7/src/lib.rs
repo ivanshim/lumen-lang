@@ -19,6 +19,7 @@ pub mod exec;
 pub mod table;
 pub mod form;
 pub mod data;
+mod core;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -311,6 +312,9 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         }
     }
     if !table.flag("ext.system.kind.spelled") {
+        if table.has_any("ext.builtin.isinstance") {
+            for name in table.prims.keys() { machine.define(name, Value::Intrinsic(Rc::from(name.as_str()))); }
+        }
         for (key, sort) in exec::KIND_LABELS {
             if let Some(n) = table.single(key) {
                 machine.define(n, Value::KindOf(sort));

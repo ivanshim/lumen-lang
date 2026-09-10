@@ -1,0 +1,5 @@
+print(isinstance(True, int), isinstance(1, bool), isinstance(None, type(None)))
+print(isinstance([], list), isinstance((), tuple), isinstance(set(), set), isinstance({}, dict))
+print(repr((1,)), repr(dict([(1, "a"), (2, None)])), repr(dict(a=1, **{"b": 2})))
+print(repr(sorted(set([3, 1, 3]))), hash((1, 2)) == hash(tuple([1, 2])), hash(-1))
+print(bool([]), bool(()), bool({}), bool(""), callable(3))
