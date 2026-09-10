@@ -440,30 +440,8 @@ class TestLoader:
         raise 'NotImplementedError: test discovery needs filesystem access'
 
 
-def main(module=None, exit=True, verbosity=1):
-    names = __program_namespace()
-    result = TestResult()
-    loader = TestLoader()
-    for name in list(names):
-        cls = names[name]
-        if isinstance(cls, TestCase) or not getattr(cls, '_test_case', False):
-            continue
-        before = len(result.failures)
-        errors = len(result.errors)
-        loader.loadTestsFromTestCase(cls).run(result)
-        for failure in result.failures[before:]:
-            print('FAIL: ' + failure[0] + ' (' + name + ')')
-            print('AssertionError: ' + failure[1])
-        for error in result.errors[errors:]:
-            print('ERROR: ' + error[0] + ' (' + name + ')')
-            print(error[1])
-    print('Ran ' + str(result.testsRun) + ' tests')
-    if result.wasSuccessful():
-        print('OK')
-    else:
-        print('FAILED (failures=' + str(len(result.failures)) + ', errors=' + str(len(result.errors)) + ')')
-    # The scratch runner asks for the summary on stdout and a normal exit.
-    return result
+def main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
+    return _main(module, exit, verbosity, argv, testRunner)
 
 
 class _Call:
