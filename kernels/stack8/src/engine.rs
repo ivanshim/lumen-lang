@@ -434,7 +434,7 @@ impl<'a> Engine<'a> {
     fn truth(&self, v: &Value) -> bool {
         match v {
             Value::Bond(shared) => self.truth(&shared.borrow()),
-            Value::Array(items) if self.lang.untrue_empty => !items.is_empty(),
+            Value::Array(items) | Value::NameList(items) if self.lang.untrue_empty => !items.is_empty(),
             Value::Map(pairs) if self.lang.untrue_empty => !pairs.is_empty(),
             Value::Text(s) if self.lang.untrue_text.iter().any(|w| w == s.as_ref()) => false,
             other => other.is_true(),
