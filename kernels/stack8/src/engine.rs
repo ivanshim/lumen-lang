@@ -992,7 +992,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_)) || self.lang.sequence_values && matches!(held, Value::Text(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -1129,6 +1129,7 @@ impl<'a> Engine<'a> {
             false_word: word(&self.lang.false_words, "false"),
             null_word: nothing,
             flag_counts: self.lang.flags_count,
+            sequence_values: self.lang.sequence_values,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
@@ -1398,6 +1399,7 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
+                        v @ (Value::List(_) | Value::Tuple(_) | Value::Set(_)) => items.extend(self.comprehension_items(v)?.into_iter().map(|v| (None, v))),
                         Value::Array(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
                         Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
@@ -2196,6 +2198,12 @@ impl<'a> Engine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::List(items) => {
+                        let place = self.sequence_place(&inside, &at, items.borrow().len())?;
+                        items.borrow_mut().remove(place);
+                        Value::List(items.clone())
+                    }
+                    v @ (Value::Tuple(_) | Value::Text(_)) if self.lang.sequence_values => return Err(self.sequence_complaint(&self.lang.sequence_delete, &[v.sequence_kind()]).into()),
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
                         let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
                         let i = if raw < 0 { items.len() as i64 + raw } else { raw };
@@ -2390,6 +2398,26 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
+            Action::SequenceList | Action::SequenceTuple | Action::SequenceSet => {
+                let source = self.drop_top()?;
+                let items = self.comprehension_items(&source)?;
+                match op {
+                    Action::SequenceList => Value::list(items),
+                    Action::SequenceTuple => Value::Tuple(Rc::new(items)),
+                    _ => {
+                        let mut distinct: Vec<Value> = Vec::new();
+                        for item in items {
+                            self.sequence_hash_checked(&item)?;
+                            if !distinct.iter().any(|v| item.sequence_member_equal(v)) { distinct.push(item); }
+                        }
+                        Value::Set(Rc::new(distinct))
+                    }
+                }
+            }
+            Action::SequenceAdd | Action::SequenceMultiply => {
+                let both = self.drop_many(2)?;
+                self.dyadic(op, &both[0], &both[1])?
+            }
             Action::TupleJoin => {
                 let portions = self.drop_many(2)?;
                 let mut together = Vec::new();
@@ -2402,7 +2430,7 @@ impl<'a> Engine<'a> {
             Action::Unpack(count, rest) => {
                 let source = self.drop_top()?;
                 let mut items = match source {
-                    Value::Counted(_) => self.comprehension_items(&source)?,
+                    Value::Counted(_) | Value::Tuple(_) | Value::List(_) | Value::Set(_) => self.comprehension_items(&source)?,
                     Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -2444,7 +2472,15 @@ impl<'a> Engine<'a> {
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
-                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    for (key, value) in new_pairs {
+                        if self.lang.sequence_values {
+                            self.sequence_hash_checked(&key)?;
+                            match pairs.iter_mut().find(|(k, _)| k.sequence_member_equal(&key)) {
+                                Some((_, held)) => *held = value,
+                                None => pairs.push((key, value)),
+                            }
+                        } else { put_key(&mut pairs, key, value); }
+                    }
                     Value::Map(Rc::new(pairs))
                 } else {
                     let mut items = match gathered_so_far { Value::Array(a) => a.as_ref().clone(), _ => unreachable!() };
@@ -2465,6 +2501,12 @@ impl<'a> Engine<'a> {
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
                 match &pair[0] {
+                    v @ (Value::List(_) | Value::Tuple(_) | Value::Set(_)) => {
+                        let items = self.comprehension_items(v)?;
+                        if key { Value::Small(at as i64) } else { items.get(at).cloned().ok_or_else(|| self.lang.sequence_unready[0].clone())? }
+                    }
+                    Value::Text(text) if self.lang.sequence_values => if key { Value::Small(at as i64) }
+                        else { Value::text(&text.chars().nth(at).ok_or_else(|| self.lang.sequence_unready[0].clone())?.to_string()) },
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
@@ -3076,6 +3118,9 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
+                            Value::List(items) => items.borrow().len(),
+                            Value::Tuple(items) | Value::Set(items) => items.len(),
+                            Value::Text(text) if self.lang.sequence_values => text.chars().count(),
                             Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -3107,6 +3152,9 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::Extent => match self.drop_top()? {
+                Value::List(items) => Value::Small(items.borrow().len() as i64),
+                Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
+                Value::Text(s) if self.lang.sequence_values => Value::Small(s.chars().count() as i64),
                 Value::Counted(r) => Value::of_big(r.length()),
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -3243,7 +3291,7 @@ impl<'a> Engine<'a> {
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
         let values: Vec<&Value> = match arguments {
-            Value::Array(items) => items.iter().collect(),
+            Value::Tuple(items) | Value::Array(items) => items.iter().collect(),
             one => vec![one],
         };
         let mut used = 0;
@@ -3292,6 +3340,191 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn sequence_hash_checked(&self, v: &Value) -> Res<i64> {
+        if let Value::Tuple(items) = v {
+            for item in items.iter() { self.sequence_hash_checked(item)?; }
+        }
+        v.sequence_hash().map_err(|()| self.sequence_complaint(&self.lang.sequence_unhashable, &[v.sequence_kind()]))
+    }
+
+    fn sequence_builtin(&self, which: Builtin, args: &[Value]) -> Res<Value> {
+        let unready = || self.lang.sequence_unready[0].clone();
+        let amiss = || self.lang.call_amiss[0].clone();
+        match which {
+            Builtin::SequenceTuple => {
+                if args.len() > 1 { return Err(amiss()); }
+                let parts = if let Some(source) = args.first() { self.comprehension_items(source)? } else { Vec::new() };
+                Ok(Value::Tuple(Rc::new(parts)))
+            }
+            Builtin::SequenceHash => {
+                if args.len() != 1 { return Err(amiss()); }
+                self.sequence_hash_checked(&args[0]).map(Value::Small)
+            }
+            Builtin::SequenceMin | Builtin::SequenceMax | Builtin::SequenceSorted | Builtin::SequenceReversed => {
+                if args.is_empty() { return Err(amiss()); }
+                let choose = matches!(which, Builtin::SequenceMin | Builtin::SequenceMax);
+                if !choose && args.len() != 1 { return Err(unready()); }
+                let mut items = if args.len() == 1 { self.comprehension_items(&args[0])? } else { args.to_vec() };
+                if matches!(which, Builtin::SequenceReversed) {
+                    if !matches!(args[0], Value::List(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_)) { return Err(unready()); }
+                    items.reverse(); return Ok(Value::list(items));
+                }
+                if choose {
+                    let Some(mut best) = items.first().cloned() else {
+                        let named = if matches!(which, Builtin::SequenceMin) { "min" } else { "max" };
+                        return Err(self.sequence_complaint(&self.lang.sequence_empty, &[named]));
+                    };
+                    let test = if matches!(which, Builtin::SequenceMin) { Action::Lt } else { Action::Gt };
+                    for item in items.into_iter().skip(1) {
+                        if self.dyadic(&test, &item, &best)?.is_true() { best = item; }
+                    }
+                    return Ok(best);
+                }
+                for i in 1..items.len() {
+                    let mut j = i;
+                    while j > 0 && self.dyadic(&Action::Lt, &items[j], &items[j - 1])?.is_true() {
+                        items.swap(j, j - 1); j -= 1;
+                    }
+                }
+                Ok(Value::list(items))
+            }
+            Builtin::SequenceIndex | Builtin::SequenceCount => {
+                if args.len() < 2 || args.len() > 4 { return Err(amiss()); }
+                let source = &args[0];
+                if !matches!(source, Value::List(_) | Value::Tuple(_) | Value::Text(_)) { return Err(unready()); }
+                let count = matches!(which, Builtin::SequenceCount);
+                if count && !matches!(source, Value::Text(_)) && args.len() != 2 { return Err(amiss()); }
+                let items = self.comprehension_items(source)?;
+                let bound = |at: usize, default: usize| -> Res<usize> {
+                    let Some(v) = args.get(at) else { return Ok(default); };
+                    let n = match v { Value::Small(n) => BigInt::from(*n), Value::Huge(n) => (**n).clone(), Value::Flag(b) => BigInt::from(i64::from(*b)), Value::Null => return Ok(default), _ => return Err(unready()) };
+                    let n = if n < BigInt::from(0) { n + items.len() } else { n };
+                    Ok(if n < BigInt::from(0) { 0 } else { n.to_usize().unwrap_or(usize::MAX) })
+                };
+                let start = bound(2, 0)?;
+                let stop = bound(3, items.len())?.min(items.len());
+                if let Value::Text(_) = source {
+                    let Value::Text(needle) = &args[1] else { return Err(unready()); };
+                    let sought: Vec<Value> = needle.chars().map(|c| Value::text(&c.to_string())).collect();
+                    let mut matches = 0;
+                    let mut i = start;
+                    while i <= stop && sought.len() <= stop - i {
+                        if items[i..i + sought.len()].iter().zip(sought.iter()).all(|(x,y)| x.sequence_member_equal(y)) {
+                            if !count { return Ok(Value::Small(i as i64)); }
+                            matches += 1; i += sought.len().max(1);
+                        } else { i += 1; }
+                    }
+                    return if count { Ok(Value::Small(matches)) } else { Err(self.lang.sequence_missing[3].clone()) };
+                }
+                let found: Vec<usize> = (start.min(stop)..stop).filter(|i| items[*i].sequence_member_equal(&args[1])).collect();
+                if count { return Ok(Value::Small(found.len() as i64)); }
+                match found.first() {
+                    Some(i) => Ok(Value::Small(*i as i64)),
+                    None if matches!(source, Value::Tuple(_)) => Err(self.lang.sequence_missing[2].clone()),
+                    None => Err(format!("{}{}{}", self.lang.sequence_missing[0], args[1].string_field(&self.wording(), "", "r"), self.lang.sequence_missing[1])),
+                }
+            }
+            _ => Err(unready()),
+        }
+    }
+
+    fn sequence_complaint(&self, words: &[String], pieces: &[&str]) -> String {
+        let mut said = String::new();
+        for (i, word) in words.iter().enumerate() {
+            said.push_str(word);
+            if let Some(piece) = pieces.get(i) { said.push_str(piece); }
+        }
+        said
+    }
+
+    fn sequence_place(&self, value: &Value, at: &Value, length: usize) -> Res<usize> {
+        let raw = match at {
+            Value::Small(n) => BigInt::from(*n),
+            Value::Huge(n) => (**n).clone(),
+            Value::Flag(b) => BigInt::from(i64::from(*b)),
+            Value::Object(_) => return Err(self.lang.sequence_unready[0].clone()),
+            _ => return Err(self.sequence_complaint(&self.lang.sequence_subscript, &[value.sequence_kind(), at.sequence_kind()])),
+        };
+        let shifted = if raw < BigInt::from(0) { raw + length } else { raw };
+        let found = shifted.to_usize().filter(|i| *i < length);
+        found.ok_or_else(|| self.sequence_complaint(&self.lang.sequence_index,
+            &[if matches!(value, Value::Text(_)) { "string" } else { value.sequence_kind() }]))
+    }
+
+    fn sequence_operation(&self, op: &Action, a: &Value, b: &Value) -> Option<Res<Value>> {
+        let word = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", Action::Ge => ">=", _ => "" };
+        if !word.is_empty() {
+            if a.no_number() || b.no_number() { return Some(Ok(Value::Flag(false))); }
+            let order = a.sequence_order(b);
+            return Some(match order {
+                Some(found) => Ok(Value::Flag(match op {
+                    Action::Lt => found.is_lt(), Action::Le => !found.is_gt(),
+                    Action::Gt => found.is_gt(), _ => !found.is_lt(),
+                })),
+                None => Err(self.sequence_complaint(&self.lang.sequence_order, &[word, a.sequence_kind(), b.sequence_kind()])),
+            });
+        }
+        if matches!(op, Action::Eq | Action::Ne) {
+            return Some(Ok(Value::Flag(a.sequence_equal(b) != matches!(op, Action::Ne))));
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            let answer = match b {
+                Value::Text(text) => match a { Value::Text(needle) => Ok(text.contains(needle.as_ref())), _ => Err(self.lang.membership_unsupported.clone().unwrap_or_default()) },
+                _ => b.sequence_items().map(|items| items.iter().any(|v| a.sequence_member_equal(v)))
+                    .ok_or_else(|| self.lang.membership_unsupported.clone().unwrap_or_default()),
+            };
+            return Some(answer.map(|yes| Value::Flag(yes != matches!(op, Action::Lacks))));
+        }
+        let row = |v: &Value| matches!(v, Value::List(_) | Value::Array(_) | Value::Tuple(_) | Value::Text(_));
+        if matches!(op, Action::Add | Action::SequenceAdd) && row(a) {
+            if matches!(op, Action::SequenceAdd) {
+                if let Value::List(held) = a {
+                    return Some(self.comprehension_items(b).map(|more| { held.borrow_mut().extend(more); a.clone() }));
+                }
+            }
+            if a.sequence_kind() != b.sequence_kind() {
+                return Some(Err(self.sequence_complaint(&self.lang.sequence_concat, &[a.sequence_kind(), b.sequence_kind(), a.sequence_kind()])));
+            }
+            return Some(Ok(match (a, b) {
+                (Value::Text(left), Value::Text(right)) => Value::text(&format!("{}{}", left, right)),
+                _ => {
+                    let mut all = a.sequence_items().unwrap(); all.extend(b.sequence_items().unwrap());
+                    if matches!(a, Value::Tuple(_)) { Value::Tuple(Rc::new(all)) } else { Value::list(all) }
+                }
+            }));
+        }
+        if matches!(op, Action::Mul | Action::SequenceMultiply) && (row(a) || row(b)) {
+            let (source, times) = if row(a) { (a, b) } else { (b, a) };
+            let count = match times {
+                Value::Small(n) => Some(BigInt::from(*n)), Value::Huge(n) => Some((**n).clone()),
+                Value::Flag(b) => Some(BigInt::from(i64::from(*b))), _ => None,
+            };
+            let Some(count) = count else {
+                return Some(Err(if matches!(times, Value::Object(_)) { self.lang.sequence_unready[0].clone() }
+                    else { self.sequence_complaint(&self.lang.sequence_repeat, &[times.sequence_kind()]) }));
+            };
+            let count = if count < BigInt::from(0) { Some(0) } else { count.to_usize() };
+            let Some(count) = count else { return Some(Err(self.lang.sequence_unready[0].clone())); };
+            let items = source.sequence_items().unwrap();
+            let Some(size) = items.len().checked_mul(count) else { return Some(Err(self.lang.sequence_unready[0].clone())); };
+            let mut all = Vec::new();
+            if all.try_reserve(size).is_err() { return Some(Err(self.lang.sequence_unready[0].clone())); }
+            if !items.is_empty() { for _ in 0..count { all.extend(items.iter().cloned()); } }
+            return Some(Ok(match source {
+                Value::Text(_) => Value::text(&all.iter().map(|v| v.display(&self.wording())).collect::<String>()),
+                Value::Tuple(_) => Value::Tuple(Rc::new(all)),
+                Value::List(held) if matches!(op, Action::SequenceMultiply) && std::ptr::eq(source, a) => { *held.borrow_mut() = all; source.clone() },
+                _ => Value::list(all),
+            }));
+        }
+        if matches!(op, Action::Add | Action::SequenceAdd | Action::Mul | Action::SequenceMultiply)
+            && (row(a) || row(b) || matches!(a, Value::Null | Value::Map(_) | Value::Set(_)) || matches!(b, Value::Null | Value::Map(_) | Value::Set(_))) {
+            let sign = if matches!(op, Action::Add | Action::SequenceAdd) { "+" } else { "*" };
+            return Some(Err(self.sequence_complaint(&self.lang.sequence_operands, &[sign, a.sequence_kind(), b.sequence_kind()])));
+        }
+        None
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3302,6 +3535,14 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = b {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
+        }
+        if self.lang.sequence_values {
+            if let Some(result) = self.sequence_operation(op, a, b) { return result; }
+            match op {
+                Action::SequenceAdd => return self.dyadic(&Action::Add, a, b),
+                Action::SequenceMultiply => return self.dyadic(&Action::Mul, a, b),
+                _ => {}
+            }
         }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
@@ -3392,6 +3633,8 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
+                    (Value::Tuple(x), Value::Tuple(y)) | (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -3928,6 +4171,18 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if self.lang.sequence_values && !matches!(at, Value::Slice(_)) {
+            if matches!(target, Value::List(_) | Value::Tuple(_) | Value::Text(_)) {
+                let items = self.comprehension_items(target)?;
+                let place = self.sequence_place(target, at, items.len())?;
+                return Ok(items[place].clone());
+            }
+            if let Value::Map(pairs) = target {
+                self.sequence_hash_checked(at)?;
+                return pairs.iter().find(|(k, _)| k.sequence_member_equal(at)).map(|(_, v)| v.clone())
+                    .ok_or_else(|| self.lang.sequence_unready[0].clone());
+            }
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -3992,6 +4247,12 @@ impl<'a> Engine<'a> {
 
     fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
         match target {
+            Value::List(_) | Value::Tuple(_) => {
+                let items = self.comprehension_items(target)?;
+                let (_, _, _, places) = self.slice_places(parts, items.len())?;
+                let kept = places.into_iter().map(|i| items[i].clone()).collect();
+                Ok(if matches!(target, Value::Tuple(_)) { Value::Tuple(Rc::new(kept)) } else { Value::list(kept) })
+            }
             Value::Array(items) => {
                 let (_, _, _, places) = self.slice_places(parts, items.len())?;
                 Ok(Value::array(places.into_iter().map(|i| items[i].clone()).collect()))
@@ -4006,6 +4267,14 @@ impl<'a> Engine<'a> {
     }
 
     fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        if let Value::List(items) = &target {
+            let old = Value::array(items.borrow().clone());
+            let replacement = Value::array(self.comprehension_items(&given)?);
+            let changed = self.write_slice(old, parts, replacement)?;
+            let Value::Array(next) = changed else { unreachable!() };
+            *items.borrow_mut() = next.as_ref().clone();
+            return Ok(target);
+        }
         let Value::Array(mut items) = target else {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         };
@@ -4121,6 +4390,8 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::Tuple(items) | Value::Set(items) => Ok(items.as_ref().clone()),
+            Value::List(items) => Ok(items.borrow().clone()),
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4786,10 +5057,14 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::SequenceTuple | Builtin::SequenceHash | Builtin::SequenceIndex | Builtin::SequenceCount
+                | Builtin::SequenceMin | Builtin::SequenceMax | Builtin::SequenceSorted | Builtin::SequenceReversed => {
+                self.sequence_builtin(builtin, args)?
+            }
             Builtin::List => {
-                if args.is_empty() { return Ok(Value::array(Vec::new())); }
-                arity(1)?;
-                Value::array(self.comprehension_items(&args[0])?)
+                if args.len() > 1 { return Err(self.lang.call_amiss[0].clone()); }
+                let items = if args.is_empty() { Vec::new() } else { self.comprehension_items(&args[0])? };
+                if self.lang.sequence_values { Value::list(items) } else { Value::array(items) }
             }
             Builtin::Any => {
                 arity(1)?;
@@ -4871,6 +5146,8 @@ impl<'a> Engine<'a> {
             Builtin::Length => {
                 arity(1)?;
                 match &args[0] {
+                    Value::List(items) => Value::Small(items.borrow().len() as i64),
+                    Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -4959,6 +5236,11 @@ impl<'a> Engine<'a> {
                     held => held,
                 };
                 match target {
+                    Value::List(items) => {
+                        items.borrow_mut().push(v);
+                        Value::List(items)
+                    }
+                    Value::Tuple(_) | Value::Text(_) if self.lang.sequence_values => return Err(self.lang.sequence_unready[0].clone()),
                     Value::Array(mut items) => {
                         Rc::make_mut(&mut items).push(v);
                         Value::Array(items)
@@ -4977,6 +5259,9 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if self.lang.sequence_values && matches!(target, Value::Tuple(_) | Value::Text(_)) {
+                    return Err(self.sequence_complaint(&self.lang.sequence_assign, &[target.sequence_kind()]));
+                }
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
                 }
@@ -5029,6 +5314,11 @@ impl<'a> Engine<'a> {
                     return Ok(Value::text(&letters.into_iter().collect::<String>()));
                 }
                 match target {
+                    Value::List(items) => {
+                        let place = self.sequence_place(&Value::List(items.clone()), &at, items.borrow().len())?;
+                        items.borrow_mut()[place] = v;
+                        Value::List(items)
+                    }
                     // A list written at a place it already holds stays a list.
                     Value::Array(mut items) if as_index(&at).map_or(false, |i| i < items.len()) => {
                         let i = as_index(&at)?;
@@ -5095,6 +5385,12 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let at = self.key_quietly(&args.pop().expect("the place"));
                 match args.pop().expect("the array") {
+                    Value::List(items) => {
+                        let place = self.sequence_place(&Value::List(items.clone()), &at, items.borrow().len())?;
+                        items.borrow_mut().remove(place);
+                        Value::List(items)
+                    }
+                    v @ (Value::Tuple(_) | Value::Text(_)) if self.lang.sequence_values => return Err(self.sequence_complaint(&self.lang.sequence_delete, &[v.sequence_kind()])),
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
                         let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
                         let i = if raw < 0 { items.len() as i64 + raw } else { raw };

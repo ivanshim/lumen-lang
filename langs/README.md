@@ -1762,6 +1762,43 @@ only. The extension labels so far, all from PHP:
   is a word before the operator that turns the answer about (`not in`).
   `ext.op.in.unsupported` holds the plain complaint where the right
   value cannot be searched, or the left of a text search is not text.
+- `ext.op.sequence.values`: a switch; lists keep shared mutable places,
+  tuples keep fixed places, and sets keep distinct members. Adding like
+  sequences joins their items; multiplying by a whole number repeats
+  them. A compound addition or multiplication writes a list in place,
+  while a tuple or text is bound anew. Equality looks within containers;
+  maps and sets ask without regard to order. Lists and tuples are ordered
+  by the first unlike pair of items, then by length. Text is ordered by
+  its letters. Text within a container is quoted; bare text keeps its
+  former printing.
+- `ext.builtin.tuple` gathers the items of a collection into a tuple.
+  `ext.builtin.hash` gives the hash of a value whose contents cannot be
+  changed; a tuple asks the same of every item. `ext.builtin.index` finds
+  the first matching item within optional starting and ending bounds;
+  `ext.builtin.count` counts matches. Text asks for whole substrings.
+  `ext.builtin.min` and `ext.builtin.max` choose the least or greatest
+  item; `ext.builtin.sorted` gathers items in order, and
+  `ext.builtin.reversed` gathers them from last to first.
+- `ext.op.sequence.concat` holds three pieces of a complaint: before
+  the receiving kind, before the other kind, and before the receiving
+  kind once more. `ext.op.sequence.order` holds four pieces surrounding
+  the operator and both kinds. `ext.op.sequence.repeat` surrounds the
+  kind of a repeat count which is not whole. These lists let the
+  definition say why unlike values cannot be joined or ordered.
+- `ext.op.sequence.operands` holds four pieces surrounding an arithmetic
+  sign and the two kinds which cannot be worked upon by it.
+- `ext.op.sequence.assign`, `ext.op.sequence.delete` and
+  `ext.op.sequence.unhashable` each hold two pieces surrounding a kind:
+  fixed places cannot be written or removed, and mutable contents have
+  no hash. `ext.op.sequence.index` surrounds the name of a sequence
+  whose requested place lies beyond either end. `ext.op.sequence.subscript`
+  holds the words before the sequence kind and between that kind and
+  the kind of an unfit index.
+- `ext.op.sequence.missing` holds the words before and after a missing
+  list item, then the whole complaints for a missing tuple item and a
+  missing substring. `ext.op.sequence.empty` surrounds the name of a
+  chooser given no items. `ext.op.sequence.unready` is the plain complaint
+  for a sequence operation whose required means are not yet present.
 - `ext.op.compare.chained`: a switch; comparisons beside one another
   ask each adjacent pair in turn. A middle value is worked out once
   and kept; after a false comparison no further operand runs. Equality,
@@ -2157,6 +2194,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
+| `ext.builtin.count` | - | - | `count` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -2168,13 +2206,17 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.index` | - | - | `index` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
+| `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
@@ -2199,6 +2241,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed` | - | - | `reversed` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -2207,6 +2250,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
@@ -2221,6 +2265,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
@@ -2341,6 +2386,19 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.rem.format.unsupported` | - | - | `Unsupported string format` | - | - | - | - | - | - | - |
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
+| `ext.op.sequence.assign` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
+| `ext.op.sequence.concat` | - | - | `TypeError: can only concatenate ` ` (not "` `") to ` | - | - | - | - | - | - | - |
+| `ext.op.sequence.delete` | - | - | `TypeError: '` `' object doesn't support item deletion` | - | - | - | - | - | - | - |
+| `ext.op.sequence.empty` | - | - | `ValueError: ` `() arg is an empty sequence` | - | - | - | - | - | - | - |
+| `ext.op.sequence.index` | - | - | `IndexError: ` ` index out of range` | - | - | - | - | - | - | - |
+| `ext.op.sequence.missing` | - | - | `ValueError: ` ` is not in list` `ValueError: tuple.index(x): x not in tuple` `ValueError: substring not found` | - | - | - | - | - | - | - |
+| `ext.op.sequence.operands` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.op.sequence.order` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.op.sequence.repeat` | - | - | `TypeError: can't multiply sequence by non-int of type '` `'` | - | - | - | - | - | - | - |
+| `ext.op.sequence.subscript` | - | - | `TypeError: ` ` indices must be integers or slices, not ` | - | - | - | - | - | - | - |
+| `ext.op.sequence.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.op.sequence.unready` | - | - | `NotImplementedError: this sequence operation is not supported` | - | - | - | - | - | - | - |
+| `ext.op.sequence.values` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
 | `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |

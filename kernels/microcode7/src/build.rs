@@ -1199,7 +1199,7 @@ impl<'a> Builder<'a> {
             whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(whole)
+        Ok(if self.table.flag("ext.op.sequence.values") { prim_call(Prim::Frozen, vec![whole]) } else { whole })
     }
 
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
@@ -1214,7 +1214,7 @@ impl<'a> Builder<'a> {
             value = prim_call(Prim::TupleJoined, vec![value, segment]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(value)
+        Ok(if self.table.flag("ext.op.sequence.values") { prim_call(Prim::Frozen, vec![value]) } else { value })
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
@@ -4357,7 +4357,8 @@ impl<'a> Builder<'a> {
                 Some(op) => {
                     let current = self.read(&slot.ident);
                     let current = self.kept_before(current);
-                    let combined = self.kept_after(prim_call(op, vec![current, value]));
+                    let work = if self.table.flag("ext.op.sequence.values") && matches!(op, Prim::Plus | Prim::Times) { Prim::GrowSequence(op == Prim::Times) } else { op };
+                    let combined = self.kept_after(prim_call(work, vec![current, value]));
                     let stored = self.write(&slot.ident, combined);
                     match gives_back {
                         true => sequence(vec![stored, self.read(&slot.ident)]),
@@ -5257,7 +5258,7 @@ impl<'a> Builder<'a> {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
-                                else if self.on_any("syntax.group.close") { prim_call(Prim::MakeArray, Vec::new()) }
+                                else if self.on_any("syntax.group.close") { prim_call(if table.flag("ext.op.sequence.values") { Prim::MakeTuple } else { Prim::MakeArray }, Vec::new()) }
                                 else { self.comma_value()? };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression
@@ -5271,7 +5272,7 @@ impl<'a> Builder<'a> {
                         self.gathered_literal("array")?
                     } else {
                         let items = self.elements("syntax.array.close", "syntax.array.separator")?;
-                    prim_call(Prim::MakeArray, items)
+                    prim_call(if table.flag("ext.op.sequence.values") { Prim::MakeList } else { Prim::MakeArray }, items)
                     }
                 } else if table.single("syntax.map.open") == Some(t.lexeme.as_str()) {
                     self.advance();
@@ -5880,6 +5881,7 @@ impl<'a> Builder<'a> {
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {
                             Some(slot) => sequence(vec![fallback, Form::Write(slot.clone(), Box::new(Form::Read(held.clone()))), constant(Value::Nil)]),
+                            None if table.flag("ext.op.sequence.values") => sequence(vec![fallback, constant(Value::Nil)]),
                             None => r.class_not_ready(),
                         });
                     }
@@ -6040,7 +6042,7 @@ impl<'a> Builder<'a> {
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else { Prim::MakeArray }, vec![]);
+        let mut value = prim_call(if mapped { Prim::MakeMap } else if self.table.flag("ext.op.sequence.values") { Prim::MakeList } else { Prim::MakeArray }, vec![]);
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spreading { self.advance(); }
@@ -6055,7 +6057,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
-        Ok(value)
+        Ok(if family == "map" && !mapped && self.table.flag("ext.op.sequence.values") { prim_call(Prim::MakeSet, vec![value]) } else { value })
     }
 
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
@@ -6063,7 +6065,7 @@ impl<'a> Builder<'a> {
         self.pos = first_for;
         let old_names = self.gather_names.len();
         let name = self.gather_name("gathered");
-        let empty = prim_call(if dictionary { Prim::MakeMap } else { Prim::MakeArray }, Vec::new());
+        let empty = prim_call(if dictionary { Prim::MakeMap } else if self.table.flag("ext.op.sequence.values") { Prim::MakeList } else { Prim::MakeArray }, Vec::new());
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);

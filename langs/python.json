@@ -336,8 +336,23 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.count": [
+    "count"
+  ],
+  "ext.builtin.hash": [
+    "hash"
+  ],
+  "ext.builtin.index": [
+    "index"
+  ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.max": [
+    "max"
+  ],
+  "ext.builtin.min": [
+    "min"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -384,6 +399,12 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.reversed": [
+    "reversed"
+  ],
+  "ext.builtin.sorted": [
+    "sorted"
+  ],
   "ext.builtin.sum": [
     "sum"
   ],
@@ -417,6 +438,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.tuple": [
+    "tuple"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -646,6 +670,61 @@
     "Unsupported string format"
   ],
   "ext.op.rem.formats_text": true,
+  "ext.op.sequence.assign": [
+    "TypeError: '",
+    "' object does not support item assignment"
+  ],
+  "ext.op.sequence.concat": [
+    "TypeError: can only concatenate ",
+    " (not \"",
+    "\") to "
+  ],
+  "ext.op.sequence.delete": [
+    "TypeError: '",
+    "' object doesn't support item deletion"
+  ],
+  "ext.op.sequence.empty": [
+    "ValueError: ",
+    "() arg is an empty sequence"
+  ],
+  "ext.op.sequence.index": [
+    "IndexError: ",
+    " index out of range"
+  ],
+  "ext.op.sequence.missing": [
+    "ValueError: ",
+    " is not in list",
+    "ValueError: tuple.index(x): x not in tuple",
+    "ValueError: substring not found"
+  ],
+  "ext.op.sequence.operands": [
+    "TypeError: unsupported operand type(s) for ",
+    ": '",
+    "' and '",
+    "'"
+  ],
+  "ext.op.sequence.order": [
+    "TypeError: '",
+    "' not supported between instances of '",
+    "' and '",
+    "'"
+  ],
+  "ext.op.sequence.repeat": [
+    "TypeError: can't multiply sequence by non-int of type '",
+    "'"
+  ],
+  "ext.op.sequence.subscript": [
+    "TypeError: ",
+    " indices must be integers or slices, not "
+  ],
+  "ext.op.sequence.unhashable": [
+    "TypeError: unhashable type: '",
+    "'"
+  ],
+  "ext.op.sequence.unready": [
+    "NotImplementedError: this sequence operation is not supported"
+  ],
+  "ext.op.sequence.values": true,
   "ext.op.tuple": [
     ","
   ],

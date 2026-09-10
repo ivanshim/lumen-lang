@@ -227,6 +227,11 @@ pub enum Action {
     Unpack(usize, Option<usize>),
     /// Join the gathered portions of a tuple.
     TupleJoin,
+    SequenceList,
+    SequenceTuple,
+    SequenceSet,
+    SequenceAdd,
+    SequenceMultiply,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is refused as a write to one is.
@@ -414,6 +419,8 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    SequenceTuple, SequenceHash, SequenceIndex, SequenceCount,
+    SequenceMin, SequenceMax, SequenceSorted, SequenceReversed,
     Sum,
     List,
     Any,

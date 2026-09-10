@@ -53,6 +53,19 @@ pub struct Lang {
     pub with_unready: Vec<String>,
     pub yield_from: Vec<String>,
     pub member_pipes: bool,
+    pub sequence_values: bool,
+    pub sequence_operands: Vec<String>,
+    pub sequence_concat: Vec<String>,
+    pub sequence_order: Vec<String>,
+    pub sequence_repeat: Vec<String>,
+    pub sequence_assign: Vec<String>,
+    pub sequence_delete: Vec<String>,
+    pub sequence_index: Vec<String>,
+    pub sequence_unhashable: Vec<String>,
+    pub sequence_missing: Vec<String>,
+    pub sequence_unready: Vec<String>,
+    pub sequence_empty: Vec<String>,
+    pub sequence_subscript: Vec<String>,
     pub tuple_unready: Vec<String>,
     pub bytes_unready: Vec<String>,
     pub format_unready: Vec<String>,
@@ -891,6 +904,8 @@ w ext.lexical.string.prefix.bytes.unready
 w ext.lexical.string.prefix.format.unready
 b ext.stmt.assign.chain
 w ext.lexical.escape.deferred
+w ext.op.sequence.operands | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.order | w ext.op.sequence.repeat | w ext.op.sequence.assign | w ext.op.sequence.delete | w ext.op.sequence.index | w ext.op.sequence.unhashable | w ext.op.sequence.missing | w ext.op.sequence.unready | w ext.op.sequence.empty | w ext.op.sequence.subscript
+w ext.builtin.tuple | w ext.builtin.hash | w ext.builtin.index | w ext.builtin.count | w ext.builtin.min | w ext.builtin.max | w ext.builtin.sorted | w ext.builtin.reversed
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1310,6 +1325,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.tuple", Builtin::SequenceTuple), ("ext.builtin.hash", Builtin::SequenceHash), ("ext.builtin.index", Builtin::SequenceIndex), ("ext.builtin.count", Builtin::SequenceCount), ("ext.builtin.min", Builtin::SequenceMin), ("ext.builtin.max", Builtin::SequenceMax), ("ext.builtin.sorted", Builtin::SequenceSorted), ("ext.builtin.reversed", Builtin::SequenceReversed),
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
@@ -1407,6 +1423,19 @@ impl Lang {
             with_unready: r.strings("ext.stmt.with.unready")?,
             yield_from: r.strings("ext.stmt.yield.from")?,
             member_pipes: r.flag("ext.op.member.pipes")?,
+            sequence_operands: r.strings("ext.op.sequence.operands")?,
+            sequence_values: r.flag("ext.op.sequence.values")?,
+            sequence_concat: r.strings("ext.op.sequence.concat")?,
+            sequence_order: r.strings("ext.op.sequence.order")?,
+            sequence_repeat: r.strings("ext.op.sequence.repeat")?,
+            sequence_assign: r.strings("ext.op.sequence.assign")?,
+            sequence_delete: r.strings("ext.op.sequence.delete")?,
+            sequence_index: r.strings("ext.op.sequence.index")?,
+            sequence_unhashable: r.strings("ext.op.sequence.unhashable")?,
+            sequence_missing: r.strings("ext.op.sequence.missing")?,
+            sequence_unready: r.strings("ext.op.sequence.unready")?,
+            sequence_empty: r.strings("ext.op.sequence.empty")?,
+            sequence_subscript: r.strings("ext.op.sequence.subscript")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
             format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,

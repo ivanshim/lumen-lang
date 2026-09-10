@@ -3,6 +3,7 @@
 // through a shared reference, which a taking load avoids.
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::rc::Rc;
 
@@ -129,6 +130,10 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    /// A list keeps its own cell, apart from the name holding it.
+    List(Rc<RefCell<Vec<Value>>>),
+    Tuple(Rc<Vec<Value>>),
+    Set(Rc<Vec<Value>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -171,6 +176,8 @@ pub struct Wording<'a> {
     /// width of a piece of text is the count of its characters and not
     /// the count of bytes the letters they spell would take.
     pub text_is_bytes: bool,
+    /// Whether collections keep their kind and quote the text within.
+    pub sequence_values: bool,
     pub guarded_word: Option<&'a str>,
     pub hidden_word: Option<&'a str>,
 }
@@ -208,6 +215,191 @@ impl Value {
         Value::Array(Rc::new(items))
     }
 
+    pub fn list(items: Vec<Value>) -> Value {
+        Value::List(Rc::new(RefCell::new(items)))
+    }
+
+    /// The kind named when a sequence operation cannot be done.
+    pub fn sequence_kind(&self) -> &'static str {
+        match self {
+            Value::Bond(cell) => cell.borrow().sequence_kind(),
+            Value::Array(_) | Value::List(_) => "list",
+            Value::Tuple(_) => "tuple",
+            Value::Set(_) => "set",
+            Value::Text(_) => "str",
+            Value::Map(_) => "dict",
+            Value::Null => "NoneType",
+            Value::Small(_) | Value::Huge(_) => "int",
+            Value::Frac(_) | Value::Real(_) => "float",
+            Value::Flag(_) => "bool",
+            Value::Counted(_) => "range",
+            Value::Slice(_) => "slice",
+            Value::Ellipsis => "ellipsis",
+            Value::Class(_) | Value::SortOf(_) => "type",
+            Value::Routine(_) | Value::Method(..) => "function",
+            _ => "object",
+        }
+    }
+
+    /// A collection recognises a member it already holds, including
+    /// the one real which does not compare equal even to itself.
+    pub fn sequence_member_equal(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Bond(cell), value) => cell.borrow().sequence_member_equal(value),
+            (value, Value::Bond(cell)) => value.sequence_member_equal(&cell.borrow()),
+            (Value::Real(left), Value::Real(right)) if Rc::ptr_eq(left, right) => true,
+            _ => self.sequence_equal(other),
+        }
+    }
+
+    /// Equality within collections keeps unlike sequence kinds apart.
+    /// Keys have no order; the order of list and tuple items matters.
+    pub fn sequence_equal(&self, other: &Value) -> bool {
+        if let Value::Bond(cell) = self {
+            return cell.borrow().sequence_equal(other);
+        }
+        if let Value::Bond(cell) = other {
+            return self.sequence_equal(&cell.borrow());
+        }
+        match (self, other) {
+            (Value::Flag(flag), value) => Value::Small(i64::from(*flag)).sequence_equal(value),
+            (value, Value::Flag(flag)) => value.sequence_equal(&Value::Small(i64::from(*flag))),
+            (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Text(left), Value::Text(right)) => left == right,
+            (Value::List(left), Value::List(right)) => {
+                if Rc::ptr_eq(left, right) { return true; }
+                let (left, right) = (left.borrow(), right.borrow());
+                left.len() == right.len() && left.iter().zip(right.iter()).all(|(a, b)| a.sequence_member_equal(b))
+            }
+            (Value::Array(left), Value::Array(right)) | (Value::Tuple(left), Value::Tuple(right)) => {
+                Rc::ptr_eq(left, right) || left.len() == right.len() && left.iter().zip(right.iter()).all(|(a, b)| a.sequence_member_equal(b))
+            }
+            (Value::Array(left), Value::List(right)) | (Value::List(right), Value::Array(left)) => {
+                let right = right.borrow();
+                left.len() == right.len() && left.iter().zip(right.iter()).all(|(a, b)| a.sequence_member_equal(b))
+            }
+            (Value::Map(left), Value::Map(right)) => {
+                Rc::ptr_eq(left, right) || left.len() == right.len() && left.iter().all(|(key, value)| {
+                    right.iter().any(|(other_key, other_value)| key.sequence_member_equal(other_key) && value.sequence_member_equal(other_value))
+                })
+            }
+            (Value::Set(left), Value::Set(right)) => {
+                Rc::ptr_eq(left, right) || left.len() == right.len() && left.iter().all(|item| right.iter().any(|value| item.sequence_member_equal(value)))
+            }
+            (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+            (Value::Class(left), Value::Class(right)) => Rc::ptr_eq(left, right),
+            (Value::Routine(left), Value::Routine(right)) => Rc::ptr_eq(left, right),
+            (Value::Counted(_), Value::Counted(_)) => self.equals(other),
+            _ => crate::arith::order_values(self, other) == Some(Ordering::Equal),
+        }
+    }
+
+    /// Sequence order asks the first unequal pair, then the lengths.
+    pub fn sequence_order(&self, other: &Value) -> Option<Ordering> {
+        match (self, other) {
+            (Value::Bond(cell), value) => cell.borrow().sequence_order(value),
+            (value, Value::Bond(cell)) => value.sequence_order(&cell.borrow()),
+            (Value::Flag(flag), value) => Value::Small(i64::from(*flag)).sequence_order(value),
+            (value, Value::Flag(flag)) => value.sequence_order(&Value::Small(i64::from(*flag))),
+            (Value::Text(left), Value::Text(right)) => Some(left.cmp(right)),
+            _ if matches!(self.sequence_kind(), "list" | "tuple") && self.sequence_kind() == other.sequence_kind() => {
+                let left = self.sequence_items()?;
+                let right = other.sequence_items()?;
+                for (a, b) in left.iter().zip(right.iter()) {
+                    if !a.sequence_member_equal(b) { return a.sequence_order(b); }
+                }
+                Some(left.len().cmp(&right.len()))
+            }
+            _ => crate::arith::order_values(self, other),
+        }
+    }
+
+    /// The members of a value, in the order a walk sees them.
+    pub fn sequence_items(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::Bond(cell) => cell.borrow().sequence_items(),
+            Value::List(items) => Some(items.borrow().clone()),
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Some(items.as_ref().clone()),
+            Value::Text(text) => Some(text.chars().map(|letter| Value::text(&letter.to_string())).collect()),
+            Value::Map(pairs) => Some(pairs.iter().map(|(key, _)| key.clone()).collect()),
+            Value::Counted(range) => {
+                let count = range.length().to_usize()?;
+                let mut items = Vec::new();
+                items.try_reserve(count).ok()?;
+                for at in 0..count { items.push(Value::of_big(&range.start + BigInt::from(at) * &range.step)); }
+                Some(items)
+            }
+            _ => None,
+        }
+    }
+
+    /// A tuple mixes the hashes of its members; a mutable collection
+    /// has no hash, even when it is held inside an immutable one.
+    pub fn sequence_hash(&self) -> Result<i64, ()> {
+        let fix = |number: i64| if number == -1 { -2 } else { number };
+        match self {
+            Value::Bond(cell) => cell.borrow().sequence_hash(),
+            Value::Array(_) | Value::List(_) | Value::Map(_) | Value::Set(_) => Err(()),
+            Value::Tuple(items) => {
+                let mut hash = 2_870_177_450_012_600_261_u64;
+                for item in items.iter() {
+                    hash = hash.wrapping_add((item.sequence_hash()? as u64).wrapping_mul(14_029_467_366_897_019_727));
+                    hash = hash.rotate_left(31).wrapping_mul(11_400_714_785_074_694_791);
+                }
+                hash = hash.wrapping_add(items.len() as u64 ^ (2_870_177_450_012_600_261 ^ 3_527_539));
+                Ok(if hash == u64::MAX { 1_546_275_796 } else { hash as i64 })
+            }
+            Value::Flag(flag) => Ok(i64::from(*flag)),
+            Value::Text(text) => {
+                let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+                for byte in text.bytes() { hash = (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3); }
+                Ok(if text.is_empty() { 0 } else { fix(hash as i64) })
+            }
+            Value::Null => Ok(0x1234_abcd),
+            Value::Real(real) if real.outside() => {
+                Ok(if real.no_number() { Rc::as_ptr(real) as usize as i64 }
+                    else if real.p.is_negative() { -314159 } else { 314159 })
+            }
+            _ => {
+                let (top, bottom) = crate::arith::parts(self).ok_or(())?;
+                let modulus = BigInt::from((1_u64 << 61) - 1);
+                let divisor = bottom.mod_floor(&modulus);
+                let number = if divisor.is_zero() { 314159 } else {
+                    let inverse = divisor.modpow(&(&modulus - 2), &modulus);
+                    (top.abs() * inverse).mod_floor(&modulus).to_i64().ok_or(())?
+                };
+                Ok(fix(if top.is_negative() { -number } else { number }))
+            }
+        }
+    }
+
+    fn sequence_shown(&self, words: &Wording, within: bool, path: &mut Vec<usize>) -> String {
+        if let Value::Bond(cell) = self { return cell.borrow().sequence_shown(words, within, path); }
+        if let Value::Text(_) = self {
+            return if within { self.string_field(words, "", "r") } else { self.plain() };
+        }
+        let (identity, open, close) = match self {
+            Value::List(items) => (Rc::as_ptr(items) as usize, "[", "]"),
+            Value::Array(items) => (Rc::as_ptr(items) as usize, "[", "]"),
+            Value::Tuple(items) => (Rc::as_ptr(items) as usize, "(", ")"),
+            Value::Set(items) if items.is_empty() => return "set()".to_string(),
+            Value::Set(items) => (Rc::as_ptr(items) as usize, "{", "}"),
+            Value::Map(pairs) => (Rc::as_ptr(pairs) as usize, "{", "}"),
+            _ => return self.ordinary_display(words),
+        };
+        if path.contains(&identity) { return format!("{open}...{close}"); }
+        path.push(identity);
+        let shown = match self {
+            Value::Map(pairs) => pairs.iter().map(|(key, value)| {
+                format!("{}: {}", key.sequence_shown(words, true, path), value.sequence_shown(words, true, path))
+            }).collect::<Vec<_>>(),
+            _ => self.sequence_items().unwrap_or_default().iter().map(|item| item.sequence_shown(words, true, path)).collect(),
+        };
+        path.pop();
+        let comma = if matches!(self, Value::Tuple(_)) && shown.len() == 1 { "," } else { "" };
+        format!("{open}{}{comma}{close}", shown.join(", "))
+    }
+
     pub fn sort(&self) -> Option<Sort> {
         Some(match self {
             Value::Small(_) | Value::Huge(_) => Sort::Integer,
@@ -215,7 +407,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Array(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -244,6 +436,8 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::List(items) => !items.borrow().is_empty(),
+            Value::Tuple(items) | Value::Set(items) => !items.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -274,7 +468,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Array(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -292,6 +486,7 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::List(_), Value::List(_)) | (Value::Tuple(_), Value::Tuple(_)) | (Value::Set(_), Value::Set(_)) => self.sequence_equal(other),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -351,6 +546,13 @@ impl Value {
     /// What print shows: the language's words for the literals, the
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
+        if sp.sequence_values {
+            return self.sequence_shown(sp, false, &mut Vec::new());
+        }
+        self.ordinary_display(sp)
+    }
+
+    fn ordinary_display(&self, sp: &Wording) -> String {
         match self {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
@@ -463,6 +665,18 @@ impl Value {
                 let shown: Vec<String> = items.iter().map(Value::plain).collect();
                 format!("[{}]", shown.join(", "))
             }
+            Value::List(items) => {
+                let shown: Vec<String> = items.borrow().iter().map(Value::plain).collect();
+                format!("[{}]", shown.join(", "))
+            }
+            Value::Tuple(items) | Value::Set(items) => {
+                let shown: Vec<String> = items.iter().map(Value::plain).collect();
+                match self {
+                    Value::Tuple(_) => format!("({}{})", shown.join(", "), if items.len() == 1 { "," } else { "" }),
+                    _ if items.is_empty() => "set()".to_string(),
+                    _ => format!("{{{}}}", shown.join(", ")),
+                }
+            }
             Value::Map(pairs) => {
                 let shown: Vec<String> = pairs.iter().map(|(k, v)| format!("{} => {}", k.plain(), v.plain())).collect();
                 format!("[{}]", shown.join(", "))
@@ -480,6 +694,16 @@ impl Value {
     /// A key for the call cache: kind and content, nested for arrays.
     pub fn memo_key(&self, into: &mut String) {
         match self {
+            Value::List(items) => {
+                into.push_str("list[");
+                for item in items.borrow().iter() { item.memo_key(into); }
+                into.push(']');
+            }
+            Value::Tuple(items) | Value::Set(items) => {
+                into.push_str(if matches!(self, Value::Tuple(_)) { "tuple[" } else { "set[" });
+                for item in items.iter() { item.memo_key(into); }
+                into.push(']');
+            }
             Value::Text(s) => {
                 let _ = write!(into, "s{}:{}", s.len(), s);
             }
@@ -922,4 +1146,3 @@ fn laid_flat(figures: &str, power: i32) -> String {
     }
     format!("{}.{}", &figures[..point], &figures[point..])
 }
-

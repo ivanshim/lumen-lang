@@ -317,7 +317,8 @@ impl<'a> Machine<'a> {
     /// for its key where the places carry none.
     fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
         match v {
-            Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
+            Value::List(items) => items.borrow().iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
+            Value::Tuple(items) | Value::Set(items) | Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
             Value::Dict(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
         }
@@ -483,6 +484,8 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
+                            Value::List(items) => items.borrow().len(),
+                            Value::Tuple(items) | Value::Set(items) => items.len(),
                             Value::Vector(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
@@ -535,7 +538,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -997,6 +1000,18 @@ impl<'a> Machine<'a> {
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
         match item {
+            Value::List(elements) => {
+                let mut parts = Vec::new();
+                for element in elements.borrow().iter() { parts.push(self.quoted_remainder(element)?); }
+                return Ok(format!("[{}]", parts.join(", ")));
+            }
+            Value::Tuple(elements) | Value::Set(elements) => {
+                let mut parts = Vec::new();
+                for element in elements.iter() { parts.push(self.quoted_remainder(element)?); }
+                return Ok(if matches!(item, Value::Tuple(_)) {
+                    format!("({}{})", parts.join(", "), if elements.len() == 1 { "," } else { "" })
+                } else if elements.is_empty() { "set()".to_string() } else { format!("{{{}}}", parts.join(", ")) });
+            }
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
                 for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
@@ -1037,7 +1052,7 @@ impl<'a> Machine<'a> {
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
-        let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
+        let supplied = match rhs { Value::Vector(list) | Value::Tuple(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
         let mut arguments = supplied.iter();
         let letters: Vec<char> = pattern.chars().collect();
         let mut at = 0;
@@ -1886,6 +1901,12 @@ impl<'a> Machine<'a> {
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::List(items) => {
+                        let index = self.sequence_position(&at, items.borrow().len(), "list")?;
+                        items.borrow_mut().remove(index);
+                        inside.clone()
+                    }
+                    Value::Tuple(_) | Value::Text(_) if self.table.flag("ext.op.sequence.values") => return Err(self.sequence_fault("delete", &[Self::sequence_kind(&inside)]).into()),
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
@@ -2370,6 +2391,34 @@ impl<'a> Machine<'a> {
                     let mut all = vec![subject];
                     all.extend(values);
                     Ok(self.invoke(program, self.outermost.clone(), all)?)
+                }
+                Prim::Append | Prim::Replace if self.table.flag("ext.op.sequence.values") => {
+                    let mut values = self.value_list(args, frame)?;
+                    if self.table.flag("ext.syntax.call.bind_names") {
+                        let (plain, keywords) = self.open_arguments(values)?;
+                        if !keywords.is_empty() { return Err(self.builtin_keyword_fault(name).into()); }
+                        values = plain;
+                    }
+                    let desired = if *op == Prim::Append { 2 } else { 3 };
+                    if values.len() != desired { return Err(self.sequence_fault("unready", &[]).into()); }
+                    let target = &values[0];
+                    if matches!(target, Value::Tuple(_) | Value::Text(_)) { return Err(self.sequence_fault("assign", &[Self::sequence_kind(target)]).into()); }
+                    if let Value::List(row) = target {
+                        if *op == Prim::Append { row.borrow_mut().push(values[1].clone()); }
+                        else if let Value::Span(bounds) = &values[1] {
+                            let mut copy = target.clone();
+                            self.span_written(&mut copy, bounds, &values[2])?;
+                        } else {
+                            let index = self.sequence_position(&values[1], row.borrow().len(), "list")?;
+                            row.borrow_mut()[index] = values[2].clone();
+                        }
+                        return Ok(Value::Nil);
+                    }
+                    if *op == Prim::Replace && matches!(target, Value::Dict(_)) {
+                        let updated = self.prim(Prim::Placed, name, &values)?;
+                        if let Some(Form::Read(slot)) = args.first() { self.store(slot, frame, updated)?; return Ok(Value::Nil); }
+                    }
+                    Err(self.sequence_fault("unready", &[]).into())
                 }
                 Prim::Append | Prim::Replace => {
                     let Some(Form::Read(slot)) = args.first() else {
@@ -2944,6 +2993,8 @@ impl<'a> Machine<'a> {
                                 place += 1;
                             }
                         }
+                        Value::List(values) => positions.extend(values.borrow().iter().cloned()),
+                        Value::Tuple(values) | Value::Set(values) => positions.extend(values.iter().cloned()),
                         Value::Vector(values) => positions.extend(values.iter().cloned()),
                         Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
                         Value::Text(text) => {
@@ -3470,6 +3521,25 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.table.flag("ext.op.sequence.values") {
+            if matches!(op, Prim::Frozen | Prim::Fingerprint | Prim::Locate | Prim::Occurrences | Prim::Least | Prim::Greatest | Prim::Ordered | Prim::Backwards | Prim::Listed) {
+                return self.sequence_builtin(op, v);
+            }
+            if v.len() == 2 {
+                if matches!(op, Prim::Eq | Prim::Ne) { return Ok(Value::Flag(Self::sequence_equal(&v[0], &v[1]) == (op == Prim::Eq))); }
+                if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                    if math::no_order(&v[0], &v[1]) { return Ok(Value::Flag(false)); }
+                    let mark = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
+                    let rank = self.sequence_order(&v[0], &v[1], mark)?;
+                    return Ok(Value::Flag(match op { Prim::Lt => rank.is_lt(), Prim::Le => !rank.is_gt(), Prim::Gt => rank.is_gt(), _ => !rank.is_lt() }));
+                }
+                if matches!(op, Prim::Plus | Prim::Times | Prim::GrowSequence(_)) {
+                    let plain = match op { Prim::GrowSequence(false) => Prim::Plus, Prim::GrowSequence(true) => Prim::Times, x => x };
+                    if let Some(value) = self.sequence_arithmetic(plain, &v[0], &v[1], matches!(op, Prim::GrowSequence(_)))? { return Ok(value); }
+                    if plain != op { return self.prim(plain, name, v); }
+                }
+            }
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -3514,6 +3584,17 @@ impl<'a> Machine<'a> {
             });
         }
         Ok(match op {
+            Prim::MakeList => Value::List(Rc::new(RefCell::new(v.to_vec()))),
+            Prim::MakeTuple => Value::Tuple(Rc::new(v.to_vec())),
+            Prim::MakeSet => {
+                let mut unique = Vec::new();
+                for item in self.gathered_members(&v[0])? {
+                    self.sequence_hash(&item)?;
+                    if !unique.iter().any(|prior| Self::sequence_equal(prior, &item)) { unique.push(item); }
+                }
+                Value::Set(Rc::new(unique))
+            }
+            Prim::Frozen | Prim::Fingerprint | Prim::Locate | Prim::Occurrences | Prim::Least | Prim::Greatest | Prim::Ordered | Prim::Backwards | Prim::GrowSequence(_) => return Err(self.sequence_fault("unready", &[])),
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -3555,7 +3636,8 @@ impl<'a> Machine<'a> {
                     Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
-                    Value::Vector(v) => v.to_vec(),
+                    Value::Vector(v) | Value::Tuple(v) | Value::Set(v) => v.to_vec(),
+                    Value::List(v) => v.borrow().clone(),
                     _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
                 };
                 let minimum = if star.is_some() { wanted - 1 } else { wanted };
@@ -3569,7 +3651,7 @@ impl<'a> Machine<'a> {
                     let tail = wanted - middle - 1;
                     let after = values.split_off(values.len() - tail);
                     let gathered = values.split_off(middle);
-                    values.push(Value::Vector(Rc::new(gathered)));
+                    values.push(if self.table.flag("ext.op.sequence.values") { Value::List(Rc::new(RefCell::new(gathered))) } else { Value::Vector(Rc::new(gathered)) });
                     values.extend(after);
                 }
                 Value::Vector(Rc::new(values))
@@ -3584,10 +3666,9 @@ impl<'a> Machine<'a> {
             }
             Prim::ExtendLiteral(dictionary, expanded) => {
                 if !dictionary {
-                    let Value::Vector(prior) = &v[0] else { unreachable!() };
-                    let mut next = prior.to_vec();
+                    let mut next = self.gathered_members(&v[0])?;
                     next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
-                    Value::Vector(Rc::new(next))
+                    if matches!(v[0], Value::List(_)) { Value::List(Rc::new(RefCell::new(next))) } else { Value::Vector(Rc::new(next)) }
                 } else {
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
                     let incoming = match &v[1] {
@@ -3596,7 +3677,10 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
                     };
                     let mut combined = prior.to_vec();
-                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    for entry in incoming {
+                        if self.table.flag("ext.op.sequence.values") { self.sequence_hash(&entry.0)?; }
+                        set_key(&mut combined, entry.0, entry.1);
+                    }
                     Value::Dict(Rc::new(combined))
                 }
             }
@@ -3614,6 +3698,14 @@ impl<'a> Machine<'a> {
                     Value::Progression(walk) => {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
+                    }
+                    Value::List(items) => {
+                        if wants_key { Value::Small(at as i64) }
+                        else { items.borrow().get(at).cloned().ok_or_else(|| self.sequence_fault("index", &["list"]))? }
+                    }
+                    Value::Tuple(items) | Value::Set(items) => {
+                        if wants_key { Value::Small(at as i64) }
+                        else { items.get(at).cloned().ok_or_else(|| self.sequence_fault("index", &[Self::sequence_kind(&v[0])]))? }
                     }
                     Value::Vector(items) => match items.get(at) {
                         Some(_) if wants_key => Value::Small(at as i64),
@@ -3643,6 +3735,8 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
+                    Value::List(items) => Value::Small(items.borrow().len() as i64),
+                    Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                     Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
@@ -3869,6 +3963,8 @@ impl<'a> Machine<'a> {
             Prim::Added => {
                 n(2)?;
                 match &v[0] {
+                    Value::List(items) => { items.borrow_mut().push(v[1].clone()); v[0].clone() }
+                    Value::Tuple(_) | Value::Text(_) if self.table.flag("ext.op.sequence.values") => return Err(self.sequence_fault("assign", &[Self::sequence_kind(&v[0])])),
                     Value::Vector(items) => {
                         let mut all = items.as_ref().clone();
                         all.push(v[1].clone());
@@ -3886,6 +3982,17 @@ impl<'a> Machine<'a> {
             Prim::Placed => {
                 n(3)?;
                 match &v[0] {
+                    Value::List(items) => {
+                        if let Value::Span(bounds) = &v[1] {
+                            let mut target = v[0].clone();
+                            self.span_written(&mut target, bounds, &v[2])?;
+                        } else {
+                            let index = self.sequence_position(&v[1], items.borrow().len(), "list")?;
+                            items.borrow_mut()[index] = v[2].clone();
+                        }
+                        v[0].clone()
+                    }
+                    Value::Tuple(_) | Value::Text(_) if self.table.flag("ext.op.sequence.values") => return Err(self.sequence_fault("assign", &[Self::sequence_kind(&v[0])])),
                     Value::Text(had) if self.letter_places => {
                         let (made, over) = letter_put(had, &v[1], &v[2].render(w))?;
                         if over {
@@ -3907,6 +4014,7 @@ impl<'a> Machine<'a> {
                         Value::Dict(Rc::new(all))
                     }
                     Value::Dict(entries) => {
+                        if self.table.flag("ext.op.sequence.values") { self.sequence_hash(&v[1])?; }
                         let mut all = entries.as_ref().clone();
                         set_key(&mut all, v[1].clone(), v[2].clone());
                         Value::Dict(Rc::new(all))
@@ -4398,6 +4506,12 @@ impl<'a> Machine<'a> {
             Prim::Erase => {
                 n(2)?;
                 match &v[0] {
+                    Value::List(items) => {
+                        let index = self.sequence_position(&v[1], items.borrow().len(), "list")?;
+                        items.borrow_mut().remove(index);
+                        v[0].clone()
+                    }
+                    Value::Tuple(_) | Value::Text(_) if self.table.flag("ext.op.sequence.values") => return Err(self.sequence_fault("delete", &[Self::sequence_kind(&v[0])])),
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
@@ -4559,8 +4673,10 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
+                    (needle, Value::List(hay)) => hay.borrow().iter().any(|item| Self::sequence_equal(needle, item)),
+                    (needle, Value::Tuple(hay) | Value::Set(hay)) => hay.iter().any(|item| Self::sequence_equal(needle, item)),
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
-                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| if self.table.flag("ext.op.sequence.values") { Self::sequence_equal(key, k) } else { key.equals(k) }),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
@@ -4572,6 +4688,8 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
+                    (Value::List(a), Value::List(b)) => Rc::ptr_eq(a, b),
+                    (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
@@ -4914,6 +5032,8 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::List(l) => Value::Small(l.borrow().len() as i64),
+                    Value::Tuple(l) | Value::Set(l) => Value::Small(l.len() as i64),
                     Value::Vector(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
@@ -5188,11 +5308,20 @@ impl<'a> Machine<'a> {
     }
 
     fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+        if matches!(held, Value::Tuple(_) | Value::Text(_)) && self.table.flag("ext.op.sequence.values") { return Err(self.sequence_fault("assign", &[Self::sequence_kind(held)])); }
+        if let Value::List(cell) = held {
+            let mut temporary = Value::Vector(Rc::new(cell.borrow().clone()));
+            self.span_written(&mut temporary, bounds, handed)?;
+            if let Value::Vector(items) = temporary { *cell.borrow_mut() = items.to_vec(); }
+            return Ok(());
+        }
         let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
         let (span, picked, unit) = self.span_selection(bounds, row.len())?;
         let coming: Vec<Value> = match handed {
             Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::List(values) => values.borrow().clone(),
+            Value::Tuple(values) | Value::Set(values) => values.to_vec(),
             Value::Vector(values) => values.iter().cloned().collect(),
             _ => return Err(self.span_complaint("assign")),
         };
@@ -5219,6 +5348,8 @@ impl<'a> Machine<'a> {
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if let Value::Span(bounds) = at {
             let row = match target {
+                Value::List(values) => values.borrow().clone(),
+                Value::Tuple(values) => values.as_ref().clone(),
                 Value::Vector(values) => values.as_ref().clone(),
                 Value::Text(text) if self.table.flag("op.index.strings") => {
                     text.chars().map(|letter| Value::text(&letter.to_string())).collect()
@@ -5229,9 +5360,16 @@ impl<'a> Machine<'a> {
             let selected: Vec<Value> = picked.iter().map(|&i| row[i].clone()).collect();
             return Ok(if matches!(target, Value::Text(_)) {
                 Value::text(&selected.iter().map(Value::bare).collect::<String>())
+            } else if matches!(target, Value::Tuple(_)) { Value::Tuple(Rc::new(selected))
+            } else if matches!(target, Value::List(_)) { Value::List(Rc::new(RefCell::new(selected)))
             } else {
                 Value::Vector(Rc::new(selected))
             });
+        }
+        if self.table.flag("ext.op.sequence.values") && matches!(target, Value::List(_) | Value::Tuple(_) | Value::Text(_)) {
+            let items = self.gathered_members(target)?;
+            let place = self.sequence_position(at, items.len(), Self::sequence_kind(target))?;
+            return Ok(items[place].clone());
         }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.
@@ -5257,7 +5395,7 @@ impl<'a> Machine<'a> {
         }
         if let Value::Dict(entries) = target {
             let at = &self.as_key_spoken(at);
-            let found = entries.iter().find(|(k, _)| k.equals(at));
+            let found = entries.iter().find(|(k, _)| if self.table.flag("ext.op.sequence.values") { Self::sequence_equal(k, at) } else { k.equals(at) });
             return match found {
                 Some((_, v)) => Ok(v.clone()),
                 None => missing(format!("Undefined array key {}", at.bare()), at),
@@ -5308,9 +5446,250 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn sequence_fault(&self, ending: &str, inserts: &[&str]) -> String {
+        let label = format!("ext.op.sequence.{}", ending);
+        let words = self.table.strings(&label);
+        let mut message = String::new();
+        for (i, word) in words.iter().enumerate() {
+            message.push_str(word);
+            if let Some(part) = inserts.get(i) { message.push_str(part); }
+        }
+        message
+    }
+
+    fn sequence_equal(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Shared(c), x) | (x, Value::Shared(c)) => Self::sequence_equal(&c.borrow(), x),
+            (Value::Nil, x) | (x, Value::Nil) => matches!(x, Value::Nil),
+            (Value::Flag(x), Value::Flag(y)) => x == y,
+            (Value::Flag(flag), number) | (number, Value::Flag(flag)) => Self::sequence_equal(&Value::Small(i64::from(*flag)), number),
+            (Value::List(x), Value::List(y)) => {
+                let (x, y) = (x.borrow(), y.borrow());
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(u, v)| Self::sequence_equal(u, v))
+            }
+            (Value::Tuple(x), Value::Tuple(y)) | (Value::Vector(x), Value::Vector(y)) =>
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(u, v)| Self::sequence_equal(u, v)),
+            (Value::Set(x), Value::Set(y)) => x.len() == y.len() && x.iter().all(|u| y.iter().any(|v| Self::sequence_equal(u, v))),
+            (Value::Dict(x), Value::Dict(y)) => x.len() == y.len() && x.iter().all(|(k, u)| y.iter().any(|(j, v)| Self::sequence_equal(k, j) && Self::sequence_equal(u, v))),
+            _ => a.equals(b),
+        }
+    }
+
+    fn sequence_kind(value: &Value) -> &str {
+        match value {
+            Value::List(_) | Value::Vector(_) => "list",
+            Value::Tuple(_) => "tuple",
+            Value::Set(_) => "set",
+            Value::Dict(_) => "dict",
+            Value::Text(_) => "str",
+            Value::Nil => "NoneType",
+            Value::Small(_) | Value::Huge(_) => "int",
+            Value::Flag(_) => "bool",
+            Value::Frac(_) => "float",
+            Value::Thing(t) => &t.of.name,
+            _ => "object",
+        }
+    }
+
+    fn sequence_order(&self, a: &Value, b: &Value, sign: &str) -> Result<std::cmp::Ordering, String> {
+        use std::cmp::Ordering;
+        if let Value::Flag(flag) = a { return self.sequence_order(&Value::Small(i64::from(*flag)), b, sign); }
+        if let Value::Flag(flag) = b { return self.sequence_order(a, &Value::Small(i64::from(*flag)), sign); }
+        let bad = || self.sequence_fault("order", &[sign, Self::sequence_kind(a), Self::sequence_kind(b)]);
+        let rows = match (a, b) {
+            (Value::Text(x), Value::Text(y)) => return Ok(x.cmp(y)),
+            (Value::List(x), Value::List(y)) => Some((x.borrow().clone(), y.borrow().clone())),
+            (Value::Tuple(x), Value::Tuple(y)) => Some((x.to_vec(), y.to_vec())),
+            _ => None,
+        };
+        if let Some((one, two)) = rows {
+            for (x, y) in one.iter().zip(two.iter()) {
+                if !Self::sequence_equal(x, y) { return self.sequence_order(x, y, sign); }
+            }
+            return Ok(one.len().cmp(&two.len()));
+        }
+        if matches!(a, Value::Nil) || matches!(b, Value::Nil) { return Err(bad()); }
+        if Self::sequence_kind(a) == "str" || Self::sequence_kind(b) == "str" { return Err(bad()); }
+        match math::below(a, b) {
+            Some(true) => Ok(Ordering::Less),
+            Some(false) if Self::sequence_equal(a, b) => Ok(Ordering::Equal),
+            Some(false) => Ok(Ordering::Greater),
+            None => Err(bad()),
+        }
+    }
+
+    fn sequence_position(&self, value: &Value, extent: usize, kind: &str) -> Result<usize, String> {
+        let mut index = match value {
+            Value::Small(n) => BigInt::from(*n),
+            Value::Huge(n) => n.as_ref().clone(),
+            Value::Flag(b) => BigInt::from(u8::from(*b)),
+            _ => return Err(self.sequence_fault("subscript", &[kind, Self::sequence_kind(value)])),
+        };
+        if index < BigInt::from(0) { index += extent; }
+        index.to_usize().filter(|&i| i < extent).ok_or_else(|| self.sequence_fault("index", &[if kind == "str" { "string" } else { kind }]))
+    }
+
+    fn sequence_hash(&self, value: &Value) -> Result<i64, String> {
+        match value {
+            Value::Tuple(row) => {
+                let mut accumulator = 2870177450012600261_u64;
+                for item in row.iter() {
+                    accumulator = accumulator.wrapping_add((self.sequence_hash(item)? as u64).wrapping_mul(14029467366897019727));
+                    accumulator = accumulator.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                accumulator = accumulator.wrapping_add((row.len() as u64) ^ (2870177450012600261_u64 ^ 3527539));
+                Ok(if accumulator == u64::MAX { 1546275796 } else { accumulator as i64 })
+            }
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {
+                let number = value.as_big()?;
+                let residue = (number % BigInt::from(2305843009213693951_i64)).to_i64().unwrap();
+                Ok(if residue == -1 { -2 } else { residue })
+            }
+            Value::Text(text) => {
+                let mut hash = 0xcbf29ce484222325_u64;
+                for byte in text.bytes() { hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3); }
+                Ok(if hash == u64::MAX { -2 } else { hash as i64 })
+            }
+            Value::Nil => Ok(0x12d687),
+            Value::Frac(number) => {
+                let binary = crate::data::nearest_binary(&number.above, &number.beneath);
+                if binary.is_nan() { return Err(self.sequence_fault("unready", &[])); }
+                if binary.is_infinite() { return Ok(if binary.is_sign_negative() { -314159 } else { 314159 }); }
+                let bits = binary.to_bits();
+                let raised = ((bits >> 52) & 0x7ff) as i32;
+                let significant = (bits & ((1_u64 << 52) - 1)) | if raised == 0 { 0 } else { 1_u64 << 52 };
+                let power = if raised == 0 { -1074 } else { raised - 1075 };
+                let modulus = BigInt::from(2305843009213693951_i64);
+                let factor = if power >= 0 { BigInt::from(2).modpow(&BigInt::from(power), &modulus) }
+                    else { BigInt::from(1152921504606846976_i64).modpow(&BigInt::from(-power), &modulus) };
+                let mut answer = (BigInt::from(significant) * factor % modulus).to_i64().unwrap();
+                if binary.is_sign_negative() { answer = -answer; }
+                Ok(if answer == -1 { -2 } else { answer })
+            }
+            _ => Err(self.sequence_fault("unhashable", &[Self::sequence_kind(value)])),
+        }
+    }
+
+    fn sequence_arithmetic(&self, op: Prim, left: &Value, right: &Value, inplace: bool) -> Result<Option<Value>, String> {
+        let is_row = |x: &Value| matches!(x, Value::List(_) | Value::Tuple(_) | Value::Text(_));
+        if !is_row(left) && !is_row(right) { return Ok(None); }
+        if op == Prim::Plus {
+            let answer = match (left, right) {
+                (Value::Text(a), Value::Text(b)) => Value::text(&format!("{}{}", a, b)),
+                (Value::Tuple(a), Value::Tuple(b)) => Value::Tuple(Rc::new(a.iter().chain(b.iter()).cloned().collect())),
+                (Value::List(a), b) if inplace => {
+                    let tail = self.gathered_members(b)?;
+                    a.borrow_mut().extend(tail);
+                    left.clone()
+                }
+                (Value::List(a), Value::List(b)) => Value::List(Rc::new(RefCell::new(a.borrow().iter().chain(b.borrow().iter()).cloned().collect()))),
+                _ => {
+                    if !is_row(left) { return Err(self.sequence_fault("operands", &["+", Self::sequence_kind(left), Self::sequence_kind(right)])); }
+                    let kind = Self::sequence_kind(left);
+                    let parts = self.table.strings("ext.op.sequence.concat");
+                    let word = |at| parts.get(at).map(String::as_str).unwrap_or("");
+                    return Err(format!("{}{}{}{}{}{}", word(0), kind, word(1), Self::sequence_kind(right), word(2), kind));
+                }
+            };
+            return Ok(Some(answer));
+        }
+        let (row, copies) = if is_row(left) { (left, right) } else { (right, left) };
+        if !matches!(copies, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.sequence_fault("repeat", &[Self::sequence_kind(copies)])); }
+        let count = copies.as_big()?.max(BigInt::from(0)).to_usize().ok_or_else(|| self.sequence_fault("unready", &[]))?;
+        if let Value::Text(text) = row {
+            if text.is_empty() { return Ok(Some(row.clone())); }
+            let size = text.len().checked_mul(count).ok_or_else(|| self.sequence_fault("unready", &[]))?;
+            let mut result = String::new();
+            result.try_reserve(size).map_err(|_| self.sequence_fault("unready", &[]))?;
+            for _ in 0..count { result.push_str(text); }
+            return Ok(Some(Value::text(&result)));
+        }
+        let members = self.gathered_members(row)?;
+        let size = members.len().checked_mul(count).ok_or_else(|| self.sequence_fault("unready", &[]))?;
+        let mut all = Vec::new();
+        all.try_reserve(size).map_err(|_| self.sequence_fault("unready", &[]))?;
+        if !members.is_empty() { for _ in 0..count { all.extend(members.iter().cloned()); } }
+        Ok(Some(match row {
+            Value::Tuple(_) => Value::Tuple(Rc::new(all)),
+            Value::List(cell) if inplace => { *cell.borrow_mut() = all; row.clone() }
+            _ => Value::List(Rc::new(RefCell::new(all))),
+        }))
+    }
+
+    fn sequence_builtin(&self, op: Prim, values: &[Value]) -> Result<Value, String> {
+        let refusal = || self.sequence_fault("unready", &[]);
+        match op {
+            Prim::Frozen | Prim::Listed => {
+                if values.len() > 1 { return Err(refusal()); }
+                let row = if values.is_empty() { Vec::new() } else { self.gathered_members(&values[0])? };
+                Ok(if op == Prim::Frozen { Value::Tuple(Rc::new(row)) } else { Value::List(Rc::new(RefCell::new(row))) })
+            }
+            Prim::Fingerprint if values.len() == 1 => Ok(Value::Small(self.sequence_hash(&values[0])?)),
+            Prim::Locate | Prim::Occurrences if (2..=4).contains(&values.len()) => {
+                let members = self.gathered_members(&values[0])?;
+                let length = members.len();
+                let bound = |at: usize, default: usize| -> Result<usize, String> {
+                    let Some(value) = values.get(at) else { return Ok(default); };
+                    if matches!(value, Value::Nil) { return Ok(default); }
+                    if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(refusal()); }
+                    let mut n = value.as_big()?;
+                    if n < BigInt::from(0) { n += length; }
+                    Ok(n.max(BigInt::from(0)).min(BigInt::from(usize::MAX)).to_usize().unwrap())
+                };
+                let (start, stop) = (bound(2, 0)?, bound(3, length)?.min(length));
+                let mut places = Vec::new();
+                if let Value::Text(_) = &values[0] {
+                    let Value::Text(needle) = &values[1] else { return Err(refusal()); };
+                    let needed: Vec<char> = needle.chars().collect();
+                    let mut i = start;
+                    while i <= stop {
+                        let end = i.saturating_add(needed.len());
+                        if end <= stop && end <= members.len() && needed.iter().enumerate().all(|(j, c)| members[i+j].bare() == c.to_string()) {
+                            places.push(i);
+                            i += needed.len().max(1);
+                        } else { i += 1; }
+                    }
+                } else if start < stop {
+                    places.extend((start..stop).filter(|&at| Self::sequence_equal(&members[at], &values[1])));
+                }
+                if op == Prim::Occurrences { return Ok(Value::Small(places.len() as i64)); }
+                if let Some(at) = places.first() { return Ok(Value::Small(*at as i64)); }
+                let words = self.table.strings("ext.op.sequence.missing");
+                Err(match values[0] {
+                    Value::Tuple(_) => words.get(2).cloned().unwrap_or_default(),
+                    Value::Text(_) => words.get(3).cloned().unwrap_or_default(),
+                    _ => format!("{}{}{}", words.first().map(String::as_str).unwrap_or(""), self.quoted_remainder(&values[1])?, words.get(1).map(String::as_str).unwrap_or("")),
+                })
+            }
+            Prim::Least | Prim::Greatest if !values.is_empty() => {
+                let row = if values.len() == 1 { self.gathered_members(&values[0])? } else { values.to_vec() };
+                let Some(mut best) = row.first().cloned() else { return Err(self.sequence_fault("empty", &[if op == Prim::Least { "min" } else { "max" }])); };
+                for candidate in row.iter().skip(1) {
+                    let order = self.sequence_order(candidate, &best, if op == Prim::Least { "<" } else { ">" })?;
+                    if (op == Prim::Least && order.is_lt()) || (op == Prim::Greatest && order.is_gt()) { best = candidate.clone(); }
+                }
+                Ok(best)
+            }
+            Prim::Ordered | Prim::Backwards if values.len() == 1 => {
+                let mut row = self.gathered_members(&values[0])?;
+                if op == Prim::Backwards { row.reverse(); }
+                else {
+                    for i in 1..row.len() {
+                        let mut j = i;
+                        while j > 0 && self.sequence_order(&row[j], &row[j-1], "<")?.is_lt() { row.swap(j, j-1); j -= 1; }
+                    }
+                }
+                Ok(Value::List(Rc::new(RefCell::new(row))))
+            }
+            _ => Err(refusal()),
+        }
+    }
+
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::List(values) => values.borrow().clone(),
+            Value::Tuple(values) | Value::Set(values) => values.to_vec(),
             Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
@@ -5331,7 +5710,7 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
-            let text = x.render(w);
+            let text = if self.table.flag("ext.op.sequence.values") && matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_)) { self.quoted_remainder(x).unwrap_or_else(|e| e) } else { x.render(w) };
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,

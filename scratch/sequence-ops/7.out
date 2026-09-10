@@ -1,0 +1,8 @@
+3 4 b
+list index out of range
+tuple index out of range
+string index out of range
+'tuple' object does not support item assignment
+'tuple' object doesn't support item deletion
+'str' object does not support item assignment
+'str' object doesn't support item deletion

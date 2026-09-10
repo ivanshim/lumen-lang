@@ -1006,6 +1006,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        if self.lang.sequence_values { self.act(Action::SequenceTuple, 1); }
         Ok(())
     }
 
@@ -4052,6 +4053,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        if self.lang.sequence_values { self.act(Action::SequenceTuple, 1); }
         Ok(())
     }
 
@@ -4399,6 +4401,7 @@ impl<'a> Compiler<'a> {
     /// The newer compound forms keep a real's point; a plain working
     /// keeps the spelling it had before these forms were read.
     fn compound_act(&mut self, op: Action) {
+        let op = if self.lang.sequence_values { match op { Action::Add => Action::SequenceAdd, Action::Mul => Action::SequenceMultiply, other => other } } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
@@ -5174,6 +5177,14 @@ impl<'a> Compiler<'a> {
         }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
+            if self.lang.sequence_values {
+                let receiver = self.gensym("receiver");
+                self.write(&receiver);
+                let call = self.lang.calling.clone().ok_or("This language has no call syntax")?;
+                self.want_sign(&call.open, "after the method name")?;
+                let argc = self.arguments(&call)?;
+                return self.mutation(&name, &receiver, argc + 1);
+            }
             // arr.push(x): the piped value must be the array's name.
             let target = match &self.piece().instrs[left..] {
                 [Instr::Read(slot)] if !slot.moving => slot.ident.to_string(),
@@ -5620,7 +5631,7 @@ impl<'a> Compiler<'a> {
                                 tuple = true;
                                 self.take();
                             }
-                            if tuple { self.act(Action::MakeArray, count); }
+                            if tuple { self.act(Action::MakeArray, count); if lang.sequence_values { self.act(Action::SequenceTuple, 1); } }
                             self.want_sign(&group.close, "to close a group")?;
                         } else {
                         if let Some(clause) = self.comprehension_ahead() {
@@ -5628,6 +5639,7 @@ impl<'a> Compiler<'a> {
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
                                 self.act(Action::MakeArray, 0);
+                                if lang.sequence_values { self.act(Action::SequenceTuple, 1); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;
@@ -6462,6 +6474,8 @@ impl<'a> Compiler<'a> {
                         self.mutation(&named, &held, argc + 1)?;
                         self.read(&held);
                         self.write(&target);
+                    } else if lang.sequence_values && argc == needed {
+                        self.mutation(&named, &held, argc + 1)?;
                     } else { self.class_cannot_run(); }
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
@@ -6605,7 +6619,9 @@ impl<'a> Compiler<'a> {
     fn extended_literal(&mut self, pair: &Brackets, braces: bool) -> Res<()> {
         let map = braces && (!self.lang.set_literals || self.literal_is_map(pair));
         if let Some(clause) = self.comprehension_ahead() {
-            return self.comprehension(pair, clause, map);
+            self.comprehension(pair, clause, map)?;
+            if self.lang.sequence_values && !map { self.act(if braces { Action::SequenceSet } else { Action::SequenceList }, 1); }
+            return Ok(());
         }
         self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
         while !self.at_symbol(&pair.close) {
@@ -6623,7 +6639,9 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &pair.between { self.want_sign(sep, "between literal items")?; }
             else { return Err("Expected a literal separator".to_string()); }
         }
-        self.want_sign(&pair.close, "after a literal")
+        self.want_sign(&pair.close, "after a literal")?;
+        if self.lang.sequence_values && !map { self.act(if braces { Action::SequenceSet } else { Action::SequenceList }, 1); }
+        Ok(())
     }
 
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {

@@ -132,6 +132,9 @@ pub enum Value {
     Nil,
     Ellipsis,
     Vector(Rc<Vec<Value>>),
+    List(Rc<RefCell<Vec<Value>>>),
+    Tuple(Rc<Vec<Value>>),
+    Set(Rc<Vec<Value>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -216,7 +219,7 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
+            Value::Vector(_) | Value::Dict(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
@@ -226,6 +229,8 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::List(row) => !row.borrow().is_empty(),
+            Value::Tuple(row) | Value::Set(row) => !row.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -251,7 +256,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -287,6 +292,12 @@ impl Value {
                     _ => left.first == right.first && left.stride == right.stride,
                 }
             }
+            (Value::List(a), Value::List(b)) => {
+                let (left, right) = (a.borrow(), b.borrow());
+                left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| x.equals(y))
+            }
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -349,6 +360,9 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
+            Value::List(items) => format!("[{}]", items.borrow().iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
+            Value::Set(items) => format!("{{{}}}", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
@@ -450,6 +464,9 @@ impl Value {
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),
+            Value::List(items) => format!("[{}]", items.borrow().iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
+            Value::Set(items) => format!("{{{}}}", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Vector(items) => format!("[{}]", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
