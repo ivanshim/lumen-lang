@@ -2465,7 +2465,8 @@ impl<'a> Machine<'a> {
                     let value = values.pop().unwrap();
                     let mut key = values.pop().map(|k| self.as_key_spoken(&k));
                     if self.table.has_any("ext.stmt.class.special") {
-                        let target = collection_read(&self.fetch(slot, frame)?);
+                        let original = self.fetch(slot, frame)?;
+                        let target = collection_read(&original);
                         if matches!(target, Value::Vector(_) | Value::Text(_)) {
                             if let Some(given) = key {
                                 key = Some(if let Value::Span(bounds) = given {
@@ -2495,7 +2496,9 @@ impl<'a> Machine<'a> {
                             let mut position = 0;
                             while position < entries.len() && !self.keys_agree(&entries[position].0, &key)? { position += 1; }
                             if position < entries.len() { entries[position].1 = value; } else { entries.push((key, value)); }
-                            self.store(slot, frame, Value::Dict(Rc::new(entries)))?;
+                            let changed = Value::Dict(Rc::new(entries));
+                            if let Value::Shared(cell) = original { *cell.borrow_mut() = changed; }
+                            else { self.store(slot, frame, changed)?; }
                             return Ok(Value::Nil);
                         }
                         if let (Some(Value::Text(word)), Value::Attributes(t)) = (&key, &target) {
@@ -2981,7 +2984,7 @@ impl<'a> Machine<'a> {
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
                 if at != 0 { written.push_str(&join); }
-                written.push_str(&self.object_words(item, false)?);
+                written.push_str(&self.shown_objects(std::slice::from_ref(item))?);
             }
             written.push_str(&tail);
             match channel {
@@ -3922,6 +3925,13 @@ impl<'a> Machine<'a> {
             }
         }
         let value = match (operation, operands) {
+            (Prim::RootFormat, [receiver, Value::Text(spec)]) => {
+                if spec.is_empty() { Value::text(&self.object_words(receiver, false)?) }
+                else {
+                    let words = self.table.strings("ext.stmt.class.format.amiss");
+                    return Err([words[0].clone(), self.operand_name(receiver), words[1].clone()].concat());
+                }
+            }
             (Prim::ForSource, [source @ (Value::Thing(_) | Value::Cursor(_))]) => source.clone(),
             (Prim::ForSource, [source]) => Value::Vector(Rc::new(self.object_members(source)?)),
             (Prim::ClassReady, [subject @ Value::Blueprint(class), rest @ ..]) => {
@@ -3990,6 +4000,12 @@ impl<'a> Machine<'a> {
                 let modulus = modulus.as_big()?;
                 if exponent < BigInt::from(0) || modulus == BigInt::from(0) { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()); }
                 Value::from_big(base.as_big()?.modpow(&exponent, &modulus))
+            }
+            (Prim::PowerCall, [base, exponent, modulus]) => {
+                match self.ask_special(exponent, 32, &[base.clone(), modulus.clone()])? {
+                    Some(answer) if !matches!(answer, Value::Refusal(_)) => answer,
+                    _ => return Err(self.bad_answer()),
+                }
             }
             (Prim::DividePair, [left, right]) => {
                 let quotient = self.prim(Prim::IntDiv, "", &[left.clone(), right.clone()])?;
@@ -4309,7 +4325,7 @@ impl<'a> Machine<'a> {
                     Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
                 }
             }
-            Prim::ForSource | Prim::ClassReady | Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
+            Prim::RootFormat | Prim::ForSource | Prim::ClassReady | Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
             Prim::StartContext | Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -6176,7 +6192,7 @@ impl<'a> Machine<'a> {
 
     fn shown_objects(&mut self, values: &[Value]) -> Result<String, String> {
         if !self.table.has_any("ext.stmt.class.special") || !values.iter().any(Self::carries_instance) { return Ok(self.show(values)); }
-        values.iter().map(|value| self.object_words(value, false)).collect::<Result<Vec<_>, _>>().map(|parts| parts.join(" "))
+        values.iter().map(|value| if Self::carries_instance(value) { self.object_words(value, false) } else { Ok(self.show(std::slice::from_ref(value))) }).collect::<Result<Vec<_>, _>>().map(|parts| parts.join(" "))
     }
 
     fn show(&self, v: &[Value]) -> String {

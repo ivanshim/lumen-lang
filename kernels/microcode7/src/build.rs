@@ -2132,7 +2132,7 @@ impl<'a> Builder<'a> {
                 let keyword_name = if keyword { let word = self.advance().lexeme; self.advance(); Some(word) } else { None };
                 let value = self.expr(0)?;
                 if let Some(word) = keyword_name {
-                    if table.strings("ext.stmt.class.special").len() > 80 {
+                    if table.strings("ext.stmt.class.special").len() > 80 && parent.is_some() {
                         let slot = self.gensym("subclass_argument");
                         let value = prim_call(Prim::Couple, vec![constant(Value::text(&word)), value]);
                         setup.push(Form::Write(slot.clone(), Box::new(value)));
@@ -4355,6 +4355,13 @@ impl<'a> Builder<'a> {
     /// The same for the value the place holds once the step is done.
     fn kept_after(&mut self, made: Form) -> Form {
         let made = if self.table.strings("ext.stmt.class.special").len() > 51 {
+            let made = match made {
+                Form::Dyad { op, name, a, b } => {
+                    let form = |input| match input { Input::Form(body) => *body, Input::Address(slot) => Form::Read(slot), Input::Const(value) => constant(value) };
+                    Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])
+                }
+                other => other,
+            };
             match made {
                 Form::Apply(Callee::Prim(op, name), args) => {
                     let index = match op {
@@ -5193,6 +5200,7 @@ impl<'a> Builder<'a> {
         }
         if table.spells("ext.stmt.class.special.stop", &t.lexeme) || table.spells("ext.stmt.class.root", &t.lexeme)
             || (table.strings("ext.stmt.class.special").len() > 77 && table.spells("ext.builtin.map", &t.lexeme)
+                && !self.layers.last().map_or(false, |scope| scope.idents.contains(&t.lexeme)) && !table.spells("stmt.assign", &self.glance(1).lexeme)
                 && !table.spells("syntax.call.open", &self.glance(1).lexeme)) {
             self.advance();
             let plan = crate::data::Blueprint {
@@ -5200,6 +5208,20 @@ impl<'a> Builder<'a> {
                 fields: vec![], constants: vec![], reaches: vec![], answers: vec![],
             };
             let mut plan = plan;
+            if table.spells("ext.stmt.class.root", &t.lexeme) {
+                if let Some(word) = table.strings("ext.stmt.class.special").get(76).cloned() {
+                    let taking = self.taking.take();
+                    let kinds = std::mem::take(&mut self.formal_kinds);
+                    let format = self.routine(&word, Holds::Every, Traps::Yields, vec!["#value".into(), "#spec".into()], 2, |reader| {
+                        let value = reader.read("#value");
+                        let spec = reader.read("#spec");
+                        Ok(prim_call(Prim::RootFormat, vec![value, spec]))
+                    })?;
+                    self.taking = taking;
+                    self.formal_kinds = kinds;
+                    if let Form::Const(Value::Routine(body)) = format { plan.methods.push((word, body)); }
+                }
+            }
             if table.spells("ext.builtin.map", &t.lexeme) {
                 plan.fields = vec![(String::new(), Value::Dict(Rc::new(vec![])))];
             }

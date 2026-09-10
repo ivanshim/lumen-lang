@@ -2415,6 +2415,10 @@ impl<'a> Engine<'a> {
                 if exponent < BigInt::from(0) || modulus == BigInt::from(0) { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
                 Value::of_big(base.modpow(&exponent, &modulus))
             }
+            Builtin::PowerCall if args.len() == 3 => {
+                let answer = self.special_call(&args[1], 32, vec![args[0].clone(), args[2].clone()])?;
+                match answer { Some(value) if !matches!(value, Value::Declined(_)) => value, _ => return Err(self.special_fault()) }
+            }
             Builtin::PowerCall if args.len() == 2 => self.special_dyad(&Action::Power, &args[0], &args[1])?,
             Builtin::Absolute if args.len() == 1 => {
                 let value = &args[0];
@@ -3098,6 +3102,13 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
+            }
+            Action::RootFormat => {
+                let spec = self.drop_top()?;
+                let receiver = self.drop_top()?;
+                let Value::Text(spec) = spec else { return Err(self.special_fault().into()); };
+                if !spec.is_empty() { return Err(format!("{}{}{}", self.lang.format_amiss[0], self.special_kind(&receiver), self.lang.format_amiss[1]).into()); }
+                Value::text(&self.special_text(&receiver, false)?)
             }
             Action::ClassReady => {
                 let mut given = self.drop_many(argc)?;
@@ -4920,7 +4931,7 @@ impl<'a> Engine<'a> {
     fn render_special(&mut self, values: &[Value]) -> Res<String> {
         if self.lang.class_special.is_empty() || !values.iter().any(Self::holds_object) { return Ok(self.render(values)); }
         let mut pieces = Vec::new();
-        for value in values { pieces.push(self.special_text(value, false)?); }
+        for value in values { pieces.push(if Self::holds_object(value) { self.special_text(value, false)? } else { self.render(std::slice::from_ref(value)) }); }
         Ok(pieces.join(" "))
     }
 
@@ -4994,7 +5005,7 @@ impl<'a> Engine<'a> {
                 }
             }
             let mut parts = Vec::new();
-            for value in &args { parts.push(self.special_text(value, false)?); }
+            for value in &args { parts.push(self.render_special(std::slice::from_ref(value))?); }
             let text = parts.join(&between) + &ending;
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);

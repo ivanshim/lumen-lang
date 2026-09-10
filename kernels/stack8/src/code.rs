@@ -167,6 +167,7 @@ pub enum Action {
     KeepPoint,
     InPlace(Box<Action>),
     ClassReady,
+    RootFormat,
     ContextEnter,
     SettleObjects,
     Add,

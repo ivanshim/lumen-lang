@@ -3216,7 +3216,7 @@ impl<'a> Compiler<'a> {
                 let from = self.mark();
                 if keyword { let name = self.take().lexeme; self.take(); self.constant(Value::text(&name)); }
                 self.expr(0)?;
-                if keyword && lang.class_special.len() > 80 {
+                if keyword && lang.class_special.len() > 80 && base.is_some() {
                     self.act(Action::Tie, 2);
                     let slot = self.gensym("class_argument");
                     self.write(&slot);
@@ -5522,10 +5522,26 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.lexeme) || Lang::spells(&lang.class_root, &tok.lexeme)
             || (lang.class_special.len() > 77 && lang.builtins.get(&tok.lexeme) == Some(&Builtin::MapFrom)
+                && !self.piece().idents.contains(&tok.lexeme) && !lang.assign_words.contains(&self.look_ahead(1).lexeme)
                 && !lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).lexeme == c.open)) {
             self.take();
             let class = crate::value::Class { name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
             let mut class = class;
+            if Lang::spells(&lang.class_root, &tok.lexeme) {
+                if let Some(word) = lang.class_special.get(76).cloned() {
+                    let rules = self.parameter_rules.take();
+                    let kinds = std::mem::take(&mut self.formal_kinds);
+                    let method = self.routine(&word, vec!["#receiver".into(), "#pattern".into()], 2, true, |reader| {
+                        reader.read("#receiver"); reader.read("#pattern");
+                        reader.act(Action::RootFormat, 2);
+                        reader.escape();
+                        Ok(())
+                    })?;
+                    self.parameter_rules = rules;
+                    self.formal_kinds = kinds;
+                    class.methods.push((word, method));
+                }
+            }
             if lang.builtins.get(&tok.lexeme) == Some(&Builtin::MapFrom) {
                 class.fields.push((String::new(), Value::Map(Rc::new(Vec::new()))));
             }
