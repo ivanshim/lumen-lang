@@ -52,6 +52,8 @@ def _parse(text):
     return n, 10 ** scale
 
 def _ratio(value):
+    if isinstance(value, bool):
+        return int(value), 1
     n = getattr(value, 'numerator', None)
     if n is not None:
         return n, value.denominator
@@ -76,7 +78,7 @@ class Fraction:
     def __init__(self, numerator=0, denominator=None):
         n, d = _ratio(numerator)
         if denominator is not None:
-            if not (isinstance(numerator, int) or isinstance(numerator, Fraction)) or not (isinstance(denominator, int) or isinstance(denominator, Fraction)):
+            if not (isinstance(numerator, int) or isinstance(numerator, bool) or isinstance(numerator, Fraction)) or not (isinstance(denominator, int) or isinstance(denominator, bool) or isinstance(denominator, Fraction)):
                 raise 'TypeError: both arguments should be Rational instances'
             p, q = _ratio(denominator)
             n, d = n * q, d * p

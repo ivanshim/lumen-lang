@@ -6215,9 +6215,9 @@ impl Machine<'_> {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
                     true => Value::text(path),
                     false => {
-                        let kind = KIND_LABELS.iter().find(|(_, key)| self.table.single(key) == Some(name.as_str()));
+                        let kind = KIND_LABELS.iter().find(|(key, _)| self.table.single(key) == Some(name.as_str()));
                         match kind {
-                            Some((kind, _)) if !self.table.flag("ext.system.kind.spelled") => Value::KindOf(*kind),
+                            Some((_, kind)) if !self.table.flag("ext.system.kind.spelled") => Value::KindOf(*kind),
                             _ => Value::Unset,
                         }
                     }
