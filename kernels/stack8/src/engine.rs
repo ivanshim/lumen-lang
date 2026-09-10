@@ -2030,6 +2030,7 @@ impl<'a> Engine<'a> {
             for span in &arm.kinds {
                 self.run_span(program, frame, instrs, *span)?;
                 match self.drop_top()? {
+                    Value::Class(c) if !self.lang.catch_group_amiss.is_empty() && c.all_fields().iter().any(|(n, _)| n == "\0group") => return Err(self.lang.catch_group_amiss[0].clone().into()),
                     Value::Class(c) if self.exception_class(&c) => kinds.push(c),
                     _ => return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()),
                 }
@@ -2038,10 +2039,13 @@ impl<'a> Engine<'a> {
             remainder = rest;
             let Some(matched) = matched else { continue };
             if let Some(current) = self.caught.last_mut() { *current = matched.clone(); }
-            if let Some(cell) = &arm.held { self.store_cell(cell, frame, matched)?; }
+            self.under = None;
+            self.entering = None;
+            if let Some(cell) = &arm.held { self.store_cell(cell, frame, matched.clone())?; }
             let outcome = self.run_span(program, frame, instrs, arm.body);
             if let Some(cell) = &arm.held { self.put_cell(cell, frame, Value::Blank); }
             match outcome {
+                Err(Fault::Thrown(v)) if v.identical(&matched) => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
                 Err(Fault::Thrown(v)) => newly.push(v),
                 Err(Fault::Note(words)) => match self.as_fault(&words) { Some(v) => newly.push(v), None => return Err(Fault::Note(words)) },
                 Ok(Passage::Along(at)) if at == arm.body.1 => {},
@@ -3167,6 +3171,19 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     Value::Object(o) => {
+                        if self.exception_class(&o.class) {
+                            let trace = self.lang.builtin_exceptions_traceback.iter().any(|n| n == name.as_ref());
+                            let suppress = self.lang.builtin_exceptions_suppress.iter().any(|n| n == name.as_ref());
+                            let grouped = o.class.all_fields().iter().any(|(n, _)| n == "\0group");
+                            let readonly = grouped && self.lang.builtin_exceptions_group_message.iter().chain(self.lang.builtin_exceptions_group_members.iter()).any(|n| n == name.as_ref());
+                            if readonly || trace && !matches!(value, Value::Null) || suppress && !matches!(value, Value::Flag(_)) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+                            if self.lang.exception_cause.as_deref() == Some(name.as_ref()) {
+                                if !matches!(&value, Value::Null) && !matches!(&value, Value::Object(e) if self.exception_class(&e.class)) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+                                for key in &self.lang.builtin_exceptions_suppress {
+                                    if let Some((_, v)) = o.fields.borrow_mut().iter_mut().find(|(n, _)| n == key) { *v = Value::Flag(true); }
+                                }
+                            }
+                        }
                         if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
                             let plain = match &value { Value::Bond(cell) => cell.borrow().clone(), v => v.clone() };
                             let row = match &plain {
@@ -3406,8 +3423,9 @@ impl<'a> Engine<'a> {
                     Some(Value::Class(native)) => native.clone(), _ => class,
                 };
                 if self.exception_class(&class) {
-                    let args = if matches!(&message, Value::Text(w) if w.is_empty()) { Vec::new() } else { vec![message] };
+                    let args = if matches!(&message, Value::Blank) { Vec::new() } else { vec![message] };
                     let value = self.exception_instance(class, args, Value::Null);
+                    self.hurled_at.set(self.line);
                     return Err(Fault::Thrown(value));
                 }
                 self.made += 1;

@@ -2374,8 +2374,9 @@ impl<'a> Machine<'a> {
                 if self.stands_true(&tested) { return Ok(Value::Nil); }
                 let held = self.value_of(message, frame)?;
                 if let Some(Value::Blueprint(c)) = self.table.single("ext.stmt.assert.kind").and_then(|n| self.fault_kinds.get(n)).cloned() {
-                    let args = match &held { Value::Text(t) if t.is_empty() => Vec::new(), _ => vec![held] };
+                    let args = if matches!(held, Value::Unset) { Vec::new() } else { vec![held] };
                     let value = self.make_fault(c, args, Value::Nil);
+                    self.raised_on = self.row;
                     return Err(Escape::Thrown(value));
                 }
                 let kind = Blueprint {
@@ -2420,6 +2421,7 @@ impl<'a> Machine<'a> {
                                     for expression in part.choices.as_deref().unwrap_or(&[]) {
                                         let class = self.value_of(expression, frame)?;
                                         if let Value::Blueprint(c) = class {
+                                            if self.table.has_any("ext.stmt.catch.group.amiss") && c.every_field().iter().any(|(k, _)| k == "\0group-kind") { return Err(self.argument_fault("ext.stmt.catch.group.amiss", None).into()); }
                                             if self.is_fault_kind(&c) { selected.push(c); continue; }
                                         }
                                         return Err(self.argument_fault("ext.stmt.catch.invalid", None).into());
@@ -2428,11 +2430,14 @@ impl<'a> Machine<'a> {
                                     left = rest;
                                     if let Some(taken) = taken {
                                         *self.holding_fault.last_mut().unwrap() = taken.clone();
-                                        if let Some(slot) = &part.held { self.store(slot, frame, taken)?; }
+                                        self.under = None;
+                                        self.entering = None;
+                                        if let Some(slot) = &part.held { self.store(slot, frame, taken.clone())?; }
                                         let result = self.value_of(&part.body, frame);
                                         if let Some(slot) = &part.held { self.store(slot, frame, Value::Unset)?; }
                                         match result {
                                             Ok(_) => {},
+                                            Err(Escape::Thrown(v)) if v.identical(&taken) => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
                                             Err(Escape::Thrown(v)) => thrown.push(v),
                                             Err(Escape::Error(words)) => {
                                                 if let Some(v) = self.as_raised(&words) { thrown.push(v); } else { return Err(Escape::Error(words)); }
@@ -4411,6 +4416,20 @@ impl<'a> Machine<'a> {
                 }
                 match &v[0] {
                     Value::Thing(thing) => {
+                        if self.is_fault_kind(&thing.of) {
+                            let field_is = |key| self.table.single(key) == Some(called.as_str());
+                            let is_group = thing.of.every_field().iter().any(|(k, _)| k == "\0group-kind");
+                            let fixed = is_group && (field_is("ext.builtin.exceptions.group.members") || field_is("ext.builtin.exceptions.group.message"));
+                            let wrong_trace = field_is("ext.builtin.exceptions.traceback") && !matches!(v[2], Value::Nil);
+                            let wrong_flag = field_is("ext.builtin.exceptions.suppress") && !matches!(v[2], Value::Flag(_));
+                            if fixed || wrong_trace || wrong_flag { return Err(self.argument_fault("ext.builtin.exceptions.unready", None)); }
+                            if field_is("ext.builtin.exceptions.cause") {
+                                if !matches!(v[2], Value::Nil) && !matches!(&v[2], Value::Thing(e) if self.is_fault_kind(&e.of)) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None)); }
+                                if let Some(key) = self.table.single("ext.builtin.exceptions.suppress") {
+                                    if let Some((_, flag)) = thing.holds.borrow_mut().iter_mut().find(|(n, _)| n == key) { *flag = Value::Flag(true); }
+                                }
+                            }
+                        }
                         if self.is_fault_kind(&thing.of) && self.table.single("ext.builtin.exceptions.args") == Some(called.as_str()) {
                             let contents = match &v[2] {
                                 Value::Arguments(r) | Value::Vector(r) => Value::Arguments(r.clone()),

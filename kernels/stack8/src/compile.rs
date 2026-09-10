@@ -1177,7 +1177,7 @@ impl<'a> Compiler<'a> {
                     self.take();
                     self.expr(0)?;
                 } else {
-                    self.constant(Value::text(""));
+                    self.constant(if lang.exceptions.is_empty() { Value::text("") } else { Value::Blank });
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
@@ -2949,6 +2949,7 @@ impl<'a> Compiler<'a> {
             if tuple { self.take(); }
             let mut kinds = Vec::new();
             let bare = !tuple && self.on_any(&lang.block_intros);
+            if grouped && bare && !lang.catch_amiss.is_empty() { return Err(lang.catch_amiss[0].clone()); }
             let empty = tuple && lang.catch_tuple_close.as_ref().map_or(false, |m| self.at_symbol(m));
             if !bare && !empty {
                 loop {
@@ -2991,6 +2992,7 @@ impl<'a> Compiler<'a> {
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
         }
+        if !lang.catch_amiss.is_empty() && clauses.iter().any(|c| c.grouped) && clauses.iter().any(|c| !c.grouped) { return Err(lang.catch_amiss[0].clone()); }
         let after = self.mark();
         self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { body, clauses, otherwise, last, after }));
         Ok(())

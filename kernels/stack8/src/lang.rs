@@ -382,6 +382,8 @@ pub struct Lang {
     pub fault_trace: Vec<String>,
     pub os_message: Vec<String>,
     pub group_summary: Vec<String>,
+    pub catch_amiss: Vec<String>,
+    pub catch_group_amiss: Vec<String>,
     pub exception_args: Option<String>,
     pub exception_cause: Option<String>,
     pub class_name: Option<String>,
@@ -932,7 +934,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions.current | w ext.builtin.exceptions.group.derive | w ext.builtin.exceptions.group.invalid | w ext.builtin.exceptions.group.members | w ext.builtin.exceptions.group.message | w ext.builtin.exceptions.group.split | w ext.builtin.exceptions.group.subgroup | w ext.builtin.exceptions.info | w ext.builtin.exceptions.name | w ext.builtin.exceptions.note | w ext.builtin.exceptions.note.invalid | w ext.builtin.exceptions.notes | w ext.builtin.exceptions.notes.invalid | w ext.builtin.exceptions.object | w ext.builtin.exceptions.os | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.builtin.exceptions.traceback.with | w ext.stmt.throw.invalid | n ext.system.recursion.limit | w ext.system.recursion.exceeded | b ext.system.collection.repr | w ext.system.fault.trace | w ext.builtin.exceptions.os.message | w ext.builtin.exceptions.group.summary | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions.current | w ext.builtin.exceptions.group.derive | w ext.builtin.exceptions.group.invalid | w ext.builtin.exceptions.group.members | w ext.builtin.exceptions.group.message | w ext.builtin.exceptions.group.split | w ext.builtin.exceptions.group.subgroup | w ext.builtin.exceptions.info | w ext.builtin.exceptions.name | w ext.builtin.exceptions.note | w ext.builtin.exceptions.note.invalid | w ext.builtin.exceptions.notes | w ext.builtin.exceptions.notes.invalid | w ext.builtin.exceptions.object | w ext.builtin.exceptions.os | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.builtin.exceptions.traceback.with | w ext.stmt.throw.invalid | n ext.system.recursion.limit | w ext.system.recursion.exceeded | b ext.system.collection.repr | w ext.system.fault.trace | w ext.builtin.exceptions.os.message | w ext.builtin.exceptions.group.summary | w ext.stmt.catch.amiss | w ext.stmt.catch.group.amiss | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1721,6 +1723,8 @@ impl Lang {
             fault_trace: r.strings("ext.system.fault.trace")?,
             os_message: r.strings("ext.builtin.exceptions.os.message")?,
             group_summary: r.strings("ext.builtin.exceptions.group.summary")?,
+            catch_amiss: r.strings("ext.stmt.catch.amiss")?,
+            catch_group_amiss: r.strings("ext.stmt.catch.group.amiss")?,
             exception_args: r.head("ext.builtin.exceptions.args")?,
             exception_cause: r.head("ext.builtin.exceptions.cause")?,
             class_name: r.head("ext.builtin.class.name")?,

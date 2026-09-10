@@ -1398,7 +1398,7 @@ impl<'a> Builder<'a> {
                 let message = if self.on_any("syntax.call.separator") {
                     self.advance();
                     self.expr(0)?
-                } else { constant(Value::text("")) };
+                } else { constant(if self.table.has_any("ext.builtin.exceptions") { Value::Unset } else { Value::text("") }) };
                 return Ok(Form::Assert { condition, message: Box::new(message) });
             }
             if self.key("stmt.foreach") {
@@ -1928,6 +1928,9 @@ impl<'a> Builder<'a> {
                 let bracketed = self.on_any("ext.stmt.catch.tuple.open");
                 if bracketed { self.advance(); }
                 takes_all = !bracketed && self.on_any("block.intro");
+                if grouped && takes_all && self.table.has_any("ext.stmt.catch.amiss") {
+                    return Err(self.table.single("ext.stmt.catch.amiss").unwrap().into());
+                }
                 if !takes_all && !(bracketed && self.on_any("ext.stmt.catch.tuple.close")) {
                     loop {
                         let selector = match self.expr(0)? {
@@ -1979,6 +1982,9 @@ impl<'a> Builder<'a> {
             }
             false => None,
         };
+        if self.table.has_any("ext.stmt.catch.amiss") && clauses.iter().any(|c| c.grouped) && clauses.iter().any(|c| !c.grouped) {
+            return Err(self.table.single("ext.stmt.catch.amiss").unwrap().into());
+        }
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
         }

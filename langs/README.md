@@ -1036,6 +1036,9 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
   the call separator and a message. Only a false condition works out the
   message and raises it; `ext.stmt.assert.kind` names the kind so raised.
+- `ext.stmt.catch.amiss`: the words for mixing ordinary and grouped
+  clauses, or giving a grouped clause no type. `.group.amiss` refuses a
+  grouped clause whose selector is itself an exception-group class.
 - `ext.stmt.catch.group`: a sign before the classes of a clause taking
   parts of an exception group. The clause is read whole, but reaching the
   attempt stops with `ext.stmt.catch.group.unsupported` where group members
@@ -2075,7 +2078,8 @@ only. The extension labels so far, all from PHP:
   children beneath a class, and `.group.split` returns both halves. Nested
   groups retain their shape, notes and cause. A class or a function may
   choose the children; other selectors say `.unready`. `.group.invalid` gives the complaint for
-  unsuitable constructor arguments.
+  unsuitable constructor arguments. Re-raising the caught subgroup itself
+  says `.unready`; an unmatched remainder is raised with its shape kept.
 - `ext.builtin.exceptions.info` and `.current`: builtins giving the class,
   value and absent traceback as a tuple, or the caught value alone. Outside
   a clause their places hold nothing.
@@ -3078,8 +3082,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.case.mark` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.case.mark.instead` | - | - | - | - | `Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead` | - | - | - | - | - |
 | `ext.stmt.catch` | - | - | `except` | - | `catch` | - | - | - | - | - |
+| `ext.stmt.catch.amiss` | - | - | `SyntaxError: invalid exception handler` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.group.amiss` | - | - | `TypeError: catching ExceptionGroup with except* is not allowed. Use except instead.` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group.unsupported` | - | - | `Exception groups are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.invalid` | - | - | `catching classes that do not inherit from BaseException is not allowed` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |

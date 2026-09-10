@@ -906,11 +906,17 @@
   "ext.stmt.catch": [
     "except"
   ],
+  "ext.stmt.catch.amiss": [
+    "SyntaxError: invalid exception handler"
+  ],
   "ext.stmt.catch.as": [
     "as"
   ],
   "ext.stmt.catch.group": [
     "*"
+  ],
+  "ext.stmt.catch.group.amiss": [
+    "TypeError: catching ExceptionGroup with except* is not allowed. Use except instead."
   ],
   "ext.stmt.catch.group.unsupported": [
     "Exception groups are not supported"
