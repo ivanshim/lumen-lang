@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_listcomps.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_listcomps.py:166, bare super as a value.
 import doctest
 import textwrap
 import traceback

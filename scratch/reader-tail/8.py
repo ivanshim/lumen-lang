@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_with.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_with.py:673 and 692, indexed call-result binding.
 """Unit tests for the 'with/async with' statements specified in PEP 343/492."""
 
 

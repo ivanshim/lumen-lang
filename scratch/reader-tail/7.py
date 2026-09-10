@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_opcodes.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_opcodes.py:49, try within a class body.
 # Python test set -- part 2, opcodes
 
 import unittest

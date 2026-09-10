@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_grammar.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_grammar.py:1395, starred loop sources.
 # Python test set -- part 1, grammar.
 # This just tests whether the parser accepts them all.
 

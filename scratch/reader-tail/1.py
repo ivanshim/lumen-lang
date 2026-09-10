@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_fstring.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_fstring.py, quoted spreading signs in call arguments.
 # -*- coding: utf-8 -*-
 # There are tests here with unicode string literals and
 # identifiers. There's a code in ast.c that was added because of a

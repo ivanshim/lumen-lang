@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_funcattrs.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_funcattrs.py:223, generic function head.
 import textwrap
 import types
 import typing

@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_decorators.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_decorators.py:290, chained calls on member results.
 import unittest
 
 

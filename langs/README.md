@@ -403,6 +403,15 @@ only. The extension labels so far, all from PHP:
   are refused. The class still raises `ext.stmt.class.unready` when
   reached. These labels also belong to the separate modern syntax piece;
   this reading supplies only the class head needed here.
+- `ext.op.tuple` also joins the values of a class member written without
+  outer brackets. The joined value is kept as that member, as a single
+  expression would be.
+- `ext.syntax.call.chained` admits calls upon a member call's answer,
+  followed in turn by further calls or members. Each answer supplies the
+  callee for the next pair of call marks.
+- `ext.stmt.binding.unrun` also covers an indexed call result used as a
+  context target where a reader cannot write back through that result.
+  The call, indices and whole context body are read before the run speaks.
 - `ext.stmt.type_params.unready`: words said upon reaching a routine
   whose head bears type parameters. The existing opening and closing
   marks admit the same parameter reading after a routine name as after

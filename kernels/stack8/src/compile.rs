@@ -1335,6 +1335,16 @@ impl<'a> Compiler<'a> {
             self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             return Ok(());
         }
+        let written = &self.pieces.last().expect("an open routine").instrs;
+        let temporary = self.keyed.first().map_or(false, |at| {
+            matches!(written.get(at.saturating_sub(1)), Some(Instr::Act(Action::Invoke(_), _)))
+        });
+        if temporary && !self.lang.binding_unrun.is_empty() {
+            self.piece().instrs.truncate(from);
+            self.constant(Value::text(&self.lang.binding_unrun));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            return Ok(());
+        }
         let waiting = self.waiting.replace(held.to_string());
         let answer = self.store_into(from, None, None, "");
         self.waiting = waiting;
@@ -3202,7 +3212,7 @@ impl<'a> Compiler<'a> {
             } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
                 let named = self.take().lexeme;
                 self.take();
-                self.expr(0)?;
+                if lang.tuple_marks.is_empty() { self.expr(0)?; } else { self.tuple_value()?; }
                 let held = self.gensym("attribute");
                 self.write(&held);
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
@@ -6494,6 +6504,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
         loop {
+            if lang.chained_calls { self.called_on_value()?; }
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {

@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_print.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_print.py:95, quoted star in a call.
 import unittest
 import sys
 from io import StringIO

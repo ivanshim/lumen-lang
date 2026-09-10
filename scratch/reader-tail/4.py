@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_set.py; stopping line to be recorded after diagnosis.
+# Whole-file reader probe: tests/python/test_set.py:1429, bare comma class member value.
 import collections.abc
 import copy
 import gc

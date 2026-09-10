@@ -2148,7 +2148,7 @@ impl<'a> Builder<'a> {
                 } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
                     self.pos += 2;
                     attributes.push(member);
-                    Some(self.expr(0)?)
+                    Some(if table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? })
                 } else if self.look().shape == Shape::Bare && !self.key("ext.stmt.try")
                     && self.glance(1).shape == Shape::Sign && table.spells("block.intro", &self.glance(1).lexeme) {
                     self.pos += 2;
