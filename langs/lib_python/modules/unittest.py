@@ -2,7 +2,7 @@
 # In the absence of a regular-expression module, phrases are literal.
 class AssertionError:
     def __init__(self, message):
-        self.message = message
+        self.message = str(message)
         self.args = (message,)
 
     def __str__(self):
@@ -10,7 +10,7 @@ class AssertionError:
 
 class SkipTest:
     def __init__(self, message):
-        self.message = message
+        self.message = str(message)
         self.args = (message,)
 
     def __str__(self):
@@ -34,7 +34,7 @@ class _Raises:
 
     def __exit__(self, kind, value, traceback):
         if kind is None:
-            raise AssertionError('exception not raised')
+            raise AssertionError(__class_name(self.expected) + ' not raised')
         if not isinstance(value, self.expected):
             return False
         self.exception = value
@@ -78,8 +78,6 @@ class TestCase:
         pass
 
     def fail(self, msg=None):
-        if msg is None:
-            msg = 'test failed'
         raise self.failureException(msg)
 
     def _check(self, condition, message, msg=None):
@@ -217,7 +215,7 @@ class TestCase:
     def doCleanups(self):
         successful = True
         while len(self._cleanups) > 0:
-            cleanup = self._cleanups[-1]
+            cleanup = self._cleanups[len(self._cleanups) - 1]
             self._cleanups = self._cleanups[:-1]
             outcome = __call_outcome(_Call(cleanup[0], cleanup[1], cleanup[2]).invoke)
             if not outcome[0]:
@@ -391,7 +389,7 @@ class _ExpectedFailure:
 
 class _Expected:
     def __init__(self, message):
-        self.message = message
+        self.message = str(message)
         self.args = (message,)
 
     def __str__(self):
@@ -399,7 +397,7 @@ class _Expected:
 
 class _Unexpected:
     def __init__(self, message):
-        self.message = message
+        self.message = str(message)
         self.args = (message,)
 
     def __str__(self):
@@ -505,18 +503,10 @@ def _representation(value):
     return repr(value)
 
 
-def _load_regex():
-    return __load_module('re')
-
-
 def _matches(pattern, text):
-    # Native lookup faults are returned by the outcome helper too.
-    outcome = __call_outcome(_load_regex)
-    if not outcome[0]:
-        if "No module named 're'" in outcome[2]:
-            return pattern in text
-        raise outcome[1]
-    return outcome[1].search(pattern, text) is not None
+    # No expression module is carried by this source store. Seek the
+    # phrase as written until that module is supplied.
+    return pattern in text
 
 
 class _SubTest:
@@ -535,7 +525,7 @@ class _SubTest:
         if self.message is not None:
             detail += ' [' + str(self.message) + ']'
         words = ''
-        for name in self.parameters:
+        for name in list(self.parameters):
             if words != '':
                 words += ', '
             words += name + '=' + _representation(self.parameters[name])
@@ -578,13 +568,14 @@ class _Warns:
                     self.filename = record.filename
                     self.lineno = record.lineno
                     return False
-        raise AssertionError('warning not triggered')
+        raise AssertionError(__class_name(self.expected) + ' not triggered')
 
 
 def _lines(text):
     lines = []
     current = ''
-    for character in text:
+    for index in range(len(text)):
+        character = text[index]
         current += character
         if character == '\n':
             lines = [*lines, current]
@@ -623,9 +614,6 @@ def _ordered(values):
 
 class TextTestRunner:
     def __init__(self, stream=None, descriptions=True, verbosity=1, failfast=False, buffer=False, resultclass=None, warnings=None, **kwargs):
-        import sys
-        if stream is None:
-            stream = sys.stderr
         if buffer or warnings is not None or len(kwargs) != 0:
             raise 'NotImplementedError: these test runner options are not supported'
         self.stream = stream
@@ -635,7 +623,11 @@ class TextTestRunner:
         self.resultclass = resultclass
 
     def _write(self, words):
-        self.stream.write(words)
+        if self.stream is None:
+            import sys
+            print(words, end='', file=sys.stderr)
+        else:
+            self.stream.write(words)
 
     def _run(self, test, result):
         if isinstance(test, TestSuite):
@@ -666,7 +658,7 @@ class TextTestRunner:
             description = 'FAIL'
         elif len(result.skipped) > skips:
             mark = 's'
-            description = 'skipped ' + repr(result.skipped[-1][1])
+            description = 'skipped ' + repr(result.skipped[len(result.skipped) - 1][1])
         elif len(result.expectedFailures) > expected:
             mark = 'x'
             description = 'expected failure'

@@ -3779,6 +3779,9 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(items))
             }
             Prim::ProgramNames => {
+                if v.len() > 1 {
+                    return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_owned());
+                }
                 if !v.is_empty() {
                     n(1)?;
                     return match &v[0] {

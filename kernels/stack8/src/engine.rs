@@ -4604,6 +4604,7 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProgramNamespace => {
+                if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
                 if args.len() == 1 {
                     let Value::Object(module) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()); };
                     let members = module.fields.borrow().iter().map(|(name, value)| {

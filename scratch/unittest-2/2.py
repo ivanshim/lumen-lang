@@ -2,7 +2,8 @@ import unittest
 
 def first_line(text):
     line = ''
-    for character in text:
+    for index in range(len(text)):
+        character = text[index]
         if character == '\n':
             break
         line += character
