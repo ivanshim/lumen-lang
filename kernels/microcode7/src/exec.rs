@@ -1144,7 +1144,13 @@ impl<'a> Machine<'a> {
                 }
                 6 => {
                     if given.len() > 2 { return Err(bad()); }
-                    if let Some(source) = given.get(1) { self.filled_map(&mut entries, source)?; }
+                    if let Some(source) = given.get(1) {
+                        let outcome = self.filled_map(&mut entries, source);
+                        if outcome.is_err() {
+                            if let Value::Shared(cell) = receiver { cell.replace(Value::Dict(Rc::new(entries))); }
+                            return outcome.map(|()| Value::Nil);
+                        }
+                    }
                     for (key, value) in names { self.enter_pair(&mut entries, Value::text(key), value.clone()); }
                     write_back = true;
                     Value::Nil
@@ -2144,6 +2150,7 @@ impl<'a> Machine<'a> {
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
+                if self.table.flag("ext.syntax.map.value_keys") && matches!(*cell.borrow(), Value::Dict(_)) { self.admits_key(&at)?; }
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
@@ -2165,7 +2172,6 @@ impl<'a> Machine<'a> {
                         ))
                     }
                     Value::Dict(pairs) if self.table.flag("ext.syntax.map.value_keys") => {
-                        self.admits_key(&at)?;
                         let mut remaining = pairs.to_vec();
                         let position = remaining.iter().position(|entry| Self::equal_contents(&entry.0, &at))
                             .ok_or_else(|| self.key_absent(&at))?;
@@ -3801,8 +3807,9 @@ impl<'a> Machine<'a> {
                 let contents = collection_read(&v[0]);
                 if let Value::Dict(entries) = contents {
                     let mut updated = entries.to_vec();
-                    self.filled_map(&mut updated, &v[1])?;
+                    let completed = self.filled_map(&mut updated, &v[1]);
                     cell.replace(Value::Dict(Rc::new(updated)));
+                    completed?;
                     return Ok(v[0].clone());
                 }
             }
@@ -5368,7 +5375,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Vector(l) | Value::Record(l) => Value::Small(l.len() as i64),
                     Value::Projection(source, keys, _) => Value::Small(source.projected(*keys).len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),

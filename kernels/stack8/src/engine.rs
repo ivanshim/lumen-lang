@@ -2204,6 +2204,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
+                if self.lang.map_value_keys && matches!(*cell.borrow(), Value::Map(_)) { self.map_key(&at)?; }
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
@@ -2226,7 +2227,6 @@ impl<'a> Engine<'a> {
                         ))
                     }
                     Value::Map(pairs) if self.lang.map_value_keys => {
-                        self.map_key(&at)?;
                         if !pairs.iter().any(|(k, _)| self.map_equal(k, &at)) { return Err(self.missing_key(&at).into()); }
                         Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !self.map_equal(k, &at)).cloned().collect()))
                     }
@@ -3449,21 +3449,15 @@ impl<'a> Engine<'a> {
     }
 
     fn map_extend(&self, into: &mut Vec<(Value, Value)>, source: &Value) -> Res<()> {
-        let pairs = match collection_contents(source) {
-            Value::Map(pairs) => pairs.as_ref().clone(),
-            other => {
-                let mut pairs = Vec::new();
-                for item in self.comprehension_items(&other)? {
-                    let parts = self.comprehension_items(&item)?;
-                    if parts.len() != 2 { return Err(self.lang.map_pairs_amiss.first().cloned().unwrap_or_default()); }
-                    pairs.push((parts[0].clone(), parts[1].clone()));
-                }
-                pairs
+        if let Value::Map(pairs) = collection_contents(source) {
+            for (key, value) in pairs.iter() { self.replace_item(into, key.clone(), value.clone()); }
+        } else {
+            for item in self.comprehension_items(source)? {
+                let parts = self.comprehension_items(&item)?;
+                if parts.len() != 2 { return Err(self.lang.map_pairs_amiss.first().cloned().unwrap_or_default()); }
+                self.map_key(&parts[0])?;
+                self.replace_item(into, parts[0].clone(), parts[1].clone());
             }
-        };
-        for (key, value) in pairs {
-            self.map_key(&key)?;
-            self.replace_item(into, key, value);
         }
         Ok(())
     }
@@ -3518,7 +3512,12 @@ impl<'a> Engine<'a> {
             }
             6 => {
                 if args.len() > 2 { return Err(bad()); }
-                if let Some(source) = args.get(1) { self.map_extend(&mut pairs, source)?; }
+                if let Some(source) = args.get(1) {
+                    if let Err(told) = self.map_extend(&mut pairs, source) {
+                        if let Value::Bond(cell) = receiver { *cell.borrow_mut() = Value::Map(Rc::new(pairs)); }
+                        return Err(told);
+                    }
+                }
                 for (key, value) in named { self.replace_item(&mut pairs, Value::text(key), value.clone()); }
                 changed = true;
                 Value::Null
@@ -3585,8 +3584,9 @@ impl<'a> Engine<'a> {
             if let Value::Bond(cell) = a {
                 if let Value::Map(entries) = collection_contents(a) {
                     let mut merged = entries.as_ref().clone();
-                    self.map_extend(&mut merged, b)?;
+                    let outcome = self.map_extend(&mut merged, b);
                     *cell.borrow_mut() = Value::Map(Rc::new(merged));
+                    outcome?;
                     return Ok(a.clone());
                 }
             }
