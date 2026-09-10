@@ -1159,12 +1159,22 @@ impl<'a> Engine<'a> {
     /// taking load moves the value out and leaves a hole.
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
+            if let Value::Binding(shared) = &frame[s] {
+                let value = shared.borrow().clone();
+                if self.lang.closes_over && matches!(value, Value::Blank) {
+                    return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
+                }
+                return Ok(value);
+            }
             if let Value::Bond(shared) = &frame[s] {
                 return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
             }
+        }
+        if self.lang.closes_over && !slot.near.is_empty() {
+            return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
@@ -1194,6 +1204,14 @@ impl<'a> Engine<'a> {
     /// The shared cell a binding stands for, made from what it holds if
     /// it is not shared already.
     fn share_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Rc<RefCell<Value>>> {
+        if self.lang.closes_over && self.lang.bind_names {
+            if let Some(&s) = slot.near.first() {
+                if let Value::Binding(cell) = &frame[s] { return Ok(cell.clone()); }
+                let cell = Rc::new(RefCell::new(frame[s].clone()));
+                frame[s] = Value::Binding(cell.clone());
+                return Ok(cell);
+            }
+        }
         for &s in &slot.near {
             if let Value::Bond(shared) = &frame[s] {
                 return Ok(shared.clone());
@@ -1209,7 +1227,7 @@ impl<'a> Engine<'a> {
         // so where nothing has been written to it anywhere the cell is
         // made in the unit's own place and not the outermost one.
         if let Some(&s) = slot.near.first() {
-            let shared = Rc::new(RefCell::new(Value::Null));
+            let shared = Rc::new(RefCell::new(if self.lang.closes_over { Value::Blank } else { Value::Null }));
             frame[s] = Value::Bond(shared.clone());
             return Ok(shared);
         }
@@ -1240,7 +1258,7 @@ impl<'a> Engine<'a> {
     /// in place because what it holds lives elsewhere.
     fn shares_cell(&self, slot: &Cell, frame: &[Value]) -> bool {
         for &s in &slot.near {
-            if matches!(frame[s], Value::Bond(_)) {
+            if matches!(frame[s], Value::Bond(_) | Value::Binding(_)) {
                 return true;
             }
             if !matches!(frame[s], Value::Blank) {
@@ -1256,6 +1274,9 @@ impl<'a> Engine<'a> {
             if !matches!(frame[s], Value::Blank) {
                 return Ok(&frame[s]);
             }
+        }
+        if self.lang.closes_over && !slot.near.is_empty() {
+            return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
         if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
             self.complain(Complaint::Warning, &format!("Undefined variable {}", slot.ident));
@@ -1293,6 +1314,9 @@ impl<'a> Engine<'a> {
                 return Ok(&mut frame[s]);
             }
         }
+        if self.lang.closes_over && !slot.near.is_empty() {
+            return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
+        }
         if matches!(self.world[slot.far], Value::Blank) && self.warns_about(&slot.ident) {
             self.complain(Complaint::Warning, &format!("Undefined variable {}", slot.ident));
             self.world[slot.far] = Value::Null;
@@ -1307,7 +1331,14 @@ impl<'a> Engine<'a> {
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
         if self.lang.bind_names {
-            self.put_cell(slot, frame, self.keep_collection(v));
+            let value = self.keep_collection(v);
+            if let Some(&s) = slot.near.first() {
+                if let Value::Binding(cell) = &frame[s] {
+                    *cell.borrow_mut() = value;
+                    return Ok(());
+                }
+            }
+            self.put_cell(slot, frame, value);
             return Ok(());
         }
         // A cell only ever becomes a name's own through fastening. A
@@ -1550,6 +1581,7 @@ impl<'a> Engine<'a> {
         frame.resize(program.idents.len(), Value::Blank);
         // A routine written where a value stands carried names away
         // from around it: each fills the slot it was given here.
+        for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
         for (slot, held) in program.carried.iter().zip(program.held.iter()) {
             if program.parameter_rules.is_none() || *slot >= program.formals.len() || matches!(frame[*slot], Value::Blank) {
                 frame[*slot] = held.clone();
@@ -1782,6 +1814,14 @@ impl<'a> Engine<'a> {
                 }
             }
             match &instrs[pc] {
+                Instr::Const(Value::Routine(program)) if self.lang.closes_over && !program.enclosing.is_empty() => {
+                    let mut closed = (**program).clone();
+                    for (at, source) in &program.enclosing {
+                        let shared = self.share_cell(source, frame)?;
+                        closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
+                    }
+                    self.data.push(Value::Routine(Rc::new(closed)));
+                }
                 Instr::Const(v) => self.data.push(self.keep_collection(v.clone())),
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
                     Ok(v) => self.data.push(v),
@@ -1926,6 +1966,9 @@ impl<'a> Engine<'a> {
                 Instr::Nothing => {}
                 Instr::Forget(slot) => {
                     for &s in &slot.near {
+                        if self.lang.closes_over {
+                            if let Value::Binding(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
+                        }
                         frame[s] = Value::Blank;
                     }
                     if slot.near.is_empty() {

@@ -498,6 +498,11 @@ pub struct Lang {
     /// and reading it while it does falls through to the outermost
     /// binding as before, so this tells only where a write from text
     /// read in while the run goes may land.
+    pub closes_over: bool,
+    pub local_unbound: Vec<String>,
+    pub free_unbound: Vec<String>,
+    pub nonlocal_amiss: Vec<String>,
+    pub nonlocal_module: Option<String>,
     pub own_names: bool,
     /// Whether a `static` written at the top of text read in while the
     /// run goes stands for a plain write of the name in the scope that
@@ -518,7 +523,6 @@ pub struct Lang {
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
     pub if_else_words: Vec<String>,
-    pub lambda_unsupported: Option<String>,
     pub lambda_enclosing: Option<String>,
     pub identity_not: Vec<String>,
     pub identity_unsupported: Option<String>,
@@ -933,6 +937,7 @@ w ext.lexical.string.prefix.bytes.unready
 w ext.lexical.string.prefix.format.unready
 b ext.stmt.assign.chain
 w ext.lexical.escape.deferred
+b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1749,6 +1754,11 @@ impl Lang {
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
+            closes_over: r.flag("ext.stmt.function.closes_over")?,
+            local_unbound: r.strings("ext.stmt.function.local.unbound")?,
+            free_unbound: r.strings("ext.stmt.function.free.unbound")?,
+            nonlocal_amiss: r.strings("ext.stmt.nonlocal.amiss")?,
+            nonlocal_module: r.head("ext.stmt.nonlocal.module")?,
             own_names: r.flag("ext.stmt.function.own_names")?,
             static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
@@ -1772,7 +1782,6 @@ impl Lang {
             imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
             if_else_words: r.strings("ext.op.if_else")?,
-            lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
             lambda_enclosing: r.head("ext.op.lambda.enclosing")?,
             identity_not: r.strings("ext.op.identical.negated")?,
             identity_unsupported: r.head("ext.op.identical.unsupported")?,

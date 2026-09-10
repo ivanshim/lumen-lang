@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: nonlocal bindings are not supported
+PythonError: SyntaxError: nonlocal declaration not allowed at module level
