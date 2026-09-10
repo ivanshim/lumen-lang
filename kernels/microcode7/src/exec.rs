@@ -4365,7 +4365,7 @@ impl<'a> Machine<'a> {
         if op == Prim::AsText {
             if let Some(Value::Huge(whole)) = v.first().map(Value::settled).as_ref() {
                 let bound = self.table.count("ext.builtin.to_int.digits").unwrap_or(0);
-                if bound > 0 && whole.abs().to_string().len() > bound { return Err(self.argument_fault("ext.builtin.to_int.digits.amiss", Some(&bound.to_string()))); }
+                if bound > 0 && whole.magnitude().to_str_radix(10).len() > bound { return Err(self.argument_fault("ext.builtin.to_int.digits.amiss", Some(&bound.to_string()))); }
             }
         }
         if matches!(op, Prim::Added | Prim::Placed) {

@@ -1694,7 +1694,7 @@
     "unsupported operand type(s)"
   ],
   "ext.system.fault.shift": [
-    "negative shift count"
+    "ValueError: negative shift count"
   ],
   "ext.system.module.name": [
     "__name__"
