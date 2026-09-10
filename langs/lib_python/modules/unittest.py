@@ -160,6 +160,8 @@ class TestCase:
         raise SkipTest(reason)
 
     def _run_test(self):
+        if getattr(self, '__unittest_skip__', False):
+            self.skipTest(getattr(self, '__unittest_skip_why__', 'skipped'))
         self.setUp()
         try:
             getattr(self, self._method)()
@@ -195,6 +197,10 @@ class _Skip:
         raise SkipTest(self.reason)
 
     def decorate(self, function):
+        if getattr(function, '_test_case', False):
+            setattr(function, '__unittest_skip__', True)
+            setattr(function, '__unittest_skip_why__', self.reason)
+            return function
         return self.call
 
 def skip(reason):
@@ -266,7 +272,7 @@ def main(module=None, exit=True, verbosity=1):
     loader = TestLoader()
     for name in list(names):
         cls = names[name]
-        if not getattr(cls, '_test_case', False):
+        if isinstance(cls, TestCase) or not getattr(cls, '_test_case', False):
             continue
         before = len(result.failures)
         errors = len(result.errors)

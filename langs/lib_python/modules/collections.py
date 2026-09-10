@@ -61,7 +61,7 @@ class deque:
     def pop(self):
         if len(self.data) == 0:
             raise 'IndexError: pop from an empty deque'
-        value = self.data[-1]
+        value = self.data[len(self.data) - 1]
         self.data = self.data[:-1]
         return value
 

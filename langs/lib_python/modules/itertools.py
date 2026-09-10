@@ -77,7 +77,7 @@ def combinations(iterable, r):
         for path in paths:
             start = 0
             if len(path) != 0:
-                start = path[-1] + 1
+                start = path[len(path) - 1] + 1
             for i in range(start, len(values)):
                 fresh.append([*path, i])
         paths = fresh

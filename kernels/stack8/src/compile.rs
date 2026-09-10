@@ -1452,17 +1452,23 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
-        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return if lang.explicit_this { self.class_decl() } else { self.scoped_class() }; }
-        if self.on_keyword(&lang.async_words) { self.take(); }
-        if !self.on_keyword(&lang.function_words) {
-            return Err(amiss());
-        }
-        self.take();
-        let gives_cell = self.skip_reference();
-        let name = self.want_name("after the function keyword")?;
-        self.function(name.clone(), gives_cell)?;
+        let a_class = self.on_any(&lang.class_words) && !lang.class_unready.is_empty();
+        let name = if a_class {
+            if !lang.explicit_this { return self.scoped_class(); }
+            let name = self.look_ahead(1).lexeme.clone();
+            self.class_decl()?;
+            name
+        } else {
+            if self.on_keyword(&lang.async_words) { self.take(); }
+            if !self.on_keyword(&lang.function_words) { return Err(amiss()); }
+            self.take();
+            let gives_cell = self.skip_reference();
+            let name = self.want_name("after the function keyword")?;
+            self.function(name.clone(), gives_cell)?;
+            name
+        };
         for decorator in held.into_iter().rev() {
-            let bound = if lang.routines_outermost {
+            let bound = if lang.routines_outermost && !a_class {
                 Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
             } else {
                 self.cell_to_write(&name)
@@ -6112,8 +6118,8 @@ impl<'a> Compiler<'a> {
 
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
-        if !lang.lambda_words.is_empty() { self.called_on_value()?; }
         loop {
+            if !lang.lambda_words.is_empty() { self.called_on_value()?; }
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {

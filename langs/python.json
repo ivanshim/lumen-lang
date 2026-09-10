@@ -350,11 +350,18 @@
     "__math"
   ],
   "ext.builtin.math.floating": true,
+  "ext.builtin.member.absent": [
+    "AttributeError: object has no attribute '",
+    "'"
+  ],
   "ext.builtin.member.get": [
     "getattr"
   ],
   "ext.builtin.member.set": [
     "setattr"
+  ],
+  "ext.builtin.module.helper.amiss": [
+    "TypeError: invalid module helper arguments"
   ],
   "ext.builtin.module.load": [
     "__load_module"

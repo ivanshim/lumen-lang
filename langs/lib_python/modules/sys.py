@@ -9,6 +9,7 @@ modules = {}
 # Stub: this is the advertised limit; the kernel does not yet count calls.
 _recursion_limit = 1000
 
+# Stub: startup flags describe the fixed library environment.
 class _Flags:
     debug = 0
     inspect = 0
@@ -34,6 +35,8 @@ class _Flags:
 
 flags = _Flags()
 
+# Stub: compatibility records advertise binary64 and 32-bit limbs;
+# they are not a probe of every arithmetic operation in the kernel.
 class _FloatInfo:
     max = float('1.7976931348623157e308')
     max_exp = 1024

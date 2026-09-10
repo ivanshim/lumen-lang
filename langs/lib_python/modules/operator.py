@@ -82,6 +82,8 @@ class _ItemGetter:
         return [value[name] for name in self.names]
 
 def itemgetter(*items):
+    if len(items) == 0:
+        raise 'TypeError: itemgetter needs at least one item'
     return _ItemGetter(items).take
 
 class _AttrGetter:
@@ -106,6 +108,11 @@ class _AttrGetter:
         return result
 
 def attrgetter(*names):
+    if len(names) == 0:
+        raise 'TypeError: attrgetter needs at least one attribute'
+    for name in names:
+        if type(name) != type(''):
+            raise 'TypeError: attribute names must be strings'
     return _AttrGetter(names).take
 
 # Bit work can be written with division and remainders, including the
@@ -160,7 +167,29 @@ def rshift(a, b):
     return a // 2 ** b
 
 def concat(a, b):
+    if type(a) == type([]) and type(b) == type([]):
+        return [*a, *b]
     return a + b
 
 def matmul(a, b):
     raise 'NotImplementedError: matrix multiplication is not supported'
+
+def countOf(sequence, value):
+    return sum([1 for item in sequence if item == value])
+
+def indexOf(sequence, value):
+    position = 0
+    for item in sequence:
+        if item == value:
+            return position
+        position += 1
+    raise 'ValueError: sequence.index(x): x not in sequence'
+
+def length_hint(value, default=0):
+    if type(value) == type([]) or type(value) == type({}) or type(value) == type(''):
+        return len(value)
+    # A user iterator's length hint cannot yet be consulted.
+    raise 'NotImplementedError: length hints need iterator methods'
+
+def setitem(sequence, key, value):
+    raise 'NotImplementedError: setitem needs shared mutable sequence storage'

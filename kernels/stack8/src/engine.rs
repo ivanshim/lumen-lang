@@ -4554,11 +4554,11 @@ impl<'a> Engine<'a> {
             Builtin::DeriveClass => {
                 arity(3)?;
                 let (Value::Text(title), Value::Class(parent), Value::Map(entries)) = (&args[0], &args[1], &args[2]) else {
-                    return Err("class making wants a name, a parent class and a map".into());
+                    return Err(self.lang.module_helper_amiss.clone());
                 };
                 let mut shared = Vec::new();
                 for (key, value) in entries.iter() {
-                    let Value::Text(word) = key else { return Err("class member names must be strings".into()); };
+                    let Value::Text(word) = key else { return Err(self.lang.module_helper_amiss.clone()); };
                     shared.push((word.to_string(), value.clone()));
                 }
                 Value::Class(Rc::new(Class {
@@ -4599,7 +4599,7 @@ impl<'a> Engine<'a> {
                 }).collect()))
             }
             Builtin::MemberGet => {
-                if args.len() != 2 && args.len() != 3 { return Err("attribute lookup wants two or three arguments".into()); }
+                if args.len() != 2 && args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
                 let name = args[1].display(&sp);
                 let value = &args[0];
                 let class = match value { Value::Object(o) => Some(&o.class), Value::Class(c) => Some(c), _ => None };
@@ -4616,14 +4616,14 @@ impl<'a> Engine<'a> {
                 match found.or_else(|| args.get(2).cloned()) {
                     Some(Value::Bond(cell)) => cell.borrow().clone(),
                     Some(v) => v,
-                    None => return Err(format!("attribute '{}' is absent", name)),
+                    None => return Err(Self::named_fault(&self.lang.member_absent, &name)),
                 }
             }
             Builtin::MemberSet => {
                 arity(3)?;
                 let name = args[1].display(&sp);
                 let value = args[2].clone();
-                let fields = match &args[0] { Value::Object(o) => &o.fields, Value::Class(c) => &c.shared, _ => return Err("attribute write needs a namespace or an object".into()) };
+                let fields = match &args[0] { Value::Object(o) => &o.fields, Value::Class(c) => &c.shared, _ => return Err(self.lang.module_helper_amiss.clone()) };
                 let mut fields = fields.borrow_mut();
                 if let Some((_, old)) = fields.iter_mut().find(|(n, _)| n == &name) {
                     if let Value::Bond(cell) = old { *cell.borrow_mut() = value; } else { *old = value; }

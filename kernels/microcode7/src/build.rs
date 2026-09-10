@@ -1538,22 +1538,30 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") { forms.push(if self.table.flag("ext.stmt.class.this.explicit") { self.class_decl()? } else { self.class_scope()? }); return Ok(sequence(forms)); }
-        if self.key("ext.stmt.async") { self.advance(); }
-        if !self.key("stmt.function") {
-            return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+        let binding;
+        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") {
+            if !self.table.flag("ext.stmt.class.this.explicit") {
+                forms.push(self.class_scope()?);
+                return Ok(sequence(forms));
+            }
+            let title = self.glance(1).lexeme.clone();
+            forms.push(self.class_decl()?);
+            binding = self.address_to_write(&title);
+        } else {
+            if self.key("ext.stmt.async") { self.advance(); }
+            if !self.key("stmt.function") {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            self.advance();
+            let shared = self.skip_reference();
+            let named = self.need_word("after the function keyword")?;
+            self.giving_cells.push(shared);
+            let definition = self.func(named.clone(), true);
+            self.giving_cells.pop();
+            forms.push(definition?);
+            binding = if self.table.flag("ext.stmt.function.outermost") { self.global_address(&named) }
+                else { self.address_to_write(&named) };
         }
-        self.advance();
-        let shared = self.skip_reference();
-        let named = self.need_word("after the function keyword")?;
-        self.giving_cells.push(shared);
-        let definition = self.func(named.clone(), true);
-        self.giving_cells.pop();
-        forms.push(definition?);
-        let binding = match self.table.flag("ext.stmt.function.outermost") {
-            true => self.global_address(&named),
-            false => self.address_to_write(&named),
-        };
         while let Some(saved) = decorators.pop() {
             let answer = invoke(Form::Read(saved), vec![Form::Read(binding.clone())]);
             forms.push(Form::Write(binding.clone(), Box::new(answer)));
@@ -5562,6 +5570,7 @@ impl<'a> Builder<'a> {
     fn members(&mut self, mut node: Form) -> Res<Form> {
         let table = self.table;
         loop {
+            if table.has_any("ext.op.lambda") { node = self.called_on_value(node)?; }
             let reaching = table.single("ext.op.member").map_or(false, |m| self.sign(m));
             let owning = table.single("ext.op.scope").map_or(false, |m| self.sign(m));
             if !reaching && !owning {

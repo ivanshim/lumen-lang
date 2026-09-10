@@ -3727,14 +3727,14 @@ impl<'a> Machine<'a> {
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
             Prim::MakeHeir => {
                 n(3)?;
-                let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err("a class title must be text".into()) };
-                let ancestor = match &v[1] { Value::Blueprint(old) => old.clone(), _ => return Err("a class must stand upon another class".into()) };
-                let members = match &v[2] { Value::Dict(pairs) => pairs, _ => return Err("class members need a dictionary".into()) };
+                let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
+                let ancestor = match &v[1] { Value::Blueprint(old) => old.clone(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
+                let members = match &v[2] { Value::Dict(pairs) => pairs, _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
                 let mut holdings = Vec::with_capacity(members.len());
                 for pair in members.iter() {
                     match &pair.0 {
                         Value::Text(key) => holdings.push((key.to_string(), pair.1.clone())),
-                        _ => return Err("a member needs a string name".into()),
+                        _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                     }
                 }
                 let heir = Blueprint {
@@ -3777,9 +3777,12 @@ impl<'a> Machine<'a> {
                 Value::Dict(Rc::new(bindings))
             }
             Prim::ReadMember => {
-                if v.len() < 2 || v.len() > 3 { return Err("attribute lookup takes two or three values".into()); }
+                if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                 let word = v[1].bare();
-                self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()).ok_or_else(|| format!("attribute '{}' is absent", word))?
+                self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()).ok_or_else(|| {
+                    let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
+                    format!("{opening}{word}{ending}")
+                })?
             }
             Prim::WriteMember => {
                 n(3)?;
@@ -3787,7 +3790,7 @@ impl<'a> Machine<'a> {
                 let places = match &v[0] {
                     Value::Thing(object) => &object.holds,
                     Value::Blueprint(class) => &class.shared,
-                    _ => return Err("attribute write needs an object or namespace".into()),
+                    _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                 };
                 let mut held = places.borrow_mut();
                 match held.iter_mut().find(|(word, _)| word == &key) {
