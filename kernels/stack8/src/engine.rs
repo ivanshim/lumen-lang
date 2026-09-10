@@ -3604,7 +3604,7 @@ impl<'a> Engine<'a> {
                     Action::Mod => Operation::Remainder,
                     _ => Operation::Raise,
                 };
-                let result = if self.lang.real_bits.is_some() { arith::binary_work(calc, a, b) } else { None };
+                let result = if self.lang.arithmetic_binary { arith::binary_work(calc, a, b) } else { None };
                 match result.or_else(|| arith::calculate(calc, a, b)) {
                     // A language may tell taking the remainder by
                     // nought apart from dividing by it, and word the

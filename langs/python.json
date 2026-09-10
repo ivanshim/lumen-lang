@@ -503,6 +503,7 @@
   "ext.literal.ellipsis": [
     "..."
   ],
+  "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [

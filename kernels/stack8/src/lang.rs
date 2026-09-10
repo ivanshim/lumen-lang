@@ -99,6 +99,7 @@ pub struct Lang {
     /// How many bits wide a real is, where a language says its reals
     /// are binary numbers rather than exact ones, and how many
     /// significant digits one shows when simply written out.
+    pub arithmetic_binary: bool,
     pub arithmetic_flags: bool,
     pub infinity_words: Vec<String>,
     pub nan_words: Vec<String>,
@@ -791,7 +792,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-b ext.op.arithmetic.flags
+b ext.op.arithmetic.binary | b ext.op.arithmetic.flags
 w ext.builtin.to_real.infinity | w ext.builtin.to_real.nan
 b ext.lexical.number.point_open | b ext.op.pow.real_exponent | w ext.op.pow.overflow | w ext.op.pow.nonreal | w ext.op.pow.zero | w ext.op.div.zero | w ext.op.quot.zero | w ext.op.quot.real_zero | w ext.op.rem.real_zero | w ext.builtin.to_int.text.detail
 b ext.op.bit.unbounded | w ext.op.bit.integer | w ext.op.bit.beyond
@@ -1401,6 +1402,7 @@ impl Lang {
             octal_lead: r.flag("ext.lexical.number.octal_lead")?,
             digit_separators: r.letters("ext.lexical.number.separator")?,
             integer_bits: r.count("ext.system.integer.bits")?,
+            arithmetic_binary: r.flag("ext.op.arithmetic.binary")?,
             arithmetic_flags: r.flag("ext.op.arithmetic.flags")?,
             infinity_words: r.strings("ext.builtin.to_real.infinity")?,
             nan_words: r.strings("ext.builtin.to_real.nan")?,

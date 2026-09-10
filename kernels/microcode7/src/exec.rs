@@ -4687,7 +4687,7 @@ impl<'a> Machine<'a> {
                     true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
                     false => (v[0].clone(), v[1].clone()),
                 };
-                let binary = if self.table.count("ext.system.real.bits").is_some() { math::binary_work(sum, &left, &right) } else { None };
+                let binary = if self.table.flag("ext.op.arithmetic.binary") { math::binary_work(sum, &left, &right) } else { None };
                 let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
                     // A language may tell the remainder by nought apart
                     // from the division by it and word that its own

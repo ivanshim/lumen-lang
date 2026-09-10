@@ -582,6 +582,9 @@ only. The extension labels so far, all from PHP:
   names around where it was written.
 - `ext.lexical.number.point_open`: a switch allowing the decimal point
   to stand before all the digits or after them, as in `.5` and `5.`.
+- `ext.op.arithmetic.binary`: a switch selecting binary arithmetic for
+  real addition, subtraction, multiplication and division. Python enables
+  it; quotient and remainder keep the shared truncating rule.
 - `ext.op.arithmetic.flags`: a switch making flags count as nought and
   one in arithmetic, numeric comparison and conversion to a real.
   Identity keeps the kinds apart, and bit operations keep their own
@@ -2098,6 +2101,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
