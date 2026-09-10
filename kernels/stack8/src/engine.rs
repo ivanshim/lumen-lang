@@ -2662,13 +2662,12 @@ impl<'a> Engine<'a> {
         }
         let counted = |v: &Value| match v { Value::Flag(t) => Value::Small(i64::from(*t)), _ => v.clone() };
         let (x, y) = (counted(a), counted(b));
-        if arith::order_values(&x, &y).is_some() {
-            return self.dyadic(op, &x, &y);
-        }
+        let number = |v: &Value| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_));
+        if number(&x) && number(&y) { return self.dyadic(op, &x, &y); }
         let kind = |v: &Value| match v { Value::Object(o) => o.class.name.clone(), _ => v.core_kind() };
         let sign = match op { Action::Lt => "<", Action::Gt => ">", Action::Le => "<=", _ => ">=" };
         let words = &self.lang.compare_unsupported;
-        Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], kind(a), words[2], kind(b), words[3]))
+        Err(format!("\0{}{}{}{}{}{}{}", words[0], sign, words[1], kind(a), words[2], kind(b), words[3]))
     }
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
@@ -5731,7 +5730,7 @@ impl<'a> Engine<'a> {
             let changed = !matches!(&*cell.borrow(), Value::Array(row) if Rc::ptr_eq(row, &vacant));
             *cell.borrow_mut() = match &result { Ok(row) => Value::array(row.clone()), Err(_) => original };
             result?;
-            if changed { return Err(self.lang.sort_modified[0].clone()); }
+            if changed { return Err(format!("\0{}", self.lang.sort_modified[0])); }
             return Ok(Value::Null);
         }
         crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone())
@@ -7447,7 +7446,8 @@ impl Engine<'_> {
     }
 
     fn core_fault(&self, label: &str, piece: &str) -> String {
-        self.lang.core_words.get(label).map_or_else(String::new, |words| Self::named_fault(words, piece))
+        let said = self.lang.core_words.get(label).map_or_else(String::new, |words| Self::named_fault(words, piece));
+        if label == "core.empty" && !self.lang.sort_modified.is_empty() { format!("\0{said}") } else { said }
     }
 
     fn core_cursor(source: CursorSource) -> Value {
@@ -7526,6 +7526,11 @@ impl Engine<'_> {
         match work {
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
+            Value::Object(_) if self.special_method(work, 17).is_some() => self.special_call(work, 17, args)?.ok_or_else(|| self.special_fault()),
+            Value::Method(object, routine) => {
+                args.insert(0, Value::Object(object.clone()));
+                self.core_apply(&Value::Routine(routine.clone()), args)
+            }
             Value::Routine(p) => {
                 if let Err(f) = self.invoke(p, args) {
                     self.carried = Some(f);
@@ -7710,13 +7715,13 @@ impl Engine<'_> {
             Builtin::Minimum | Builtin::Maximum | Builtin::Sorted => {
                 arity(1, if b == Builtin::Sorted { 1 } else { usize::MAX })?;
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
-                let values = if args.len() == 1 { self.core_members(&args[0])? } else { args.clone() };
-                if values.is_empty() && b != Builtin::Sorted { return default.ok_or_else(|| self.core_fault("core.empty", name)); }
                 if b == Builtin::Sorted {
+                    let values = self.core_members(&args[0])?;
                     Value::array(self.stable_order(values, &key, reverse)?).held(true)
                 } else {
+                    let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(args.clone(), 0)) };
                     let mut chosen: Option<(Value, Value)> = None;
-                    for value in values {
+                    while let Some(value) = self.core_step(&walk)? {
                         let rank = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
                         let take = if let Some((old, _)) = &chosen {
                             let comparison = self.special_dyad(if b == Builtin::Maximum { &Action::Gt } else { &Action::Lt }, &rank, old)?;
@@ -7724,7 +7729,7 @@ impl Engine<'_> {
                         } else { true };
                         if take { chosen = Some((rank, value)); }
                     }
-                    chosen.unwrap().1
+                    match chosen { Some((_, value)) => value, None => return default.ok_or_else(|| self.core_fault("core.empty", name)) }
                 }
             }
 
