@@ -829,6 +829,10 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.try.else`: a switch; the ordinary else word may follow the
   clauses, and its body runs only when the watched body ended of its own
   accord. A value raised there is not offered to those clauses.
+- `ext.system.recursion.limit`: the greatest number of routine frames a
+  run may hold at once, the outermost frame included. A call that would
+  reach this count says `ext.system.recursion.exceeded`; a tail call is
+  counted too. Where no count is given, calls go on as before.
 - `ext.stmt.throw.from`: the word before a cause. The cause is read whole
   and set aside. Where spelled, a throw without a value raises again what
   the innermost clause is holding. `ext.stmt.throw.empty` gives the words
@@ -2496,7 +2500,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.terminator` | - | - | `;` | - | - | - | - | - | - | - |
 | `ext.stmt.terminator.only` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.throw` | - | - | `raise` | - | `throw` | - | - | - | - | - |
-| `ext.stmt.throw.empty` | - | - | `No active exception to reraise` | - | - | - | - | - | - | - |
+| `ext.stmt.throw.empty` | - | - | `RuntimeError: No active exception to reraise` | - | - | - | - | - | - | - |
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2571,6 +2575,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
+| `ext.system.recursion.exceeded` | - | - | `RecursionError: maximum recursion depth exceeded` | - | - | - | - | - | - | - |
+| `ext.system.recursion.limit` | - | - | `1000` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |

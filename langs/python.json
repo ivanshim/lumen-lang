@@ -846,7 +846,7 @@
     "raise"
   ],
   "ext.stmt.throw.empty": [
-    "No active exception to reraise"
+    "RuntimeError: No active exception to reraise"
   ],
   "ext.stmt.throw.from": [
     "from"
@@ -944,6 +944,10 @@
   ],
   "ext.system.module.name": [
     "__name__"
+  ],
+  "ext.system.recursion.limit": 1000,
+  "ext.system.recursion.exceeded": [
+    "RecursionError: maximum recursion depth exceeded"
   ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"

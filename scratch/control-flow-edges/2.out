@@ -1,0 +1,13 @@
+enter error
+exit error type ValueError traceback
+enter normal
+body
+exit normal NoneType NoneType NoneType
+enter return
+exit return NoneType NoneType NoneType
+7
+enter a
+enter b
+both
+exit b NoneType NoneType NoneType
+exit a NoneType NoneType NoneType

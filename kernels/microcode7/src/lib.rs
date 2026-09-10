@@ -50,11 +50,30 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 }
 
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let mut table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    let table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    if table.count("ext.system.recursion.limit").is_some() {
+        return std::thread::scope(|scope| {
+            let worker = std::thread::Builder::new()
+                .stack_size(134_217_728)
+                .spawn_scoped(scope, || {
+                    let table = Table::parse(definition)?;
+                    run_table(table, source, program_args, request)
+                })
+                .map_err(|failure| failure.to_string())?;
+            worker.join().unwrap_or_else(|failure| std::panic::resume_unwind(failure))
+        });
+    }
+    run_table(table, source, program_args, request)
+}
+
+fn run_table(mut table: Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     brief_settled(&mut table, request);
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        if ["ext.stmt.throw.empty", "ext.system.recursion.exceeded"].iter().any(|key| table.single(key) == Some(e.as_str())) {
+            return e;
+        }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

@@ -1474,6 +1474,9 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        if !program.body_of_all && self.lang.recursion_limit.map_or(false, |limit| self.calls.len() + 1 >= limit) {
+            return Err(self.lang.recursion_exceeded.clone().unwrap_or_default().into());
+        }
         let n = if let Some(rules) = &program.parameter_rules {
             let given = self.drop_many(n)?;
             let bound = self.bind_call(program, given, rules)?;

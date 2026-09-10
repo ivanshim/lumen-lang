@@ -42,10 +42,7 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
-            let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
-            settle_brief(&mut lang, request);
-            settle_markup(&mut lang, request);
-            return go(&lang, source, program_args, request);
+            return run_definition(text, source, program_args, request);
         }
     }
     Err(format!("Error: Unknown language '{}'", language))
@@ -56,6 +53,21 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     settle_brief(&mut lang, request);
     settle_markup(&mut lang, request);
+    if lang.recursion_limit.is_some() {
+        return std::thread::scope(|scope| {
+            let running = std::thread::Builder::new().stack_size(128 * 1024 * 1024)
+                .spawn_scoped(scope, || {
+                    let mut held = Lang::parse(definition)?;
+                    settle_brief(&mut held, request);
+                    settle_markup(&mut held, request);
+                    go(&held, source, program_args, request)
+                }).map_err(|error| error.to_string())?;
+            match running.join() {
+                Ok(result) => result,
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        });
+    }
     go(&lang, source, program_args, request)
 }
 
@@ -119,6 +131,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
         if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        else if lang.throw_empty.as_deref() == Some(e.as_str()) || lang.recursion_exceeded.as_deref() == Some(e.as_str()) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }

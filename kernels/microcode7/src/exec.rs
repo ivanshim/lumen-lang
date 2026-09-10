@@ -134,6 +134,7 @@ pub struct Machine<'a> {
     /// call itself was written, and where among the arguments kept the
     /// ones it was handed stand.
     calls: Vec<Called>,
+    recursive_calls: usize,
     /// The calls a fault was raised under, written out as they stood
     /// then, since by the time it is told they are all left behind. The
     /// first fault to leave a call writes this; a trap taking one
@@ -266,6 +267,7 @@ impl<'a> Machine<'a> {
             written_in: Rc::from(""),
             pages_at: None,
             calls: Vec::new(),
+            recursive_calls: 0,
             under: None,
             entering: None,
             quieted: 0,
@@ -3294,6 +3296,17 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        let counted = self.table.count("ext.system.recursion.limit").filter(|_| !program.frameless);
+        if counted.map_or(false, |ceiling| self.recursive_calls + 1 >= ceiling) {
+            return Err(self.table.single("ext.system.recursion.exceeded").unwrap_or_default().to_string().into());
+        }
+        self.recursive_calls += usize::from(counted.is_some());
+        let answer = self.drive_inner(program, frame);
+        self.recursive_calls -= usize::from(counted.is_some());
+        answer
+    }
+
+    fn drive_inner(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         let memo = program.traps == Traps::Yields && self.memo_cell.map_or(false, |i| matches!(self.outermost.cells.borrow()[i], Value::Flag(true)));
         let key = memo.then(|| {
             let mut k = format!("{}(", program.ident);
@@ -3378,6 +3391,9 @@ impl<'a> Machine<'a> {
                     break Ok(v);
                 }
                 Ok(Next::Jump(p, f)) => {
+                    if !p.frameless && self.table.count("ext.system.recursion.limit").is_some() {
+                        break self.drive(p, f);
+                    }
                     program = p;
                     frame = f;
                     // A program holding no names of its own is a piece
