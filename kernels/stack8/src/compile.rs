@@ -1194,6 +1194,7 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             if Lang::spells(&lang.nonlocal_words, &w) {
+                if lang.closes_over && self.piece().outermost && self.class_names.is_empty() { return Err(lang.nonlocal_module.clone().unwrap_or_default()); }
                 let class_scope = self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len());
                 self.take();
                 loop {
@@ -1576,6 +1577,7 @@ impl<'a> Compiler<'a> {
     fn decorated_function(&mut self) -> Res<()> {
         let lang = self.lang;
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
+        let before_decorators = self.mark();
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -1593,7 +1595,12 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.async_words) { self.take(); }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
-            self.class_decl()?;
+            if self.explicit_class()? {
+                self.piece().instrs.truncate(before_decorators);
+                self.class_cannot_run();
+                self.discard();
+                return Ok(());
+            }
             name
         } else {
             if !self.on_keyword(&lang.function_words) { return Err(amiss()); }
@@ -1737,7 +1744,7 @@ impl<'a> Compiler<'a> {
             // to hold nothing where it held nothing at all: reading it
             // is then reading a name written to.
             let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
-            self.put(Instr::Ready(cell));
+            if !self.lang.bind_names { self.put(Instr::Ready(cell)); }
             self.piece().globals.push((name.clone(), name));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -3279,7 +3286,7 @@ impl<'a> Compiler<'a> {
 
     /// A class whose methods name their object themselves. Its first base
     /// is kept once, so the parent's name may be an expression as well.
-    fn explicit_class(&mut self) -> Res<()> {
+    fn explicit_class(&mut self) -> Res<bool> {
         let lang = self.lang;
         self.take();
         let name = self.want_name("as the class name")?;
@@ -3392,7 +3399,7 @@ impl<'a> Compiler<'a> {
             self.write(&private);
             self.class_names.last_mut().expect("the enclosing class").1.insert(name, private);
         } else { self.write(&name); }
-        Ok(())
+        Ok(unready)
     }
 
     fn class_type_parameters(&mut self) -> Res<()> {
@@ -3418,7 +3425,7 @@ impl<'a> Compiler<'a> {
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.explicit_this {
-            return self.explicit_class();
+            return self.explicit_class().map(|_| ());
         }
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
@@ -4000,8 +4007,11 @@ impl<'a> Compiler<'a> {
         let mut defaults = Vec::new();
         let mut rest = None;
         let mut keywords = false;
-        let mut unsupported = false;
+        let mut pairs = false;
+        let mut default_seen = false;
+        let bad = || lang.parameters_amiss.first().cloned().unwrap_or_default();
         while !self.at_symbol(&mark) {
+            if pairs { return Err(bad()); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Div | Action::DivReal)) {
                 if lang.closes_over {
@@ -4013,31 +4023,41 @@ impl<'a> Compiler<'a> {
             } else {
                 let star = self.look().lexeme.clone();
                 let spread = lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
+                let mut mode = if keywords { 2 } else { 0 };
                 if spread {
+                    let mapping = lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Power));
+                    if keywords && !mapping { return Err(bad()); }
                     self.take();
-                    unsupported |= keywords || lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Power));
                     keywords = true;
-                    if self.at_symbol(&separator) { self.take(); unsupported = true; continue; }
+                    pairs = mapping;
+                    mode = if mapping { 4 } else { 3 };
+                    if !mapping && self.at_symbol(&separator) {
+                        self.take();
+                        if self.at_symbol(&mark) { return Err(bad()); }
+                        continue;
+                    }
                     rest = Some(formals.len());
-                } else if keywords { unsupported = true; }
+                }
                 let name = self.want_name("as a lambda parameter")?;
                 if formals.contains(&name) { return Err("Duplicate lambda parameter".to_string()); }
                 formals.push(name);
-                modes.push(if spread { 3 } else { 0 });
+                modes.push(mode);
                 if self.on_assign() {
+                    if mode >= 3 { return Err(bad()); }
+                    if mode == 0 { default_seen = true; }
                     self.take();
                     let hidden = self.gensym("default");
                     self.expr(0)?;
                     self.write(&hidden);
                     defaults.push((formals.len() - 1, hidden));
-                }
+                } else if mode == 0 && default_seen { return Err(bad()); }
             }
             if !self.at_symbol(&mark) { self.want_sign(&separator, "between lambda parameters")?; }
         }
         self.take();
         let least = rest.unwrap_or(formals.len()).saturating_sub(defaults.len());
         let given = formals.clone();
-        let binds = lang.closes_over && lang.bind_names && !unsupported;
+        let binds = lang.bind_names;
         if binds { self.parameter_rules = Some(modes); }
         let enclosing = if self.piece().outermost { Vec::new() } else { self.piece().idents.clone() };
         let mut unavailable = self.uncarried.clone();
@@ -4060,11 +4080,6 @@ impl<'a> Compiler<'a> {
                 a.land(done);
             }
             let code = a.member_value()?;
-            let fault = if unsupported { lang.lambda_unsupported.as_deref() } else { None };
-            if let Some(told) = fault {
-                a.constant(Value::text(told));
-                a.act(Action::Builtin(Builtin::Raise, Rc::from("lambda")), 1);
-            }
             let here = a.mark();
             for word in relocated(code, here as i64) { a.put(word); }
             a.piece().result_touched = true;
@@ -6649,6 +6664,15 @@ impl<'a> Compiler<'a> {
     /// One place or span within brackets. Commas belong to the row
     /// of places, and are left for the brackets themselves to gather.
     fn slice_part(&mut self, close: &str, separator: Option<&str>) -> Res<()> {
+        if self.on_any(&self.lang.array_spread) {
+            self.take();
+            let start = self.mark();
+            self.expr(0)?;
+            self.piece().instrs.truncate(start);
+            self.constant(Value::text(self.lang.index_spread_unsupported.as_deref().unwrap_or_default()));
+            self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            return Ok(());
+        }
         let marks = self.lang.slice_marks.clone();
         let ellipsis = self.lang.slice_ellipsis.clone();
         if ellipsis.iter().any(|word| self.at_symbol(word)) {

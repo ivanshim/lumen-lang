@@ -56,6 +56,15 @@ keeps its value. At a statement boundary the same separator also admits
 assignment to a flat sequence of bare names; the source is evaluated once
 and unpacked only after its length has been checked.
 
+The modern syntax reading uses the shared string, tuple, range and function
+forms above. Lambda defaults are evaluated when the function is defined;
+body names use the enclosing function bindings. Reassigning or deleting an
+enclosing name must therefore remain visible to a lambda that reads it.
+The earlier modern syntax extension labels remain in the accepted rosters;
+Python selects the shared labels instead of a separate capture path.
+`ext.op.index.spread.unsupported` supplies the runtime complaint for a
+starred subscript, after the entire subscript has been read.
+
 ## Format rules
 
 1. A file is one flat JSON object. Every file carries the same labels in the
@@ -439,9 +448,13 @@ only. The extension labels so far, all from PHP:
   spells `ext.builtin.range.value` may give a loop any supported range
   call, including a one-bound call or one with a step. A bare comma list
   as the source is read by the tuple reading above.
-- `ext.op.lambda` reads a parameter list without outer brackets, then
-  a colon and one expression. `ext.op.lambda.unready` refuses this value
-  at the run; the expression piece supplies the function and its cells.
+- `ext.op.lambda` introduces unbracketed parameters and one expression,
+  separated by `block.intro`. Defaults are evaluated once when the value
+  is defined. With `ext.syntax.call.bind_names`, positional-only and
+  keyword-only parameters, `*args`, and `**kwargs` use the function call
+  binder. With `ext.stmt.function.closes_over`, free names read the
+  enclosing bindings at call time. Rebinding or deleting a captured name
+  changes that binding; aliases and defaults retain their own values.
 - `ext.stmt.with` takes context expressions, each optionally followed by
   `ext.stmt.with.as` and a target, then a body. Outer brackets and a final
   comma are allowed. Every expression and statement is read, and the
@@ -452,9 +465,11 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.yield` takes an optional value list, or `ext.stmt.yield.from`
   and the value which would be walked. `ext.stmt.yield.unrun` refuses it
   at the run until a routine can be suspended and entered again.
-- `ext.stmt.nonlocal` names enclosing bindings, separated by commas.
-  `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
-  provided. Outermost bindings use the existing `ext.stmt.global`.
+- `ext.stmt.nonlocal` names enclosing function bindings. With
+  `ext.stmt.function.closes_over`, writes and deletion reach the nearest
+  such binding. `ext.stmt.nonlocal.amiss` surrounds a name with no enclosing
+  binding; `ext.stmt.nonlocal.module` rejects a module-level declaration.
+  Without lexical closures, `ext.stmt.nonlocal.unrun` gives the refusal.
 - `ext.stmt.del` reads one or more places to remove; `ext.stmt.del.unrun`
   refuses their removal at the run. The separate block piece supplies
   deletion, enclosing bindings and the fuller suspended forms above.
@@ -535,6 +550,11 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.nonlocal.amiss` holds two pieces about a name with no such
   binding: the words before the name and those after it.
   Without the switch, `ext.stmt.nonlocal.unrun` gives the refusal.
+- `ext.stmt.nonlocal` names enclosing function bindings. With
+  `ext.stmt.function.closes_over`, writes and deletion reach the nearest
+  such binding. `ext.stmt.nonlocal.amiss` surrounds a name with no enclosing
+  binding; `ext.stmt.nonlocal.module` rejects a module-level declaration.
+  Without lexical closures, `ext.stmt.nonlocal.unrun` gives the refusal.
 - `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
   while loop runs when its test ends the loop, including an empty walk.
   A break leaves that block behind; a continue does not.
@@ -572,11 +592,13 @@ only. The extension labels so far, all from PHP:
   read as an ordinary suite in a scope of its own, including functions
   and classes within it. `ext.stmt.class.unready` gives the complaint
   when the run reaches such a class; making its namespace is still owed.
-- `ext.op.lambda` begins a short routine whose names precede the body
-  mark, and whose body is one expression. The reader enters a fresh
-  scope for that expression, including another short routine within it.
-  Where `ext.stmt.function.closes_over` is on, the routine keeps the
-  enclosing cells it reads, just as a routine written under a name does.
+- `ext.op.lambda` introduces unbracketed parameters and one expression,
+  separated by `block.intro`. Defaults are evaluated once when the value
+  is defined. With `ext.syntax.call.bind_names`, positional-only and
+  keyword-only parameters, `*args`, and `**kwargs` use the function call
+  binder. With `ext.stmt.function.closes_over`, free names read the
+  enclosing bindings at call time. Rebinding or deleting a captured name
+  changes that binding; aliases and defaults retain their own values.
 - `ext.op.tuple` joins values within grouping marks, a returned value,
   an assigned value, or a statement's targets. A final mark still joins
   a tuple of one, and empty grouping marks hold a tuple of none. This
@@ -1102,9 +1124,11 @@ only. The extension labels so far, all from PHP:
   form says `ext.stmt.with.unready` until entering and leaving can run.
 - `ext.stmt.del` and `ext.stmt.del.unrun`: the word before places to be
   removed and the complaint when removal cannot yet be done.
-- `ext.stmt.nonlocal` and `ext.stmt.nonlocal.unrun`: names belonging to an
-  enclosing function, and the complaint until those cells can be shared.
-  `ext.stmt.global` already binds names to their outermost cells.
+- `ext.stmt.nonlocal` names enclosing function bindings. With
+  `ext.stmt.function.closes_over`, writes and deletion reach the nearest
+  such binding. `ext.stmt.nonlocal.amiss` surrounds a name with no enclosing
+  binding; `ext.stmt.nonlocal.module` rejects a module-level declaration.
+  Without lexical closures, `ext.stmt.nonlocal.unrun` gives the refusal.
 - `ext.stmt.yield`, `ext.stmt.yield.from` and `ext.stmt.yield.unrun`: a
   yielded value, an optional word asking to yield from another source,
   and the complaint until a suspended function can be resumed. Bare
@@ -1175,9 +1199,11 @@ only. The extension labels so far, all from PHP:
   `ext.system.fault.operands`; a negative shift count is refused with
   `ext.system.fault.shift`. This piece spells only the bit signs found
   outside the generator tests' strings: and, or, complement and left shift.
-- `ext.stmt.nonlocal` and `ext.stmt.nonlocal.unrun`: the enclosing-binding
-  word of the block reader and its complaint. Its names are read, but the
-  statement cannot run until enclosing cells may be shared.
+- `ext.stmt.nonlocal` names enclosing function bindings. With
+  `ext.stmt.function.closes_over`, writes and deletion reach the nearest
+  such binding. `ext.stmt.nonlocal.amiss` surrounds a name with no enclosing
+  binding; `ext.stmt.nonlocal.module` rejects a module-level declaration.
+  Without lexical closures, `ext.stmt.nonlocal.unrun` gives the refusal.
 - `ext.stmt.del`: the deletion word of the block reader. Comma-parted
   names must exist before they are forgotten. Indexed and slice targets
   are read, but the words in `ext.stmt.del.unrun` stop the whole deletion
@@ -1266,17 +1292,13 @@ only. The extension labels so far, all from PHP:
   question; `ext.op.identical.unsupported` gives the plain complaint,
   rather than answering equality in its stead.
 
-- `ext.op.lambda`: the word before an unbracketed parameter list and
-  one expression, parted by `block.intro`. The value is a routine;
-  its defaults are worked out where it is made and kept for later
-  calls. A multiplication sign before a parameter gathers the remaining
-  arguments into an array. A division sign parts positional parameters;
-  a power sign before a parameter and parameters after a bare
-  multiplication sign are read as keyword parameters. Such parameters
-  cannot yet be called: `ext.op.lambda.unsupported` gives the words said
-  on reaching that body. A name of the enclosing routine is not carried
-  away; `ext.op.lambda.enclosing` gives the complaint when such a body
-  is called. These are lists of plain words, one message apiece.
+- `ext.op.lambda` introduces unbracketed parameters and one expression,
+  separated by `block.intro`. Defaults are evaluated once when the value
+  is defined. With `ext.syntax.call.bind_names`, positional-only and
+  keyword-only parameters, `*args`, and `**kwargs` use the function call
+  binder. With `ext.stmt.function.closes_over`, free names read the
+  enclosing bindings at call time. Rebinding or deleting a captured name
+  changes that binding; aliases and defaults retain their own values.
 - `ext.op.in`: membership of the left value among an array's items, a
   map's keys, or the substrings of text on the right. `ext.op.in.negated`
   is a word before the operator that turns the answer about (`not in`).
@@ -2313,18 +2335,13 @@ only. The extension labels so far, all from PHP:
   binary operator and above a lambda. The condition runs first, and
   only the arm it chooses runs; a further conditional belongs to the
   other arm unless brackets say otherwise.
-- `ext.op.lambda`: the word before an unbracketed parameter list and
-  one expression, parted by `block.intro`. The value is a routine;
-  its defaults are worked out where it is made and kept for later
-  calls. A multiplication sign before a parameter gathers the remaining
-  arguments into an array. A division sign parts positional parameters;
-  a power sign before a parameter and parameters after a bare
-  multiplication sign are read as keyword parameters. Such parameters
-  cannot yet be called: `ext.op.lambda.unsupported` gives the words said
-  on reaching that body. With `ext.stmt.function.closes_over`, free
-  names read the enclosing cells as they stand at the time of the call.
-  Without it, `ext.op.lambda.enclosing` gives the complaint about such
-  a name. These complaints are lists of plain words, one apiece.
+- `ext.op.lambda` introduces unbracketed parameters and one expression,
+  separated by `block.intro`. Defaults are evaluated once when the value
+  is defined. With `ext.syntax.call.bind_names`, positional-only and
+  keyword-only parameters, `*args`, and `**kwargs` use the function call
+  binder. With `ext.stmt.function.closes_over`, free names read the
+  enclosing bindings at call time. Rebinding or deleting a captured name
+  changes that binding; aliases and defaults retain their own values.
 - `ext.op.in`: membership of the left value among an array's items, a
   map's keys, or the substrings of text on the right. `ext.op.in.negated`
   is a word before the operator that turns the answer about (`not in`).
@@ -2360,11 +2377,13 @@ only. The extension labels so far, all from PHP:
   for the words said when a tuple value is reached; its members are
   read whole but not worked out. The tuple piece supplies the fuller
   account of values, stores, and taking apart.
-- `ext.op.lambda`: the word introducing unbracketed parameters and one
-  expression, with `block.intro` between them. The parameter rules are
-  those of a function, without annotations. `ext.op.lambda.unready`
-  supplies the complaint when a lambda value is reached; its parameters,
-  defaults and body are read whole, but this small reading makes no value.
+- `ext.op.lambda` introduces unbracketed parameters and one expression,
+  separated by `block.intro`. Defaults are evaluated once when the value
+  is defined. With `ext.syntax.call.bind_names`, positional-only and
+  keyword-only parameters, `*args`, and `**kwargs` use the function call
+  binder. With `ext.stmt.function.closes_over`, free names read the
+  enclosing bindings at call time. Rebinding or deleting a captured name
+  changes that binding; aliases and defaults retain their own values.
 - `ext.op.assign.expression`: a mark between a binding name and the
   expression whose value is both stored there and answered with. The mark
   is read at the lowest expression tier, including in a decorator.
@@ -3151,6 +3170,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.slice.length` | - | - | `attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.unsupported` | - | - | `this slice operation is not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.zero` | - | - | `slice step cannot be zero` | - | - | - | - | - | - | - |
+| `ext.op.index.spread.unsupported` | - | - | `NotImplementedError: starred subscripts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
@@ -3214,7 +3234,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch` | - | - | `except` | - | `catch` | - | - | - | - | - |
 | `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.stmt.catch.group.unsupported` | - | - | `Exception groups are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.catch.group.unsupported` | - | - | - | - | - | - | - | - | - | - |
 | `ext.stmt.catch.invalid` | - | - | `catching classes that do not inherit from BaseException is not allowed` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.separator` | - | - | `,` | - | `\|` | - | - | - | - | - |
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
@@ -3285,6 +3305,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.match.wildcard` | - | - | `_` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.amiss` | - | - | `SyntaxError: no binding for nonlocal '` `' found` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.module` | - | - | `SyntaxError: nonlocal declaration not allowed at module level` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.separator` | - | - | `;` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
@@ -3361,7 +3382,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
-| `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
+| `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |

@@ -170,6 +170,8 @@ pub enum Value {
     /// write all of them see. Where calls bind by name, it also holds
     /// a collection whose items may change whilst its names stay apart.
     Bond(Rc<RefCell<Value>>),
+    /// A lexical binding, independent of any collection it currently holds.
+    Binding(Rc<RefCell<Value>>),
     Class(Rc<Class>),
     Object(Rc<Instance>),
     /// A key and a value written together (`k => v`), waiting to be
@@ -213,7 +215,7 @@ impl Value {
     pub fn keeps_point(&self) -> bool {
         match self {
             Value::Real(r) => r.point,
-            Value::Bond(cell) => cell.borrow().keeps_point(),
+            Value::Bond(cell) | Value::Binding(cell) => cell.borrow().keeps_point(),
             _ => false,
         }
     }
@@ -280,7 +282,7 @@ impl Value {
             Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Native(cell, _) => return cell.borrow().sort(),
             Value::View(_) => Sort::Array,
-            Value::Bond(shared) => return shared.borrow().sort(),
+            Value::Bond(shared) | Value::Binding(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
             _ => return None,
@@ -292,7 +294,7 @@ impl Value {
     pub fn outside_numbers(&self) -> bool {
         match self {
             Value::Real(r) => r.outside(),
-            Value::Bond(shared) => shared.borrow().outside_numbers(),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().outside_numbers(),
             _ => false,
         }
     }
@@ -301,7 +303,7 @@ impl Value {
     pub fn no_number(&self) -> bool {
         match self {
             Value::Real(r) => r.no_number(),
-            Value::Bond(shared) => shared.borrow().no_number(),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().no_number(),
             _ => false,
         }
     }
@@ -324,7 +326,7 @@ impl Value {
             Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
-            Value::Bond(shared) => shared.borrow().is_true(),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
@@ -346,7 +348,7 @@ impl Value {
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
-            Value::Bond(shared) => shared.borrow().as_big(),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
             Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Native(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
@@ -434,7 +436,7 @@ impl Value {
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
-            Value::Bond(shared) => shared.borrow().display(sp),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().display(sp),
             Value::Flag(true) => match sp.flag_counts {
                 true => "1".to_string(),
                 false => sp.true_word.to_string(),
@@ -588,7 +590,7 @@ impl Value {
             Value::Generator(_) => "<generator>".to_string(),
             Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
-            Value::Bond(shared) => shared.borrow().plain(),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
@@ -634,7 +636,7 @@ impl Value {
             Value::Object(o) => {
                 let _ = write!(into, "o{:p}", Rc::as_ptr(o));
             }
-            Value::Bond(shared) => shared.borrow().memo_key(into),
+            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().memo_key(into),
             Value::Class(c) => {
                 let _ = write!(into, "c{}", c.name);
             }

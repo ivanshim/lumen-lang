@@ -281,9 +281,20 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
 impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let outermost = Env::make(idents.len(), None);
+        if table.has_any("ext.stmt.catch.as") {
+            if let Some(at) = find("ext.system.fault.class.value") {
+                let blueprint = Blueprint {
+                    name: idents[at].clone(), under: None, answers: Vec::new(),
+                    fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
+                    shared: RefCell::new(Vec::new()), reaches: Vec::new(),
+                };
+                outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
+            }
+        }
         Machine {
             table,
-            outermost: Env::make(idents.len(), None),
+            outermost,
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
@@ -1557,9 +1568,12 @@ impl<'a> Machine<'a> {
 
     fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
-        let v = f.cells.borrow()[slot.at].clone();
-        if let Value::Shared(cell) = v {
-            return Ok(if self.table.flag("ext.syntax.call.bind_names") { Value::Shared(cell) } else { cell.borrow().clone() });
+        let mut v = f.cells.borrow()[slot.at].clone();
+        if let Value::Shared(cell) = &v {
+            if self.table.flag("ext.syntax.call.bind_names") { return Ok(v); }
+            let held = cell.borrow().clone();
+            if !self.table.flag("ext.stmt.function.closes_over") { return Ok(held); }
+            v = held;
         }
         if matches!(v, Value::Unset) && self.table.flag("ext.stmt.function.closes_over") && !Rc::ptr_eq(&f, &self.outermost) {
             let label = if slot.up == 0 { "ext.stmt.function.local.unbound" } else { "ext.stmt.function.free.unbound" };
@@ -2125,9 +2139,11 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
-                // Captures address the environment slot itself. Deletion
-                // must leave any collection shared by another name alive.
-                f.cells.borrow_mut()[slot.at] = Value::Unset;
+                let mut places = f.cells.borrow_mut();
+                match &places[slot.at] {
+                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.table.flag("ext.syntax.call.bind_names") => *cell.borrow_mut() = Value::Unset,
+                    _ => places[slot.at] = Value::Unset,
+                }
                 Ok(Value::Nil)
             }
             Form::ShareWithin(under, places) => {
@@ -2266,7 +2282,7 @@ impl<'a> Machine<'a> {
                 }))))
             }
             Form::Attempt { body, clauses, last, otherwise } => {
-                if clauses.iter().any(|part| part.grouped) {
+                if self.table.has_any("ext.stmt.catch.group.unsupported") && clauses.iter().any(|part| part.grouped) {
                     return Err(self.table.single("ext.stmt.catch.group.unsupported").unwrap_or_default().to_string().into());
                 }
                 let preceding = self.holding_fault.len();
@@ -2547,6 +2563,13 @@ impl<'a> Machine<'a> {
                 Prim::Hurl => {
                     let values = self.value_list(args, frame)?;
                     let raised = values.into_iter().next().ok_or_else(|| format!("{}() needs a value to raise", name))?;
+                    let raised = match raised {
+                        Value::Blueprint(of) if self.table.has_any("ext.stmt.catch.as") => {
+                            self.made += 1;
+                            Value::Thing(Rc::new(Thing { of, holds: RefCell::new(Vec::new()), turn: self.made }))
+                        }
+                        worth => worth,
+                    };
                     self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }

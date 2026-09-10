@@ -214,6 +214,7 @@ pub struct Lang {
     pub slice_ellipsis: Vec<String>,
     pub slice_zero: Option<String>,
     pub slice_bounds: Option<String>,
+    pub index_spread_unsupported: Option<String>,
     pub slice_unsupported: Option<String>,
     pub slice_assign: Option<String>,
     pub slice_length: Vec<String>,
@@ -515,6 +516,7 @@ pub struct Lang {
     pub local_unbound: Vec<String>,
     pub free_unbound: Vec<String>,
     pub nonlocal_amiss: Vec<String>,
+    pub nonlocal_module: Option<String>,
     pub own_names: bool,
     /// Whether a `static` written at the top of text read in while the
     /// run goes stands for a plain write of the name in the scope that
@@ -535,7 +537,6 @@ pub struct Lang {
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
     pub if_else_words: Vec<String>,
-    pub lambda_unsupported: Option<String>,
     pub lambda_enclosing: Option<String>,
     pub identity_not: Vec<String>,
     pub identity_unsupported: Option<String>,
@@ -877,7 +878,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point | w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready | w ext.stmt.type_params.close | w ext.stmt.type_params.open | w ext.stmt.for.target.unready | w ext.op.identity.unready | w ext.op.identity.negated | w ext.op.identity | w ext.op.in.unready | w ext.op.in.negated | w ext.op.in | w ext.stmt.del.unrun | w ext.stmt.async.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.with.unready | w ext.op.lambda.unready | b ext.op.member.pipes | w ext.op.tuple.unready | w ext.lexical.number.imaginary.unready | w ext.lexical.number.imaginary | w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | b ext.lexical.escape.continued | b ext.stmt.loop.else | w ext.stmt.with.unrun | w ext.stmt.async.unrun | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters | b ext.op.pipe.attribute | b ext.stmt.yield.suspends | w ext.stmt.yield.exhausted | w ext.stmt.yield.send | w ext.stmt.yield.close | w ext.stmt.yield.throw | w ext.stmt.yield.unstarted | w ext.stmt.yield.busy | w ext.stmt.yield.unsupported | w ext.stmt.yield.throw.unavailable | w ext.builtin.next | w ext.builtin.iter | w ext.builtin.tuple
+w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point | w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready | w ext.stmt.type_params.close | w ext.stmt.type_params.open | w ext.stmt.for.target.unready | w ext.op.identity.unready | w ext.op.identity.negated | w ext.op.identity | w ext.op.in.unready | w ext.op.in.negated | w ext.op.in | w ext.stmt.del.unrun | w ext.stmt.async.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.with.unready | w ext.op.lambda.unready | b ext.op.member.pipes | w ext.op.tuple.unready | w ext.lexical.number.imaginary.unready | w ext.lexical.number.imaginary | w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | b ext.lexical.escape.continued | b ext.stmt.loop.else | w ext.stmt.with.unrun | w ext.stmt.async.unrun | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters | b ext.op.pipe.attribute | b ext.stmt.yield.suspends | w ext.stmt.yield.exhausted | w ext.stmt.yield.send | w ext.stmt.yield.close | w ext.stmt.yield.throw | w ext.stmt.yield.unstarted | w ext.stmt.yield.busy | w ext.stmt.yield.unsupported | w ext.stmt.yield.throw.unavailable | w ext.builtin.next | w ext.builtin.iter | w ext.builtin.tuple | w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported | w ext.lexical.string.raw_prefix | w ext.lexical.string.text_prefix | b ext.syntax.string.adjacent | w ext.op.identity.unsupported | b ext.op.comparison.chain | b ext.stmt.for.range.stop | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare | b ext.lexical.string.triple
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step | w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.stmt.assign.names.chained | b ext.syntax.call.chained | w ext.op.lambda | w ext.op.lambda.unready | w ext.op.assign.expression | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.op.contains | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss | w ext.builtin.method.sort.key | w ext.builtin.method.sort.reverse | w ext.builtin.method.split.sep | w ext.builtin.method.split.maxsplit | w ext.builtin.method.upper | w ext.builtin.method.lower | w ext.builtin.method.strip | w ext.builtin.method.lstrip | w ext.builtin.method.rstrip | w ext.builtin.method.split | w ext.builtin.method.rsplit | w ext.builtin.method.join | w ext.builtin.method.replace | w ext.builtin.method.startswith | w ext.builtin.method.endswith | w ext.builtin.method.find | w ext.builtin.method.rfind | w ext.builtin.method.index | w ext.builtin.method.count | w ext.builtin.method.isdigit | w ext.builtin.method.isalpha | w ext.builtin.method.isalnum | w ext.builtin.method.isspace | w ext.builtin.method.islower | w ext.builtin.method.isupper | w ext.builtin.method.title | w ext.builtin.method.capitalize | w ext.builtin.method.center | w ext.builtin.method.ljust | w ext.builtin.method.rjust | w ext.builtin.method.zfill | w ext.builtin.method.format | w ext.builtin.method.encode | w ext.builtin.method.append | w ext.builtin.method.extend | w ext.builtin.method.insert | w ext.builtin.method.pop | w ext.builtin.method.remove | w ext.builtin.method.sort | w ext.builtin.method.reverse | w ext.builtin.method.copy | w ext.builtin.method.clear | w ext.builtin.method.get | w ext.builtin.method.keys | w ext.builtin.method.values | w ext.builtin.method.items | w ext.builtin.method.setdefault | w ext.builtin.method.update | w ext.builtin.method.bit_length | w ext.builtin.method.is_integer | w ext.builtin.method.hex | w ext.builtin.method.as_integer_ratio | w ext.builtin.method.error.unready | w ext.builtin.method.error.bytes | w ext.builtin.method.error.arguments | w ext.builtin.method.error.separator | w ext.builtin.method.error.substring | w ext.builtin.method.error.pop | w ext.builtin.method.error.index | w ext.builtin.method.error.remove | w ext.builtin.method.error.list_index | w ext.builtin.method.error.format | w ext.builtin.method.error.spec | w ext.builtin.method.error.unicode | w ext.builtin.method.error.attribute | w ext.builtin.method.error.key | w ext.builtin.method.error.missing | w ext.builtin.method.error.mixed | w ext.builtin.method.error.fill | w ext.builtin.sorted
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
@@ -937,7 +938,7 @@ w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.syste
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
-w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss
+w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1576,6 +1577,7 @@ impl Lang {
             whole_bits_large: r.head("ext.op.bit.whole.large")?,
             matrix_words: r.strings("ext.op.matrix")?,
             matrix_unavailable: r.head("ext.op.matrix.unavailable")?,
+            index_spread_unsupported: r.head("ext.op.index.spread.unsupported")?,
             slice_unsupported: r.head("ext.op.index.slice.unsupported")?,
             slice_assign: r.head("ext.op.index.slice.assign")?,
             slice_length: r.strings("ext.op.index.slice.length")?,
@@ -1772,6 +1774,7 @@ impl Lang {
             local_unbound: r.strings("ext.stmt.function.local.unbound")?,
             free_unbound: r.strings("ext.stmt.function.free.unbound")?,
             nonlocal_amiss: r.strings("ext.stmt.nonlocal.amiss")?,
+            nonlocal_module: r.head("ext.stmt.nonlocal.module")?,
             own_names: r.flag("ext.stmt.function.own_names")?,
             static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
@@ -1795,7 +1798,6 @@ impl Lang {
             imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
             if_else_words: r.strings("ext.op.if_else")?,
-            lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
             lambda_enclosing: r.head("ext.op.lambda.enclosing")?,
             identity_not: r.strings("ext.op.identical.negated")?,
             identity_unsupported: r.head("ext.op.identical.unsupported")?,

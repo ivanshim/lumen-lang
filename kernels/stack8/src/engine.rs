@@ -210,9 +210,18 @@ impl<'a> Engine<'a> {
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
+        let mut world = vec![Value::Blank; idents.len()];
+        if !lang.catch_as.is_empty() {
+            if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
+                world[slot] = Value::Class(Rc::new(Class {
+                    name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
+                    reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                }));
+            }
+        }
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world,
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -1151,12 +1160,15 @@ impl<'a> Engine<'a> {
     /// taking load moves the value out and leaves a hole.
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
-            if let Value::Bond(shared) = &frame[s] {
+            if let Value::Binding(shared) = &frame[s] {
                 let value = shared.borrow().clone();
                 if self.lang.closes_over && matches!(value, Value::Blank) {
                     return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
                 }
-                return Ok(if self.lang.closes_over || !self.lang.bind_names { value } else { Value::Bond(shared.clone()) });
+                return Ok(value);
+            }
+            if let Value::Bond(shared) = &frame[s] {
+                return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
@@ -1193,6 +1205,14 @@ impl<'a> Engine<'a> {
     /// The shared cell a binding stands for, made from what it holds if
     /// it is not shared already.
     fn share_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Rc<RefCell<Value>>> {
+        if self.lang.closes_over && self.lang.bind_names {
+            if let Some(&s) = slot.near.first() {
+                if let Value::Binding(cell) = &frame[s] { return Ok(cell.clone()); }
+                let cell = Rc::new(RefCell::new(frame[s].clone()));
+                frame[s] = Value::Binding(cell.clone());
+                return Ok(cell);
+            }
+        }
         for &s in &slot.near {
             if let Value::Bond(shared) = &frame[s] {
                 return Ok(shared.clone());
@@ -1239,7 +1259,7 @@ impl<'a> Engine<'a> {
     /// in place because what it holds lives elsewhere.
     fn shares_cell(&self, slot: &Cell, frame: &[Value]) -> bool {
         for &s in &slot.near {
-            if matches!(frame[s], Value::Bond(_)) {
+            if matches!(frame[s], Value::Bond(_) | Value::Binding(_)) {
                 return true;
             }
             if !matches!(frame[s], Value::Blank) {
@@ -1266,6 +1286,16 @@ impl<'a> Engine<'a> {
         match &self.world[slot.far] {
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
             v => Ok(v),
+        }
+    }
+
+    /// Captured bindings must be loaded before an optimized operation:
+    /// the wrapper is a binding, not an operand or a collection value.
+    fn operand_value(&mut self, operand: &Operand, frame: &mut [Value]) -> Res<Option<Value>> {
+        match operand {
+            Operand::Top => self.drop_top().map(Some),
+            Operand::Cell(slot) if self.shares_cell(slot, frame) => self.load_cell(slot, frame).map(Some),
+            _ => Ok(None),
         }
     }
 
@@ -1312,16 +1342,14 @@ impl<'a> Engine<'a> {
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
         if self.lang.bind_names {
-            let held = self.keep_collection(v);
-            if self.lang.closes_over {
-                if let Some(&local) = slot.near.first() {
-                    if let Value::Bond(binding) = &frame[local] {
-                        *binding.borrow_mut() = held;
-                        return Ok(());
-                    }
+            let value = self.keep_collection(v);
+            if let Some(&s) = slot.near.first() {
+                if let Value::Binding(cell) = &frame[s] {
+                    *cell.borrow_mut() = value;
+                    return Ok(());
                 }
             }
-            self.put_cell(slot, frame, held);
+            self.put_cell(slot, frame, value);
             return Ok(());
         }
         // A cell only ever becomes a name's own through fastening. A
@@ -1573,7 +1601,7 @@ impl<'a> Engine<'a> {
             // Each local owns a binding cell; mutable values inside it
             // retain their separate identity when the name is rebound.
             for value in &mut frame {
-                *value = Value::Bond(Rc::new(RefCell::new(self.keep_collection(value.clone()))));
+                *value = Value::Binding(Rc::new(RefCell::new(self.keep_collection(value.clone()))));
             }
         }
         for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
@@ -1699,7 +1727,7 @@ impl<'a> Engine<'a> {
     /// Each arm runs in the same frame. A leap beyond its span is an
     /// outward return or loop step, and the last part runs before it goes.
     fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
-        if plan.clauses.iter().any(|arm| arm.grouped) {
+        if self.lang.catch_group_unsupported.is_some() && plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
         let depth = self.data.len();
@@ -1873,7 +1901,7 @@ impl<'a> Engine<'a> {
                     let mut closed = (**program).clone();
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
-                        closed.enclosed.push((*at, Value::Bond(shared)));
+                        closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }
@@ -1893,7 +1921,7 @@ impl<'a> Engine<'a> {
                         .near
                         .iter()
                         .map(|&s| match &frame[s] {
-                            Value::Bond(cell) if self.lang.closes_over => cell.borrow().clone(),
+                            Value::Binding(cell) if self.lang.closes_over => cell.borrow().clone(),
                             value => value.clone(),
                         })
                         .find(|v| !matches!(v, Value::Blank))
@@ -2053,7 +2081,7 @@ impl<'a> Engine<'a> {
                 Instr::Forget(slot) => {
                     for &s in &slot.near {
                         if self.lang.closes_over {
-                            if let Value::Bond(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
+                            if let Value::Binding(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
                         }
                         frame[s] = Value::Blank;
                     }
@@ -2069,7 +2097,7 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Missing(slot) => {
                     let empty = match &frame[*slot] {
-                        Value::Bond(cell) if self.lang.closes_over => matches!(*cell.borrow(), Value::Blank),
+                        Value::Binding(cell) if self.lang.closes_over => matches!(*cell.borrow(), Value::Blank),
                         value => matches!(value, Value::Blank),
                     };
                     self.data.push(Value::Flag(empty));
@@ -2108,16 +2136,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::SkipCmp { op, a, b, to } => {
-                    let bt = match b {
-                        Operand::Top => Some(self.drop_top()?),
-                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
-                        _ => None,
-                    };
-                    let at = match a {
-                        Operand::Top => Some(self.drop_top()?),
-                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
-                        _ => None,
-                    };
+                    let bt = self.operand_value(b, frame)?;
+                    let at = self.operand_value(a, frame)?;
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
                     let holds = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
@@ -2139,16 +2159,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Dyad { op, a, b } => {
-                    let bt = match b {
-                        Operand::Top => Some(self.drop_top()?),
-                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
-                        _ => None,
-                    };
-                    let at = match a {
-                        Operand::Top => Some(self.drop_top()?),
-                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
-                        _ => None,
-                    };
+                    let bt = self.operand_value(b, frame)?;
+                    let at = self.operand_value(a, frame)?;
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
                     let fast = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
@@ -3167,7 +3179,14 @@ impl<'a> Engine<'a> {
             }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
-                return Err(Fault::Thrown(self.drop_top()?));
+                let mut raised = self.drop_top()?;
+                if !self.lang.catch_as.is_empty() {
+                    if let Value::Class(class) = raised {
+                        self.made += 1;
+                        raised = Value::Object(Rc::new(Instance { class, fields: RefCell::new(Vec::new()), mark: self.made }));
+                    }
+                }
+                return Err(Fault::Thrown(raised));
             }
             Action::Titled => match self.drop_top()? {
                 Value::Object(o) => Value::text(&o.class.name),

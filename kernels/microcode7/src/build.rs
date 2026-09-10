@@ -1338,6 +1338,9 @@ impl<'a> Builder<'a> {
                 return self.forget_list(false, true, None);
             }
             if self.key("ext.stmt.nonlocal") {
+                if self.table.flag("ext.stmt.function.closes_over") && !self.layers.iter().skip(1).any(|layer| layer.holds == Holds::Every) && self.class_bindings.is_empty() {
+                    return Err(self.table.single("ext.stmt.nonlocal.module").unwrap_or_default().into());
+                }
                 let in_class = self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len());
                 self.advance();
                 loop {
@@ -1648,7 +1651,9 @@ impl<'a> Builder<'a> {
         let named;
         if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
             named = self.glance(1).lexeme.clone();
-            forms.push(self.class_decl()?);
+            let (definition, cannot) = self.class_with_receiver()?;
+            if cannot { return Ok(self.class_not_ready()); }
+            forms.push(definition);
         } else {
             if !self.key("stmt.function") {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
@@ -2192,7 +2197,7 @@ impl<'a> Builder<'a> {
 
     /// The class header encloses expressions for bases. Only the first
     /// is taken as a parent; the others are read without being run.
-    fn class_with_receiver(&mut self) -> Res<Form> {
+    fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
         self.advance();
         let named = self.need_word("as the class name")?;
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
@@ -2259,7 +2264,7 @@ impl<'a> Builder<'a> {
                 let member = self.look().lexeme.clone();
                 let value = if self.key("ext.stmt.class") {
                     let member = self.glance(1).lexeme.clone();
-                    setup.push(self.class_with_receiver()?);
+                    setup.push(self.class_with_receiver()?.0);
                     attributes.push(member.clone());
                     Some(self.read(&member))
                 } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
@@ -2311,7 +2316,7 @@ impl<'a> Builder<'a> {
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
             setup.push(Form::Write(slot, Box::new(declaration)));
         } else { setup.push(self.write(&named, declaration)); }
-        Ok(sequence(setup))
+        Ok((sequence(setup), cannot))
     }
 
     fn class_type_parameters(&mut self) -> Res<()> {
@@ -2335,7 +2340,7 @@ impl<'a> Builder<'a> {
 
     fn class_decl(&mut self) -> Res<Form> {
         if self.table.flag("ext.stmt.class.this.explicit") {
-            return self.class_with_receiver();
+            return self.class_with_receiver().map(|(form, _)| form);
         }
         let table = self.table;
         let word = self.advance().lexeme;
@@ -3905,9 +3910,12 @@ impl<'a> Builder<'a> {
         let mut before = Vec::new();
         let mut gather = None;
         let mut named_only = false;
-        let mut cannot_call = false;
+        let mut pairs = false;
+        let mut default_seen = false;
+        let bad = || table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().to_string();
         loop {
             if self.sign(colon) { self.advance(); break; }
+            if pairs { return Err(bad()); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
                 if table.flag("ext.stmt.function.closes_over") {
@@ -3921,34 +3929,39 @@ impl<'a> Builder<'a> {
             } else {
                 let many = table.spells("op.mul", &self.look().lexeme);
                 let mapping = table.spells("op.pow", &self.look().lexeme);
+                let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
+                    if many && named_only { return Err(bad()); }
                     self.advance();
-                    cannot_call |= mapping || named_only;
                     named_only = true;
-                    if self.sign(comma) {
+                    pairs = mapping;
+                    way = if mapping { 'k' } else { 'v' };
+                    if many && self.sign(comma) {
                         self.advance();
-                        cannot_call = true;
+                        if self.sign(colon) { return Err(bad()); }
                         continue;
                     }
                     gather = Some(names.len());
-                } else { cannot_call |= named_only; }
+                }
                 let parameter = self.need_word("as a lambda parameter")?;
                 if names.contains(&parameter) { return Err("Duplicate lambda parameter".to_string()); }
                 names.push(parameter);
-                ways.push(if many { 'v' } else { 'b' });
+                ways.push(way);
                 if self.on_assign() {
+                    if many || mapping { return Err(bad()); }
+                    if way == 'b' { default_seen = true; }
                     self.advance();
                     let worth = self.expr(0)?;
                     let hidden = self.gensym("spare");
                     before.push(Form::Write(hidden.clone(), Box::new(worth)));
                     spares.push((names.len() - 1, hidden));
-                }
+                } else if way == 'b' && default_seen { return Err(bad()); }
             }
             if !self.sign(colon) { self.need_sign(comma, "between lambda parameters")?; }
         }
         let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
         let parameters = names.clone();
-        let bind_arguments = table.flag("ext.stmt.function.closes_over") && table.flag("ext.syntax.call.bind_names") && !cannot_call;
+        let bind_arguments = table.flag("ext.syntax.call.bind_names");
         if bind_arguments { self.taking = Some(ways); }
         let enclosing: Vec<String> = self.layers.iter().skip(1).filter(|l| l.holds == Holds::Every).flat_map(|l| l.idents.clone()).collect();
         let mut unavailable = self.outside_lambda.clone();
@@ -3966,8 +3979,6 @@ impl<'a> Builder<'a> {
                 steps.push(b.choose(absent, fill, constant(Value::Nil)));
             }
             let body = b.expr(0)?;
-            let complaint = if cannot_call { table.single("ext.op.lambda.unsupported") } else { None };
-            if let Some(words) = complaint { steps.push(prim_call(Prim::Raise, vec![constant(Value::text(words))])); }
             steps.push(body);
             Ok(sequence(steps))
         })?;
@@ -6236,6 +6247,11 @@ impl<'a> Builder<'a> {
     }
 
     fn bracket_part(&mut self, close: &str, comma: Option<&str>) -> Res<Form> {
+        if self.on_any("ext.syntax.array.spread") {
+            self.advance();
+            self.expr(0)?;
+            return Ok(self.scope_unrun("ext.op.index.spread.unsupported"));
+        }
         if self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
             self.advance();
             return Ok(prim_call(Prim::SliceRefused, Vec::new()));

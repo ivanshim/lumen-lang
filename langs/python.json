@@ -936,6 +936,9 @@
   "ext.op.index.slice.zero": [
     "slice step cannot be zero"
   ],
+  "ext.op.index.spread.unsupported": [
+    "NotImplementedError: starred subscripts are not supported"
+  ],
   "ext.op.lambda": [
     "lambda"
   ],
@@ -1019,9 +1022,7 @@
   "ext.stmt.catch.group": [
     "*"
   ],
-  "ext.stmt.catch.group.unsupported": [
-    "Exception groups are not supported"
-  ],
+  "ext.stmt.catch.group.unsupported": [],
   "ext.stmt.catch.invalid": [
     "catching classes that do not inherit from BaseException is not allowed"
   ],
@@ -1155,6 +1156,9 @@
   "ext.stmt.nonlocal.amiss": [
     "SyntaxError: no binding for nonlocal '",
     "' found"
+  ],
+  "ext.stmt.nonlocal.module": [
+    "SyntaxError: nonlocal declaration not allowed at module level"
   ],
   "ext.stmt.nonlocal.unrun": [
     "Nonlocal bindings cannot be run without enclosing function cells"
@@ -1298,6 +1302,9 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.fault.class.value": [
+    "ValueError"
+  ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
   ],
