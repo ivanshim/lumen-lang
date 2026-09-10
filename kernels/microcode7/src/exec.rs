@@ -3550,7 +3550,12 @@ impl<'a> Machine<'a> {
     }
 
     fn octets_from_text(&self, text: &str, alphabet: usize) -> Result<Vec<u8>, String> {
-        if alphabet != 0 {
+        if alphabet == 2 {
+            let mut encoded = Vec::new();
+            for c in text.chars() { encoded.push(u8::try_from(u32::from(c)).map_err(|_| self.octet_error("unready"))?); }
+            return Ok(encoded);
+        }
+        if alphabet == 1 {
             let chars = text.chars().collect::<Vec<_>>();
             if let Some(first) = chars.iter().position(|c| *c as u32 > 127) {
                 let last = chars[first..].iter().position(|c| c.is_ascii()).map_or(chars.len(), |i| first + i);
@@ -3568,6 +3573,7 @@ impl<'a> Machine<'a> {
     }
 
     fn octets_to_text(&self, numbers: &[u8], alphabet: usize) -> Result<Value, String> {
+        if alphabet == 2 { return Ok(Value::text(&numbers.iter().copied().map(char::from).collect::<String>())); }
         let mut fault = None;
         if alphabet == 1 {
             for (i, &number) in numbers.iter().enumerate() {
@@ -3612,6 +3618,26 @@ impl<'a> Machine<'a> {
         };
         let seek = |hay: &[u8], part: &[u8]| (0..=hay.len()).find(|&i| hay[i..].starts_with(part));
         match operation {
+            40 => {
+                let converted = self.octet_work(5, values, false)?;
+                return Ok(self.octets(self.octet_contents(&converted, false)?, true));
+            }
+            41 | 42 => {
+                if values.len() != 1 { return Err(wrong()); }
+                let mut numbers = self.octet_contents(&values[0], true)?;
+                if operation == 42 { return numbers.into_iter().max().map(|n| Value::Small(n.into())).ok_or_else(refusal); }
+                numbers.sort();
+                return Ok(Value::Vector(Rc::new(numbers.iter().map(|n| Value::Small(i64::from(*n))).collect())));
+            }
+            33 => {
+                if values.len() != 2 { return Err(wrong()); }
+                let from = self.octet_contents(&values[0], false)?;
+                let into = self.octet_contents(&values[1], false)?;
+                if from.len() != into.len() { return Err(wrong()); }
+                let mut replacements = Vec::from_iter(0..=u8::MAX);
+                for i in 0..from.len() { replacements[from[i] as usize] = into[i]; }
+                return Ok(self.octets(replacements, false));
+            }
             0 | 1 => {
                 let content = match values.len() {
                     0 => Vec::new(),
@@ -3696,6 +3722,124 @@ impl<'a> Machine<'a> {
         let args = &values[1..];
         let result;
         match operation {
+            18..=23 => {
+                if !changeable { return Err(self.octet_error("immutable")); }
+                let mut updated = content;
+                let returned = match operation {
+                    18 if args.len() == 1 => { updated.extend(self.octet_contents(&args[0], true)?); Value::Nil }
+                    19 if args.len() <= 1 => {
+                        let position = match args.first() { None => updated.len().checked_sub(1).ok_or_else(|| self.octet_error("index"))?, Some(i) => self.octet_at(i, updated.len())? };
+                        Value::Small(updated.remove(position).into())
+                    }
+                    20 if args.len() == 2 => {
+                        let mut position = self.octet_whole(&args[0])?;
+                        if position < BigInt::zero() { position += updated.len(); }
+                        let position = position.max(BigInt::zero()).min(BigInt::from(updated.len())).to_usize().ok_or_else(wrong)?;
+                        updated.insert(position, self.octet_item(&args[1])?); Value::Nil
+                    }
+                    21 if args.len() == 1 => {
+                        let number = self.octet_item(&args[0])?;
+                        let position = updated.iter().position(|n| *n == number).ok_or_else(|| self.octet_error("remove"))?;
+                        updated.remove(position); Value::Nil
+                    }
+                    22 if args.is_empty() => { updated.truncate(0); Value::Nil }
+                    23 if args.is_empty() => { updated.reverse(); Value::Nil }
+                    _ => return Err(refusal()),
+                };
+                cell.replace(updated);
+                return Ok(returned);
+            }
+            24..=26 if args.len() == 1 => {
+                let part = if operation < 26 && matches!(args[0].kind(), Some(Kind::Whole | Kind::Truth)) { vec![self.octet_item(&args[0])?] }
+                    else { self.octet_contents(&args[0], false)? };
+                match operation {
+                    26 => return Ok(Value::Flag(content.ends_with(&part))),
+                    25 => return seek(&content, &part).map(|p| Value::Small(p as i64)).ok_or_else(|| self.octet_error("subsection")),
+                    _ => {
+                        let mut tally = 0;
+                        let mut offset = 0;
+                        if part.is_empty() { tally = content.len() + 1; }
+                        else { while let Some(next) = seek(&content[offset..], &part) { tally += 1; offset += next + part.len(); } }
+                        return Ok(Value::Small(tally as i64));
+                    }
+                }
+            }
+            27 => return Err(refusal()),
+            28 | 29 if args.len() == 1 || (operation == 28 && args.len() == 2) => {
+                let width = self.octet_whole(&args[0])?.to_usize().unwrap_or(0);
+                let missing = width.saturating_sub(content.len());
+                let mut padded;
+                if operation == 29 {
+                    let signed = content.first().map_or(false, |n| *n == 43 || *n == 45);
+                    padded = vec![48; missing];
+                    if signed { padded.insert(0, content[0]); }
+                    padded.extend_from_slice(&content[usize::from(signed)..]);
+                } else {
+                    let filler = if args.len() == 1 { 32 } else {
+                        let fill = self.octet_contents(&args[1], false)?;
+                        if fill.len() != 1 { return Err(wrong()); } fill[0]
+                    };
+                    let leading = missing / 2 + usize::from(missing % 2 == 1 && width % 2 == 1);
+                    padded = vec![filler; leading];
+                    padded.extend_from_slice(&content);
+                    padded.extend(std::iter::repeat(filler).take(missing - leading));
+                }
+                result = padded;
+            }
+            30 | 31 if args.is_empty() => {
+                let accepted = content.iter().filter(|n| if operation == 30 { n.is_ascii_alphabetic() } else { n.is_ascii_digit() }).count();
+                return Ok(Value::Flag(accepted > 0 && accepted == content.len()));
+            }
+            32 if !args.is_empty() && args.len() <= 2 => {
+                let replacement = match &args[0] { Value::Nil => Vec::from_iter(0..=255), v => self.octet_contents(v, false)? };
+                if replacement.len() != 256 { return Err(wrong()); }
+                let omitted = if args.len() == 2 { self.octet_contents(&args[1], false)? } else { Vec::new() };
+                let mut translated = Vec::new();
+                for number in content { if !omitted.contains(&number) { translated.push(replacement[number as usize]); } }
+                result = translated;
+            }
+            34 if args.len() < 2 => {
+                let stop = match args.first() { None => 8, Some(n) => self.octet_whole(n)?.to_usize().unwrap_or(0) };
+                let mut expanded = Vec::new();
+                let mut used = 0;
+                for number in content {
+                    match number {
+                        9 => { if stop > 0 { let count = stop - used % stop; expanded.extend(std::iter::repeat(32).take(count)); used += count; } }
+                        10 | 13 => { expanded.push(number); used = 0; }
+                        _ => { expanded.push(number); used += 1; }
+                    }
+                }
+                result = expanded;
+            }
+            35 if args.len() < 2 => {
+                let endings = args.first().map_or(false, |v| self.truth(v));
+                let mut lines = Vec::new();
+                let mut remaining = content.as_slice();
+                while !remaining.is_empty() {
+                    if let Some(end) = remaining.iter().position(|n| *n == 10 || *n == 13) {
+                        let next = end + if remaining[end] == 13 && remaining.get(end + 1) == Some(&10) { 2 } else { 1 };
+                        lines.push(self.octets(remaining[..if endings { next } else { end }].to_vec(), *changeable));
+                        remaining = &remaining[next..];
+                    } else { lines.push(self.octets(remaining.to_vec(), *changeable)); break; }
+                }
+                return Ok(Value::Vector(Rc::new(lines)));
+            }
+            36 | 37 if args.is_empty() => {
+                let mut transformed = Vec::with_capacity(content.len());
+                let mut begin_word = true;
+                for number in content {
+                    let upper = if operation == 36 { begin_word } else { number.is_ascii_lowercase() };
+                    transformed.push(if upper { number.to_ascii_uppercase() } else { number.to_ascii_lowercase() });
+                    begin_word = !number.is_ascii_alphabetic();
+                }
+                result = transformed;
+            }
+            38 | 39 if args.len() == 1 => {
+                let remove = self.octet_contents(&args[0], false)?;
+                let range = if operation == 38 && content.starts_with(&remove) { remove.len()..content.len() }
+                    else if operation == 39 && content.ends_with(&remove) { 0..content.len() - remove.len() } else { 0..content.len() };
+                result = content[range].to_vec();
+            }
             3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
             4 if args.is_empty() => {
                 let mut text = String::with_capacity(content.len() * 2);
@@ -3800,6 +3944,7 @@ impl<'a> Machine<'a> {
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
             }
+            if op == Prim::Plus && matches!((&v[0], &v[1]), (Value::Octets { .. }, Value::Text(_))) { return Err(self.octet_error("concat")); }
             if has_octets && matches!(op, Prim::Plus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Mod | Prim::Join) {
                 return Err(self.octet_error("unready"));
             }
@@ -4216,6 +4361,12 @@ impl<'a> Machine<'a> {
             Prim::Added => {
                 n(2)?;
                 match &v[0] {
+                    Value::Octets { cell, changeable, .. } => {
+                        if !changeable { return Err(self.octet_error("immutable")); }
+                        let number = self.octet_item(&v[1])?;
+                        cell.borrow_mut().push(number);
+                        v[0].clone()
+                    }
                     Value::Vector(items) => {
                         let mut all = items.as_ref().clone();
                         all.push(v[1].clone());
@@ -5247,6 +5398,7 @@ impl<'a> Machine<'a> {
                     _ => return Err(format!("{}() requires a real argument", name)),
                 }
             }
+            Prim::AsText if matches!(v.first(), Some(Value::Octets { .. })) && (2..=3).contains(&v.len()) => return self.octet_routine(3, v),
             Prim::AsText if self.table.single("ext.builtin.to_string.object").is_some() && v.len() != 1 => {
                 if v.is_empty() { Value::text("") } else { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
             }

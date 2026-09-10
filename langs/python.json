@@ -976,7 +976,9 @@
     "utf-8",
     "utf8",
     "ascii",
-    "us-ascii"
+    "us-ascii",
+    "latin-1",
+    "latin1"
   ],
   "ext.system.bytes.hex": [
     "ValueError: non-hexadecimal number found in fromhex() arg at position "
@@ -1035,5 +1037,111 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.builtin.bytes.extend": [
+    "extend"
+  ],
+  "ext.builtin.bytes.pop": [
+    "pop"
+  ],
+  "ext.builtin.bytes.insert": [
+    "insert"
+  ],
+  "ext.builtin.bytes.remove": [
+    "remove"
+  ],
+  "ext.builtin.bytes.clear": [
+    "clear"
+  ],
+  "ext.builtin.bytes.reverse": [
+    "reverse"
+  ],
+  "ext.builtin.bytes.count": [
+    "count"
+  ],
+  "ext.builtin.bytes.index": [
+    "index"
+  ],
+  "ext.builtin.bytes.endswith": [
+    "endswith"
+  ],
+  "ext.builtin.bytes.partition": [
+    "partition"
+  ],
+  "ext.builtin.bytes.center": [
+    "center"
+  ],
+  "ext.builtin.bytes.zfill": [
+    "zfill"
+  ],
+  "ext.builtin.bytes.isalpha": [
+    "isalpha"
+  ],
+  "ext.builtin.bytes.isdigit": [
+    "isdigit"
+  ],
+  "ext.builtin.bytes.translate": [
+    "translate"
+  ],
+  "ext.builtin.bytes.maketrans": [
+    "bytes.maketrans"
+  ],
+  "ext.builtin.bytes.expandtabs": [
+    "expandtabs"
+  ],
+  "ext.builtin.bytes.splitlines": [
+    "splitlines"
+  ],
+  "ext.builtin.bytes.title": [
+    "title"
+  ],
+  "ext.builtin.bytes.swapcase": [
+    "swapcase"
+  ],
+  "ext.builtin.bytes.removeprefix": [
+    "removeprefix"
+  ],
+  "ext.builtin.bytes.removesuffix": [
+    "removesuffix"
+  ],
+  "ext.builtin.bytearray.fromhex": [
+    "bytearray.fromhex"
+  ],
+  "ext.builtin.sorted": [
+    "sorted"
+  ],
+  "ext.builtin.max": [
+    "max"
+  ],
+  "ext.builtin.memoryview": [
+    "memoryview"
+  ],
+  "ext.builtin.memoryview.tobytes": [
+    "tobytes"
+  ],
+  "ext.builtin.memoryview.tolist": [
+    "tolist"
+  ],
+  "ext.builtin.memoryview.readonly": [
+    "readonly"
+  ],
+  "ext.builtin.memoryview.release": [
+    "release"
+  ],
+  "ext.system.bytes.concat": [
+    "TypeError: can't concat str to bytes"
+  ],
+  "ext.system.bytes.subsection": [
+    "ValueError: subsection not found"
+  ],
+  "ext.system.bytes.remove": [
+    "ValueError: value not found in bytearray"
+  ],
+  "ext.system.bytes.released": [
+    "ValueError: operation forbidden on released memoryview object"
+  ],
+  "ext.system.bytes.join": [
+    "TypeError: sequence item ",
+    ": expected str instance, bytes found"
+  ]
 }

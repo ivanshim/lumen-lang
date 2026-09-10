@@ -81,7 +81,7 @@ system.kind.array:L system.kind.null:L \
 
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
-const EXT_TAGS: &str = "ext.builtin.bytes.signed:L ext.system.bytes.strict:L ext.builtin.bytes:L ext.builtin.bytearray:L ext.builtin.bytes.encode:L ext.builtin.bytes.decode:L ext.builtin.bytes.hex:L ext.builtin.bytes.fromhex:L ext.builtin.bytes.upper:L ext.builtin.bytes.lower:L ext.builtin.bytes.split:L ext.builtin.bytes.join:L ext.builtin.bytes.startswith:L ext.builtin.bytes.replace:L ext.builtin.bytes.strip:L ext.builtin.bytes.find:L ext.builtin.bytes.from_int:L ext.builtin.bytes.to_int:L ext.builtin.isinstance:L ext.builtin.hash:L ext.system.bytes.repr:L ext.system.bytes.type:L ext.system.bytes.encodings:L ext.system.bytes.order:L ext.system.bytes.unready:L ext.system.bytes.arguments:L ext.system.bytes.range:L ext.system.bytes.negative:L ext.system.bytes.index:L ext.system.bytes.immutable:L ext.system.bytes.unhashable:L ext.system.bytes.separator:L ext.system.bytes.hex:L ext.system.bytes.overflow:L ext.system.bytes.unsigned:L ext.system.bytes.bad_order:L ext.system.bytes.decode:L ext.system.bytes.encode:L ext.lexical.string.bytes.ascii:L ext.lexical.string.bytes.mixed:L \
+const EXT_TAGS: &str = "ext.builtin.bytes.extend:L ext.builtin.bytes.pop:L ext.builtin.bytes.insert:L ext.builtin.bytes.remove:L ext.builtin.bytes.clear:L ext.builtin.bytes.reverse:L ext.builtin.bytes.count:L ext.builtin.bytes.index:L ext.builtin.bytes.endswith:L ext.builtin.bytes.partition:L ext.builtin.bytes.center:L ext.builtin.bytes.zfill:L ext.builtin.bytes.isalpha:L ext.builtin.bytes.isdigit:L ext.builtin.bytes.translate:L ext.builtin.bytes.maketrans:L ext.builtin.bytes.expandtabs:L ext.builtin.bytes.splitlines:L ext.builtin.bytes.title:L ext.builtin.bytes.swapcase:L ext.builtin.bytes.removeprefix:L ext.builtin.bytes.removesuffix:L ext.builtin.bytearray.fromhex:L ext.builtin.sorted:L ext.builtin.max:L ext.builtin.memoryview:L ext.builtin.memoryview.tobytes:L ext.builtin.memoryview.tolist:L ext.builtin.memoryview.readonly:L ext.builtin.memoryview.release:L ext.system.bytes.concat:L ext.system.bytes.subsection:L ext.system.bytes.remove:L ext.system.bytes.released:L ext.system.bytes.join:L ext.builtin.bytes.signed:L ext.system.bytes.strict:L ext.builtin.bytes:L ext.builtin.bytearray:L ext.builtin.bytes.encode:L ext.builtin.bytes.decode:L ext.builtin.bytes.hex:L ext.builtin.bytes.fromhex:L ext.builtin.bytes.upper:L ext.builtin.bytes.lower:L ext.builtin.bytes.split:L ext.builtin.bytes.join:L ext.builtin.bytes.startswith:L ext.builtin.bytes.replace:L ext.builtin.bytes.strip:L ext.builtin.bytes.find:L ext.builtin.bytes.from_int:L ext.builtin.bytes.to_int:L ext.builtin.isinstance:L ext.builtin.hash:L ext.system.bytes.repr:L ext.system.bytes.type:L ext.system.bytes.encodings:L ext.system.bytes.order:L ext.system.bytes.unready:L ext.system.bytes.arguments:L ext.system.bytes.range:L ext.system.bytes.negative:L ext.system.bytes.index:L ext.system.bytes.immutable:L ext.system.bytes.unhashable:L ext.system.bytes.separator:L ext.system.bytes.hex:L ext.system.bytes.overflow:L ext.system.bytes.unsigned:L ext.system.bytes.bad_order:L ext.system.bytes.decode:L ext.system.bytes.encode:L ext.lexical.string.bytes.ascii:L ext.lexical.string.bytes.mixed:L \
 ext.lexical.string.long:L ext.op.lambda:L ext.op.tuple:L ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.stmt.class.unready:L ext.stmt.del:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unrun:L ext.system.scope.unready:L ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L ext.op.await:L ext.stmt.async:L ext.stmt.loop.else:B ext.stmt.del.unrun:L ext.stmt.binding.unrun:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
@@ -144,7 +144,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 90] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 120] = [
     ("ext.builtin.bytes", Prim::Octets(0)),
     ("ext.builtin.bytearray", Prim::Octets(1)),
     ("ext.builtin.bytes.encode", Prim::Octets(2)),
@@ -163,6 +163,37 @@ pub const BUILTIN_LABELS: [(&str, Prim); 90] = [
     ("ext.builtin.bytes.to_int", Prim::Octets(15)),
     ("ext.builtin.isinstance", Prim::Octets(16)),
     ("ext.builtin.hash", Prim::Octets(17)),
+    ("ext.builtin.memoryview.release", Prim::Octets(47)),
+    ("ext.builtin.memoryview.readonly", Prim::Octets(46)),
+    ("ext.builtin.memoryview.tolist", Prim::Octets(45)),
+    ("ext.builtin.memoryview.tobytes", Prim::Octets(44)),
+    ("ext.builtin.memoryview", Prim::Octets(43)),
+    ("ext.builtin.max", Prim::Octets(42)),
+    ("ext.builtin.sorted", Prim::Octets(41)),
+    ("ext.builtin.bytearray.fromhex", Prim::Octets(40)),
+    ("ext.builtin.bytes.removesuffix", Prim::Octets(39)),
+    ("ext.builtin.bytes.removeprefix", Prim::Octets(38)),
+    ("ext.builtin.bytes.swapcase", Prim::Octets(37)),
+    ("ext.builtin.bytes.title", Prim::Octets(36)),
+    ("ext.builtin.bytes.splitlines", Prim::Octets(35)),
+    ("ext.builtin.bytes.expandtabs", Prim::Octets(34)),
+    ("ext.builtin.bytes.maketrans", Prim::Octets(33)),
+    ("ext.builtin.bytes.translate", Prim::Octets(32)),
+    ("ext.builtin.bytes.isdigit", Prim::Octets(31)),
+    ("ext.builtin.bytes.isalpha", Prim::Octets(30)),
+    ("ext.builtin.bytes.zfill", Prim::Octets(29)),
+    ("ext.builtin.bytes.center", Prim::Octets(28)),
+    ("ext.builtin.bytes.partition", Prim::Octets(27)),
+    ("ext.builtin.bytes.endswith", Prim::Octets(26)),
+    ("ext.builtin.bytes.index", Prim::Octets(25)),
+    ("ext.builtin.bytes.count", Prim::Octets(24)),
+    ("ext.builtin.bytes.reverse", Prim::Octets(23)),
+    ("ext.builtin.bytes.clear", Prim::Octets(22)),
+    ("ext.builtin.bytes.remove", Prim::Octets(21)),
+    ("ext.builtin.bytes.insert", Prim::Octets(20)),
+    ("ext.builtin.bytes.pop", Prim::Octets(19)),
+    ("ext.builtin.bytes.extend", Prim::Octets(18)),
+
 
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),

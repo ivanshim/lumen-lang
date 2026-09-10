@@ -813,7 +813,7 @@ b system.flag.counts
 
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
-const EXT_LABELS: &str = "w ext.builtin.bytes.signed | w ext.system.bytes.strict | w ext.builtin.bytes | w ext.builtin.bytearray | w ext.builtin.bytes.encode | w ext.builtin.bytes.decode | w ext.builtin.bytes.hex | w ext.builtin.bytes.fromhex | w ext.builtin.bytes.upper | w ext.builtin.bytes.lower | w ext.builtin.bytes.split | w ext.builtin.bytes.join | w ext.builtin.bytes.startswith | w ext.builtin.bytes.replace | w ext.builtin.bytes.strip | w ext.builtin.bytes.find | w ext.builtin.bytes.from_int | w ext.builtin.bytes.to_int | w ext.builtin.isinstance | w ext.builtin.hash | w ext.system.bytes.repr | w ext.system.bytes.type | w ext.system.bytes.encodings | w ext.system.bytes.order | w ext.system.bytes.unready | w ext.system.bytes.arguments | w ext.system.bytes.range | w ext.system.bytes.negative | w ext.system.bytes.index | w ext.system.bytes.immutable | w ext.system.bytes.unhashable | w ext.system.bytes.separator | w ext.system.bytes.hex | w ext.system.bytes.overflow | w ext.system.bytes.unsigned | w ext.system.bytes.bad_order | w ext.system.bytes.decode | w ext.system.bytes.encode | w ext.lexical.string.bytes.ascii | w ext.lexical.string.bytes.mixed |
+const EXT_LABELS: &str = "w ext.builtin.bytes.extend | w ext.builtin.bytes.pop | w ext.builtin.bytes.insert | w ext.builtin.bytes.remove | w ext.builtin.bytes.clear | w ext.builtin.bytes.reverse | w ext.builtin.bytes.count | w ext.builtin.bytes.index | w ext.builtin.bytes.endswith | w ext.builtin.bytes.partition | w ext.builtin.bytes.center | w ext.builtin.bytes.zfill | w ext.builtin.bytes.isalpha | w ext.builtin.bytes.isdigit | w ext.builtin.bytes.translate | w ext.builtin.bytes.maketrans | w ext.builtin.bytes.expandtabs | w ext.builtin.bytes.splitlines | w ext.builtin.bytes.title | w ext.builtin.bytes.swapcase | w ext.builtin.bytes.removeprefix | w ext.builtin.bytes.removesuffix | w ext.builtin.bytearray.fromhex | w ext.builtin.sorted | w ext.builtin.max | w ext.builtin.memoryview | w ext.builtin.memoryview.tobytes | w ext.builtin.memoryview.tolist | w ext.builtin.memoryview.readonly | w ext.builtin.memoryview.release | w ext.system.bytes.concat | w ext.system.bytes.subsection | w ext.system.bytes.remove | w ext.system.bytes.released | w ext.system.bytes.join | w ext.builtin.bytes.signed | w ext.system.bytes.strict | w ext.builtin.bytes | w ext.builtin.bytearray | w ext.builtin.bytes.encode | w ext.builtin.bytes.decode | w ext.builtin.bytes.hex | w ext.builtin.bytes.fromhex | w ext.builtin.bytes.upper | w ext.builtin.bytes.lower | w ext.builtin.bytes.split | w ext.builtin.bytes.join | w ext.builtin.bytes.startswith | w ext.builtin.bytes.replace | w ext.builtin.bytes.strip | w ext.builtin.bytes.find | w ext.builtin.bytes.from_int | w ext.builtin.bytes.to_int | w ext.builtin.isinstance | w ext.builtin.hash | w ext.system.bytes.repr | w ext.system.bytes.type | w ext.system.bytes.encodings | w ext.system.bytes.order | w ext.system.bytes.unready | w ext.system.bytes.arguments | w ext.system.bytes.range | w ext.system.bytes.negative | w ext.system.bytes.index | w ext.system.bytes.immutable | w ext.system.bytes.unhashable | w ext.system.bytes.separator | w ext.system.bytes.hex | w ext.system.bytes.overflow | w ext.system.bytes.unsigned | w ext.system.bytes.bad_order | w ext.system.bytes.decode | w ext.system.bytes.encode | w ext.lexical.string.bytes.ascii | w ext.lexical.string.bytes.mixed |
 w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
@@ -1329,6 +1329,37 @@ impl Lang {
             ("ext.builtin.bytes.to_int", Builtin::Bytes(15)),
             ("ext.builtin.isinstance", Builtin::Bytes(16)),
             ("ext.builtin.hash", Builtin::Bytes(17)),
+            ("ext.builtin.bytes.extend", Builtin::Bytes(18)),
+            ("ext.builtin.bytes.pop", Builtin::Bytes(19)),
+            ("ext.builtin.bytes.insert", Builtin::Bytes(20)),
+            ("ext.builtin.bytes.remove", Builtin::Bytes(21)),
+            ("ext.builtin.bytes.clear", Builtin::Bytes(22)),
+            ("ext.builtin.bytes.reverse", Builtin::Bytes(23)),
+            ("ext.builtin.bytes.count", Builtin::Bytes(24)),
+            ("ext.builtin.bytes.index", Builtin::Bytes(25)),
+            ("ext.builtin.bytes.endswith", Builtin::Bytes(26)),
+            ("ext.builtin.bytes.partition", Builtin::Bytes(27)),
+            ("ext.builtin.bytes.center", Builtin::Bytes(28)),
+            ("ext.builtin.bytes.zfill", Builtin::Bytes(29)),
+            ("ext.builtin.bytes.isalpha", Builtin::Bytes(30)),
+            ("ext.builtin.bytes.isdigit", Builtin::Bytes(31)),
+            ("ext.builtin.bytes.translate", Builtin::Bytes(32)),
+            ("ext.builtin.bytes.maketrans", Builtin::Bytes(33)),
+            ("ext.builtin.bytes.expandtabs", Builtin::Bytes(34)),
+            ("ext.builtin.bytes.splitlines", Builtin::Bytes(35)),
+            ("ext.builtin.bytes.title", Builtin::Bytes(36)),
+            ("ext.builtin.bytes.swapcase", Builtin::Bytes(37)),
+            ("ext.builtin.bytes.removeprefix", Builtin::Bytes(38)),
+            ("ext.builtin.bytes.removesuffix", Builtin::Bytes(39)),
+            ("ext.builtin.bytearray.fromhex", Builtin::Bytes(40)),
+            ("ext.builtin.sorted", Builtin::Bytes(41)),
+            ("ext.builtin.max", Builtin::Bytes(42)),
+            ("ext.builtin.memoryview", Builtin::Bytes(43)),
+            ("ext.builtin.memoryview.tobytes", Builtin::Bytes(44)),
+            ("ext.builtin.memoryview.tolist", Builtin::Bytes(45)),
+            ("ext.builtin.memoryview.readonly", Builtin::Bytes(46)),
+            ("ext.builtin.memoryview.release", Builtin::Bytes(47)),
+
 
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
@@ -1428,7 +1459,7 @@ impl Lang {
             yield_from: r.strings("ext.stmt.yield.from")?,
             member_pipes: r.flag("ext.op.member.pipes")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
-            byte_words: ["ext.builtin.bytes.signed", "ext.system.bytes.strict", "ext.builtin.bytes", "ext.builtin.bytearray", "ext.builtin.bytes.encode", "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower", "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace", "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.from_int", "ext.builtin.bytes.to_int", "ext.builtin.isinstance", "ext.builtin.hash", "ext.system.bytes.repr", "ext.system.bytes.type", "ext.system.bytes.encodings", "ext.system.bytes.order", "ext.system.bytes.unready", "ext.system.bytes.arguments", "ext.system.bytes.range", "ext.system.bytes.negative", "ext.system.bytes.index", "ext.system.bytes.immutable", "ext.system.bytes.unhashable", "ext.system.bytes.separator", "ext.system.bytes.hex", "ext.system.bytes.overflow", "ext.system.bytes.unsigned", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"].iter().map(|key| Ok((key.to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
+            byte_words: ["ext.builtin.bytes.extend", "ext.builtin.bytes.pop", "ext.builtin.bytes.insert", "ext.builtin.bytes.remove", "ext.builtin.bytes.clear", "ext.builtin.bytes.reverse", "ext.builtin.bytes.count", "ext.builtin.bytes.index", "ext.builtin.bytes.endswith", "ext.builtin.bytes.partition", "ext.builtin.bytes.center", "ext.builtin.bytes.zfill", "ext.builtin.bytes.isalpha", "ext.builtin.bytes.isdigit", "ext.builtin.bytes.translate", "ext.builtin.bytes.maketrans", "ext.builtin.bytes.expandtabs", "ext.builtin.bytes.splitlines", "ext.builtin.bytes.title", "ext.builtin.bytes.swapcase", "ext.builtin.bytes.removeprefix", "ext.builtin.bytes.removesuffix", "ext.builtin.bytearray.fromhex", "ext.builtin.sorted", "ext.builtin.max", "ext.builtin.memoryview", "ext.builtin.memoryview.tobytes", "ext.builtin.memoryview.tolist", "ext.builtin.memoryview.readonly", "ext.builtin.memoryview.release", "ext.system.bytes.concat", "ext.system.bytes.subsection", "ext.system.bytes.remove", "ext.system.bytes.released", "ext.system.bytes.join", "ext.builtin.bytes.signed", "ext.system.bytes.strict", "ext.builtin.bytes", "ext.builtin.bytearray", "ext.builtin.bytes.encode", "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower", "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace", "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.from_int", "ext.builtin.bytes.to_int", "ext.builtin.isinstance", "ext.builtin.hash", "ext.system.bytes.repr", "ext.system.bytes.type", "ext.system.bytes.encodings", "ext.system.bytes.order", "ext.system.bytes.unready", "ext.system.bytes.arguments", "ext.system.bytes.range", "ext.system.bytes.negative", "ext.system.bytes.index", "ext.system.bytes.immutable", "ext.system.bytes.unhashable", "ext.system.bytes.separator", "ext.system.bytes.hex", "ext.system.bytes.overflow", "ext.system.bytes.unsigned", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"].iter().map(|key| Ok((key.to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
             format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
             identity_unready: r.strings("ext.op.identical.unsupported")?,

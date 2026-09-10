@@ -3339,6 +3339,7 @@ impl<'a> Engine<'a> {
                 return Ok(self.byte_make(out, *mutable));
             }
         }
+        if matches!((a, b), (Value::Bytes(..), Value::Text(_))) && matches!(op, Action::Add) { return Err(self.byte_fault("concat")); }
         if (matches!(a, Value::Bytes(..)) || matches!(b, Value::Bytes(..)))
             && matches!(op, Action::Add | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Mod | Action::Join) {
             return Err(self.byte_fault("unready"));
@@ -4377,16 +4378,17 @@ impl<'a> Engine<'a> {
         n.to_usize().filter(|&at| at < size).ok_or_else(|| self.byte_fault("index"))
     }
 
-    fn byte_codec(&self, value: Option<&Value>) -> Res<bool> {
-        let Some(value) = value else { return Ok(false); };
+    fn byte_codec(&self, value: Option<&Value>) -> Res<usize> {
+        let Some(value) = value else { return Ok(0); };
         let Value::Text(name) = value else { return Err(self.byte_fault("arguments")); };
         let name = name.to_ascii_lowercase().replace('_', "-");
         self.lang.byte_words["ext.system.bytes.encodings"].iter().position(|word| word == &name)
-            .map(|at| at >= 2).ok_or_else(|| self.byte_fault("unready"))
+            .map(|at| at / 2).ok_or_else(|| self.byte_fault("unready"))
     }
 
-    fn byte_encode(&self, text: &str, ascii: bool) -> Res<Vec<u8>> {
-        if ascii {
+    fn byte_encode(&self, text: &str, codec: usize) -> Res<Vec<u8>> {
+        if codec == 2 { return text.chars().map(|c| u8::try_from(c as u32).map_err(|_| self.byte_fault("unready"))).collect(); }
+        if codec == 1 {
             let letters: Vec<char> = text.chars().collect();
             if let Some(at) = letters.iter().position(|c| !c.is_ascii()) {
                 let stop = at + letters[at..].iter().take_while(|c| !c.is_ascii()).count();
@@ -4401,7 +4403,9 @@ impl<'a> Engine<'a> {
         Ok(text.as_bytes().to_vec())
     }
 
-    fn byte_decode(&self, row: &[u8], ascii: bool) -> Res<Value> {
+    fn byte_decode(&self, row: &[u8], codec: usize) -> Res<Value> {
+        if codec == 2 { return Ok(Value::text(&row.iter().map(|&b| char::from(b)).collect::<String>())); }
+        let ascii = codec == 1;
         let failure = if ascii {
             row.iter().position(|b| !b.is_ascii()).map(|at| (at, 1, "ordinal not in range(128)"))
         } else {
@@ -4467,6 +4471,25 @@ impl<'a> Engine<'a> {
             let Value::Text(text) = &args[0] else { return Err(bad()); };
             return Ok(self.byte_make(self.byte_encode(text, self.byte_codec(args.get(1))?)?, false));
         }
+        if task == 40 {
+            let made = self.byte_work(5, args, signed)?;
+            return Ok(self.byte_make(self.byte_row(&made)?, true));
+        }
+        if task == 41 || task == 42 {
+            let [given] = args else { return Err(bad()); };
+            let mut row = self.byte_row(given)?;
+            row.sort_unstable();
+            return if task == 41 { Ok(Value::array(row.into_iter().map(|b| Value::Small(i64::from(b))).collect())) }
+                else { row.last().map(|b| Value::Small(i64::from(*b))).ok_or_else(unready) };
+        }
+        if task == 33 {
+            let [before, after] = args else { return Err(bad()); };
+            let (before, after) = (self.byte_row(before)?, self.byte_row(after)?);
+            if before.len() != after.len() { return Err(bad()); }
+            let mut table: Vec<u8> = (0..=255).collect();
+            for (from, to) in before.into_iter().zip(after) { table[from as usize] = to; }
+            return Ok(self.byte_make(table, false));
+        }
         if task == 5 {
             let [Value::Text(text)] = args else { return Err(bad()); };
             let chars: Vec<char> = text.chars().collect();
@@ -4529,6 +4552,94 @@ impl<'a> Engine<'a> {
         };
         let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
         let result = match task {
+            18..=23 => {
+                if !mutable { return Err(self.byte_fault("immutable")); }
+                let mut changed = row.clone();
+                let mut answer = Value::Null;
+                match (task, given) {
+                    (18, [source]) => changed.extend(self.byte_row(source)?),
+                    (19, []) => { answer = Value::Small(i64::from(changed.pop().ok_or_else(|| self.byte_fault("index"))?)); }
+                    (19, [at]) => { let at = self.byte_position(at, changed.len())?; answer = Value::Small(i64::from(changed.remove(at))); }
+                    (20, [at, value]) => {
+                        let raw = at.as_big()?.to_i64().ok_or_else(bad)?;
+                        let at = if raw < 0 { (raw + changed.len() as i64).max(0) as usize } else { (raw as usize).min(changed.len()) };
+                        changed.insert(at, self.byte_number(value)?);
+                    }
+                    (21, [value]) => {
+                        let byte = self.byte_number(value)?;
+                        let at = changed.iter().position(|b| *b == byte).ok_or_else(|| self.byte_fault("remove"))?;
+                        changed.remove(at);
+                    }
+                    (22, []) => changed.clear(),
+                    (23, []) => changed.reverse(),
+                    _ => return Err(unready()),
+                }
+                *cell.borrow_mut() = changed;
+                return Ok(answer);
+            }
+            24 | 25 | 26 if given.len() == 1 => {
+                let needle = if matches!(&given[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && task != 26 { vec![self.byte_number(&given[0])?] } else { bytes(&given[0])? };
+                if task == 26 { return Ok(Value::Flag(row.ends_with(&needle))); }
+                if task == 25 { return find(&row, &needle).map(|at| Value::Small(at as i64)).ok_or_else(|| self.byte_fault("subsection")); }
+                let mut total = 0;
+                let mut rest = row.as_slice();
+                if needle.is_empty() { total = row.len() + 1; }
+                else { while let Some(at) = find(rest, &needle) { total += 1; rest = &rest[at + needle.len()..]; } }
+                return Ok(Value::Small(total as i64));
+            }
+            27 => return Err(unready()),
+            28 if (1..=2).contains(&given.len()) => {
+                let width = given[0].as_big()?.to_usize().unwrap_or(0);
+                let fill = match given.get(1) { None => b' ', Some(v) => { let fill = bytes(v)?; if fill.len() != 1 { return Err(bad()); } fill[0] } };
+                let pad = width.saturating_sub(row.len());
+                let left = pad / 2 + (pad & width & 1);
+                let mut made = vec![fill; left]; made.extend(&row); made.resize(row.len() + pad, fill); made
+            }
+            29 if given.len() == 1 => {
+                let width = given[0].as_big()?.to_usize().unwrap_or(0);
+                let pad = width.saturating_sub(row.len());
+                let sign = usize::from(matches!(row.first(), Some(b'+' | b'-')));
+                let mut made = row[..sign].to_vec(); made.resize(sign + pad, b'0'); made.extend(&row[sign..]); made
+            }
+            30 | 31 if given.is_empty() => return Ok(Value::Flag(!row.is_empty() && row.iter().all(|b| if task == 30 { b.is_ascii_alphabetic() } else { b.is_ascii_digit() }))),
+            32 if (1..=2).contains(&given.len()) => {
+                let table = if matches!(given[0], Value::Null) { (0..=255).collect() } else { bytes(&given[0])? };
+                if table.len() != 256 { return Err(bad()); }
+                let delete = given.get(1).map(bytes).transpose()?.unwrap_or_default();
+                row.iter().filter(|b| !delete.contains(b)).map(|b| table[*b as usize]).collect()
+            }
+            34 if given.len() <= 1 => {
+                let width = given.first().map(|v| v.as_big()).transpose()?.and_then(|n| n.to_usize()).unwrap_or(if given.is_empty() { 8 } else { 0 });
+                let (mut made, mut column) = (Vec::new(), 0);
+                for &b in &row {
+                    if b == 9 { let n = if width == 0 { 0 } else { width - column % width }; made.resize(made.len() + n, b' '); column += n; }
+                    else { made.push(b); column = if b == 10 || b == 13 { 0 } else { column + 1 }; }
+                }
+                made
+            }
+            35 if given.len() <= 1 => {
+                let keep = given.first().map_or(false, |v| self.truth(v));
+                let (mut parts, mut start, mut at) = (Vec::new(), 0, 0);
+                while at < row.len() {
+                    if row[at] == 10 || row[at] == 13 {
+                        let end = at; at += 1;
+                        if row[end] == 13 && row.get(at) == Some(&10) { at += 1; }
+                        parts.push(self.byte_make(row[start..if keep { at } else { end }].to_vec(), *mutable)); start = at;
+                    } else { at += 1; }
+                }
+                if start < row.len() { parts.push(self.byte_make(row[start..].to_vec(), *mutable)); }
+                return Ok(Value::array(parts));
+            }
+            36 | 37 if given.is_empty() => {
+                let mut letter = false;
+                row.iter().map(|b| { let out = if task == 37 { if b.is_ascii_lowercase() { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() } }
+                    else if letter { b.to_ascii_lowercase() } else { b.to_ascii_uppercase() }; letter = b.is_ascii_alphabetic(); out }).collect()
+            }
+            38 | 39 if given.len() == 1 => {
+                let affix = bytes(&given[0])?;
+                if task == 38 && row.starts_with(&affix) { row[affix.len()..].to_vec() }
+                else if task == 39 && row.ends_with(&affix) { row[..row.len() - affix.len()].to_vec() } else { row.clone() }
+            }
             3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
             4 if given.is_empty() => return Ok(Value::text(&row.iter().map(|b| format!("{:02x}", b)).collect::<String>())),
             6 | 7 if given.is_empty() => row.iter().map(|b| if task == 6 { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() }).collect(),
@@ -5168,6 +5279,7 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
+            Builtin::ToText if matches!(args.first(), Some(Value::Bytes(..))) && (2..=3).contains(&args.len()) => return self.byte_call(3, args),
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
             Builtin::ToText => {
                 arity(1)?;

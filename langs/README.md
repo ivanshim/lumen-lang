@@ -320,9 +320,37 @@ only. The extension labels so far, all from PHP:
   mutable row, so its other names see the change. Byte prefixes make the
   immutable value, whose places hold whole numbers. Rows admit joining, repetition, ordering, membership
   and equality; a byte row and text are never equal.
+- `ext.builtin.bytes.extend`, `.pop`, `.insert`, `.remove`, `.clear` and
+  `.reverse`: methods changing a mutable byte row. A removed last or named
+  place yields its byte; the other changes yield nothing.
+- `ext.builtin.bytes.count`, `.index` and `.endswith`: count a subsection,
+  find its first place with a complaint if absent, and test the ending.
+- `ext.builtin.bytes.partition`, `.center` and `.zfill`: part a row about
+  a separator, set it amid padding, and fill before its figures with noughts.
+- `ext.builtin.bytes.isalpha` and `.isdigit`: ask whether a nonempty row
+  holds only letters or only figures of the seven-bit alphabet.
+- `ext.builtin.bytes.translate` and `.maketrans`: apply and make a table
+  of 256 byte replacements. Translation may also leave out named bytes.
+- `ext.builtin.bytes.expandtabs`, `.splitlines`, `.title` and `.swapcase`:
+  widen tab stops, part lines, capitalize words, and turn letter case about.
+- `ext.builtin.bytes.removeprefix` and `.removesuffix`: leave off a given
+  beginning or ending when present; otherwise make a copy of the row.
+- `ext.builtin.bytearray.fromhex`: read hexadecimal pairs into a mutable row.
+- `ext.builtin.sorted` and `ext.builtin.max`: order a walk and find its
+  greatest member. This byte reading admits byte walks.
+- `ext.builtin.memoryview`: borrow the places of a byte row.
+  `.tobytes` copies those places into bytes, `.tolist` into whole numbers,
+  `.readonly` tells whether writing is forbidden, and `.release` gives up
+  the view. Slicing keeps a view. Other view operations remain wanting.
+- `ext.system.bytes.concat`, `.subsection`, `.remove` and `.released`:
+  complaints for joining text to bytes, seeking an absent subsection,
+  removing an absent byte, and using a view after giving it up.
+- `ext.system.bytes.join`: words before and after the place of a byte row
+  wrongly given to a text join.
 - `ext.builtin.bytes.encode` and `.decode`: the methods taking text to
   bytes and bytes to text. `ext.system.bytes.encodings` names the wide
-  encoding and its alias, then the seven-bit encoding and its alias.
+  encoding and its alias, then the seven-bit encoding and its alias,
+  then the eight-bit Latin encoding and its alias.
   `ext.system.bytes.strict` names strict conversion; other error policies
   remain wanting.
 - `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
