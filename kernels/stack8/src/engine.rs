@@ -6754,14 +6754,18 @@ impl Engine<'_> {
                 let x = number(&args[0]);
                 let (p, q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 if q.is_zero() { return Err(self.core_fault("core.unready", name)); }
-                if self.lang.shortest_reals && matches!(x, Value::Real(_)) {
+                if self.lang.shortest_reals {
+                    let integral = !matches!(x, Value::Real(_));
+                    if integral && digits >= 0 { return Ok(x); }
                     let scale = BigInt::from(10).pow(places);
                     let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow((-digits).min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
                     let (mut whole, remainder) = top.div_rem(&bottom);
-                    if remainder * 2 >= bottom { whole += 1; }
+                    let doubled = remainder * 2;
+                    if doubled > bottom || (doubled == bottom && (&whole % 2u8) != BigInt::from(0)) { whole += 1; }
                     if p.is_negative() { whole = -whole; }
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
                     let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow((-digits).min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
+                    if integral { return Ok(Value::of_big(above)); }
                     let result = crate::value::as_binary(&above, &beneath);
                     return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }
