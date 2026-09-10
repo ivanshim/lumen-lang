@@ -55,10 +55,14 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
-        match table.strings("ext.syntax.call.amiss.builtin") {
-            [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
-            _ => format!("{}: {}", prefix, e),
+        for label in ["ext.syntax.map.resized", "ext.syntax.map.key.unready", "ext.syntax.map.ordering",
+            "ext.syntax.map.unhashable", "ext.syntax.map.missing", "ext.syntax.call.amiss.builtin"] {
+            let words = table.strings(label);
+            let labelled = words.len() == 1 && words[0] == e
+                || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]);
+            if labelled { return e; }
         }
+        format!("{}: {}", prefix, e)
     })
 }
 

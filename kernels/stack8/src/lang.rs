@@ -40,6 +40,13 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub map_resized: Vec<String>,
+    pub map_value_keys: bool,
+    pub map_missing: Vec<String>,
+    pub map_unhashable: Vec<String>,
+    pub map_key_unready: Vec<String>,
+    pub map_ordering: Vec<String>,
+
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
@@ -831,6 +838,7 @@ w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
+b ext.syntax.map.value_keys | w ext.syntax.map.resized | w ext.syntax.map.missing | w ext.syntax.map.unhashable | w ext.syntax.map.key.unready | w ext.syntax.map.ordering
 w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
@@ -1872,6 +1880,12 @@ impl Lang {
             to_string_encoding: r.strings("ext.builtin.to_string.encoding")?,
             to_string_errors: r.strings("ext.builtin.to_string.errors")?,
             to_string_unready: r.strings("ext.builtin.to_string.unready")?,
+            map_resized: r.strings("ext.syntax.map.resized")?,
+            map_value_keys: r.flag("ext.syntax.map.value_keys")?,
+            map_missing: r.strings("ext.syntax.map.missing")?,
+            map_unhashable: r.strings("ext.syntax.map.unhashable")?,
+            map_key_unready: r.strings("ext.syntax.map.key.unready")?,
+            map_ordering: r.strings("ext.syntax.map.ordering")?,
             range_value: r.flag("ext.builtin.range.value")?,
             range_zero: r.strings("ext.builtin.range.zero")?,
             range_integer: r.strings("ext.builtin.range.integer")?,

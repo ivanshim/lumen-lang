@@ -215,6 +215,8 @@ pub enum Action {
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.
     MakeMap,
+    MapSize,
+    MapCheck,
     /// `k => v` as one value, until a literal gathers it.
     Tie,
     /// The key, or the value, of the pair at a position: how a foreach

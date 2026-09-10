@@ -999,6 +999,48 @@ impl<'a> Machine<'a> {
         number_spelled_in(v).map(|n| self.at_width(n))
     }
 
+    fn admits_key(&self, item: &Value) -> Res<()> {
+        if self.table.flag("ext.syntax.map.value_keys") {
+            let value = collection_read(item);
+            let kind = match value {
+                Value::Vector(_) => Some("list"),
+                Value::Dict(_) => Some("dict"),
+                Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Nil | Value::Flag(_) => None,
+                _ => return Err(self.argument_fault("ext.syntax.map.key.unready", None)),
+            };
+            if let Some(kind) = kind { return Err(self.argument_fault("ext.syntax.map.unhashable", Some(kind))); }
+        }
+        Ok(())
+    }
+
+    fn equal_contents(left: &Value, right: &Value) -> bool {
+        let one = collection_read(left);
+        let other = collection_read(right);
+        if let (Value::Dict(a), Value::Dict(b)) = (&one, &other) {
+            if a.len() != b.len() { return false; }
+            return a.iter().all(|entry| b.iter().find(|candidate| Self::equal_contents(&entry.0, &candidate.0))
+                .map_or(false, |candidate| Self::equal_contents(&entry.1, &candidate.1)));
+        }
+        if let (Value::Vector(a), Value::Vector(b)) = (&one, &other) {
+            return a.len() == b.len() && (0..a.len()).all(|i| Self::equal_contents(&a[i], &b[i]));
+        }
+        let number = |v: &Value| match v { Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }), _ => v.clone() };
+        number(&one).equals(&number(&other))
+    }
+
+    fn key_absent(&self, key: &Value) -> String {
+        let printed = self.quoted_remainder(key).unwrap_or_else(|_| key.bare());
+        self.argument_fault("ext.syntax.map.missing", Some(&printed))
+    }
+
+    fn enter_pair(&self, entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+        if !self.table.flag("ext.syntax.map.value_keys") { set_key(entries, key, value); return; }
+        match entries.iter().position(|entry| Self::equal_contents(&entry.0, &key)) {
+            Some(i) => entries[i].1 = value,
+            None => entries.push((key, value)),
+        }
+    }
+
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
         if let Value::Shared(held) = item {
             return self.quoted_remainder(&held.borrow());
@@ -1915,6 +1957,14 @@ impl<'a> Machine<'a> {
                                 .collect(),
                         ))
                     }
+                    Value::Dict(pairs) if self.table.flag("ext.syntax.map.value_keys") => {
+                        self.admits_key(&at)?;
+                        let mut remaining = pairs.to_vec();
+                        let position = remaining.iter().position(|entry| Self::equal_contents(&entry.0, &at))
+                            .ok_or_else(|| self.key_absent(&at))?;
+                        remaining.remove(position);
+                        Value::Dict(Rc::new(remaining))
+                    }
                     Value::Dict(pairs) => {
                         let present = pairs.iter().any(|entry| entry.0.equals(&at));
                         if self.table.has_any("ext.stmt.del") && !present {
@@ -2419,6 +2469,15 @@ impl<'a> Machine<'a> {
                     let over = match shared {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
+                            if self.table.flag("ext.syntax.map.value_keys") {
+                                if let (Value::Dict(entries), Some(key)) = (&*held, &key) {
+                                    self.admits_key(key)?;
+                                    let mut replaced = entries.to_vec();
+                                    self.enter_pair(&mut replaced, key.clone(), value);
+                                    *held = Value::Dict(Rc::new(replaced));
+                                    return Ok(Value::Nil);
+                                }
+                            }
                             written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
                         }
                         None => {
@@ -3503,6 +3562,26 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.table.flag("ext.syntax.map.value_keys") && v.len() == 2 {
+            let maps = matches!(v[0], Value::Dict(_)) || matches!(v[1], Value::Dict(_));
+            if maps && matches!(op, Prim::Eq | Prim::Ne) {
+                return Ok(Value::Flag(Self::equal_contents(&v[0], &v[1]) != (op == Prim::Ne)));
+            }
+            if let (Value::Dict(a), Value::Dict(b)) = (&v[0], &v[1]) {
+                match op {
+                    Prim::BitsEither => {
+                        let mut joined = a.to_vec();
+                        for entry in b.iter() { self.enter_pair(&mut joined, entry.0.clone(), entry.1.clone()); }
+                        return Ok(Value::Dict(Rc::new(joined)));
+                    }
+                    Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
+                        let sign = match op { Prim::Lt => "<", Prim::Gt => ">", Prim::Le => "<=", _ => ">=" };
+                        return Err(self.argument_fault("ext.syntax.map.ordering", Some(sign)));
+                    }
+                    _ => (),
+                }
+            }
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -3636,14 +3715,34 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
                     };
                     let mut combined = prior.to_vec();
-                    for entry in incoming { set_key(&mut combined, entry.0, entry.1); }
+                    for entry in incoming { self.enter_pair(&mut combined, entry.0, entry.1); }
                     Value::Dict(Rc::new(combined))
                 }
             }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
-            Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
+            Prim::MakeMap => {
+                let assembled = assembled(v.to_vec(), true, self.plain_keys);
+                if !self.table.flag("ext.syntax.map.value_keys") { return Ok(assembled); }
+                let Value::Dict(entries) = assembled else { unreachable!() };
+                let mut result = Vec::new();
+                for entry in entries.iter() { self.enter_pair(&mut result, entry.0.clone(), entry.1.clone()); }
+                Value::Dict(Rc::new(result))
+            }
+            Prim::MapLength => match &v[0] {
+                Value::Dict(entries) => Value::Small(entries.len() as i64),
+                _ => Value::Small(-1),
+            },
+            Prim::MapUnchanged => {
+                if let (Value::Dict(now), Value::Small(before)) = (&v[0], &v[1]) {
+                    if *before != -1 && *before != now.len() as i64 {
+                        return Err(self.argument_fault("ext.syntax.map.resized", None));
+                    }
+                }
+                Value::Nil
+            }
             Prim::Couple => {
                 n(2)?;
+                self.admits_key(&v[0])?;
                 Value::Couple(Rc::new((v[0].clone(), v[1].clone())))
             }
             Prim::KeyAt | Prim::ItemAt => {
@@ -3661,7 +3760,7 @@ impl<'a> Machine<'a> {
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
                     },
                     Value::Dict(entries) => match entries.get(at) {
-                        Some((k, x)) => if wants_key { k.clone() } else { x.clone() },
+                        Some((k, x)) => if wants_key || self.table.flag("ext.syntax.map.value_keys") { k.clone() } else { x.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, entries.len())),
                     },
                     // A thing keeps named values too, and walking it
@@ -3948,7 +4047,8 @@ impl<'a> Machine<'a> {
                     }
                     Value::Dict(entries) => {
                         let mut all = entries.as_ref().clone();
-                        set_key(&mut all, v[1].clone(), v[2].clone());
+                        self.admits_key(&v[1])?;
+                        self.enter_pair(&mut all, v[1].clone(), v[2].clone());
                         Value::Dict(Rc::new(all))
                     }
                     _ => return Err(self.no_places()),
@@ -4600,7 +4700,10 @@ impl<'a> Machine<'a> {
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
-                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
+                    (key, Value::Dict(entries)) => {
+                        self.admits_key(key)?;
+                        entries.iter().any(|(k, _)| if self.table.flag("ext.syntax.map.value_keys") { Self::equal_contents(key, k) } else { key.equals(k) })
+                    },
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
@@ -5306,9 +5409,11 @@ impl<'a> Machine<'a> {
         }
         if let Value::Dict(entries) = target {
             let at = &self.as_key_spoken(at);
-            let found = entries.iter().find(|(k, _)| k.equals(at));
+            self.admits_key(at)?;
+            let found = entries.iter().find(|(k, _)| if self.table.flag("ext.syntax.map.value_keys") { Self::equal_contents(k, at) } else { k.equals(at) });
             return match found {
                 Some((_, v)) => Ok(v.clone()),
+                None if self.table.flag("ext.syntax.map.value_keys") => Err(self.key_absent(at)),
                 None => missing(format!("Undefined array key {}", at.bare()), at),
             };
         }

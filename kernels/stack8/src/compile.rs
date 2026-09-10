@@ -1882,6 +1882,13 @@ impl<'a> Compiler<'a> {
                 copy
             }
         };
+        let map_size = if lang.map_value_keys {
+            let size = self.gensym("map_length");
+            self.read(bag);
+            self.act(Action::MapSize, 1);
+            self.write(&size);
+            Some(size)
+        } else { None };
         let at = self.gensym("at");
         self.constant(Value::Small(0));
         self.write(&at);
@@ -1990,6 +1997,12 @@ impl<'a> Compiler<'a> {
         self.act(Action::WalkOnward, 1);
         self.put_away();
         self.land(to_test);
+        if let Some(size) = &map_size {
+            self.read(bag);
+            self.read(size);
+            self.act(Action::MapCheck, 2);
+            self.put_away();
+        }
         self.read(&over);
         self.read(&at);
         self.act(Action::WalkMore, 2);

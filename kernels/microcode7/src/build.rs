@@ -2600,6 +2600,16 @@ impl<'a> Builder<'a> {
     /// The walk itself: a place counted to the extent, the key and the
     /// item read from it at the head of every pass.
     fn walk(&mut self, source: Form, key: Option<String>, item: String, shares: Option<String>, place: Option<usize>) -> Res<Form> {
+        let (source, map_check, before_walk) = if self.table.flag("ext.syntax.map.value_keys") {
+            let original = self.gensym("map_source");
+            let source_name = original.ident.to_string();
+            let hold_source = Form::Write(original, Box::new(source));
+            let extent = self.gensym("map_extent");
+            let size_name = extent.ident.to_string();
+            let held = self.read(&source_name);
+            let hold_size = Form::Write(extent, Box::new(prim_call(Prim::MapLength, vec![held])));
+            (self.read(&source_name), Some((source_name, size_name)), vec![hold_source, hold_size])
+        } else { (source, None, Vec::new()) };
         let bag = self.gensym("bag");
         let bag_name = bag.ident.to_string();
         // A walk over the copy takes the copy here; one handing out the
@@ -2646,7 +2656,12 @@ impl<'a> Builder<'a> {
         let looped = self.cycle(
             move |r| {
                 let (walking, here) = (r.read(&test_over), r.read(&test_at));
-                Ok(prim_call(Prim::MoreYet, vec![walking, here]))
+                let more = prim_call(Prim::MoreYet, vec![walking, here]);
+                if let Some((source_name, size_name)) = &map_check {
+                    let original = r.read(source_name);
+                    let extent = r.read(size_name);
+                    Ok(sequence(vec![prim_call(Prim::MapUnchanged, vec![original, extent]), more]))
+                } else { Ok(more) }
             },
             move |r| {
                 let mut items = Vec::new();
@@ -2751,7 +2766,7 @@ impl<'a> Builder<'a> {
             let ours = self.address_to_write(&mine);
             Form::Forget(ours)
         });
-        let mut all = Vec::new();
+        let mut all = before_walk;
         all.extend(alone);
         all.push(hold);
         all.push(start);

@@ -891,6 +891,19 @@ only. The extension labels so far, all from PHP:
   remains a map. Line ends within these braces are space. This stage
   does not provide a distinct set value. These arrays and maps keep
   the kernel's accustomed printed form: `[1, hello]` and `[a => 1]`.
+- `ext.syntax.map.value_keys`: a switch; maps compare their keys by value,
+  whole numbers and equal flags naming the same place. Their equality
+  disregards insertion order, and the bitwise union sign joins maps,
+  the right-hand value prevailing whilst an old key keeps its place.
+  Keys must have a settled hash; arrays and maps have none.
+  `ext.syntax.map.unhashable` holds the words before and after the kind
+  of such a key; `ext.syntax.map.key.unready` gives plain words where
+  the key's kind has no means of hashing yet. `ext.syntax.map.missing`
+  encloses the representation of a key that was not found.
+  `ext.syntax.map.ordering` encloses the comparison sign where two
+  maps are asked to stand before or after one another.
+  `ext.syntax.map.resized` gives plain words for a map whose length
+  changes whilst a loop walks it.
 - `ext.syntax.array.spread` and `ext.syntax.map.spread`: a mark before
   a literal item takes all its members; the former takes array items,
   letters of text or map keys, the latter takes map pairs, later keys
@@ -2525,8 +2538,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: value is not iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.map.key.unready` | - | - | `NotImplementedError: dictionary keys of this kind are not supported` | - | - | - | - | - | - | - |
+| `ext.syntax.map.missing` | - | - | `KeyError: ` `` | - | - | - | - | - | - | - |
+| `ext.syntax.map.ordering` | - | - | `TypeError: '` `' not supported between instances of 'dict' and 'dict'` | - | - | - | - | - | - | - |
+| `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
+| `ext.syntax.map.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.map.value_keys` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |

@@ -929,12 +929,31 @@
   "ext.syntax.collection.unwalkable": [
     "TypeError: value is not iterable"
   ],
+  "ext.syntax.map.key.unready": [
+    "NotImplementedError: dictionary keys of this kind are not supported"
+  ],
+  "ext.syntax.map.missing": [
+    "KeyError: ",
+    ""
+  ],
+  "ext.syntax.map.ordering": [
+    "TypeError: '",
+    "' not supported between instances of 'dict' and 'dict'"
+  ],
+  "ext.syntax.map.resized": [
+    "RuntimeError: dictionary changed size during iteration"
+  ],
   "ext.syntax.map.spread": [
     "**"
   ],
   "ext.syntax.map.spread.unmapped": [
     "TypeError: value is not a mapping"
   ],
+  "ext.syntax.map.unhashable": [
+    "TypeError: unhashable type: '",
+    "'"
+  ],
+  "ext.syntax.map.value_keys": true,
   "ext.syntax.set": true,
   "ext.system.fault.operands": [
     "unsupported operand type(s)"

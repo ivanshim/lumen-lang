@@ -2225,6 +2225,11 @@ impl<'a> Engine<'a> {
                                 .collect(),
                         ))
                     }
+                    Value::Map(pairs) if self.lang.map_value_keys => {
+                        self.map_key(&at)?;
+                        if !pairs.iter().any(|(k, _)| self.map_equal(k, &at)) { return Err(self.missing_key(&at).into()); }
+                        Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !self.map_equal(k, &at)).cloned().collect()))
+                    }
                     Value::Map(pairs) => {
                         if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| k.equals(&at)) {
                             return Err(self.lang.del_unrun.clone().into());
@@ -2460,7 +2465,7 @@ impl<'a> Engine<'a> {
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
-                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    for (key, value) in new_pairs { self.replace_item(&mut pairs, key, value); }
                     Value::Map(Rc::new(pairs))
                 } else {
                     let mut items = match gathered_so_far { Value::Array(a) => a.as_ref().clone(), _ => unreachable!() };
@@ -2469,11 +2474,34 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
-            Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
+            Action::MakeMap => {
+                let held = gathered(self.drop_many(argc)?, true, self.lang.plain_keys);
+                if self.lang.map_value_keys {
+                    let Value::Map(entries) = held else { unreachable!() };
+                    let mut unique = Vec::new();
+                    for (k, v) in entries.iter() { self.replace_item(&mut unique, k.clone(), v.clone()); }
+                    Value::Map(Rc::new(unique))
+                } else { held }
+            }
+            Action::MapSize => {
+                let held = collection_contents(&self.drop_top()?);
+                match held { Value::Map(entries) => Value::Small(entries.len() as i64), _ => Value::Small(-1) }
+            }
+            Action::MapCheck => {
+                let size = self.drop_top()?;
+                let held = collection_contents(&self.drop_top()?);
+                if let (Value::Small(was), Value::Map(entries)) = (size, held) {
+                    if was >= 0 && was as usize != entries.len() {
+                        return Err(self.lang.map_resized.first().cloned().unwrap_or_default().into());
+                    }
+                }
+                Value::Null
+            }
             Action::Tie => {
                 let pair = self.drop_many(2)?;
                 let mut pair = pair.into_iter();
                 let (k, v) = (pair.next().expect("the key"), pair.next().expect("the value"));
+                self.map_key(&k)?;
                 Value::Tie(Rc::new((k, v)))
             }
             Action::KeyAt | Action::ValueAt => {
@@ -2490,7 +2518,7 @@ impl<'a> Engine<'a> {
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
                     },
                     Value::Map(pairs) => match pairs.get(at) {
-                        Some((k, v)) => if key { k.clone() } else { v.clone() },
+                        Some((k, v)) => if key || self.lang.map_value_keys { k.clone() } else { v.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, pairs.len()).into()),
                     },
                     // A thing holds named values too, and walking it
@@ -3307,6 +3335,36 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn map_key(&self, key: &Value) -> Res<()> {
+        if !self.lang.map_value_keys { return Ok(()); }
+        match key {
+            Value::Bond(cell) => self.map_key(&cell.borrow()),
+            Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_)
+                | Value::Flag(_) | Value::Text(_) | Value::Null => Ok(()),
+            Value::Array(_) => Err(Self::named_fault(&self.lang.map_unhashable, "list")),
+            Value::Map(_) => Err(Self::named_fault(&self.lang.map_unhashable, "dict")),
+            _ => Err(self.lang.map_key_unready.first().cloned().unwrap_or_default()),
+        }
+    }
+
+    fn map_equal(&self, a: &Value, b: &Value) -> bool {
+        let a = collection_contents(a);
+        let b = collection_contents(b);
+        match (&a, &b) {
+            (Value::Flag(x), Value::Small(y)) | (Value::Small(y), Value::Flag(x)) => i64::from(*x) == *y,
+            (Value::Flag(x), Value::Real(_) | Value::Huge(_) | Value::Frac(_)) => Value::Small(i64::from(*x)).equals(&b),
+            (Value::Real(_) | Value::Huge(_) | Value::Frac(_), Value::Flag(y)) => a.equals(&Value::Small(i64::from(*y))),
+            (Value::Map(x), Value::Map(y)) => x.len() == y.len() && x.iter().all(|(k, v)|
+                y.iter().any(|(j, w)| self.map_equal(k, j) && self.map_equal(v, w))),
+            (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| self.map_equal(v, w)),
+            _ => a.equals(&b),
+        }
+    }
+
+    fn missing_key(&self, key: &Value) -> String {
+        Self::named_fault(&self.lang.map_missing, &self.rem_repr(key).unwrap_or_else(|_| key.plain()))
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3321,6 +3379,23 @@ impl<'a> Engine<'a> {
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
+        }
+        if self.lang.map_value_keys {
+            if matches!(op, Action::Eq | Action::Ne) && (matches!(a, Value::Map(_)) || matches!(b, Value::Map(_))) {
+                return Ok(Value::Flag(self.map_equal(a, b) == matches!(op, Action::Eq)));
+            }
+            if let (Value::Map(left), Value::Map(right)) = (a, b) {
+                if matches!(op, Action::BitEither) {
+                    let mut merged = left.as_ref().clone();
+                    for (key, value) in right.iter() {
+                        if let Some((_, old)) = merged.iter_mut().find(|(k, _)| self.map_equal(k, key)) { *old = value.clone(); }
+                        else { merged.push((key.clone(), value.clone())); }
+                    }
+                    return Ok(Value::Map(Rc::new(merged)));
+                }
+                let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", Action::Ge => ">=", _ => "" };
+                if !sign.is_empty() { return Err(Self::named_fault(&self.lang.map_ordering, sign)); }
+            }
         }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
@@ -3396,7 +3471,10 @@ impl<'a> Engine<'a> {
             Action::Contains | Action::Lacks => {
                 let found = match b {
                     Value::Array(items) => items.iter().any(|v| a.equals(v)),
-                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
+                    Value::Map(items) => {
+                        self.map_key(a)?;
+                        items.iter().any(|(key, _)| if self.lang.map_value_keys { self.map_equal(a, key) } else { a.equals(key) })
+                    },
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
                         _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
@@ -4074,9 +4152,11 @@ impl<'a> Engine<'a> {
         }
         if let Value::Map(pairs) = target {
             let at = &self.key(at);
-            let found = pairs.iter().find(|(k, _)| k.equals(at));
+            self.map_key(at)?;
+            let found = pairs.iter().find(|(k, _)| if self.lang.map_value_keys { self.map_equal(k, at) } else { k.equals(at) });
             return match found {
                 Some((_, v)) => Ok(v.clone()),
+                None if self.lang.map_value_keys => Err(self.missing_key(at)),
                 None => absent(format!("Undefined array key {}", at.plain()), at),
             };
         }
@@ -4316,7 +4396,7 @@ impl<'a> Engine<'a> {
 
     fn replace_item(&self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
         if self.lang.bind_names {
-            if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
+            if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| if self.lang.map_value_keys { self.map_equal(k, &key) } else { k.equals(&key) }) {
                 *old = value;
             } else { pairs.push((key, value)); }
         } else { put_key(pairs, key, value); }
@@ -5032,6 +5112,7 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if matches!(target, Value::Map(_)) { self.map_key(&at)?; }
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
                 }

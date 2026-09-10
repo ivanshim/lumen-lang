@@ -117,8 +117,13 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
-        let words = &lang.call_builtin_amiss;
-        if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        let own = [&lang.call_builtin_amiss, &lang.map_missing, &lang.map_unhashable, &lang.map_ordering,
+            &lang.map_key_unready, &lang.map_resized];
+        if own.iter().any(|words| match words.as_slice() {
+            [before, after] => e.starts_with(before) && e.ends_with(after),
+            [plain] => &e == plain,
+            _ => false,
+        }) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }

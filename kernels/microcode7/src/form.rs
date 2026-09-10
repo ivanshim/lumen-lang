@@ -255,6 +255,8 @@ pub enum Prim {
     Span,
     /// A map from the values given: a couple is a key and its value,
     /// anything else takes the next whole number as its key.
+    MapLength,
+    MapUnchanged,
     MakeMap,
     /// `k => v` held as one value until a literal takes it in.
     Couple,
