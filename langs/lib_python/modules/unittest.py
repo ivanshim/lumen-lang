@@ -518,7 +518,8 @@ def _matches(pattern, text):
     search = getattr(pattern, 'search', None)
     if search is not None:
         return search(text) is not None
-    for character in pattern:
+    for index in range(len(pattern)):
+        character = pattern[index]
         if character in '[](){}|':
             raise 'NotImplementedError: grouped regular expressions are not supported'
     if pattern[:1] == '^':
