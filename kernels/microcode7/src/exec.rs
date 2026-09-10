@@ -1889,7 +1889,7 @@ impl<'a> Machine<'a> {
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
-        if self.has_class_order() && self.ancestor.is_none() { self.common_ancestor(); self.property_forebear(); }
+        if self.has_class_order() && self.property_base.is_none() { self.property_forebear(); }
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
         // reach back into the program to hand it on.
@@ -2046,6 +2046,7 @@ impl<'a> Machine<'a> {
             // both.
             Form::ShareField(of, called) => {
                 let thing = self.value_of(of, frame)?;
+                if !self.detail("descriptor.get").is_empty() && Self::ordered_subject(&thing) {return self.read_class_member(thing,called,false);}
                 let Value::Thing(thing) = thing else {
                     if matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..)) && self.table.has_any("ext.system.scope.unready") {
                         return Err(self.table.single("ext.system.scope.unready").unwrap_or_default().to_string().into());
@@ -2741,6 +2742,12 @@ impl<'a> Machine<'a> {
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    let dictionary=f.cells.borrow()[i].clone();
+                    if let Value::Wrapped(47,held)=dictionary {
+                        let Some(Value::Text(word))=key else{return Err(self.detail("descriptor.unready").to_owned().into());};
+                        self.alter_class_member(held[0].clone(),&word,Some(value),true)?;
+                        return Ok(Value::Nil);
+                    }
                     if let Some(Value::Span(bounds)) = &key {
                         let value = collection_read(&value);
                         let old = f.cells.borrow()[i].clone();
