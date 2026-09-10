@@ -4298,7 +4298,7 @@ impl<'a> Engine<'a> {
 
     fn stream_member(&mut self, object: Value, name: &str, optional: bool) -> Res<Value> {
         let mut args = vec![object, Value::text(name)];
-        if optional { args.push(Value::Null); }
+        if optional { args.push(Value::Blank); }
         self.builtin(Builtin::MemberGet, "", &mut args)
     }
 
@@ -4372,7 +4372,7 @@ impl<'a> Engine<'a> {
                 if flush {
                     let name = self.lang.print_flush[0].clone();
                     let method = self.stream_member(file, &name, true)?;
-                    if !matches!(method, Value::Null) { self.stream_call(method, Vec::new())?; }
+                    if !matches!(method, Value::Blank) { self.stream_call(method, Vec::new())?; }
                 }
                 return Ok(Value::Null);
             }
