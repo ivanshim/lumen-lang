@@ -317,12 +317,12 @@
   "system.memoization": [],
   "system.real_default_precision": [],
   "system.entry": [],
-  "system.kind.integer": [],
+  "system.kind.integer": ["int"],
   "system.kind.rational": [],
-  "system.kind.real": [],
-  "system.kind.string": [],
-  "system.kind.boolean": [],
-  "system.kind.array": [],
+  "system.kind.real": ["float"],
+  "system.kind.string": ["str"],
+  "system.kind.boolean": ["bool"],
+  "system.kind.array": ["list"],
   "system.kind.null": [],
   "ext.block.lone_statement": true,
   "ext.builtin.any": [
@@ -361,6 +361,7 @@
     "setattr"
   ],
   "ext.op.object.binary": ["__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__", "__truediv__", "__rtruediv__", "__floordiv__", "__rfloordiv__", "__mod__", "__rmod__", "__pow__", "__rpow__", "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"],
+  "ext.op.object.unary": ["__neg__", "__int__", "__float__"],
   "ext.op.object.call": ["__call__"],
   "ext.builtin.object.text": ["__str__", "__repr__"],
   "ext.builtin.module.helper.amiss": [

@@ -3536,6 +3536,19 @@ impl<'a> Machine<'a> {
     }
 
     fn object_operation(&mut self, op: Prim, values: &[Value]) -> Option<Result<Value, String>> {
+        if values.len() == 1 {
+            let index = match op { Prim::Negate => Some(0), Prim::AsInt => Some(1), Prim::AsReal => Some(2), _ => None };
+            if let (Some(index), Value::Thing(owner)) = (index, self.what_it_spells(values[0].clone())) {
+                let method = self.table.strings("ext.op.object.unary").get(index).and_then(|word| owner.of.program(word)).cloned();
+                if let Some(method) = method {
+                    return Some(match self.invoke(method, self.outermost.clone(), vec![Value::Thing(owner)]) {
+                        Ok(answer) => Ok(answer),
+                        Err(Escape::Error(words)) => Err(words),
+                        Err(away) => { self.got_away = Some(away); Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into()) }
+                    });
+                }
+            }
+        }
         if values.len() != 2 { return None; }
         let (one, two) = match op {
             Prim::Plus => (0, 1), Prim::Minus => (2, 3), Prim::Times => (4, 5),

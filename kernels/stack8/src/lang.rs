@@ -421,6 +421,7 @@ pub struct Lang {
     pub import_as_words: Vec<String>,
     pub math_floating: bool,
     pub output_error: bool,
+    pub object_unary: Vec<String>,
     pub object_binary: Vec<String>,
     pub object_call: Vec<String>,
     pub object_text: Vec<String>,
@@ -831,7 +832,7 @@ w ext.builtin.module.load
 w ext.builtin.copy
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
-w ext.op.object.binary | w ext.op.object.call | w ext.builtin.object.text
+w ext.op.object.unary | w ext.op.object.binary | w ext.op.object.call | w ext.builtin.object.text
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
 b ext.builtin.math.floating
 w ext.builtin.class.derive
@@ -1659,6 +1660,7 @@ impl Lang {
             import_as_words: r.strings("ext.stmt.import.as")?,
             math_floating: r.flag("ext.builtin.math.floating")?,
             output_error: r.flag("ext.builtin.output.error")?,
+            object_unary: r.strings("ext.op.object.unary")?,
             object_binary: r.strings("ext.op.object.binary")?,
             object_call: r.strings("ext.op.object.call")?,
             object_text: r.strings("ext.builtin.object.text")?,

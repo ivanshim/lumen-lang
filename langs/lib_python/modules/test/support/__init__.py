@@ -225,3 +225,6 @@ class _Sentinel:
 sentinel = _Sentinel()
 
 from test.support.import_helper import import_module, import_fresh_module
+
+def skip_if_sanitizer(reason=None, **sanitizers):
+    return _identity

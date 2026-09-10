@@ -1,4 +1,5 @@
 # Ratios are kept as two whole numbers with a positive denominator.
+from math import inf
 def _gcd(a, b):
     if a < 0:
         a = -a
@@ -22,7 +23,10 @@ def _parse(text):
     text = _trim(text)
     for at in range(len(text)):
         if text[at] == '/':
-            return _digits(_trim(text[:at])), _digits(_trim(text[at + 1:]))
+            denominator = _trim(text[at + 1:])
+            if len(denominator) == 0 or denominator[0] in '+-':
+                raise 'ValueError: Invalid literal for Fraction'
+            return _digits(_trim(text[:at])), _digits(denominator)
     exponent = 0
     for at in range(len(text)):
         if text[at] in 'eE':
@@ -51,11 +55,11 @@ def _ratio(value):
     n = getattr(value, 'numerator', None)
     if n is not None:
         return n, value.denominator
-    if str(value) == value:
+    if isinstance(value, str):
         return _parse(value)
     if value != value:
         raise 'ValueError: cannot convert NaN to integer ratio'
-    if value == float('inf') or value == float('-inf'):
+    if value == inf or value == -inf:
         raise 'OverflowError: cannot convert Infinity to integer ratio'
     denominator = 1
     while value != int(value):
@@ -64,7 +68,7 @@ def _ratio(value):
     return int(value), denominator
 
 def _number(value):
-    if str(value) == value:
+    if not isinstance(value, Fraction) and not isinstance(value, int) and not isinstance(value, float) and not isinstance(value, bool):
         raise 'TypeError: unsupported operand type for Fraction'
     return Fraction(value)
 
@@ -72,9 +76,10 @@ class Fraction:
     def __init__(self, numerator=0, denominator=None):
         n, d = _ratio(numerator)
         if denominator is not None:
-            if n != numerator or d != 1 or int(denominator) != denominator:
+            if not (isinstance(numerator, int) or isinstance(numerator, Fraction)) or not (isinstance(denominator, int) or isinstance(denominator, Fraction)):
                 raise 'TypeError: both arguments should be Rational instances'
-            d = int(denominator)
+            p, q = _ratio(denominator)
+            n, d = n * q, d * p
         if d == 0:
             raise 'ZeroDivisionError: Fraction denominator is zero'
         if d < 0:
@@ -82,6 +87,14 @@ class Fraction:
         common = _gcd(n, d)
         self.numerator = n // common
         self.denominator = d // common
+
+    def from_float(value):
+        if not isinstance(value, int) and not isinstance(value, float):
+            raise 'TypeError: Fraction.from_float() only takes floats and integers'
+        return Fraction(value)
+
+    def from_decimal(value):
+        raise 'NotImplementedError: Decimal conversion is not supported'
 
     def as_integer_ratio(self):
         return self.numerator, self.denominator
@@ -114,6 +127,8 @@ class Fraction:
         return self.__pos__()
 
     def __add__(self, other):
+        if isinstance(other, float):
+            return self.__float__() + other
         right = _number(other)
         return Fraction(self.numerator * right.denominator + right.numerator * self.denominator, self.denominator * right.denominator)
 
@@ -121,13 +136,19 @@ class Fraction:
         return self.__add__(other)
 
     def __sub__(self, other):
+        if isinstance(other, float):
+            return self.__float__() - other
         right = _number(other)
         return Fraction(self.numerator * right.denominator - right.numerator * self.denominator, self.denominator * right.denominator)
 
     def __rsub__(self, other):
+        if isinstance(other, float):
+            return other - self.__float__()
         return _number(other).__sub__(self)
 
     def __mul__(self, other):
+        if isinstance(other, float):
+            return self.__float__() * other
         right = _number(other)
         return Fraction(self.numerator * right.numerator, self.denominator * right.denominator)
 
@@ -135,26 +156,40 @@ class Fraction:
         return self.__mul__(other)
 
     def __truediv__(self, other):
+        if isinstance(other, float):
+            return self.__float__() / other
         right = _number(other)
         return Fraction(self.numerator * right.denominator, self.denominator * right.numerator)
 
     def __rtruediv__(self, other):
+        if isinstance(other, float):
+            return other / self.__float__()
         return _number(other).__truediv__(self)
 
     def __floordiv__(self, other):
+        if isinstance(other, float):
+            return self.__float__() // other
         right = _number(other)
         return (self.numerator * right.denominator) // (self.denominator * right.numerator)
 
     def __rfloordiv__(self, other):
+        if isinstance(other, float):
+            return other // self.__float__()
         return _number(other).__floordiv__(self)
 
     def __mod__(self, other):
+        if isinstance(other, float):
+            return self.__float__() % other
         return self - self.__floordiv__(other) * _number(other)
 
     def __rmod__(self, other):
+        if isinstance(other, float):
+            return other % self.__float__()
         return _number(other).__mod__(self)
 
     def __pow__(self, other):
+        if isinstance(other, float):
+            return self.__float__() ** other
         if other != int(other):
             raise 'NotImplementedError: non-integral Fraction powers are not supported'
         exponent = int(other)
@@ -168,7 +203,9 @@ class Fraction:
         return other ** self.numerator
 
     def __eq__(self, other):
-        if str(other) == other:
+        if isinstance(other, float) and (other != other or other == inf or other == -inf):
+            return self.__float__() == other
+        if not isinstance(other, Fraction) and not isinstance(other, int) and not isinstance(other, float) and not isinstance(other, bool):
             return False
         right = _number(other)
         return self.numerator == right.numerator and self.denominator == right.denominator
@@ -177,18 +214,26 @@ class Fraction:
         return not self.__eq__(other)
 
     def __lt__(self, other):
+        if isinstance(other, float) and (other != other or other == inf or other == -inf):
+            return self.__float__() < other
         right = _number(other)
         return self.numerator * right.denominator < right.numerator * self.denominator
 
     def __le__(self, other):
+        if isinstance(other, float) and (other != other or other == inf or other == -inf):
+            return self.__float__() <= other
         right = _number(other)
         return self.numerator * right.denominator <= right.numerator * self.denominator
 
     def __gt__(self, other):
+        if isinstance(other, float) and (other != other or other == inf or other == -inf):
+            return self.__float__() > other
         right = _number(other)
         return self.numerator * right.denominator > right.numerator * self.denominator
 
     def __ge__(self, other):
+        if isinstance(other, float) and (other != other or other == inf or other == -inf):
+            return self.__float__() >= other
         right = _number(other)
         return self.numerator * right.denominator >= right.numerator * self.denominator
 

@@ -115,7 +115,7 @@ def getsizeof(value, default=None):
     # A rough count of the value's payload and its enclosing record.
     if isinstance(value, str):
         return 49 + len(value) * 4
-    if isinstance(value, list) or isinstance(value, tuple):
+    if isinstance(value, list):
         return 56 + len(value) * 8
     if isinstance(value, int):
         return 28

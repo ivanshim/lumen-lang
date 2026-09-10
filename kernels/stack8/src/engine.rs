@@ -2290,6 +2290,10 @@ impl<'a> Engine<'a> {
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                if let Some(answer) = self.object_number(&v, 0)? {
+                    self.data.push(answer);
+                    return Ok(());
+                }
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -3367,6 +3371,16 @@ impl<'a> Engine<'a> {
         Ok(self.dyadic(op, left, right)?)
     }
 
+    fn object_number(&mut self, value: &Value, at: usize) -> Flow<Option<Value>> {
+        let Value::Object(owner) = self.what_it_spells(value.clone()) else { return Ok(None) };
+        let routine = self.lang.object_unary.get(at).and_then(|name| owner.class.method(name)).cloned();
+        if let Some(routine) = routine {
+            self.invoke(&routine, vec![Value::Object(owner)])?;
+            return Ok(Some(self.drop_top()?));
+        }
+        Ok(None)
+    }
+
     fn object_said(&mut self, value: &Value) -> Res<Value> {
         let Value::Object(object) = self.what_it_spells(value.clone()) else { return Ok(value.clone()) };
         let method = self.lang.object_text.iter().find_map(|name| object.class.method(name)).cloned();
@@ -4331,6 +4345,14 @@ impl<'a> Engine<'a> {
                 Builtin::HeldOut => return Ok(self.held_errors.borrow().last().map_or(Value::Flag(false), |text| Value::text(text))),
                 Builtin::DropOut => return Ok(Value::Flag(self.held_errors.borrow_mut().pop().is_some())),
                 _ => (),
+            }
+        }
+        if args.len() == 1 && matches!(builtin, Builtin::ToInt | Builtin::AsReal) {
+            let at = if builtin == Builtin::ToInt { 1 } else { 2 };
+            match self.object_number(&args[0], at) {
+                Ok(Some(answer)) => return Ok(answer), Ok(None) => (),
+                Err(Fault::Note(text)) => return Err(text),
+                Err(fault) => { self.carried = Some(fault); return Err(self.lang.module_helper_amiss.clone()); }
             }
         }
         if matches!(builtin, Builtin::Say | Builtin::Out | Builtin::ToText) {
