@@ -524,6 +524,18 @@ impl Value {
             }
         }
         if manner.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            if ["_", ",", "_d", ",d"].contains(&pattern) {
+                let integer = self.as_big().ok()?;
+                let magnitude = integer.abs().to_string();
+                let mut grouped = Vec::new();
+                let separator = pattern.chars().next()?;
+                for (position, digit) in magnitude.chars().rev().enumerate() {
+                    if position != 0 && position % 3 == 0 { grouped.push(separator); }
+                    grouped.push(digit);
+                }
+                if integer.is_negative() { grouped.push('-'); }
+                return Some(grouped.into_iter().rev().collect());
+            }
             let alternative = pattern.starts_with('#');
             let kind = pattern.strip_prefix('#').unwrap_or(pattern);
             let radix = match kind { "b" => 2, "o" => 8, "x" | "X" => 16, _ => 0 };

@@ -869,6 +869,7 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.format": ["format"],
   "ext.builtin.repr": [
     "repr"
   ],

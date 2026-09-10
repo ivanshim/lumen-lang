@@ -4663,7 +4663,9 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            let mut said = v.display(&sp);
+            let mut said = if self.lang.print_real_point && matches!(v, Value::Real(_)) {
+                crate::methods::shown(v, &sp)
+            } else { v.display(&sp) };
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
             {
@@ -5745,7 +5747,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Format | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -6784,7 +6786,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Format | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -6951,6 +6953,16 @@ impl Engine<'_> {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
+            Builtin::Format => {
+                arity(1, 2)?;
+                let spec = match args.get(1) {
+                    None => "",
+                    Some(Value::Text(text)) => text.as_ref(),
+                    _ => return Err(self.lang.method_errors["arguments"].clone()),
+                };
+                Value::text(&args[0].string_field(&self.wording(), spec, "")
+                    .ok_or_else(|| self.lang.method_errors["spec"].clone())?)
+            }
             Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
             Builtin::Hash => { arity(1, 1)?; if matches!(args[0], Value::Bytes(..)) { return self.byte_call(17, &args); } Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
             Builtin::Identity => {

@@ -5949,7 +5949,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
                 else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Formatted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -6537,7 +6537,9 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
-            let text = x.render(w);
+            let text = if self.table.flag("ext.builtin.print.real_point") && matches!(x, Value::Frac(r) if r.places.is_some()) {
+                x.in_field(w, "", "").unwrap_or_else(|| x.render(w))
+            } else { x.render(w) };
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
@@ -7334,7 +7336,7 @@ fn suspension_within(form: &Form) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
+        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Formatted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
     fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -7522,6 +7524,16 @@ impl Machine<'_> {
         let cursor = |values: Vec<Value>| Self::cursor_value(IteratorKind::Stored(values.into_iter().collect()));
         match op {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
+            Formatted => {
+                require(1, 2)?;
+                let pattern = match input.get(1) {
+                    Some(Value::Text(chars)) => chars.as_ref(),
+                    None => "",
+                    _ => return Err(self.table.single("ext.builtin.method.error.arguments").unwrap_or_default().to_owned()),
+                };
+                input[0].in_field(self.wording(), pattern, "").map(|s| Value::text(&s))
+                    .ok_or_else(|| self.table.single("ext.builtin.method.error.spec").unwrap_or_default().to_owned())
+            }
             Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted())) }
             Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }

@@ -13,7 +13,7 @@ fn alike(a: &Value, b: &Value) -> bool {
     match (a,b) { (Value::Real(x),Value::Real(y)) if Rc::ptr_eq(x,y) => true, _ => a.equals(b) }
 }
 
-fn shown(value: &Value, words: &Wording) -> String {
+pub fn shown(value: &Value, words: &Wording) -> String {
     if let Value::Real(r) = value {
         let mut number=crate::value::as_binary(&r.p,&r.q);
         if number==0.0 && r.below {number = -0.0;}

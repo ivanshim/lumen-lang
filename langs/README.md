@@ -1491,6 +1491,10 @@ only. The extension labels so far, all from PHP:
   or merge pairs and named arguments. `.pop` takes a map key too.
   `.keys`, `.values` and `.items` yield views which follow later changes
   to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.format`: render a value with an optional field specification.
+  The supplied integer formats include radix prefixes, decimal padding,
+  and groups of three decimal digits separated by commas or underscores.
+  With no specification, numbers use their ordinary text.
 - `ext.builtin.method.conjugate` and `.__index__` give back the
   unchanged number and the whole index. `.real` and `.imag` are value
   attributes giving the number and nought of its kind. `.numerator` and
@@ -3161,6 +3165,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
+| `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |

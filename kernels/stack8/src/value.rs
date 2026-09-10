@@ -551,6 +551,17 @@ impl Value {
             }
         }
         if conversion.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            if matches!(spec, "_" | "," | "_d" | ",d") {
+                let raw = self.as_big().ok()?.to_string();
+                let (sign, digits) = raw.strip_prefix('-').map_or(("", raw.as_str()), |s| ("-", s));
+                let separator = spec.chars().next()?;
+                let mut grouped = String::from(sign);
+                for (i, digit) in digits.chars().enumerate() {
+                    if i > 0 && (digits.len() - i) % 3 == 0 { grouped.push(separator); }
+                    grouped.push(digit);
+                }
+                return Some(grouped);
+            }
             let (radix, prefix) = match spec {
                 "x" | "X" => (16, ""), "#x" => (16, "0x"), "#X" => (16, "0X"),
                 "o" => (8, ""), "#o" => (8, "0o"), "b" => (2, ""), "#b" => (2, "0b"),
