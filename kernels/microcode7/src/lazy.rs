@@ -76,7 +76,7 @@ impl<'a> Machine<'a> {
             return if has_next { Ok(answer) } else { Err(self.no_walk("ext.op.iterator.unnextable", &answer).into()) };
         }
         let title_index = match &content {
-            Value::Vector(_) => Some(0),
+            Value::Vector(_) | Value::Tuple(_) => Some(0),
             Value::Text(_) => Some(1),
             Value::Progression(_) => Some(2),
             Value::Dict(_) => Some(3),
@@ -119,7 +119,7 @@ impl<'a> Machine<'a> {
                 if index < BigInt::from(0) { None } else {
                     let plain = collection_read(&sequence);
                     let found = match plain {
-                        Value::Vector(items) => index.to_usize().and_then(|n| items.get(n).cloned()),
+                        Value::Vector(items) | Value::Tuple(items) => index.to_usize().and_then(|n| items.get(n).cloned()),
                         Value::Dict(pairs) => index.to_usize().and_then(|n| pairs.get(n).map(|p| p.0.clone())),
                         Value::Text(text) => index.to_usize().and_then(|n| text.chars().nth(n)).map(|c| Value::text(&String::from(c))),
                         Value::Progression(p) => if index < p.count() { Some(Value::from_big(&p.first + &index * &p.stride)) } else { None },
@@ -149,7 +149,7 @@ impl<'a> Machine<'a> {
                 None => None,
                 Some(item) => {
                     shared.borrow_mut().work = Number(input, &count + 1);
-                    Some(Value::Vector(Rc::new(vec![Value::from_big(count), item])))
+                    Some(Value::Tuple(Rc::new(vec![Value::from_big(count), item])))
                 }
             },
             Map(function, inputs) => {
@@ -174,7 +174,7 @@ impl<'a> Machine<'a> {
                         }
                         return Ok(None);
                     }
-                    Some(Value::Vector(Rc::new(row)))
+                    Some(Value::Tuple(Rc::new(row)))
                 }
             }
         };
@@ -217,7 +217,7 @@ impl<'a> Machine<'a> {
             Prim::Reversed if values.len() == 1 => {
                 if let Some(custom) = self.walk_message(&values[0], "ext.op.iterator.reverse", vec![])? { return Ok(custom); }
                 let size = match collection_read(&values[0]) {
-                    Value::Vector(v) => BigInt::from(v.len()),
+                    Value::Vector(v) | Value::Tuple(v) => BigInt::from(v.len()),
                     Value::Text(t) => BigInt::from(t.chars().count()),
                     Value::Progression(r) => r.count(),
                     object => self.walk_message(&object, "ext.op.iterator.length", vec![])?.ok_or_else(|| self.walk_word("ext.op.iterator.unready"))?.as_big()?,

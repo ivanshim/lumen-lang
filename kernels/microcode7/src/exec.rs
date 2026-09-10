@@ -1543,6 +1543,17 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined variable {}", slot.ident));
             return Ok(Value::Nil);
         }
+        if self.table.has_any("ext.builtin.iter") {
+            let simple = slot.ident.trim_end_matches(crate::form::OF_A_CLASS);
+            if self.table.spells("ext.op.iterator.stop", simple) || self.table.spells("ext.op.iterator.end", simple) {
+                let blueprint = Blueprint {
+                    fields: vec![], methods: vec![], name: simple.to_owned(), constants: vec![],
+                    under: None, reaches: vec![], shared: RefCell::new(vec![]), answers: vec![],
+                };
+                return Ok(Value::Blueprint(Rc::new(blueprint)));
+            }
+            if self.table.prims.contains_key(slot.ident.as_ref()) { return Ok(Value::text(&slot.ident)); }
+        }
         Err(format!("Undefined variable: {}", slot.ident))
     }
 
@@ -3618,7 +3629,7 @@ impl<'a> Machine<'a> {
             },
             Prim::Partition(wanted, star) => {
                 let mut values: Vec<Value> = match &v[0] {
-                    Value::Progression(_) | Value::Lazy(_) => self.gathered_members(&v[0])?,
+                    Value::Progression(_) | Value::Lazy(_) | Value::Tuple(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
                     Value::Vector(v) => v.to_vec(),

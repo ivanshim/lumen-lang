@@ -212,7 +212,7 @@ impl<'a> Engine<'a> {
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world: idents.iter().map(|name| cursor_binding(lang, name)).collect(),
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -2435,7 +2435,7 @@ impl<'a> Engine<'a> {
                 let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
                     Value::Counted(_) | Value::Cursor(_) => self.comprehension_items(&source)?,
-                    Value::Array(items) => items.as_ref().clone(),
+                    Value::Array(items) | Value::Row(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
                     _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),

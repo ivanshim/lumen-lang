@@ -142,6 +142,7 @@ pub struct LazyWalk {
 #[derive(Clone)]
 pub enum Value {
     Lazy(Rc<RefCell<LazyWalk>>),
+    Tuple(Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -243,7 +244,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Lazy(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Tuple(_) | Value::Lazy(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -276,7 +277,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -379,6 +380,22 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
+            Value::Tuple(parts) => {
+                let mut text = String::from("(");
+                for (position, part) in parts.iter().enumerate() {
+                    if position > 0 { text.push_str(", "); }
+                    if let Value::Text(chars) = part {
+                        text.push('\'');
+                        for c in chars.chars() {
+                            match c { '\\' => text.push_str("\\\\"), '\'' => text.push_str("\\'"), '\n' => text.push_str("\\n"), c => text.push(c) }
+                        }
+                        text.push('\'');
+                    } else { text.push_str(&part.render(w)); }
+                }
+                if parts.len() == 1 { text.push(','); }
+                text.push(')');
+                text
+            }
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
@@ -502,6 +519,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
             Value::Lazy(held) => format!("<{} object at 0x1>", held.borrow().title),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),

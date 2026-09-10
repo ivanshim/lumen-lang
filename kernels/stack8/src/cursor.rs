@@ -51,7 +51,7 @@ impl<'a> Engine<'a> {
         self.data.extend(args);
         self.data.push(collection_contents(function));
         self.perform(&Action::Invoke(Rc::from("")), count + 1)?;
-        self.drop_top()
+        Ok(self.drop_top()?)
     }
 
     fn cursor_from(&mut self, value: &Value) -> Flow<Value> {
@@ -63,7 +63,7 @@ impl<'a> Engine<'a> {
             return Err(self.cursor_fault("ext.op.iterator.unnextable", &given).into());
         }
         let kind = match &held {
-            Value::Array(_) => 0,
+            Value::Array(_) | Value::Row(_) => 0,
             Value::Text(_) => 1,
             Value::Counted(_) => 2,
             Value::Map(_) => 3,
@@ -105,7 +105,7 @@ impl<'a> Engine<'a> {
                     let source = collection_contents(&state.sources[0]);
                     let at = state.at.to_usize();
                     let found = match &source {
-                        Value::Array(a) => at.and_then(|n| a.get(n).cloned()),
+                        Value::Array(a) | Value::Row(a) => at.and_then(|n| a.get(n).cloned()),
                         Value::Map(m) => at.and_then(|n| m.get(n).map(|(k, _)| k.clone())),
                         Value::Text(t) => at.and_then(|n| t.chars().nth(n).map(|c| Value::text(&c.to_string()))),
                         Value::Counted(r) => r.at(state.at.clone()),
@@ -144,7 +144,7 @@ impl<'a> Engine<'a> {
                 }
                 if args.is_empty() { None }
                 else if state.way == 2 { Some(self.cursor_call(&state.function, args)?) }
-                else { Some(Value::array(args)) }
+                else { Some(Value::Row(Rc::new(args))) }
             }
             3 => loop {
                 let Some(v) = self.cursor_next(&state.sources[0])? else { break None };
@@ -154,7 +154,7 @@ impl<'a> Engine<'a> {
             },
             5 => match self.cursor_next(&state.sources[0])? {
                 None => None,
-                Some(v) => { cell.borrow_mut().at += 1; Some(Value::array(vec![Value::of_big(state.at), v])) }
+                Some(v) => { cell.borrow_mut().at += 1; Some(Value::Row(Rc::new(vec![Value::of_big(state.at), v]))) }
             },
             _ => return Err(self.cursor_word("ext.op.iterator.unready").into()),
         };
@@ -192,7 +192,7 @@ impl<'a> Engine<'a> {
             if let Some(answer) = self.cursor_method(&sources[0], "ext.op.iterator.reverse", Vec::new())? { return Ok(answer); }
             let source = collection_contents(&sources[0]);
             at = match &source {
-                Value::Array(a) => BigInt::from(a.len()),
+                Value::Array(a) | Value::Row(a) => BigInt::from(a.len()),
                 Value::Text(s) => BigInt::from(s.chars().count()),
                 Value::Counted(r) => r.length(),
                 Value::Object(_) => self.cursor_method(&source, "ext.op.iterator.length", Vec::new())?.ok_or_else(|| self.cursor_word("ext.op.iterator.unready"))?.as_big()?,
@@ -202,4 +202,17 @@ impl<'a> Engine<'a> {
         } else { for source in sources { held.push(self.cursor_from(source)?); } }
         Ok(self.cursor_make(way, name.to_string(), held, function, sentinel, at))
     }
+}
+
+fn cursor_binding(lang: &Lang, name: &str) -> Value {
+    let words = |label: &str| lang.iterator_words.get(label).map(Vec::as_slice).unwrap_or(&[]);
+    if words("ext.builtin.iter").is_empty() { return Value::Blank; }
+    let bare = name.trim_end_matches(crate::code::OF_A_CLASS);
+    if ["ext.op.iterator.stop", "ext.op.iterator.end"].iter().any(|label| Lang::spells(words(label), bare)) {
+        return Value::Class(Rc::new(Class {
+            name: bare.to_string(), base: None, answers: Vec::new(), fields: Vec::new(),
+            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+        }));
+    }
+    if lang.builtins.contains_key(name) { Value::text(name) } else { Value::Blank }
 }
