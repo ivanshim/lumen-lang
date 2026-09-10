@@ -282,3 +282,43 @@ fn format_fields(template: &str, args: &[Value], names: &[(String,Value)], words
     }
     Ok(out)
 }
+
+/// Gather hexadecimal figures before rounding their exact worth once.
+pub fn from_hex(args: &[Value], fault: &dyn Fn(&str) -> String) -> Answer {
+    let [Value::Text(source)] = args else { return Err(fault("arguments")); };
+    let text = source.trim_matches(|c: char| c.is_ascii_whitespace()).to_ascii_lowercase();
+    let negative = text.starts_with('-');
+    let text = text.strip_prefix(['+', '-']).unwrap_or(&text);
+    let number = if matches!(text, "inf" | "infinity") { f64::INFINITY }
+        else if text == "nan" { f64::NAN }
+        else {
+            let text = text.strip_prefix("0x").unwrap_or(text);
+            let (digits, exponent) = text.split_once('p').unwrap_or((text, "0"));
+            let exponent_digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+            if exponent_digits.is_empty() || !exponent_digits.bytes().all(|c| c.is_ascii_digit()) { return Err(fault("hex")); }
+            let power = exponent.parse::<i64>().unwrap_or(if exponent.starts_with('-') { i64::MIN } else { i64::MAX });
+            let mut fraction = 0i64;
+            let mut point = false;
+            let mut figures = String::new();
+            for c in digits.chars() {
+                if c == '.' && !point { point = true; }
+                else if c.is_ascii_hexdigit() { figures.push(c); if point { fraction += 4; } }
+                else { return Err(fault("hex")); }
+            }
+            let whole = BigInt::parse_bytes(figures.as_bytes(), 16).ok_or_else(|| fault("hex"))?;
+            let scale = power.saturating_sub(fraction);
+            let highest = scale.saturating_add(whole.bits() as i64);
+            if whole.is_zero() || highest < -1075 { 0.0 }
+            else if highest > 1025 { return Err(fault("hex_overflow")); }
+            else {
+                let (top, bottom) = if scale >= 0 { (whole << scale as usize, BigInt::from(1)) }
+                    else { (whole, BigInt::from(1) << scale.unsigned_abs() as usize) };
+                let value = crate::value::as_binary(&top, &bottom);
+                if value.is_infinite() { return Err(fault("hex_overflow")); }
+                value
+            }
+        };
+    let number = if negative { -number } else { number };
+    let (p, q) = crate::value::from_binary(number).unwrap_or_else(|| (BigInt::from(if number.is_nan() { 0 } else if negative { -1 } else { 1 }), BigInt::from(0)));
+    Ok(Value::Real(Rc::new(crate::value::Real { p, q, places: 16, below: negative, point: true })))
+}

@@ -279,6 +279,10 @@ only. The extension labels so far, all from PHP:
   are admitted. `ext.builtin.to_int.base.amiss`, `.text.amiss` and
   `.text.required` give plain complaints for a base outside its bounds,
   ill-written digits, and a base given with something other than text.
+- `ext.builtin.to_int.infinity` and `.nan`: the plain complaints when
+  an unbounded real or a value outside the numbers is asked to be whole.
+  `ext.builtin.to_int.text.amiss` may hold two pieces, before the base
+  and before the quoted source; a lone piece keeps the plain complaint.
 - `ext.builtin.to_real.text`: a switch admitting text to the real reader,
   including a decimal point and a power of ten. An empty call gives
   nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
@@ -1483,6 +1487,11 @@ only. The extension labels so far, all from PHP:
   or merge pairs and named arguments. `.pop` takes a map key too.
   `.keys`, `.values` and `.items` yield views which follow later changes
   to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.method.fromhex`: read a real from hexadecimal figures,
+  with an optional sign, point and binary exponent. The significand is
+  kept whole until the answer is rounded to the binary width.
+  `.error.hex` and `.error.hex_overflow` under `ext.builtin.method`
+  give the plain complaints for ill-written text and a worth too great.
 - `ext.builtin.method.bit_count`: the count of set bits in a whole
   number's magnitude, without regard to its sign.
 - `ext.builtin.method.bit_length`, `.is_integer`, `.hex` and
@@ -1532,6 +1541,8 @@ only. The extension labels so far, all from PHP:
   the shared library behavior: halfway values go away from zero, unlike
   CPython, whose ties go to even. Negative decimal counts act as zero
   places, as in the library; CPython instead rounds to tens or higher.
+  Whole arguments keep their whole kind; negative counts round to powers
+  of ten, with halfway values choosing the even multiple.
   `ext.builtin.round.number` and `.ndigits` name the number and its places;
   `ext.builtin.pow.base`, `.exp` and `.mod` name the power's arguments.
   A modulus keeps whole powers bounded, and a negative exponent asks for
@@ -3176,6 +3187,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.error.bytes` | - | - | `NotImplementedError: bytes are not available` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.format` | - | - | `ValueError: invalid format string` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.hex` | - | - | `ValueError: invalid hexadecimal floating-point string` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.hex_overflow` | - | - | `OverflowError: hexadecimal value too large to represent as a float` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.index` | - | - | `IndexError: pop index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.key` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.list_index` | - | - | `ValueError: value is not in list` | - | - | - | - | - | - | - |
@@ -3191,6 +3204,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.extend` | - | - | `extend` | - | - | - | - | - | - | - |
 | `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
@@ -3287,7 +3301,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
-| `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int() with base ` `: ` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.required` | - | - | `TypeError: int() can't convert non-string with explicit base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |

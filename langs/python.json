@@ -606,6 +606,12 @@
   "ext.builtin.method.error.format": [
     "ValueError: invalid format string"
   ],
+  "ext.builtin.method.error.hex": [
+    "ValueError: invalid hexadecimal floating-point string"
+  ],
+  "ext.builtin.method.error.hex_overflow": [
+    "OverflowError: hexadecimal value too large to represent as a float"
+  ],
   "ext.builtin.method.error.index": [
     "IndexError: pop index out of range"
   ],
@@ -650,6 +656,9 @@
   ],
   "ext.builtin.method.format": [
     "format"
+  ],
+  "ext.builtin.method.fromhex": [
+    "float.fromhex"
   ],
   "ext.builtin.method.get": [
     "get"
@@ -882,8 +891,15 @@
   "ext.builtin.to_int.base.amiss": [
     "ValueError: int() base must be >= 2 and <= 36, or 0"
   ],
+  "ext.builtin.to_int.infinity": [
+    "OverflowError: cannot convert float infinity to integer"
+  ],
+  "ext.builtin.to_int.nan": [
+    "ValueError: cannot convert float NaN to integer"
+  ],
   "ext.builtin.to_int.text.amiss": [
-    "ValueError: invalid literal for int()"
+    "ValueError: invalid literal for int() with base ",
+    ": "
   ],
   "ext.builtin.to_int.text.required": [
     "TypeError: int() can't convert non-string with explicit base"

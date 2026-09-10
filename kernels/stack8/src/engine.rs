@@ -4841,8 +4841,19 @@ impl<'a> Engine<'a> {
             Some(_) => return Err(self.lang.call_amiss[0].clone()),
         };
         if base != 0 && !(2..=36).contains(&base) { return Err(self.lang.to_int_base_amiss[0].clone()); }
+        let invalid = || {
+            let words = &self.lang.to_int_text_amiss;
+            if words.len() < 2 { return words.first().cloned().unwrap_or_default(); }
+            format!("{}{}{}{}", words[0], base, words[1], value.core_repr())
+        };
         let Value::Text(text) = value else {
             if args.len() == 2 { return Err(self.lang.to_int_text_required[0].clone()); }
+            if let Value::Real(real) = value {
+                if real.outside() {
+                    let label = if real.no_number() { "to_int.nan" } else { "to_int.infinity" };
+                    if self.lang.core_words.get(label).map_or(false, |words| !words.is_empty()) { return Err(self.core_fault(label, "")); }
+                }
+            }
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
             return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
         };
@@ -4859,9 +4870,9 @@ impl<'a> Engine<'a> {
             && digits.chars().all(|c| c == '_' || c.is_ascii() && c.is_digit(radix));
         let cleaned = digits.replace('_', "");
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
-            return Err(self.lang.to_int_text_amiss[0].clone());
+            return Err(invalid());
         }
-        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(|| self.lang.to_int_text_amiss[0].clone())?;
+        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
         Ok(Value::of_big(if minus { -whole } else { whole }))
     }
 
@@ -5200,6 +5211,7 @@ impl<'a> Engine<'a> {
         };
         Ok(match builtin {
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
+            Builtin::ValueMethod if self.lang.value_methods.get(name).map(String::as_str) == Some("fromhex") => return crate::methods::from_hex(args, &|key| self.lang.method_errors[key].clone()),
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
             Builtin::Bytes(task) => return self.byte_call(task, args),
@@ -7103,6 +7115,16 @@ impl Engine<'_> {
             Builtin::Round => {
                 arity(1, 2)?;
                 let digits = match args.get(1) { None | Some(Value::Null) => 0, Some(n) => integer(n)?.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
+                if matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    let value = integer(&args[0])?;
+                    if digits >= 0 { return Ok(Value::of_big(value)); }
+                    if digits.unsigned_abs() > value.abs().to_str_radix(10).len() as u64 { return Ok(Value::Small(0)); }
+                    let scale = BigInt::from(10).pow(digits.unsigned_abs() as u32);
+                    let (mut quotient, remainder) = value.abs().div_rem(&scale);
+                    let twice = remainder * 2;
+                    if twice > scale || twice == scale && quotient.is_odd() { quotient += 1; }
+                    return Ok(Value::of_big(quotient * scale * if value.is_negative() { -1 } else { 1 }));
+                }
                 let places = u32::try_from(digits.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?;
                 let x = number(&args[0]);
                 let (p, q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;

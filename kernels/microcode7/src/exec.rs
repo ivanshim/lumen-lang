@@ -3364,6 +3364,12 @@ impl<'a> Machine<'a> {
             Some(_) => return Err(self.argument_fault("ext.syntax.call.amiss", None)),
             None => 10,
         };
+        let invalid = || {
+            let parts = self.table.strings("ext.builtin.to_int.text.amiss");
+            let mut message = parts.first().cloned().unwrap_or_default();
+            if let Some(join) = parts.get(1) { message.push_str(&radix.to_string()); message.push_str(join); message.push_str(&values[0].quoted()); }
+            message
+        };
         if let Value::Text(text) = &values[0] {
             let mut source = text.trim();
             let negative = source.starts_with('-');
@@ -3381,24 +3387,28 @@ impl<'a> Machine<'a> {
             let mut was_digit = false;
             for c in source.chars() {
                 if c == '_' {
-                    if !was_digit { return Err(complaint("text.amiss")); }
+                    if !was_digit { return Err(invalid()); }
                     was_digit = false;
                 } else {
-                    if !c.is_ascii() || c.to_digit(base).is_none() { return Err(complaint("text.amiss")); }
+                    if !c.is_ascii() || c.to_digit(base).is_none() { return Err(invalid()); }
                     digits.push(c);
                     was_digit = true;
                 }
             }
             if !was_digit || (radix == 0 && !has_prefix && digits.starts_with('0') && digits.bytes().any(|b| b != b'0')) {
-                return Err(complaint("text.amiss"));
+                return Err(invalid());
             }
-            let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| complaint("text.amiss"))?;
+            let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| invalid())?;
             if negative { number = -number; }
             return Ok(Value::from_big(number));
         }
         if values.len() > 1 { return Err(complaint("text.required")); }
         match &values[0] {
             Value::Flag(truth) => Ok(Value::Small(if *truth { 1 } else { 0 })),
+            Value::Frac(ratio) if ratio.past_numbers() && self.table.has_any("ext.builtin.to_int.infinity") => {
+                let tail = if ratio.above.is_zero() { "nan" } else { "infinity" };
+                Err(complaint(tail))
+            }
             other => math::whole_part(other).map(Value::from_big).ok_or_else(|| self.argument_fault("ext.syntax.call.amiss", None)),
         }
     }
@@ -4472,6 +4482,7 @@ impl<'a> Machine<'a> {
                 return Err(words.to_owned());
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
+            Prim::ValueMethod if self.table.spells("ext.builtin.method.fromhex", name) => return crate::members::hexadecimal(v, &|key| self.method_fault(key)),
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -7688,6 +7699,18 @@ impl Machine<'_> {
             Rounded => {
                 require(1, 2)?;
                 let places = match input.get(1) { None | Some(Value::Nil) => 0, Some(v) => whole(v)?.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
+                if let Value::Small(_) | Value::Huge(_) | Value::Flag(_) = input[0] {
+                    let source = whole(&input[0])?;
+                    let distance = places.unsigned_abs();
+                    if places >= 0 { return Ok(Value::from_big(source)); }
+                    if distance > source.abs().to_string().len() as u64 { return Ok(Value::Small(0)); }
+                    let unit = BigInt::from(10).pow(distance as u32);
+                    let mut multiple = &source / &unit;
+                    let residue = (&source % &unit).abs();
+                    let comparison = (residue * 2u8).cmp(&unit);
+                    if comparison.is_gt() || comparison.is_eq() && multiple.is_odd() { multiple += if source.is_negative() { -1 } else { 1 }; }
+                    return Ok(Value::from_big(multiple * unit));
+                }
                 let exponent = u32::try_from(places.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let value = as_number(&input[0]);
                 let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;

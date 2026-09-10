@@ -336,3 +336,55 @@ fn same_item(left:&Value,right:&Value)->bool{
     if let (Value::Frac(a),Value::Frac(b))=(left,right){if Rc::ptr_eq(a,b){return true;}}
     left.equals(right)
 }
+
+/// Read the significand whole, then ask the binary width for its worth.
+pub fn hexadecimal(given: &[Value], bad: &dyn Fn(&str) -> String) -> ResultValue {
+    if given.len() != 1 { return Err(bad("arguments")); }
+    let Value::Text(chars) = &given[0] else { return Err(bad("arguments")); };
+    let lower = chars.trim_matches(|ch: char| ch.is_ascii_whitespace()).to_ascii_lowercase();
+    let minus = lower.as_bytes().first() == Some(&b'-');
+    let mut body = lower.as_str();
+    if body.starts_with(['-', '+']) { body = &body[1..]; }
+    let unsigned = match body {
+        "nan" => f64::NAN,
+        "inf" | "infinity" => f64::INFINITY,
+        _ => {
+            if body.starts_with("0x") { body = &body[2..]; }
+            let mut pieces = body.split('p');
+            let significand = pieces.next().unwrap_or("");
+            let exponent = pieces.next().unwrap_or("0");
+            if pieces.next().is_some() { return Err(bad("hex")); }
+            let mut magnitude = BigInt::from(0);
+            let mut fractional = None;
+            let mut count = 0;
+            for byte in significand.bytes() {
+                if byte == b'.' && fractional.is_none() { fractional = Some(0i64); continue; }
+                let digit = (byte as char).to_digit(16).ok_or_else(|| bad("hex"))?;
+                magnitude = magnitude * 16 + digit;
+                count += 1;
+                if let Some(places) = fractional.as_mut() { *places += 4; }
+            }
+            if count == 0 { return Err(bad("hex")); }
+            let exponent_body = exponent.trim_start_matches(['-', '+']);
+            if exponent_body.is_empty() || !exponent_body.bytes().all(|b| b.is_ascii_digit()) || exponent.len() - exponent_body.len() > 1 { return Err(bad("hex")); }
+            let shift = exponent.parse::<i64>().unwrap_or_else(|_| if exponent.starts_with('-') { i64::MIN } else { i64::MAX }).saturating_sub(fractional.unwrap_or(0));
+            let extent = (magnitude.bits() as i64).saturating_add(shift);
+            if magnitude.is_zero() || extent < -1075 { 0.0 }
+            else {
+                if extent > 1025 { return Err(bad("hex_overflow")); }
+                let denominator;
+                if shift < 0 { denominator = BigInt::from(1) << shift.unsigned_abs() as usize; }
+                else { magnitude <<= shift as usize; denominator = BigInt::from(1); }
+                let binary = crate::data::nearest_binary(&magnitude, &denominator);
+                if !binary.is_finite() { return Err(bad("hex_overflow")); }
+                binary
+            }
+        }
+    };
+    let signed = if minus { -unsigned } else { unsigned };
+    let pair = match crate::data::binary_worth(signed) {
+        Some(ratio) => ratio,
+        None => (BigInt::from(if signed.is_nan() { 0 } else { if minus { -1 } else { 1 } }), BigInt::from(0)),
+    };
+    Ok(Value::Frac(Rc::new(crate::data::Ratio { above: pair.0, beneath: pair.1, places: Some(16), under: minus, pointed: true })))
+}
