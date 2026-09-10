@@ -99,6 +99,7 @@ pub struct Engine<'a> {
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
     holding: RefCell<Vec<String>>,
+    held_errors: RefCell<Vec<String>>,
     /// The routines to run once the program's own last statement is
     /// done, each with what it is to be handed, in the order they were
     /// named.
@@ -239,6 +240,7 @@ impl<'a> Engine<'a> {
             muted: std::cell::Cell::new(0),
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
+            held_errors: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
@@ -3357,7 +3359,7 @@ impl<'a> Engine<'a> {
                 if let Value::Object(object) = held {
                     if let Some(method) = self.lang.object_binary.get(index).and_then(|name| object.class.method(name)).cloned() {
                         self.invoke(&method, vec![Value::Object(object), other.clone()])?;
-                        return self.drop_top();
+                        return Ok(self.drop_top()?);
                     }
                 }
             }
@@ -3369,7 +3371,7 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = self.what_it_spells(value.clone()) else { return Ok(value.clone()) };
         let method = self.lang.object_text.iter().find_map(|name| object.class.method(name)).cloned();
         let Some(method) = method else { return Ok(value.clone()) };
-        let result = self.invoke(&method, vec![Value::Object(object)]).and_then(|()| self.drop_top());
+        let result = self.invoke(&method, vec![Value::Object(object)]).and_then(|()| Ok(self.drop_top()?));
         match result {
             Ok(text @ Value::Text(_)) => Ok(text),
             Ok(_) => Err(self.lang.module_helper_amiss.clone()),
@@ -4263,7 +4265,10 @@ impl<'a> Engine<'a> {
                 }
             }
             let text = args.iter().map(|v| v.display(&self.wording())).collect::<Vec<_>>().join(&between) + &ending;
-            if error { eprint!("{}", text); } else { self.utter(&text); }
+            if error {
+                if let Some(held) = self.held_errors.borrow_mut().last_mut() { held.push_str(&text); }
+                else { eprint!("{}", text); }
+            } else { self.utter(&text); }
             return Ok(Value::Null);
         }
         for (key, value) in named {
@@ -4320,6 +4325,14 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if self.lang.output_error && matches!(args.first(), Some(Value::Stream(true))) {
+            match builtin {
+                Builtin::HoldOut => { self.held_errors.borrow_mut().push(String::new()); return Ok(Value::Flag(true)); }
+                Builtin::HeldOut => return Ok(self.held_errors.borrow().last().map_or(Value::Flag(false), |text| Value::text(text))),
+                Builtin::DropOut => return Ok(Value::Flag(self.held_errors.borrow_mut().pop().is_some())),
+                _ => (),
+            }
+        }
         if matches!(builtin, Builtin::Say | Builtin::Out | Builtin::ToText) {
             for value in args.iter_mut() { *value = self.object_said(value)?; }
         }

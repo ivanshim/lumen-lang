@@ -1602,6 +1602,10 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+- `ext.builtin.output.error`: a switch; the output keeping builtins may
+  take the error stream as their first argument, keeping its text apart
+  from ordinary output. With no argument their former meaning remains.
+
 - `ext.op.object.binary`: methods asking an object to work an operation.
   The first fourteen names are the ordinary and reflected methods for
   addition, subtraction, multiplication, division, whole division,
@@ -2165,6 +2169,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
+| `ext.builtin.output.error` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.print.end` | - | - | `end` | - | - | - | - | - | - | - |

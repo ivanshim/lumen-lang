@@ -121,7 +121,28 @@ class captured_stdout:
 
 class captured_stderr:
     def __init__(self):
-        raise 'NotImplementedError: capturing stderr is not supported'
+        self.text = ''
+        self.active = False
+
+    def __enter__(self):
+        __output_hold(sys.stderr)
+        self.active = True
+        return self
+
+    def write(self, text):
+        print(text, end='', file=sys.stderr)
+        return len(text)
+
+    def getvalue(self):
+        if self.active:
+            return __output_held(sys.stderr)
+        return self.text
+
+    def __exit__(self, kind, value, traceback):
+        self.text = __output_held(sys.stderr)
+        __output_drop(sys.stderr)
+        self.active = False
+        return False
 
 def check_impl_detail(**guards):
     # Stub: this run claims no reference implementation internals.
@@ -161,7 +182,7 @@ ALWAYS_EQ = _AlwaysEqual()
 # be named before a test can mistake it for a successful check.
 async_yield = _unavailable
 run_yielding_async_fn = _unavailable
-force_not_colorized = _unavailable
+force_not_colorized = _identity
 skip_if_double_rounding = _identity
 _1G = 1073741824
 _2G = 2147483648

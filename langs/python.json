@@ -369,6 +369,7 @@
   "ext.builtin.module.load": [
     "__load_module"
   ],
+  "ext.builtin.output.error": true,
   "ext.builtin.output.drop": [
     "__output_drop"
   ],
