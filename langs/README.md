@@ -1616,13 +1616,22 @@ only. The extension labels so far, all from PHP:
   answer or raised value, and the complaint's text. A library can thus
   count failures and errors itself. An ending of the run or exhaustion
   of its allotted time or room is carried onward, never counted as a test.
+- `ext.builtin.map.test`: a builtin asking whether its value holds keys
+  with their values, rather than a list of values alone.
+- `ext.system.module.getattr`: the routine a module may declare to answer
+  an absent member. Direct reading, calls, and from-imports consult it.
+- `ext.builtin.member.has`: a builtin asking whether a named member is
+  present, without invoking a module's absent-member routine.
+- `ext.system.fault.division`: the message a division by nought carries
+  when made into a fault value.
 - `ext.system.fault.bases`: pairs of class names, each followed by its
   parent, an empty parent beginning a root. They provide the fault classes
   before source runs. A complaint beginning with one of these names and
   a colon belongs to that class, so a guarded import may take it.
 - `ext.builtin.fault.current`: a builtin returning the innermost fault
   being handled as its class name and message, or two empty values when
-  no clause is handling a fault.
+  no clause is handling a fault. Given one value, it describes that
+  value instead of the fault being handled.
 - `ext.builtin.host.info`: a builtin returning the working directory,
   operating system, machine architecture and environment, in that order.
   A directory which cannot be read is an empty value.
@@ -2156,10 +2165,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.map.test` | - | - | `__is_mapping` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.member.has` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
@@ -2482,6 +2493,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
+| `ext.system.fault.division` | - | - | `division by zero` | - | - | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
@@ -2492,6 +2504,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.module.cache` | - | - | `sys` `modules` | - | - | - | - | - | - | - |
+| `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |

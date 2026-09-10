@@ -43,6 +43,7 @@ pub enum Prim {
     IsInstance,
     WriteMember,
     ReadMember,
+    IsDictionary,
     FaultHeld,
     HostFacts,
     FileSort,

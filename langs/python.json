@@ -361,6 +361,9 @@
   "ext.builtin.list": [
     "list"
   ],
+  "ext.builtin.map.test": [
+    "__is_mapping"
+  ],
   "ext.builtin.math": [
     "__math"
   ],
@@ -371,6 +374,9 @@
   ],
   "ext.builtin.member.get": [
     "getattr"
+  ],
+  "ext.builtin.member.has": [
+    "hasattr"
   ],
   "ext.builtin.member.set": [
     "setattr"
@@ -940,9 +946,15 @@
   "ext.system.fault.class.division": [
     "ZeroDivisionError"
   ],
+  "ext.system.fault.division": [
+    "division by zero"
+  ],
   "ext.system.module.cache": [
     "sys",
     "modules"
+  ],
+  "ext.system.module.getattr": [
+    "__getattr__"
   ],
   "ext.system.module.name": [
     "__name__"

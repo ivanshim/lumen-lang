@@ -16,6 +16,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("math", include_str!("math.py")),
     ("operator", include_str!("operator.py")),
     ("os", include_str!("os.py")),
+    ("os.path", include_str!("os/path.py")),
     ("pickle", include_str!("pickle.py")),
     ("platform", include_str!("platform.py")),
     ("random", include_str!("random.py")),

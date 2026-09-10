@@ -87,7 +87,7 @@ ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.incremen
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.import.value:B ext.stmt.import.missing:L ext.stmt.import.member.missing:L ext.stmt.import.relative.unready:L \
 ext.builtin.program.namespace:L \
-ext.system.fault.bases:L ext.builtin.fault.current:L ext.builtin.host.info:L ext.builtin.file.kind:L \
+ext.builtin.map.test:L ext.system.module.getattr:L ext.builtin.member.has:L ext.system.fault.division:L ext.system.fault.bases:L ext.builtin.fault.current:L ext.builtin.host.info:L ext.builtin.file.kind:L \
 ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \
@@ -160,7 +160,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 83] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 85] = [
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
@@ -185,6 +185,8 @@ pub const BUILTIN_LABELS: [(&str, Prim); 83] = [
     ("ext.builtin.fault.current", Prim::FaultHeld),
     ("ext.builtin.host.info", Prim::HostFacts),
     ("ext.builtin.file.kind", Prim::FileSort),
+    ("ext.builtin.map.test", Prim::IsDictionary),
+    ("ext.builtin.member.has", Prim::HasMember),
     ("ext.builtin.member.get", Prim::ReadMember),
     ("ext.builtin.member.set", Prim::WriteMember),
     ("ext.builtin.instance", Prim::IsInstance),

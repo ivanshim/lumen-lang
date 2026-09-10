@@ -1202,7 +1202,7 @@ impl<'a> Machine<'a> {
         // A fault of the kernel's own carries the words said and the
         // place in the program they were said of.
         let carried = [
-            ("message", Value::text(told)),
+            ("message", Value::text(match told { "Division by zero" => self.table.single("ext.system.fault.division").unwrap_or(told), _ => told })),
             ("file", Value::text(&self.written_in)),
             ("line", Value::Small(self.row as i64)),
         ];
@@ -2376,7 +2376,9 @@ impl<'a> Machine<'a> {
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
                     if self.table.flag("ext.op.member.pipes") {
-                        if let Some(target) = self.attribute(&subject, &called) {
+                        let target = self.attribute(&subject, &called);
+                        let target = match target { Some(held) => Some(held), None => self.ask_namespace(&subject, &called)? };
+                        if let Some(target) = target {
                             let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
                             let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), expressions);
                             return self.value_of(&call, frame);
@@ -3751,8 +3753,8 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::FaultHeld => {
-                n(0)?;
-                let pair = if let Some(value) = self.holding_fault.last() {
+                if v.len() > 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                let pair = if let Some(value) = v.first().or_else(|| self.holding_fault.last()) {
                     if let Value::Thing(thing) = value {
                         let holds = thing.holds.borrow();
                         let said = holds.iter().find_map(|(key, held)| (key == "message").then(|| held.clone())).unwrap_or(Value::Nil);
@@ -3840,7 +3842,9 @@ impl<'a> Machine<'a> {
             Prim::ReadMember => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                 let word = v[1].bare();
-                self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()).ok_or_else(|| {
+                let found = self.attribute(&v[0], &word);
+                let found = if found.is_none() { self.ask_namespace(&v[0], &word)? } else { found };
+                found.or_else(|| v.get(2).cloned()).ok_or_else(|| {
                     let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
                     format!("{opening}{word}{ending}")
                 })?
@@ -3862,6 +3866,7 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
+            Prim::IsDictionary => { n(1)?; Value::Flag(if let Value::Dict(_) = &v[0] { true } else { false }) }
             Prim::HasMember => {
                 n(2)?;
                 let word = v[1].bare();
@@ -3877,6 +3882,7 @@ impl<'a> Machine<'a> {
                 let called = v[1].bare();
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
+                    if let Some(answer) = self.ask_namespace(&v[0], &called)? { return Ok(answer); }
                 }
                 match &v[0] {
                     Value::Thing(thing) => {
@@ -6202,6 +6208,25 @@ impl Machine<'_> {
         Ok(value)
     }
 
+    fn ask_namespace(&mut self, value: &Value, missing: &str) -> Result<Option<Value>, String> {
+        let Some(named) = self.table.single("ext.system.module.getattr") else { return Ok(None) };
+        let Value::Thing(space) = value else { return Ok(None) };
+        let belongs = self.imported.values().any(|stored| match stored {
+            Value::Thing(other) => Rc::ptr_eq(space, other), _ => false,
+        });
+        if !belongs { return Ok(None); }
+        let Some(answer) = self.attribute(value, named) else { return Ok(None) };
+        let (routine, scope) = match answer {
+            Value::Bound(body, scope) => (body, scope),
+            _ => return Ok(None),
+        };
+        match self.invoke(routine, scope, vec![Value::text(missing)]) {
+            Ok(value) => Ok(Some(value)),
+            Err(Escape::Error(words)) => Err(words),
+            Err(escape) => { self.got_away = Some(escape); Err("module member did not finish".into()) }
+        }
+    }
+
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
         if let Value::Thing(space) = value {
             for (name, cell) in space.holds.borrow().iter() {
@@ -6212,6 +6237,7 @@ impl Machine<'_> {
         }
         let full = format!("{path}.{wanted}");
         if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
+        if let Some(answer) = self.ask_namespace(value, wanted)? { return Ok(answer); }
         let (head, tail) = self.table.around("ext.stmt.import.member.missing").unwrap_or(("", ""));
         Err(format!("{head}{wanted}{tail}"))
     }

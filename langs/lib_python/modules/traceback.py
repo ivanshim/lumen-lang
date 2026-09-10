@@ -2,7 +2,13 @@
 def format_exception(exc, value=None, tb=None, limit=None, chain=True):
     if value is not None:
         exc = value
-    return [type(exc).__name__ + ': ' + str(exc) + '\n']
+    kind, message = __current_fault(exc)
+    if kind is None:
+        raise 'TypeError: an exception value is required'
+    prefix = kind + ': '
+    if message.startswith(prefix):
+        message = message[len(prefix):]
+    return [prefix + message + '\n']
 
 def format_exc(limit=None, chain=True):
     kind, message = __current_fault()

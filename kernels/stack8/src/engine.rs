@@ -906,7 +906,7 @@ impl<'a> Engine<'a> {
         // What a fault of the kernel's own holds: the words said, and
         // where in the program it was raised.
         for (named, held) in [
-            ("message", Value::text(told)),
+            ("message", Value::text(if told == "Division by zero" { self.lang.division_message.as_deref().unwrap_or(told) } else { told })),
             ("file", Value::text(&self.source)),
             ("line", Value::Small(self.line as i64)),
         ] {
@@ -2693,6 +2693,10 @@ impl<'a> Engine<'a> {
                             let method = o.class.method(name).expect("the member exists").clone();
                             Value::Method(o, method)
                         }
+                        None if self.module_fallback(&Value::Object(o.clone())).is_some() => {
+                            let routine = self.module_fallback(&Value::Object(o)).expect("the module answers absent names");
+                            return self.invoke(&routine, vec![Value::text(name)]);
+                        }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
                             let asked = Value::Text(Rc::from(name.as_ref()));
@@ -2857,7 +2861,7 @@ impl<'a> Engine<'a> {
                         Value::Class(c) => c.holder(name).is_some() || c.constant(name).is_some(),
                         _ => false,
                     };
-                    if field {
+                    if field || self.module_fallback(&subject).is_some() {
                         self.data.push(subject);
                         self.perform(&Action::Grab(name.clone()), 1)?;
                         let callee = self.drop_top()?;
@@ -4568,8 +4572,8 @@ impl<'a> Engine<'a> {
             // What the run has bound under a name, by name: the
             // classes, and the routines.
             Builtin::CurrentFault => {
-                arity(0)?;
-                match self.caught.last() {
+                if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                match args.first().or_else(|| self.caught.last()) {
                     Some(Value::Object(object)) => {
                         let message = object.fields.borrow().iter().find(|(name, _)| name == "message").map(|(_, value)| value.clone()).unwrap_or(Value::Null);
                         Value::array(vec![Value::text(&object.class.name), message])
@@ -4645,6 +4649,17 @@ impl<'a> Engine<'a> {
                     else { Some((Value::text(name), value.clone())) }
                 }).collect()))
             }
+            Builtin::IsMap => { arity(1)?; Value::Flag(matches!(&args[0], Value::Map(_))) }
+            Builtin::MemberHas => {
+                arity(2)?;
+                let named = args[1].display(&sp);
+                let (class, held) = match &args[0] {
+                    Value::Object(object) => (Some(&object.class), self.member_at(&object.fields.borrow(), &named).is_some()),
+                    Value::Class(class) => (Some(class), false),
+                    _ => (None, false),
+                };
+                Value::Flag(held || class.map_or(false, |shape| shape.holder(&named).is_some() || shape.method(&named).is_some() || shape.constant(&named).is_some()))
+            }
             Builtin::MemberGet => {
                 if args.len() != 2 && args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
                 let name = args[1].display(&sp);
@@ -4660,6 +4675,15 @@ impl<'a> Engine<'a> {
                         Value::Object(o) => Value::Method(o.clone(), m.clone()), _ => Value::Routine(m.clone()),
                     }))
                 }));
+                if found.is_none() {
+                    if let Some(routine) = self.module_fallback(value) {
+                        match self.invoke(&routine, vec![Value::text(&name)]) {
+                            Ok(()) => return self.drop_top(),
+                            Err(Fault::Note(words)) => return Err(words),
+                            Err(fault) => { self.carried = Some(fault); return Err("module member did not finish".into()); }
+                        }
+                    }
+                }
                 match found.or_else(|| args.get(2).cloned()) {
                     Some(Value::Bond(cell)) => cell.borrow().clone(),
                     Some(v) => v,
@@ -5946,6 +5970,16 @@ impl Engine<'_> {
         Ok(module)
     }
 
+    fn module_fallback(&self, value: &Value) -> Option<Rc<Routine>> {
+        let word = self.lang.module_getattr.as_ref()?;
+        let Value::Object(object) = value else { return None };
+        if !self.modules.values().any(|held| matches!(held, Value::Object(other) if Rc::ptr_eq(object, other))) { return None; }
+        let fields = object.fields.borrow();
+        let (_, held) = fields.iter().find(|(name, _)| name == word)?;
+        let held = match held { Value::Bond(cell) => cell.borrow().clone(), value => value.clone() };
+        if let Value::Routine(routine) = held { Some(routine) } else { None }
+    }
+
     fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
         if let Value::Object(object) = module {
             if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
@@ -5955,6 +5989,10 @@ impl Engine<'_> {
         }
         let child = format!("{path}.{name}");
         if self.module_sources.contains_key(&child) { return self.import_module(&child); }
+        if let Some(routine) = self.module_fallback(module) {
+            self.invoke(&routine, vec![Value::text(name)])?;
+            return self.drop_top().map_err(Fault::from);
+        }
         Err(Self::named_fault(&self.lang.import_member_missing, name).into())
     }
 }

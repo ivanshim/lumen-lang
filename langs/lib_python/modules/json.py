@@ -1,5 +1,5 @@
 # Text is read as JSON, never as executable source.
-class JSONDecodeError:
+class JSONDecodeError(ValueError):
     def __init__(self, msg, doc, pos):
         self.msg = msg
         self.doc = doc
@@ -57,11 +57,11 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
         raise 'ValueError: JSON nesting exceeds the supported depth'
     if obj is None:
         return 'null'
-    if type(obj) == type(True):
+    if isinstance(obj, type(True)):
         return 'true' if obj else 'false'
-    if type(obj) == type(''):
+    if isinstance(obj, type('')):
         return _quote(obj, ascii)
-    if type(obj) == type(1) or type(obj) == type(1.0):
+    if isinstance(obj, type(1)) or isinstance(obj, type(1.0)):
         text = str(obj)
         if text == 'nan' or text == 'inf' or text == '-inf':
             if not allow_nan:
@@ -70,7 +70,7 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
                 return 'NaN'
             return '-Infinity' if text == '-inf' else 'Infinity'
         return text
-    if type(obj) == type({}):
+    if __is_mapping(obj):
         keys = list(obj)
         if ordered:
             # An insertion sort needs no host sorting convention.
@@ -83,13 +83,13 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
                 keys[j] = key
         pieces = []
         for key in keys:
-            if type(key) == type(''):
+            if isinstance(key, type('')):
                 word = key
             elif key is None:
                 word = 'null'
-            elif type(key) == type(True):
+            elif isinstance(key, type(True)):
                 word = 'true' if key else 'false'
-            elif type(key) == type(1) or type(key) == type(1.0):
+            elif isinstance(key, type(1)) or isinstance(key, type(1.0)):
                 word = str(key)
             elif skipkeys:
                 continue
@@ -98,7 +98,7 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
             pieces.append(_quote(word, ascii) + colon + _encode(obj[key], gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys, depth + 1))
         opening = '{'
         closing = '}'
-    elif type(obj) == type([]) or type(obj) == type(()):
+    elif isinstance(obj, type([])) or isinstance(obj, type(())):
         pieces = []
         for item in obj:
             pieces.append(_encode(item, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys, depth + 1))

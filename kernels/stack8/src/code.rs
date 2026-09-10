@@ -332,6 +332,8 @@ pub enum Builtin {
     InstanceOf,
     MemberSet,
     MemberGet,
+    MemberHas,
+    IsMap,
     CurrentFault,
     HostInfo,
     FileKind,
