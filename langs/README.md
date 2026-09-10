@@ -2073,6 +2073,12 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.exceptions.info` and `.current`: builtins giving the class,
   value and absent traceback as a tuple, or the caught value alone. Outside
   a clause their places hold nothing.
+- `ext.system.collection.repr`: whether text members of a list are shown
+  within quotes when the list is written as a value.
+- `ext.system.fault.trace`: three pieces for an uncaught exception: the
+  header, the words before a file name, and those between it and its line
+  number. The full kernels retain the call sites and the place raised;
+  the traceback member itself still stands as nothing.
 - `ext.system.recursion.limit`: the greatest number of nested calls the
   run admits; `.exceeded` gives the words raised upon reaching it. A
   language giving no bound keeps its former account.
@@ -3183,6 +3189,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.collection.repr` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
 | `ext.system.complaint.markup.kind` | - | - | - | - | `<br />` `<b>` `</b>:  ` | - | - | - | - | - |
@@ -3216,6 +3223,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.name` | - | - | `name '` `' is not defined` | - | - | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.trace` | - | - | `Traceback (most recent call last):` `  File "` `", line ` | - | - | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |

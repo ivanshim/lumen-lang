@@ -165,6 +165,7 @@ impl std::fmt::Debug for Value {
 
 #[derive(Clone, Copy)]
 pub struct Names<'a> {
+    pub member_repr: bool,
     pub truth: &'a str,
     pub falsity: &'a str,
     pub nil: &'a str,
@@ -413,7 +414,7 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
-            Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+            Value::Vector(items) => format!("[{}]", items.iter().map(|v| if w.member_repr { v.representation(w) } else { v.render(w) }).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
             }

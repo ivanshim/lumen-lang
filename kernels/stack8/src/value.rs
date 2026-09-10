@@ -158,6 +158,7 @@ pub enum Value {
 
 /// How a language spells the literal values when printing.
 pub struct Wording<'a> {
+    pub quoted_members: bool,
     pub true_word: &'a str,
     pub false_word: &'a str,
     pub null_word: &'a str,
@@ -428,7 +429,7 @@ impl Value {
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
             Value::Array(items) => {
-                let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
+                let shown: Vec<String> = items.iter().map(|v| if sp.quoted_members { v.repr(sp) } else { v.display(sp) }).collect();
                 format!("[{}]", shown.join(", "))
             }
             Value::Map(pairs) => {

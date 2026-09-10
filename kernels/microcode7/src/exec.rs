@@ -140,6 +140,8 @@ pub struct Machine<'a> {
     /// first fault to leave a call writes this; a trap taking one
     /// wipes it again.
     under: Option<String>,
+    fault_places: Vec<(Rc<str>, u32)>,
+    member_fault: Option<(Value, String)>,
     /// Where the program a fault was raised on the way into is written.
     /// Such a fault belongs there and not where the call stood, which
     /// is worth saying only where nothing takes it.
@@ -469,6 +471,8 @@ impl<'a> Machine<'a> {
             pages_at: None,
             calls: Vec::new(),
             under: None,
+            fault_places: Vec::new(),
+            member_fault: None,
             entering: None,
             quieted: 0,
             silenced: 0,
@@ -1305,6 +1309,7 @@ impl<'a> Machine<'a> {
 
     fn wording(&self) -> Names<'a> {
         Names {
+            member_repr: self.table.flag("ext.system.collection.repr"),
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
             flag_counted: self.table.flag("system.flag.counts"),
@@ -1434,6 +1439,15 @@ impl<'a> Machine<'a> {
             let words = self.fault_words(told, &named);
             let values = if words.is_empty() || words == format!("{named}:") { vec![] } else { vec![Value::text(&words)] };
             let raised = self.make_fault(of, values, Value::Nil);
+            if self.table.single("ext.system.fault.class.attribute") == Some(named.as_str()) {
+                if let (Value::Thing(t), Some((receiver, field))) = (&raised, self.member_fault.take()) {
+                    for (label, item) in [("ext.builtin.exceptions.name", Value::text(&field)), ("ext.builtin.exceptions.object", receiver)] {
+                        if let Some(key) = self.table.single(label) {
+                            if let Some((_, v)) = t.holds.borrow_mut().iter_mut().find(|(n, _)| n == key) { *v = item; }
+                        }
+                    }
+                }
+            }
             if self.table.single("ext.system.fault.class.name") == Some(named.as_str()) {
                 let absent = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
                 if let (Value::Thing(t), Some(key)) = (&raised, self.table.single("ext.builtin.exceptions.name")) {
@@ -1744,6 +1758,12 @@ impl<'a> Machine<'a> {
                         Value::Small(n) => std::process::exit(n as i32),
                         Value::Flag(b) => std::process::exit(if b { 1 } else { 0 }),
                         other => { eprintln!("{}", other.render(self.wording())); std::process::exit(1); }
+                    }
+                }
+                if self.is_fault_kind(&thing.of) {
+                    if let [head, before, after] = self.table.strings("ext.system.fault.trace") {
+                        eprintln!("{head}");
+                        for (file, row) in &self.fault_places { eprintln!("{before}{file}{after}{row}"); }
                     }
                 }
                 let original = thing.holds.borrow().iter().find(|(key, _)| key == "\0former-complaint").map(|(_, value)| value.bare());
@@ -3871,6 +3891,8 @@ impl<'a> Machine<'a> {
         // sort is written down for it.
         let a_fault = matches!(outcome, Err(Escape::Error(_) | Escape::Thrown(_) | Escape::Stopped(_)));
         if a_fault && self.under.is_none() {
+            self.fault_places = self.calls.iter().filter(|c| !c.from_library).map(|c| (c.from.clone(), c.on)).collect();
+            self.fault_places.push((self.written_in.clone(), self.raised_on.max(self.row)));
             self.under = Some(self.calls_told());
         }
         if watching {
@@ -4080,7 +4102,7 @@ impl<'a> Machine<'a> {
                     Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
-                    Value::Vector(v) => v.to_vec(),
+                    Value::Arguments(v) | Value::Vector(v) => v.to_vec(),
                     _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
                 };
                 let minimum = if star.is_some() { wanted - 1 } else { wanted };
@@ -4271,10 +4293,16 @@ impl<'a> Machine<'a> {
                                 self.grumble("warning", &format!("Undefined property: {}::${}", thing.of.name, called));
                                 Value::Nil
                             }
-                            None => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
+                            None => {
+                                self.member_fault = Some((v[0].clone(), called.clone()));
+                                return Err(format!("Undefined property: {}::${}", thing.of.name, called));
+                            }
                         }
                     }
-                    other => return Err(format!("Cannot read property '{}' of {}", called, other.bare())),
+                    other => {
+                        self.member_fault = Some((other.clone(), called.clone()));
+                        return Err(format!("Cannot read property '{}' of {}", called, other.bare()));
+                    }
                 }
             }
             Prim::Pluck => {

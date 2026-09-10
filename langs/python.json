@@ -1147,6 +1147,7 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.collection.repr": true,
   "ext.system.fault.attribute": [
     "object has no attribute '",
     "'"
@@ -1199,6 +1200,11 @@
   ],
   "ext.system.fault.shift": [
     "negative shift count"
+  ],
+  "ext.system.fault.trace": [
+    "Traceback (most recent call last):",
+    "  File \"",
+    "\", line "
   ],
   "ext.system.module.name": [
     "__name__"

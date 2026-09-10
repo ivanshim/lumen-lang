@@ -57,6 +57,8 @@ pub struct Engine<'a> {
     /// first fault to leave a call writes this; a guard taking one
     /// clears it again.
     under: Option<String>,
+    fault_frames: Vec<(Rc<str>, u32)>,
+    attribute_fault: Option<(String, Value)>,
     /// The routine a value nobody took is handed to, where the program
     /// put one in its way.
     untaken: RefCell<Option<Value>>,
@@ -293,7 +295,8 @@ impl<'a> Engine<'a> {
     fn make_group(&mut self, class: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         let bad = || self.lang.builtin_exceptions_group_invalid.first().cloned().unwrap_or_default();
         if args.len() != 2 || !matches!(args[0], Value::Text(_)) { return Err(bad().into()); }
-        let members = match &args[1] {
+        let sequence = collection_contents(&args[1]);
+        let members = match &sequence {
             Value::Array(row) | Value::Tuple(row) if !row.is_empty() => row.clone(),
             _ => return Err(bad().into()),
         };
@@ -394,6 +397,8 @@ impl<'a> Engine<'a> {
             pages_kept: None,
             calls: Vec::new(),
             under: None,
+            fault_frames: Vec::new(),
+            attribute_fault: None,
             entering: None,
             untaken: RefCell::new(None),
             written_out: std::cell::Cell::new(false),
@@ -807,6 +812,8 @@ impl<'a> Engine<'a> {
     fn left_the_call(&mut self, amiss: bool, watching: bool, noted: bool) {
         if amiss && self.under.is_none() {
             self.under = Some(self.calls_told());
+            self.fault_frames = self.calls.iter().filter(|c| !c.from_library).map(|c| (c.from.clone(), c.on)).collect();
+            self.fault_frames.push((self.source.clone(), self.hurled_at.get().max(self.line)));
         }
         if watching {
             self.given.pop();
@@ -938,6 +945,15 @@ impl<'a> Engine<'a> {
                     v => { eprintln!("{}", v.display(&self.wording())); 1 },
                 };
                 std::process::exit(status);
+            }
+        }
+        if let Fault::Thrown(Value::Object(o)) = fault {
+            if self.exception_class(&o.class) && self.lang.fault_trace.len() == 3 {
+                eprintln!("{}", self.lang.fault_trace[0]);
+                for (source, line) in &self.fault_frames {
+                    eprintln!("{}{}{}{}", self.lang.fault_trace[1], source, self.lang.fault_trace[2], line);
+                }
+                return;
             }
         }
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == Complaint::Fatal) else { return };
@@ -1110,6 +1126,15 @@ impl<'a> Engine<'a> {
             let message = self.exception_words(told, &named);
             let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
             let value = self.exception_instance(class, args, Value::Null);
+            if self.lang.fault_attribute.as_deref() == Some(named.as_str()) {
+                if let (Some((name, object)), Value::Object(o)) = (self.attribute_fault.take(), &value) {
+                    for (keys, held) in [(&self.lang.builtin_exceptions_name, Value::text(&name)), (&self.lang.builtin_exceptions_object, object)] {
+                        for key in keys {
+                            if let Some((_, v)) = o.fields.borrow_mut().iter_mut().find(|(n, _)| n == key) { *v = held.clone(); }
+                        }
+                    }
+                }
+            }
             if self.lang.fault_name.as_deref() == Some(named.as_str()) {
                 let name = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
                 if let Value::Object(o) = &value {
@@ -1372,6 +1397,7 @@ impl<'a> Engine<'a> {
         let word = |list: &'a [String], fallback: &'a str| list.first().map_or(fallback, String::as_str);
         let nothing = if self.lang.null_silent { "" } else { word(&self.lang.null_words, "null") };
         Wording {
+            quoted_members: self.lang.collection_repr,
             true_word: word(&self.lang.true_words, "true"),
             false_word: word(&self.lang.false_words, "false"),
             null_word: nothing,
@@ -2734,7 +2760,7 @@ impl<'a> Engine<'a> {
                 let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
                     Value::Counted(_) => self.comprehension_items(&source)?,
-                    Value::Array(items) => items.as_ref().clone(),
+                    Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
                     _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
@@ -2996,10 +3022,18 @@ impl<'a> Engine<'a> {
                             self.complain(Complaint::Warning, &told);
                             Value::Null
                         }
-                        None => return Err(format!("Undefined property: {}::${}", o.class.name, name).into()),
+                        None => {
+                            let told = format!("Undefined property: {}::${}", o.class.name, name);
+                            self.attribute_fault = Some((name.to_string(), Value::Object(o)));
+                            return Err(told.into());
+                        }
                     }
                 }
-                v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
+                v => {
+                    let told = format!("Cannot read property '{}' of {}", name, v.plain());
+                    self.attribute_fault = Some((name.to_string(), v));
+                    return Err(told.into());
+                }
             },
             // The property becomes a cell the object and the name that
             // takes it both stand for, so a write through either is a
