@@ -2117,7 +2117,7 @@ impl<'a> Machine<'a> {
                 let fields = named(&plan.field_names);
                 let shared = named(&plan.shared_names);
                 let constants = named(&plan.constant_names);
-                Ok(Value::Blueprint(Rc::new(Blueprint {
+                let built = Value::Blueprint(Rc::new(Blueprint {
                     name: plan.name.clone(),
                     under,
                     answers,
@@ -2126,7 +2126,17 @@ impl<'a> Machine<'a> {
                     methods: plan.methods.clone(),
                     constants,
                     shared: RefCell::new(shared),
-                })))
+                }));
+                if let Value::Blueprint(blueprint) = &built {
+                    if let Some(word) = self.table.strings("ext.stmt.class.annotations").get(1) {
+                        blueprint.shared.borrow_mut().push((word.clone(), Value::text(&plan.name)));
+                    }
+                    if blueprint.under.is_some() {
+                        let entries = blueprint.shared.borrow().iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
+                        self.protocol_value(&built, 5, &[Value::Dict(Rc::new(entries))])?;
+                    }
+                }
+                Ok(built)
             }
             Form::Cycle { test, body, step, after, otherwise } => {
                 let mut broken = false;
@@ -2683,7 +2693,54 @@ impl<'a> Machine<'a> {
         })
     }
 
+    /// Ask the method named for an operation, if the owner supplies it.
+    fn protocol_value(&mut self, receiver: &Value, index: usize, supplied: &[Value]) -> Result<Option<Value>, String> {
+        let blueprint = match receiver {
+            Value::Thing(thing) => &thing.of,
+            Value::Blueprint(blueprint) => blueprint,
+            _ => return Ok(None),
+        };
+        let names = self.table.strings("ext.op.object.protocol");
+        let body = names.get(index).and_then(|name| blueprint.program(name)).cloned();
+        let Some(body) = body else { return Ok(None) };
+        let mut arguments = Vec::with_capacity(supplied.len() + 1);
+        arguments.push(receiver.clone());
+        arguments.extend_from_slice(supplied);
+        let env = self.outermost.clone();
+        match self.invoke(body, env, arguments) {
+            Ok(value) => Ok(Some(value)),
+            Err(Escape::Error(message)) => Err(message),
+            Err(away) => { self.got_away = Some(away); Err("the protocol call did not return".to_string()) }
+        }
+    }
+
+    fn protocol_text(&mut self, item: &Value, quoted: bool) -> Result<String, String> {
+        if !self.table.strings("ext.op.object.protocol").is_empty() {
+            match item {
+                Value::Vector(items) => {
+                    let mut text = String::from("[");
+                    for (n, value) in items.iter().enumerate() {
+                        if n > 0 { text.push_str(", "); }
+                        text.push_str(&self.protocol_text(value, true)?);
+                    }
+                    text.push(']');
+                    return Ok(text);
+                }
+                Value::Thing(_) => {
+                    if !quoted {
+                        if let Some(value) = self.protocol_value(item, 6, &[])? { return Ok(value.render(self.wording())); }
+                    }
+                    if let Some(value) = self.protocol_value(item, 0, &[])? { return Ok(value.render(self.wording())); }
+                }
+                Value::Text(text) if quoted => return Ok(format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))),
+                _ => (),
+            }
+        }
+        Ok(item.render(self.wording()))
+    }
+
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if let Some(answer) = self.protocol_value(&Value::Blueprint(class.clone()), 3, &args)? { return Ok(answer); }
         self.made += 1;
         let fields = class.every_field();
         let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
@@ -2820,7 +2877,7 @@ impl<'a> Machine<'a> {
 
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
-    fn builtin_names(&self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
+    fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
@@ -2854,7 +2911,7 @@ impl<'a> Machine<'a> {
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
                 if at != 0 { written.push_str(&join); }
-                written.push_str(&item.render(self.wording()));
+                written.push_str(&self.protocol_text(item, false)?);
             }
             written.push_str(&tail);
             match channel {
@@ -3495,6 +3552,17 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if v.len() == 2 {
+            let index = match op { Prim::Eq | Prim::Ne => Some(1), Prim::Fetch => Some(2), _ => None };
+            if let Some(index) = index {
+                if let Some(answer) = self.protocol_value(&v[0], index, &v[1..])? {
+                    return Ok(if op == Prim::Ne { Value::Flag(!answer.is_true()) } else { answer });
+                }
+            }
+        }
+        if op == Prim::Listed && v.len() == 1 {
+            if let Some(answer) = self.protocol_value(&v[0], 4, &[])? { return Ok(answer); }
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }

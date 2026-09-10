@@ -1993,7 +1993,8 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let (left, right) = (av.clone(), bv.clone());
+                            let told = self.object_dyad(op, left, right)?;
                             self.truth(&told)
                         }
                     };
@@ -2025,7 +2026,7 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => { let (left, right) = (av.clone(), bv.clone()); self.object_dyad(op, left, right)? },
                     };
                     self.data.push(r);
                 }
@@ -2057,6 +2058,47 @@ impl<'a> Engine<'a> {
             pc += 1;
         }
         Ok(Passage::Along(pc))
+    }
+
+    /// A protocol method receives its owner before the written arguments.
+    fn object_answer(&mut self, owner: &Value, place: usize, rest: Vec<Value>) -> Res<Option<Value>> {
+        let class = match owner { Value::Class(c) => c, Value::Object(o) => &o.class, _ => return Ok(None) };
+        let Some(word) = self.lang.object_protocol.get(place) else { return Ok(None) };
+        let Some(method) = class.method(word).cloned() else { return Ok(None) };
+        let mut given = vec![owner.clone()];
+        given.extend(rest);
+        match self.invoke(&method, given) {
+            Ok(()) => Ok(Some(self.drop_top()?)),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err("the method stopped the run".into()) }
+        }
+    }
+
+    fn object_dyad(&mut self, op: &Action, a: Value, b: Value) -> Res<Value> {
+        let slot = match op { Action::Eq | Action::Ne => Some(1), Action::At => Some(2), _ => None };
+        if let Some(slot) = slot {
+            if let Some(answer) = self.object_answer(&a, slot, vec![b.clone()])? {
+                return Ok(if matches!(op, Action::Ne) { Value::Flag(!self.truth(&answer)) } else { answer });
+            }
+        }
+        self.dyadic(op, &a, &b)
+    }
+
+    fn object_text(&mut self, value: &Value, nested: bool) -> Res<String> {
+        if let Value::Array(items) = value {
+            if !self.lang.object_protocol.is_empty() {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.object_text(item, true)?); }
+                return Ok(format!("[{}]", parts.join(", ")));
+            }
+        }
+        if matches!(value, Value::Object(_)) {
+            let answer = if nested { None } else { self.object_answer(value, 6, vec![])? };
+            if let Some(answer) = answer.or(self.object_answer(value, 0, vec![])?) {
+                return Ok(answer.display(&self.wording()));
+            }
+        }
+        if nested { self.rem_repr(value) } else { Ok(value.display(&self.wording())) }
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
@@ -2321,9 +2363,14 @@ impl<'a> Engine<'a> {
                     }
                     Value::Class(c) if self.lang.explicit_this => {
                         let args = self.drop_many(argc - 1)?;
-                        self.data.push(Value::Class(c));
-                        self.data.extend(args);
-                        self.perform(&Action::Make, argc)
+                        if let Some(answer) = self.object_answer(&Value::Class(c.clone()), 3, args.clone())? {
+                            self.data.push(answer);
+                            Ok(())
+                        } else {
+                            self.data.push(Value::Class(c));
+                            self.data.extend(args);
+                            self.perform(&Action::Make, argc)
+                        }
                     }
                     // A pair of a thing and a method's name stands for
                     // that method of that thing, which is how a language
@@ -2550,7 +2597,7 @@ impl<'a> Engine<'a> {
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Null))).collect()
                 };
-                Value::Class(Rc::new(Class {
+                let made = Value::Class(Rc::new(Class {
                     name: plan.name.clone(),
                     base,
                     answers,
@@ -2559,7 +2606,15 @@ impl<'a> Engine<'a> {
                     methods: plan.methods.clone(),
                     shared: RefCell::new(take(&plan.shared_names)),
                     constants: take(&plan.constant_names),
-                }))
+                }));
+                if let Value::Class(c) = &made {
+                    if let Some(word) = self.lang.class_annotations.get(1) {
+                        c.shared.borrow_mut().push((word.clone(), Value::text(&plan.name)));
+                    }
+                    let members = Value::Map(Rc::new(c.shared.borrow().iter().map(|(k, v)| (Value::text(k), v.clone())).collect()));
+                    if c.base.is_some() { self.object_answer(&made, 5, vec![members])?; }
+                }
+                made
             }
             Action::Make => {
                 let mut args = self.drop_many(argc)?;
@@ -3203,7 +3258,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.object_dyad(dyadic, a, b)?
             }
         };
         self.data.push(result);
@@ -4210,7 +4265,9 @@ impl<'a> Engine<'a> {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
             }
-            let text = args.iter().map(|v| v.display(&self.wording())).collect::<Vec<_>>().join(&between) + &ending;
+            let mut pieces = Vec::new();
+            for value in &args { pieces.push(self.object_text(value, false)?); }
+            let text = pieces.join(&between) + &ending;
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
@@ -4882,7 +4939,8 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                Value::array(self.comprehension_items(&args[0])?)
+                if let Some(values) = self.object_answer(&args[0], 4, vec![])? { values }
+                else { Value::array(self.comprehension_items(&args[0])?) }
             }
             Builtin::Any => {
                 arity(1)?;

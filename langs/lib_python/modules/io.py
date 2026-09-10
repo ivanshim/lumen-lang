@@ -45,3 +45,14 @@ class StringIO:
     def __exit__(self, kind, value, traceback):
         self.close()
         return False
+
+    def readline(self, size=-1):
+        if self.closed:
+            raise 'ValueError: I/O operation on closed file'
+        result = ''
+        while self.position < len(self.text) and (size < 0 or len(result) < size):
+            letter = self.read(1)
+            result += letter
+            if letter == '\n':
+                break
+        return result

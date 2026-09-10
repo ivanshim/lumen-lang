@@ -2137,6 +2137,7 @@ impl<'a> Builder<'a> {
         let mut methods = Vec::new();
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         let mut attributes = Vec::new();
+        let mut annotations = Vec::new();
         let mut values = Vec::new();
         if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
         let before_body = setup.len();
@@ -2171,9 +2172,13 @@ impl<'a> Builder<'a> {
                 } else if self.look().shape == Shape::Bare && table.spells("block.intro", &self.glance(1).lexeme) {
                     self.pos += 2;
                     let _annotation = self.expr(0)?;
-                    if self.on_assign() { self.advance(); let _value = self.expr(0)?; }
-                    cannot = true;
-                    None
+                    annotations.push((Value::text(&member), Value::Nil));
+                    cannot |= table.strings("ext.stmt.class.annotations").is_empty();
+                    if self.on_assign() {
+                        self.advance();
+                        attributes.push(member);
+                        Some(self.expr(0)?)
+                    } else { None }
                 } else {
                     let _read = self.stmt()?;
                     cannot = true;
@@ -2202,6 +2207,10 @@ impl<'a> Builder<'a> {
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
+        }
+        if let Some(word) = table.strings("ext.stmt.class.annotations").first().map(String::as_str) {
+            attributes.push(word.to_string());
+            values.push(constant(Value::Dict(Rc::new(annotations))));
         }
         let plan = Plan {
             name: named.clone(), answers: 0, field_names: vec![], field_reach: vec![],
