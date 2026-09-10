@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use num_bigint::BigInt;
 use std::rc::Rc;
 
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
@@ -1004,7 +1004,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Tuple(_) | Value::Set(_) | Value::Cursor(_) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Bytes(..) | Value::Tuple(_) | Value::Set(_) | Value::Cursor(_) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2277,6 +2277,14 @@ impl<'a> Engine<'a> {
                     }).collect())),
                 }
             }
+            Action::ByteAssign(repeat) => {
+                let operands = self.drop_many(2)?;
+                let result = self.dyadic(if *repeat { &Action::Mul } else { &Action::Add }, &operands[0], &operands[1])?;
+                if let (Value::Bytes(target, true, _), Value::Bytes(source, ..)) = (&operands[0], &result) {
+                    *target.borrow_mut() = source.borrow().clone();
+                    operands[0].clone()
+                } else { result }
+            }
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::BindValueMethod(operation) => {
                 let target = self.drop_top()?.held(false);
@@ -2693,7 +2701,7 @@ impl<'a> Engine<'a> {
                         }
                         found
                     }
-                    Value::Counted(_) => self.comprehension_items(&source)?,
+                    Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -2769,6 +2777,9 @@ impl<'a> Engine<'a> {
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
                 match &pair[0] {
+                    Value::Bytes(row, ..) => if key { Value::Small(at as i64) } else {
+                        Value::Small(*row.borrow().get(at).ok_or_else(|| self.byte_fault("index"))? as i64)
+                    },
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
@@ -3428,6 +3439,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
+                            Value::Bytes(row, ..) => row.borrow().len(),
                             Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -3465,6 +3477,7 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::Extent => match self.drop_top()? {
+                Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
                 Value::Counted(r) => Value::of_big(r.length()),
                 Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -3706,6 +3719,33 @@ impl<'a> Engine<'a> {
                 } else { Value::of_big(bits) });
             }
         }
+        if let (Value::Bytes(left, mutable, _), Value::Bytes(right, ..)) = (a, b) {
+            let (left, right) = (left.borrow(), right.borrow());
+            match op {
+                Action::Add => { let mut row = left.clone(); row.extend(right.iter()); return Ok(self.byte_make(row, *mutable)); }
+                Action::Lt | Action::Le | Action::Gt | Action::Ge => return Ok(Value::Flag(match op {
+                    Action::Lt => *left < *right, Action::Le => *left <= *right, Action::Gt => *left > *right, _ => *left >= *right,
+                })),
+                _ => {}
+            }
+        }
+        if matches!(op, Action::Mul) {
+            let pair = match (a, b) { (Value::Bytes(row, mutable, _), n) | (n, Value::Bytes(row, mutable, _)) => Some((row, mutable, n)), _ => None };
+            if let Some((row, mutable, n)) = pair {
+                if !matches!(n, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
+                let n = n.as_big()?;
+                let count = if n.is_negative() { 0 } else { n.to_usize().ok_or_else(|| self.byte_fault("unready"))? };
+                let row = row.borrow();
+                let size = row.len().checked_mul(count).ok_or_else(|| self.byte_fault("unready"))?;
+                let mut out = Vec::new(); out.try_reserve(size).map_err(|_| self.byte_fault("unready"))?;
+                if !row.is_empty() { for _ in 0..count { out.extend(row.iter()); } }
+                return Ok(self.byte_make(out, *mutable));
+            }
+        }
+        if (matches!(a, Value::Bytes(..)) || matches!(b, Value::Bytes(..)))
+            && matches!(op, Action::Add | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Mod | Action::Join) {
+            return Err(self.byte_fault("unready"));
+        }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
@@ -3783,6 +3823,13 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::Bytes(row, ..) => {
+                        let row = row.borrow();
+                        match a {
+                            Value::Bytes(needle, ..) => { let needle = needle.borrow(); needle.is_empty() || row.windows(needle.len()).any(|part| part == needle.as_slice()) }
+                            _ => row.contains(&self.byte_number(a)?),
+                        }
+                    }
                     Value::Counted(range) => a.as_big().ok().filter(|n| Self::member_matches(a, &Value::of_big(n.clone()))).map_or(false, |n| {
                         let delta = &n - &range.start;
                         let inside = if range.step > BigInt::from(0) { n >= range.start && n < range.stop }
@@ -3805,6 +3852,8 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
+                    (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -4414,6 +4463,11 @@ impl<'a> Engine<'a> {
 
     fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
         match target {
+            Value::Bytes(row, mutable, _) => {
+                let row = row.borrow();
+                let (_, _, _, places) = self.slice_places(parts, row.len())?;
+                Ok(self.byte_make(places.into_iter().map(|i| row[i]).collect(), *mutable))
+            }
             Value::Array(items) | Value::Tuple(items) => {
                 let (_, _, _, places) = self.slice_places(parts, items.len())?;
                 let selected = places.into_iter().map(|i| items[i].clone()).collect();
@@ -4430,6 +4484,15 @@ impl<'a> Engine<'a> {
 
     fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
         let given = collection_contents(&given);
+        if let Value::Bytes(row, mutable, _) = &target {
+            if !mutable { return Err(self.byte_fault("immutable")); }
+            let replacement = self.byte_row(&given)?;
+            let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
+            if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
+            if step == 1 { row.borrow_mut().splice(start..stop, replacement); }
+            else { for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; } }
+            return Ok(target);
+        }
         let Value::Array(mut items) = target else {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         };
@@ -4460,6 +4523,10 @@ impl<'a> Engine<'a> {
         if matches!(target, Value::Set(_)) { return Err(self.core_fault("core.unindexable", &target.core_kind())); }
         if let Value::Slice(parts) = at {
             return self.read_slice(target, parts);
+        }
+        if let Value::Bytes(row, ..) = target {
+            let row = row.borrow();
+            return Ok(Value::Small(row[self.byte_position(at, row.len())?] as i64));
         }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program, and one with a word
@@ -4562,6 +4629,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::Bytes(row, ..) => Ok(row.borrow().iter().map(|&b| Value::Small(b as i64)).collect()),
             Value::Generator(held) => {
                 let mut items = Vec::new();
                 while let Some(item) = self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? { items.push(item); }
@@ -4636,6 +4704,14 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if let Builtin::Bytes(task @ (14 | 15)) = builtin {
+            let mut signed = false;
+            for (key, value) in named {
+                if !Lang::spells(&self.lang.byte_words["ext.builtin.bytes.signed"], &key) { return Err(self.byte_fault("unready")); }
+                signed = self.truth(&value);
+            }
+            return self.byte_work(task, &args, signed);
+        }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4686,6 +4762,14 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if self.lang.byte_words.contains_key("ext.builtin.bytes") && (matches!(receiver.contents(), Value::Bytes(..)) || operation == "encode") {
+            let task = match operation { "encode" => Some(2), "decode" => Some(3), "hex" => Some(4), "upper" => Some(6), "lower" => Some(7), "split" => Some(8), "join" => Some(9), "startswith" => Some(10), "replace" => Some(11), "strip" => Some(12), "find" => Some(13), _ => None };
+            if let Some(task) = task {
+                if !named.is_empty() { return Err(self.byte_fault("unready")); }
+                let mut given = vec![receiver.contents()]; given.extend(args);
+                return self.byte_call(task, &given);
+            }
+        }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
@@ -4819,6 +4903,254 @@ impl<'a> Engine<'a> {
         Ok(Value::Map(Rc::new(pairs)))
     }
 
+    fn byte_fault(&self, part: &str) -> String {
+        self.lang.byte_words.get(&format!("ext.system.bytes.{}", part)).and_then(|w| w.first()).cloned().unwrap_or_default()
+    }
+
+    fn byte_make(&self, row: Vec<u8>, mutable: bool) -> Value {
+        Value::Bytes(Rc::new(RefCell::new(row)), mutable, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][usize::from(mutable)].as_str()))
+    }
+
+    fn byte_kind(&self, mutable: bool) -> Value {
+        let name = &self.lang.byte_words[if mutable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }][0];
+        let words = &self.lang.byte_words["ext.system.bytes.type"];
+        Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1])))
+    }
+
+    fn byte_number(&self, value: &Value) -> Res<u8> {
+        if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
+        value.as_big()?.to_u8().ok_or_else(|| self.byte_fault("range"))
+    }
+
+    fn byte_row(&self, value: &Value) -> Res<Vec<u8>> {
+        match value {
+            Value::Bytes(row, ..) => Ok(row.borrow().clone()),
+            Value::Array(row) => row.iter().map(|v| self.byte_number(v)).collect(),
+            _ => Err(self.byte_fault("arguments")),
+        }
+    }
+
+    fn byte_position(&self, value: &Value, size: usize) -> Res<usize> {
+        if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
+        let mut n = value.as_big()?;
+        if n.is_negative() { n += size; }
+        n.to_usize().filter(|&at| at < size).ok_or_else(|| self.byte_fault("index"))
+    }
+
+    fn byte_codec(&self, value: Option<&Value>) -> Res<bool> {
+        let Some(value) = value else { return Ok(false); };
+        let Value::Text(name) = value else { return Err(self.byte_fault("arguments")); };
+        let name = name.to_ascii_lowercase().replace('_', "-");
+        self.lang.byte_words["ext.system.bytes.encodings"].iter().position(|word| word == &name)
+            .map(|at| at >= 2).ok_or_else(|| self.byte_fault("unready"))
+    }
+
+    fn byte_encode(&self, text: &str, ascii: bool) -> Res<Vec<u8>> {
+        if ascii {
+            let letters: Vec<char> = text.chars().collect();
+            if let Some(at) = letters.iter().position(|c| !c.is_ascii()) {
+                let stop = at + letters[at..].iter().take_while(|c| !c.is_ascii()).count();
+                let which = if stop == at + 1 {
+                    let c = letters[at] as u32;
+                    let escaped = if c <= 255 { format!("\\x{:02x}", c) } else if c <= 65535 { format!("\\u{:04x}", c) } else { format!("\\U{:08x}", c) };
+                    format!("character '{}' in position {}", escaped, at)
+                } else { format!("characters in position {}-{}", at, stop - 1) };
+                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range(128)", self.byte_fault("encode"), self.lang.byte_words["ext.system.bytes.encodings"][2], which));
+            }
+        }
+        Ok(text.as_bytes().to_vec())
+    }
+
+    fn byte_decode(&self, row: &[u8], ascii: bool) -> Res<Value> {
+        let failure = if ascii {
+            row.iter().position(|b| !b.is_ascii()).map(|at| (at, 1, "ordinal not in range(128)"))
+        } else {
+            std::str::from_utf8(row).err().map(|bad| {
+                let at = bad.valid_up_to();
+                let reason = if bad.error_len().is_none() { "unexpected end of data" }
+                    else if !(0xc2..=0xf4).contains(&row[at]) { "invalid start byte" } else { "invalid continuation byte" };
+                (at, bad.error_len().unwrap_or(row.len() - at), reason)
+            })
+        };
+        if let Some((at, count, reason)) = failure {
+            let place = if count == 1 { format!("byte 0x{:02x} in position {}", row[at], at) }
+                else { format!("bytes in position {}-{}", at, at + count - 1) };
+            return Err(format!("{}'{}' codec can't decode {}: {}", self.byte_fault("decode"), self.lang.byte_words["ext.system.bytes.encodings"][if ascii { 2 } else { 0 }], place, reason));
+        }
+        Ok(Value::text(std::str::from_utf8(row).map_err(|_| self.byte_fault("unready"))?))
+    }
+
+    fn byte_call(&self, task: u8, args: &[Value]) -> Res<Value> {
+        self.byte_work(task, args, false)
+    }
+
+    fn byte_work(&self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if matches!(task, 0..=3) && args.len() == 3 {
+            let Value::Text(policy) = &args[2] else { return Err(self.byte_fault("arguments")); };
+            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
+            return self.byte_work(task, &args[..2], signed);
+        }
+        let bad = || self.byte_fault("arguments");
+        let unready = || self.byte_fault("unready");
+        if task <= 1 {
+            let row = match args {
+                [] => Vec::new(),
+                [Value::Text(text), encoding] => self.byte_encode(text, self.byte_codec(Some(encoding))?)?,
+                [Value::Small(_) | Value::Huge(_) | Value::Flag(_)] => {
+                    let count = args[0].as_big()?;
+                    if count.is_negative() { return Err(self.byte_fault("negative")); }
+                    let count = count.to_usize().ok_or_else(unready)?;
+                    let mut row = Vec::new();
+                    row.try_reserve_exact(count).map_err(|_| unready())?;
+                    row.resize(count, 0); row
+                }
+                [value] => self.byte_row(value)?,
+                _ => return Err(unready()),
+            };
+            return Ok(self.byte_make(row, task == 1));
+        }
+        if task == 16 {
+            if args.len() != 2 { return Err(bad()); }
+            let Value::ByteKind(wanted, _) = &args[1] else { return Err(unready()); };
+            return Ok(Value::Flag(matches!(&args[0], Value::Bytes(_, actual, _) if wanted == actual)));
+        }
+        if task == 17 {
+            if args.len() != 1 { return Err(bad()); }
+            let Value::Bytes(row, mutable, _) = &args[0] else { return Err(unready()); };
+            if *mutable { return Err(self.byte_fault("unhashable")); }
+            let mut hash = 0i64;
+            for &byte in row.borrow().iter() { hash = hash.wrapping_mul(1000003) ^ i64::from(byte); }
+            return Ok(Value::Small(if hash == -1 { -2 } else { hash }));
+        }
+        if task == 2 {
+            if args.is_empty() || args.len() > 2 { return Err(unready()); }
+            let Value::Text(text) = &args[0] else { return Err(bad()); };
+            return Ok(self.byte_make(self.byte_encode(text, self.byte_codec(args.get(1))?)?, false));
+        }
+        if task == 5 {
+            let [Value::Text(text)] = args else { return Err(bad()); };
+            let chars: Vec<char> = text.chars().collect();
+            let (mut at, mut row) = (0, Vec::new());
+            while at < chars.len() {
+                if chars[at].is_ascii_whitespace() || chars[at] == '\u{b}' { at += 1; continue; }
+                let high = chars[at].to_digit(16).filter(|_| chars[at].is_ascii()).ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at))?;
+                let low = chars.get(at + 1).and_then(|c| c.to_digit(16)).filter(|_| chars.get(at + 1).map_or(false, char::is_ascii))
+                    .ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at + 1))?;
+                row.push((high * 16 + low) as u8); at += 2;
+            }
+            return Ok(self.byte_make(row, false));
+        }
+        if task == 14 || task == 15 {
+            if args.is_empty() || args.len() > if task == 14 { 3 } else { 2 } { return Err(unready()); }
+            let order = args.get(if task == 14 { 2 } else { 1 });
+            let little = match order {
+                None => false,
+                Some(Value::Text(word)) if word.as_ref() == self.lang.byte_words["ext.system.bytes.order"][0] => false,
+                Some(Value::Text(word)) if word.as_ref() == self.lang.byte_words["ext.system.bytes.order"][1] => true,
+                _ => return Err(self.byte_fault("bad_order")),
+            };
+            if task == 15 {
+                let row = self.byte_row(&args[0])?;
+                let number = match (little, signed) {
+                    (true, true) => BigInt::from_signed_bytes_le(&row), (false, true) => BigInt::from_signed_bytes_be(&row),
+                    (true, false) => BigInt::from_bytes_le(num_bigint::Sign::Plus, &row), (false, false) => BigInt::from_bytes_be(num_bigint::Sign::Plus, &row),
+                };
+                return Ok(Value::of_big(number));
+            }
+            if !matches!(&args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(bad()); }
+            let number = args[0].as_big()?;
+            if !signed && number.is_negative() { return Err(self.byte_fault("unsigned")); }
+            let width = match args.get(1) {
+                None => 1,
+                Some(n @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => n.as_big()?.to_usize().ok_or_else(bad)?,
+                _ => return Err(bad()),
+            };
+            let mut row = if signed { number.to_signed_bytes_le() } else { number.to_bytes_le().1 };
+            if number.is_zero() { row.clear(); }
+            if row.len() > width { return Err(self.byte_fault("overflow")); }
+            row.try_reserve(width - row.len()).map_err(|_| unready())?;
+            row.resize(width, if number.is_negative() { 255 } else { 0 });
+            if !little { row.reverse(); }
+            return Ok(self.byte_make(row, false));
+        }
+        let Some(Value::Bytes(cell, mutable, _)) = args.first() else { return Err(unready()); };
+        let row = cell.borrow().clone();
+        let given = &args[1..];
+        let bytes = |v: &Value| match v { Value::Bytes(data, ..) => Ok(data.borrow().clone()), _ => Err(bad()) };
+        let count = |v: Option<&Value>| -> Res<usize> {
+            match v {
+                None => Ok(usize::MAX),
+                Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                    let n = v.as_big()?;
+                    Ok(n.to_usize().unwrap_or(usize::MAX))
+                }
+                _ => Err(bad()),
+            }
+        };
+        let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
+        let result = match task {
+            3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
+            4 if given.is_empty() => return Ok(Value::text(&row.iter().map(|b| format!("{:02x}", b)).collect::<String>())),
+            6 | 7 if given.is_empty() => row.iter().map(|b| if task == 6 { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() }).collect(),
+            8 if given.len() <= 2 => {
+                let limit = count(given.get(1))?;
+                let mut parts = Vec::new();
+                if given.first().map_or(true, |v| matches!(v, Value::Null)) {
+                    let mut pos = 0;
+                    while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
+                    while pos < row.len() {
+                        if parts.len() == limit { parts.push(self.byte_make(row[pos..].to_vec(), *mutable)); break; }
+                        let start = pos;
+                        while pos < row.len() && !(row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
+                        parts.push(self.byte_make(row[start..pos].to_vec(), *mutable));
+                        while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
+                    }
+                } else {
+                    let sep = bytes(&given[0])?;
+                    if sep.is_empty() { return Err(self.byte_fault("separator")); }
+                    let mut start = 0;
+                    while parts.len() < limit {
+                        let Some(offset) = find(&row[start..], &sep) else { break; };
+                        parts.push(self.byte_make(row[start..start + offset].to_vec(), *mutable));
+                        start += offset + sep.len();
+                    }
+                    parts.push(self.byte_make(row[start..].to_vec(), *mutable));
+                }
+                return Ok(Value::array(parts));
+            }
+            9 if given.len() == 1 => {
+                let Value::Array(parts) = &given[0] else { return Err(unready()); };
+                let mut joined = Vec::new();
+                for (at, part) in parts.iter().enumerate() { if at > 0 { joined.extend(&row); } joined.extend(bytes(part)?); }
+                joined
+            }
+            10 | 13 if given.len() == 1 => {
+                let needle = bytes(&given[0])?;
+                return Ok(if task == 10 { Value::Flag(row.starts_with(&needle)) }
+                    else { Value::Small(find(&row, &needle).map_or(-1, |i| i as i64)) });
+            }
+            11 if given.len() == 2 || given.len() == 3 => {
+                let (old, new) = (bytes(&given[0])?, bytes(&given[1])?);
+                let mut left = count(given.get(2))?;
+                let (mut made, mut pos) = (Vec::new(), 0);
+                while pos <= row.len() && left > 0 {
+                    let Some(offset) = find(&row[pos..], &old) else { break; };
+                    made.extend(&row[pos..pos + offset]); made.extend(&new); left -= 1; pos += offset + old.len();
+                    if old.is_empty() { if pos == row.len() { break; } made.push(row[pos]); pos += 1; }
+                }
+                made.extend(&row[pos..]); made
+            }
+            12 if given.len() <= 1 => {
+                let trim = match given.first() { None | Some(Value::Null) => vec![9, 10, 11, 12, 13, 32], Some(v) => bytes(v)? };
+                let start = row.iter().position(|b| !trim.contains(b)).unwrap_or(row.len());
+                let stop = row.iter().rposition(|b| !trim.contains(b)).map_or(start, |i| i + 1);
+                row[start..stop].to_vec()
+            }
+            _ => return Err(unready()),
+        };
+        Ok(self.byte_make(result, *mutable))
+    }
+
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
@@ -4870,6 +5202,7 @@ impl<'a> Engine<'a> {
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
+            Builtin::Bytes(task) => return self.byte_call(task, args),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -5487,6 +5820,7 @@ impl<'a> Engine<'a> {
             Builtin::Length => {
                 arity(1)?;
                 match &args[0] {
+                    Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -5547,6 +5881,7 @@ impl<'a> Engine<'a> {
                     };
                     if let Some(b) = which { if let Some((word, _)) = self.lang.builtins.iter().find(|(_,v)| **v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
                 }
+                if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {
@@ -5579,6 +5914,12 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 if matches!(target, Value::Tuple(_) | Value::Set(_)) { return Err(self.core_fault("core.immutable", &target.core_kind())); }
                 let v = args.pop().expect("the value");
+                if let Value::Bytes(row, mutable, _) = &target {
+                    if !mutable { return Err(self.byte_fault("immutable")); }
+                    let byte = self.byte_number(&v)?;
+                    row.borrow_mut().push(byte);
+                    return Ok(target);
+                }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {
@@ -5607,6 +5948,13 @@ impl<'a> Engine<'a> {
                 let at = self.key(&args.pop().expect("the key"));
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
+                }
+                if let Value::Bytes(row, mutable, _) = &target {
+                    if !mutable { return Err(self.byte_fault("immutable")); }
+                    let index = self.byte_position(&at, row.borrow().len())?;
+                    let byte = self.byte_number(&v)?;
+                    row.borrow_mut()[index] = byte;
+                    return Ok(target);
                 }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
@@ -6490,6 +6838,9 @@ impl Engine<'_> {
     }
 
     fn core_isinstance(&self, value: &Value, kind: &Value) -> Res<bool> {
+        if let Value::ByteKind(mutable, _) = kind { return Ok(matches!(value, Value::Bytes(_, flag, _) if flag == mutable)); }
+        if let Value::Native(Builtin::Bytes(which @ (0 | 1)), _) = kind { return Ok(matches!(value, Value::Bytes(_, flag, _) if *flag == (*which == 1))); }
+
         if let Value::Tuple(types) = kind {
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
             return Ok(false);
@@ -6561,7 +6912,7 @@ impl Engine<'_> {
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
-            Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
+            Builtin::Hash => { arity(1, 1)?; if matches!(args[0], Value::Bytes(..)) { return self.byte_call(17, &args); } Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
             Builtin::Identity => {
                 arity(1, 1)?;
                 let id = match &args[0] {
@@ -6572,7 +6923,11 @@ impl Engine<'_> {
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Native(b, _) => *b as u64 + 16,
+                    Value::Native(b, _) => {
+                        let mut kinds: Vec<_> = self.lang.builtins.iter().collect();
+                        kinds.sort_by_key(|(word, _)| *word);
+                        kinds.iter().position(|(_, known)| *known == b).unwrap_or(0) as u64 + 16
+                    },
                     Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Real(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),

@@ -167,6 +167,8 @@ pub enum Value {
     Native(crate::code::Builtin, Rc<str>),
     Set(Rc<Vec<Value>>),
     Cursor(Rc<RefCell<CursorState>>),
+    Bytes(Rc<RefCell<Vec<u8>>>, bool, Rc<str>),
+    ByteKind(bool, Rc<str>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -346,6 +348,8 @@ impl Value {
             Value::View(_) => if let Value::Array(row) = self.contents() { !row.is_empty() } else { false },
             Value::Native(..) | Value::Cursor(_) => true,
             Value::Set(v) => !v.is_empty(),
+            Value::Bytes(row, ..) => !row.borrow().is_empty(),
+            Value::ByteKind(..) => true,
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -384,7 +388,7 @@ impl Value {
             Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
-            Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Bytes(..) | Value::ByteKind(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -404,6 +408,8 @@ impl Value {
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Native(a,_), Value::Native(b,_)) => a == b,
             (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a,b),
+            (Value::Bytes(a, ..), Value::Bytes(b, ..)) => *a.borrow() == *b.borrow(),
+            (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -606,6 +612,8 @@ impl Value {
             Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::Set(_) => self.core_repr(),
+            Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
+            Value::ByteKind(_, text) => text.to_string(),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -1098,4 +1106,23 @@ fn shortest_real(x: f64) -> String {
         return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
     }
     x.to_string()
+}
+
+fn byte_repr(row: &[u8], mutable: bool, opening: &str) -> String {
+    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { '"' } else { '\'' };
+    let mut out = format!("{}{}", opening, quote);
+    for &byte in row {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b if b == quote as u8 => { out.push('\\'); out.push(quote); }
+            32..=126 => out.push(byte as char),
+            _ => { let _ = write!(out, "\\x{:02x}", byte); }
+        }
+    }
+    out.push(quote);
+    if mutable { out.push(')'); }
+    out
 }

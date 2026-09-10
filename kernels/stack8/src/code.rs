@@ -160,6 +160,7 @@ impl Pattern {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    ByteAssign(bool),
     /// A pattern and its binding order; the flag marks a tuple subject,
     /// whose members may be taken but whose whole has no value here.
     Match(Rc<Pattern>, Vec<String>, bool),
@@ -432,6 +433,7 @@ pub enum Builtin {
     ValueMethod,
     Sorted,
     InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
+    Bytes(u8),
     Sum,
     List,
     Any,
