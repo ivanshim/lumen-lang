@@ -50,6 +50,7 @@ pub struct Table {
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.
 const TAGS: &str = "\
+ext.builtin.complex:L ext.builtin.complex.real:L ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.arguments:L ext.builtin.complex.integer:L ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L ext.builtin.complex.unready:L \
 format_version:N language:W extensions:L lexical.comment_line:L lexical.comment_block.open:L \
 lexical.comment_block.close:L lexical.string_quotes:L lexical.raw_quotes:L lexical.string_escapes:L lexical.prologue:L \
 lexical.name_quote:L lexical.number.decimal_point:L lexical.number.base_marker:L lexical.number.exponent_marker:L lexical.number.hex_prefix:L \
@@ -140,7 +141,9 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 152] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 154] = [
+            ("ext.builtin.complex", Prim::ComplexMade),
+            ("ext.builtin.method.conjugate", Prim::ValueMethod),
             ("ext.builtin.isinstance", Prim::Belongs),
             ("ext.builtin.tuple", Prim::Tupling),
             ("ext.builtin.set", Prim::Uniques),

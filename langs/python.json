@@ -352,6 +352,44 @@
   "ext.builtin.callable": [
     "callable"
   ],
+  "ext.builtin.complex": [
+    "complex"
+  ],
+  "ext.builtin.complex.arguments": [
+    "TypeError: complex() requires one or two numeric arguments"
+  ],
+  "ext.builtin.complex.floor": [
+    "TypeError: unsupported operand type(s) for //: '",
+    "' and '",
+    "'"
+  ],
+  "ext.builtin.complex.imag": [
+    "imag"
+  ],
+  "ext.builtin.complex.integer": [
+    "TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'"
+  ],
+  "ext.builtin.complex.invalid": [
+    "ValueError: complex() arg is a malformed string"
+  ],
+  "ext.builtin.complex.order": [
+    "TypeError: '",
+    "' not supported between instances of '",
+    "' and '",
+    "'"
+  ],
+  "ext.builtin.complex.power.zero": [
+    "ZeroDivisionError: 0.0 to a negative or complex power"
+  ],
+  "ext.builtin.complex.real": [
+    "real"
+  ],
+  "ext.builtin.complex.unready": [
+    "NotImplementedError: this complex operation is not supported"
+  ],
+  "ext.builtin.complex.zero": [
+    "ZeroDivisionError: complex division by zero"
+  ],
   "ext.builtin.core.arity": [
     "TypeError: ",
     "() received invalid arguments"
@@ -524,6 +562,9 @@
   ],
   "ext.builtin.method.clear": [
     "clear"
+  ],
+  "ext.builtin.method.conjugate": [
+    "conjugate"
   ],
   "ext.builtin.method.copy": [
     "copy"

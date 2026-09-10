@@ -175,6 +175,7 @@ pub enum Value {
     Real(Rc<Real>),
     /// An imaginary literal and the words for working with it too soon.
     Imaginary(f64, Rc<str>),
+    Complex(Rc<crate::complex::Complex>),
     Text(Rc<str>),
     Flag(bool),
     Null,
@@ -340,6 +341,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Complex(z) => z.real != 0.0 || z.imag != 0.0,
             Value::Imaginary(n, _) => *n != 0.0,
             Value::Collection(cell, _) => cell.borrow().is_true(),
             Value::ValueMethod(_) => true,
@@ -400,6 +402,7 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Complex(z), other) | (other, Value::Complex(z)) => crate::complex::parts(other).map_or(false, |(a,b)| z.real == a && z.imag == b),
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Native(a,_), Value::Native(b,_)) => a == b,
@@ -599,6 +602,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Collection(cell, _) => cell.borrow().plain(),
             Value::ValueMethod(_) => "<built-in method>".to_string(),
@@ -1089,7 +1093,7 @@ fn laid_flat(figures: &str, power: i32) -> String {
 
 /// Write an imaginary coefficient in the fewest figures, with a sign
 /// and two places at least for the power of ten.
-fn shortest_real(x: f64) -> String {
+pub(crate) fn shortest_real(x: f64) -> String {
     if !x.is_finite() { return x.to_string().to_ascii_lowercase(); }
     let scientific = format!("{:e}", x);
     let (mantissa, exponent) = scientific.split_once('e').expect("a power follows");

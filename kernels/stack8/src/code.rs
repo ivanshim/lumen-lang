@@ -425,6 +425,7 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Complex,
     MapFrom,
     Next,
     Iter,

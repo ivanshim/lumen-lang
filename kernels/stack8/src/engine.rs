@@ -2509,13 +2509,14 @@ impl<'a> Engine<'a> {
                 match self.drop_top()? {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
-                    number @ (Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
+                    number @ (Value::Complex(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
                     _ => return Err(self.lang.plus_non_number.clone().unwrap_or_default().into()),
                 }
             }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                if let Value::Complex(z) = &v { self.data.push(crate::complex::made(-z.real,-z.imag)); return Ok(()); }
                 if let Value::Imaginary(_, words) = &v { return Err(words.to_string().into()); }
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
@@ -2905,6 +2906,11 @@ impl<'a> Engine<'a> {
                 Value::Flag(matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Complex(z) => {
+                    if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { crate::complex::real(z.real) }
+                    else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { crate::complex::real(z.imag) }
+                    else { return Err(crate::complex::fault(self.lang, "unready").into()); }
+                }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
@@ -3686,6 +3692,7 @@ impl<'a> Engine<'a> {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
         }
+        if (matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_))) && !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) { return crate::complex::work(self.lang, op, a, b); }
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
@@ -4686,6 +4693,12 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "conjugate" {
+            if !args.is_empty() || !named.is_empty() { return Err(crate::complex::fault(self.lang, "arguments")); }
+            let held = receiver.contents();
+            let (a,b) = crate::complex::parts(&held).ok_or_else(|| crate::complex::fault(self.lang, "unready"))?;
+            return Ok(crate::complex::made(a,-b));
+        }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
@@ -4750,6 +4763,7 @@ impl<'a> Engine<'a> {
     fn integer_call(&self, args: &[Value]) -> Res<Value> {
         if args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
         let Some(value) = args.first() else { return Ok(Value::Small(0)) };
+        if matches!(value, Value::Complex(_)) { return Err(crate::complex::fault(self.lang, "integer")); }
         let base = match args.get(1) {
             None => 10,
             Some(Value::Small(n)) => *n,
@@ -4867,6 +4881,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Complex => crate::complex::construct(self.lang, args)?,
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
@@ -6503,6 +6518,7 @@ impl Engine<'_> {
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
         };
         Ok(match b {
+            Builtin::Complex => matches!(value, Value::Complex(_)),
             Builtin::ToInt => matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
             Builtin::AsReal => matches!(value, Value::Real(_)),
             Builtin::ToText => matches!(value, Value::Text(_)),
@@ -6683,6 +6699,7 @@ impl Engine<'_> {
             }
             Builtin::Absolute => {
                 arity(1, 1)?;
+                if let Value::Complex(z) = &args[0] { return Ok(crate::complex::real(z.real.hypot(z.imag))); }
                 let x = number(&args[0]);
                 let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })
@@ -6695,6 +6712,7 @@ impl Engine<'_> {
             }
             Builtin::Divmod => {
                 arity(2, 2)?;
+                if args.iter().any(|v| matches!(v, Value::Complex(_))) { return Err(crate::complex::floor_fault(self.lang, &args[0], &args[1])); }
                 let (a,z) = (number(&args[0]), number(&args[1]));
                 if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
                     let divisor = z.as_big()?;
@@ -6718,6 +6736,10 @@ impl Engine<'_> {
             }
             Builtin::Power => {
                 arity(2, 3)?;
+                if args.iter().any(|v| matches!(v, Value::Complex(_))) {
+                    if args.len() != 2 { return Err(crate::complex::fault(self.lang, "unready")); }
+                    return crate::complex::work(self.lang, &Action::Power, &args[0], &args[1]);
+                }
                 if args.len() == 3 && !matches!(args[2], Value::Null) {
                     if args.iter().any(|v| !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.core_fault("core.power.integer", "")); }
                     let (mut a, mut exp, modulus) = (integer(&args[0])?, integer(&args[1])?, integer(&args[2])?);

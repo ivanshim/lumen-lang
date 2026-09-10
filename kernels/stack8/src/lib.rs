@@ -18,6 +18,7 @@ pub mod layout;
 pub mod value;
 pub mod code;
 mod core;
+mod complex;
 
 use lang::Lang;
 use value::Value;
