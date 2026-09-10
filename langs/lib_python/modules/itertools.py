@@ -30,6 +30,14 @@ def islice(iterable, *bounds):
         raise 'TypeError: islice needs one to three bounds'
     if start < 0 or step <= 0 or (stop is not None and stop < 0):
         raise 'ValueError: invalid islice bounds'
+    if isinstance(iterable, _Cycle):
+        if stop is None:
+            raise 'NotImplementedError: an unbounded cycle cannot be gathered'
+        if len(iterable.values) == 0:
+            return []
+        result = [iterable.values[(iterable.position + i) % len(iterable.values)] for i in range(start, stop, step)]
+        iterable.position = (iterable.position + stop) % len(iterable.values)
+        return result
     if isinstance(iterable, _Count):
         if stop is None:
             raise 'NotImplementedError: an unbounded islice cannot be gathered'
@@ -107,3 +115,131 @@ def accumulate(iterable, func=None, initial=None):
             value = func(value, item)
         result.append(value)
     return result
+
+# These finite walks share the eager gathering of this library's first
+# routines. An unbounded source is refused before gathering begins.
+def _finite(iterable):
+    if isinstance(iterable, _Count) or isinstance(iterable, _Repeat) or isinstance(iterable, _Cycle):
+        raise 'NotImplementedError: this operation needs a finite iterable'
+    return list(iterable)
+
+def takewhile(predicate, iterable):
+    result = []
+    for value in _finite(iterable):
+        if not predicate(value):
+            break
+        result.append(value)
+    return result
+
+def dropwhile(predicate, iterable):
+    result = []
+    dropping = True
+    for value in _finite(iterable):
+        if dropping and predicate(value):
+            continue
+        dropping = False
+        result.append(value)
+    return result
+
+def starmap(function, iterable):
+    return [function(*args) for args in _finite(iterable)]
+
+def compress(data, selectors):
+    data, selectors = _finite(data), _finite(selectors)
+    return [data[i] for i in range(len(data) if len(data) < len(selectors) else len(selectors)) if selectors[i]]
+
+def filterfalse(predicate, iterable):
+    if predicate is None:
+        return [value for value in _finite(iterable) if not value]
+    return [value for value in _finite(iterable) if not predicate(value)]
+
+class _Cycle:
+    def __init__(self, values):
+        self.values = values
+        self.position = 0
+
+def cycle(iterable):
+    return _Cycle(_finite(iterable))
+
+class _Group:
+    def __init__(self, owner, index):
+        self.owner = owner
+        self.index = index
+
+    def __class_iter__(self):
+        result = []
+        while self.owner.active == self.index and self.owner._peek():
+            if self.owner.current_key != self.owner.target:
+                break
+            result.append(self.owner.values[self.owner.position])
+            self.owner._advance()
+        return result
+
+class _Grouped:
+    def __init__(self, iterable, key):
+        self.values = _finite(iterable)
+        self.key = key
+        self.position = 0
+        self.active = -1
+        self.ready = False
+        self.pending = False
+        self.started = False
+        self.target = None
+        self.current_key = None
+
+    def _peek(self):
+        if self.position >= len(self.values):
+            return False
+        if not self.ready:
+            value = self.values[self.position]
+            self.current_key = value if self.key is None else self.key(value)
+            self.ready = True
+        return True
+
+    def _advance(self):
+        self.position += 1
+        self.ready = False
+
+    def __class_iter__(self):
+        return self
+
+    def __has_index__(self, index):
+        if self.pending:
+            return True
+        if self.started:
+            while self._peek() and self.current_key == self.target:
+                self._advance()
+        if not self._peek():
+            self.active += 1
+            return False
+        self.target = self.current_key
+        self.active += 1
+        self.pending = True
+        return True
+
+    def __getitem__(self, index):
+        if not self.__has_index__(index):
+            raise 'IndexError: group iterator exhausted'
+        self.pending = False
+        self.started = True
+        return (self.target, _Group(self, self.active))
+
+def groupby(iterable, key=None):
+    return _Grouped(iterable, key)
+
+def pairwise(iterable):
+    values = _finite(iterable)
+    return [(values[i], values[i + 1]) for i in range(len(values) - 1)]
+
+def tee(iterable, n=2):
+    raise 'NotImplementedError: tee needs tuple values and independent iterators'
+
+def batched(iterable, n, strict=False):
+    if n < 1:
+        raise 'ValueError: n must be at least one'
+    raise 'NotImplementedError: batched needs tuple values'
+
+def combinations_with_replacement(iterable, r):
+    if r < 0:
+        raise 'ValueError: r must be non-negative'
+    raise 'NotImplementedError: combinations_with_replacement needs tuple values'
