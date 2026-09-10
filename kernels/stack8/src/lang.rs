@@ -65,6 +65,7 @@ pub struct Lang {
     pub bare_number_point: bool,
     pub separator_after_prefix: bool,
     pub whole_bits: bool,
+    pub print_collections: bool,
     pub print_real_point: bool,
     pub with_as: Vec<String>,
     pub with_unready: Vec<String>,
@@ -842,7 +843,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
+w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point | b ext.builtin.print.collections
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1453,6 +1454,7 @@ impl Lang {
             bare_number_point: r.flag("ext.lexical.number.point.bare")?,
             separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
+            print_collections: r.flag("ext.builtin.print.collections")?,
             print_real_point: r.flag("ext.builtin.print.real_point")?,
             with_as: r.strings("ext.stmt.with.as")?,
             with_unready: r.strings("ext.stmt.with.unready")?,

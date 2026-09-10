@@ -3454,6 +3454,17 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::MapMerge) {
+            if let Value::Bond(cell) = a {
+                if let Value::Map(entries) = collection_contents(a) {
+                    let mut merged = entries.as_ref().clone();
+                    self.map_extend(&mut merged, b)?;
+                    *cell.borrow_mut() = Value::Map(Rc::new(merged));
+                    return Ok(a.clone());
+                }
+            }
+            return self.dyadic(&Action::BitEither, a, b);
+        }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4332,6 +4343,9 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
+            if self.lang.print_collections && matches!(collection_contents(v), Value::Array(_) | Value::Map(_)) {
+                return self.rem_repr(v).unwrap_or_else(|_| v.display(&sp));
+            }
             let mut said = v.display(&sp);
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')

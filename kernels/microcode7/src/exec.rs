@@ -3633,6 +3633,18 @@ impl<'a> Machine<'a> {
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if let Prim::MapCall(code) = op { return self.map_call(code, name, v, &[]); }
+        if op == Prim::MapJoined {
+            if let Value::Shared(cell) = &v[0] {
+                let contents = collection_read(&v[0]);
+                if let Value::Dict(entries) = contents {
+                    let mut updated = entries.to_vec();
+                    self.filled_map(&mut updated, &v[1])?;
+                    cell.replace(Value::Dict(Rc::new(updated)));
+                    return Ok(v[0].clone());
+                }
+            }
+            return self.prim(Prim::BitsEither, name, v);
+        }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -5062,6 +5074,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::MapJoined => return self.prim(Prim::BitsEither, name, v),
             Prim::MapCall(code) => return self.map_call(code, name, v, &[]),
             Prim::Listed => {
                 match v.len() {
@@ -5572,6 +5585,11 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
+            if self.table.flag("ext.builtin.print.collections") {
+                if matches!(collection_read(x), Value::Dict(_) | Value::Vector(_)) {
+                    return self.quoted_remainder(x).unwrap_or_else(|_| x.render(w));
+                }
+            }
             let text = x.render(w);
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),

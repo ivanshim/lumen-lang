@@ -4276,6 +4276,10 @@ impl<'a> Builder<'a> {
     }
 
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        let compound = match compound {
+            Some(Prim::BitsEither) if self.table.flag("ext.syntax.map.value_keys") => Some(Prim::MapJoined),
+            other => other,
+        };
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
         if let Form::Silenced(inner) = expr {
@@ -5920,6 +5924,7 @@ impl<'a> Builder<'a> {
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {
                             Some(slot) => sequence(vec![fallback, Form::Write(slot.clone(), Box::new(Form::Read(held.clone()))), constant(Value::Nil)]),
+                            None if table.flag("ext.syntax.map.value_keys") => fallback,
                             None => r.class_not_ready(),
                         });
                     }

@@ -370,6 +370,7 @@
   "ext.builtin.map.update": [
     "update"
   ],
+  "ext.builtin.print.collections": true,
   "ext.builtin.print.end": [
     "end"
   ],

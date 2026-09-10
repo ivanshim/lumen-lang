@@ -217,6 +217,7 @@ pub enum Action {
     MakeMap,
     MapSize,
     MapCheck,
+    MapMerge,
     /// `k => v` as one value, until a literal gathers it.
     Tie,
     /// The key, or the value, of the pair at a position: how a foreach

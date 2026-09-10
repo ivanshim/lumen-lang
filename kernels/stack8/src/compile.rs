@@ -4436,6 +4436,7 @@ impl<'a> Compiler<'a> {
     /// The newer compound forms keep a real's point; a plain working
     /// keeps the spelling it had before these forms were read.
     fn compound_act(&mut self, op: Action) {
+        let op = if self.lang.map_value_keys && matches!(op, Action::BitEither) { Action::MapMerge } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
@@ -6502,6 +6503,8 @@ impl<'a> Compiler<'a> {
                         self.mutation(&named, &held, argc + 1)?;
                         self.read(&held);
                         self.write(&target);
+                    } else if lang.map_value_keys && argc == needed {
+                        self.mutation(&named, &held, argc + 1)?;
                     } else { self.class_cannot_run(); }
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);

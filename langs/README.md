@@ -891,6 +891,10 @@ only. The extension labels so far, all from PHP:
   remains a map. Line ends within these braces are space. This stage
   does not provide a distinct set value. These arrays and maps keep
   the kernel's accustomed printed form: `[1, hello]` and `[a => 1]`.
+- `ext.builtin.print.collections`: a switch; printed arrays and maps
+  show the representation of each item, quoting text even within nested
+  containers. Arrays use square brackets and maps use braces and a
+  colon between each key and value. Text printed on its own stays bare.
 - `ext.builtin.map.new`: a constructor taking at most one map or walk
   of pairs, followed by named values. A fresh map keeps the order of
   its source; named values prevail over those already there.
@@ -2256,6 +2260,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.print.collections` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.print.end` | - | - | `end` | - | - | - | - | - | - | - |
 | `ext.builtin.print.end.amiss` | - | - | `TypeError: end must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.file` | - | - | `file` | - | - | - | - | - | - | - |

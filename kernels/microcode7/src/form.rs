@@ -258,6 +258,7 @@ pub enum Prim {
     /// anything else takes the next whole number as its key.
     MapLength,
     MapUnchanged,
+    MapJoined,
     MakeMap,
     /// `k => v` held as one value until a literal takes it in.
     Couple,
