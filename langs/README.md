@@ -520,6 +520,11 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.binding.unrun` holds the words for a binding target the
   kernels cannot yet fill, including starred targets, or a value with
   the wrong number of items to take apart.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right. This reading provides
+  chains of plain names; taking apart compound targets belongs to the
+  fuller account of tuples and places.
 - `ext.stmt.nonlocal`: reads the names of bindings belonging to the
   nearest enclosing function. The full kernels do not yet carry those
   cells into inner functions; reaching this statement stops the run.
@@ -625,17 +630,29 @@ only. The extension labels so far, all from PHP:
   every name and the source are read, and reaching the store raises the
   complaint before any name is changed.
 - `ext.stmt.decorator`: marks before a function definition, each followed
+  A pipe's answer may be indexed before reading the next operator;
+  where such an answer is an assignment target, the whole right side
+  is read and this complaint is kept for the run. Thus a decorated
+  routine may write `func.__dict__['author'] = name` without stopping
+  the reader, though retaining that attribute's write is still owed.
+- `ext.stmt.decorator`: marks before a function or class definition, each followed
   by an expression on its own line. The expressions are worked out in
   the order written and kept until the function is bound to its name.
   Each kept value is then called with the function as its one argument,
   nearest to the definition first, and the answer is bound to that name
   in turn. Brackets may carry an expression across lines; only the line
   end after it is whole ends the decorator. Another decorator or a
-  function definition must follow. `ext.stmt.decorator.amiss` holds the
+  function or class definition must follow. `ext.stmt.decorator.amiss` holds the
   words said when the line does not end there or what follows is neither.
   Where `ext.stmt.class.unready` is given, a class may follow as well:
   its whole body is read, but reaching the class gives that complaint
   before any decorator can be applied to it.
+  Where `ext.stmt.class.bases.open` gives classes their own reading scope,
+  a decorated class is read through the end of its body by that same
+  reader. Its decorators are worked out first; reaching the class then
+  says `ext.stmt.class.unready`, since making the class is still owed.
+  Methods, named arguments, and carried arguments keep the ordinary
+  function and call readings; no part of a decorated body is passed over.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -1359,6 +1376,10 @@ only. The extension labels so far, all from PHP:
   `0o`), and a language may list more than one spelling of the letter so
   that `0B` and `0O` are read too. Python's byte masks use this
   eightfold writing: `0o377` has its lowest eight bits set.
+  that `0B` and `0O` are read too. Python spells both cases for each
+  base, including `0x` and `0X` for sixteens. Whole numbers keep every
+  digit beyond the machine's width, and a minus before one is the
+  ordinary negation.
 - `ext.lexical.number.octal_lead`: a switch; a nought before more digits
   means those digits are read in base eight, as in the languages that
   grew from C.
@@ -1375,6 +1396,13 @@ only. The extension labels so far, all from PHP:
   nothing when the number is read. Python spells the underscore; its
   bare-point reading requires a digit on each hand of that separator.
   `scratch/file-float/6.py` witnesses separated fractions and exponents.
+  nothing when the number is read. Python spells the underscore in
+  decimal numbers and in each of its three prefixed bases. Each mark
+  must part digits of its base; doubled and trailing marks are refused
+  with `ext.lexical.number.amiss` before the marks are taken away.
+- `ext.lexical.number.separator.after_prefix`: a switch allowing one
+  spelled digit separator just after a base prefix, before its first
+  digit; `0x_FF`, `0o_77`, and `0b_11` are such numbers.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -3040,7 +3068,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
 | `ext.stmt.const` | - | - | - | - | `const` | - | - | - | - | - |
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
-| `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
+| `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function or class definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
 | `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
 | `ext.stmt.del.unrun` | - | - | `This deletion cannot be run` | - | - | - | - | - | - | - |

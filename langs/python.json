@@ -838,7 +838,7 @@
     "@"
   ],
   "ext.stmt.decorator.amiss": [
-    "A decorator must stand on its own line before a function definition"
+    "A decorator must stand on its own line before a function or class definition"
   ],
   "ext.stmt.del": [
     "del"
