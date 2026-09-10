@@ -66,11 +66,14 @@ Python selects the shared labels instead of a separate capture path.
 starred subscript, after the entire subscript has been read.
 
 - `ext.builtin.complex` names the maker of a number with real and imaginary
-  parts. When spelled, imaginary numerals yield these values. The lists
+  parts. When spelled, imaginary numerals yield these values in place of
+  the former unready complaint described below. The lists
   `ext.builtin.complex.real` and `ext.builtin.complex.imag` name the two
   read-only parts; `ext.builtin.method.conjugate` names the method which
   turns the imaginary sign about. Arithmetic admits whole, real and complex
-  operands; powers admit real exponents. The ordinary real writer supplies
+  operands; powers admit real exponents. Complex exponents, powers beyond
+  the finite range, and nonfinite multiplication or division between complex
+  operands still say the unready words. The ordinary real writer supplies
   the figures, preserving signed noughts and nonfinite parts.
 - `ext.builtin.complex.arguments`, `ext.builtin.complex.invalid`,
   `ext.builtin.complex.integer`, `ext.builtin.complex.zero`,

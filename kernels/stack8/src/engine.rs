@@ -2516,7 +2516,7 @@ impl<'a> Engine<'a> {
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
-                if let Value::Complex(z) = &v { self.data.push(crate::complex::made(-z.real,-z.imag)); return Ok(()); }
+                if let Value::Complex(z) = &v { self.data.push(crate::complex::made(self.lang, -z.real,-z.imag)); return Ok(()); }
                 if let Value::Imaginary(_, words) = &v { return Err(words.to_string().into()); }
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
@@ -2900,6 +2900,7 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
+                    Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
@@ -4643,6 +4644,21 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if builtin == Builtin::Complex && !named.is_empty() {
+            if args.len() > 2 { return Err(crate::complex::fault(self.lang, "arguments")); }
+            let mut present = [!args.is_empty(), args.len() > 1];
+            args.resize(2, Value::Small(0));
+            for (word, value) in named {
+                let slot = if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], &word) { 0 }
+                    else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], &word) { 1 }
+                    else { return Err(crate::complex::fault(self.lang, "arguments")); };
+                if present[slot] { return Err(crate::complex::fault(self.lang, "arguments")); }
+                args[slot] = value;
+                present[slot] = true;
+            }
+            if !present[1] { args.pop(); }
+            return crate::complex::construct(self.lang, &args);
+        }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4697,7 +4713,7 @@ impl<'a> Engine<'a> {
             if !args.is_empty() || !named.is_empty() { return Err(crate::complex::fault(self.lang, "arguments")); }
             let held = receiver.contents();
             let (a,b) = crate::complex::parts(&held).ok_or_else(|| crate::complex::fault(self.lang, "unready"))?;
-            return Ok(crate::complex::made(a,-b));
+            return Ok(crate::complex::made(self.lang, a,-b));
         }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
@@ -5555,6 +5571,7 @@ impl<'a> Engine<'a> {
                 if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
                     if let Value::Object(o) = &args[0] { return Ok(Value::Class(o.class.clone())); }
                     let which = match &args[0] {
+                        Value::Complex(_) => Some(Builtin::Complex),
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
@@ -6699,7 +6716,11 @@ impl Engine<'_> {
             }
             Builtin::Absolute => {
                 arity(1, 1)?;
-                if let Value::Complex(z) = &args[0] { return Ok(crate::complex::real(z.real.hypot(z.imag))); }
+                if let Value::Complex(z) = &args[0] {
+                    let length = z.real.hypot(z.imag);
+                    if length.is_infinite() && z.real.is_finite() && z.imag.is_finite() { return Err(self.core_fault("core.power.overflow", "")); }
+                    return Ok(crate::complex::real(length));
+                }
                 let x = number(&args[0]);
                 let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })

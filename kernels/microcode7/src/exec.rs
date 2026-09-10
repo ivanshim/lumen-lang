@@ -3185,7 +3185,7 @@ impl<'a> Machine<'a> {
             if !arguments.is_empty() || !keywords.is_empty() { return Err(crate::complex::complaint(self.table, "arguments").into()); }
             let subject = receiver.settled();
             let pair = crate::complex::coordinates(&subject).ok_or_else(|| crate::complex::complaint(self.table, "unready"))?;
-            return Ok(crate::complex::pair(pair.0, -pair.1));
+            return Ok(crate::complex::pair(self.table, pair.0, -pair.1));
         }
         let mut found = Vec::new();
         for (word, _) in &keywords {
@@ -3308,6 +3308,21 @@ impl<'a> Machine<'a> {
                 _ => self.utter(&written),
             }
             return Ok(Some(Value::Nil));
+        }
+        if op == Prim::ComplexMade && !keywords.is_empty() {
+            if positional.len() > 2 { return Err(crate::complex::complaint(table,"arguments").into()); }
+            let mut parts: [Option<Value>; 2] = [positional.first().cloned(), positional.get(1).cloned()];
+            for (key, value) in keywords {
+                let which = match () {
+                    _ if table.spells("ext.builtin.complex.imag", &key) => 1,
+                    _ if table.spells("ext.builtin.complex.real", &key) => 0,
+                    _ => return Err(crate::complex::complaint(table,"arguments").into()),
+                };
+                if parts[which].replace(value).is_some() { return Err(crate::complex::complaint(table,"arguments").into()); }
+            }
+            let mut given = vec![parts[0].take().unwrap_or(Value::Small(0))];
+            if let Some(imaginary) = parts[1].take() { given.push(imaginary); }
+            return crate::complex::create(table,&given).map(Some).map_err(Escape::Error);
         }
         if Self::is_core_primitive(op) {
             return self.core_primitive(op, name, positional.clone(), keywords).map(Some).map_err(Escape::Error);
@@ -4364,6 +4379,7 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
+                    Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
@@ -5721,6 +5737,7 @@ impl<'a> Machine<'a> {
                 if self.table.has_any("ext.builtin.isinstance") {
                     if let Value::Thing(t) = &v[0] { return Ok(Value::Blueprint(t.of.clone())); }
                     let wanted = match &v[0] {
+                        Value::Complex(_) => Some(Prim::ComplexMade),
                         Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
                         Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
                         Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
@@ -7231,7 +7248,11 @@ impl Machine<'_> {
             }
             Magnitude => {
                 require(1, 1)?;
-                if let Value::Complex(pair) = &input[0] { return Ok(crate::complex::decimal_value(pair.0.hypot(pair.1))); }
+                if let Value::Complex(pair) = &input[0] {
+                    let norm = pair.0.hypot(pair.1);
+                    if pair.0.is_finite() && pair.1.is_finite() && !norm.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
+                    return Ok(crate::complex::decimal_value(norm));
+                }
                 let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
             }

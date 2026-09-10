@@ -8,23 +8,25 @@ use crate::table::Table;
 use std::rc::Rc;
 use num_traits::ToPrimitive;
 
-pub fn pair(x: f64, y: f64) -> Value { Value::Complex(Rc::new((x,y))) }
+pub fn pair(t: &Table, x: f64, y: f64) -> Value {
+    Value::Complex(Rc::new((x,y,Rc::from(complaint(t,"integer")))))
+}
 
 pub fn coordinates(v: &Value) -> Option<(f64,f64)> {
     match v {
-        Value::Complex(p) => Some(**p),
+        Value::Complex(p) => Some((p.0,p.1)),
         Value::Flag(b) => Some((if *b { 1.0 } else { 0.0 },0.0)),
-        Value::Huge(n) => n.to_f64().map(|x| (x,0.0)),
+        Value::Huge(n) => n.to_f64().filter(|number| number.is_finite()).map(|x| (x,0.0)),
         Value::Small(n) => Some((*n as f64,0.0)),
         Value::Frac(r) if r.places.is_some() => {
-            let x = if r.under && r.above == 0.into() { -0.0 } else { data::nearest_binary(&r.above,&r.beneath) };
+            let x = if r.under && r.above == 0.into() && r.beneath != 0.into() { -0.0 } else { data::nearest_binary(&r.above,&r.beneath) };
             Some((x,0.0))
         }
         _ => None,
     }
 }
 
-pub fn written(p: &(f64,f64)) -> String {
+pub fn written(p: &(f64,f64,Rc<str>)) -> String {
     let coefficient = |x: f64| if x.is_nan() { String::from("nan") } else { data::brief_decimal(x) };
     let negative = p.1 < 0.0 || p.1 == 0.0 && p.1.is_sign_negative();
     let imaginary = coefficient(p.1.abs()) + "j";
@@ -65,7 +67,7 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
     if matches!(op,Prim::Positive | Prim::NumberAlone) { return Ok(first.clone()); }
     if op == Prim::Negate {
         let (r,i) = coordinates(first).ok_or_else(|| complaint(t,"unready"))?;
-        return Ok(pair(-r,-i));
+        return Ok(pair(t, -r,-i));
     }
     let second = values.get(1).ok_or_else(|| complaint(t,"unready"))?;
     if matches!(op,Prim::IntDiv | Prim::Mod) { return Err(floor(t,first,second)); }
@@ -76,18 +78,31 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
     }
     let x = coordinates(first).ok_or_else(|| complaint(t,"unready"))?;
     let y = coordinates(second).ok_or_else(|| complaint(t,"unready"))?;
+    let lhs_complex = matches!(first, Value::Complex(_));
+    let rhs_complex = matches!(second, Value::Complex(_));
+    let finite = x.0.is_finite() && x.1.is_finite() && y.0.is_finite() && y.1.is_finite();
+    if !finite {
+        let owed = match op {
+            Prim::Times => lhs_complex && rhs_complex,
+            Prim::Over | Prim::OverReal => rhs_complex,
+            Prim::Power => y.0 != 0.0 && y.0 != 1.0,
+            _ => false,
+        };
+        if owed { return Err(complaint(t,"unready")); }
+    }
     let result = match op {
-        Prim::Plus => (x.0+y.0,x.1+y.1),
-        Prim::Minus => (x.0-y.0,x.1-y.1),
-        Prim::Times => product(x,y),
+        Prim::Plus => (x.0+y.0, if !rhs_complex { x.1 } else if !lhs_complex { y.1 } else { x.1+y.1 }),
+        Prim::Minus => (x.0-y.0, if !rhs_complex { x.1 } else if !lhs_complex { -y.1 } else { x.1-y.1 }),
+        Prim::Times => if !rhs_complex { (x.0*y.0,x.1*y.0) } else if !lhs_complex { (x.0*y.0,x.0*y.1) } else { product(x,y) },
         Prim::Over | Prim::OverReal => {
             if y == (0.0,0.0) { return Err(complaint(t,"zero")); }
-            quotient(x,y)
+            if rhs_complex { quotient(x,y) } else { (x.0/y.0,x.1/y.0) }
         }
         Prim::Power => {
             if y.1 != 0.0 { return Err(complaint(t,"unready")); }
             let exponent = y.0;
             if exponent == 0.0 { (1.0,0.0) }
+            else if exponent == 1.0 { x }
             else if x == (0.0,0.0) {
                 if exponent < 0.0 { return Err(complaint(t,"power.zero")); }
                 (0.0,0.0)
@@ -110,7 +125,10 @@ pub fn reckon(t: &Table, op: Prim, values: &[Value]) -> Result<Value,String> {
         }
         _ => return Err(complaint(t,"unready")),
     };
-    Ok(pair(result.0,result.1))
+    if finite && op == Prim::Power && !(result.0.is_finite() && result.1.is_finite()) {
+        return Err(complaint(t,"unready"));
+    }
+    Ok(pair(t, result.0,result.1))
 }
 
 fn decimal(source: &str) -> Option<f64> {
@@ -151,16 +169,18 @@ fn from_chars(chars: &str) -> Option<(f64,f64)> {
 
 pub fn create(t: &Table, input: &[Value]) -> Result<Value,String> {
     match input {
-        [] => Ok(pair(0.0,0.0)),
+        [] => Ok(pair(t, 0.0,0.0)),
         [Value::Text(s)] => {
             let parsed = from_chars(s).ok_or_else(|| complaint(t,"invalid"))?;
-            Ok(pair(parsed.0,parsed.1))
+            Ok(pair(t, parsed.0,parsed.1))
         }
-        [one] => coordinates(one).map(|p| pair(p.0,p.1)).ok_or_else(|| complaint(t,"arguments")),
+        [one] => coordinates(one).map(|p| pair(t, p.0,p.1)).ok_or_else(|| complaint(t,"arguments")),
         [one,two] => {
             let left = coordinates(one).ok_or_else(|| complaint(t,"arguments"))?;
             let right = coordinates(two).ok_or_else(|| complaint(t,"arguments"))?;
-            Ok(pair(left.0-right.1,left.1+right.0))
+            let horizontal = if matches!(two, Value::Complex(_)) { left.0-right.1 } else { left.0 };
+            let vertical = if matches!(one, Value::Complex(_)) { left.1+right.0 } else { right.0 };
+            Ok(pair(t, horizontal,vertical))
         }
         _ => Err(complaint(t,"arguments")),
     }
@@ -172,4 +192,20 @@ pub fn decimal_value(number: f64) -> Value {
         Rc::make_mut(&mut parts).pointed = true;
         Value::Frac(parts)
     } else { value }
+}
+
+/// Keep the kind which the definition itself gave the complaint.
+pub fn already_named(table: &Table, words: &str) -> bool {
+    for ending in ["invalid", "arguments", "integer", "power.zero", "zero", "unready"] {
+        let expected = complaint(table, ending);
+        if !expected.is_empty() && words == expected { return true; }
+    }
+    if !words.contains("'complex'") { return false; }
+    for label in ["ext.builtin.complex.floor", "ext.builtin.complex.order"] {
+        let fragments = table.strings(label);
+        if let (Some(first), Some(last)) = (fragments.first(), fragments.last()) {
+            if !first.is_empty() && words.starts_with(first) && words.ends_with(last) { return true; }
+        }
+    }
+    false
 }

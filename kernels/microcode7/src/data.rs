@@ -153,7 +153,7 @@ pub enum Value {
     Frac(Rc<Ratio>),
     /// The coefficient of an imaginary literal, with its unready words.
     Imaginary { coefficient: f64, unready: Rc<str> },
-    Complex(Rc<(f64, f64)>),
+    Complex(Rc<(f64, f64, Rc<str>)>),
     Text(Rc<str>),
     Flag(bool),
     Nil,
@@ -327,7 +327,7 @@ impl Value {
 
     pub fn as_big(&self) -> Result<BigInt, String> {
         Ok(match self {
-            Value::Complex(_) => return Err(String::from("Cannot coerce complex to integer")),
+            Value::Complex(pair) => return Err(pair.2.to_string()),
             Value::Imaginary { unready, .. } => return Err(unready.to_string()),
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => (**n).clone(),
@@ -370,7 +370,11 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
-            (Value::Complex(pair), rhs) | (rhs, Value::Complex(pair)) => crate::complex::coordinates(rhs).map_or(false, |other| **pair == other),
+            (Value::Complex(left), Value::Complex(right)) => left.0 == right.0 && left.1 == right.1,
+            (Value::Complex(pair), rhs) | (rhs, Value::Complex(pair)) => {
+                let scalar = match rhs { Value::Flag(true) => Value::Small(1), Value::Flag(false) => Value::Small(0), _ => rhs.clone() };
+                pair.1 == 0.0 && crate::complex::decimal_value(pair.0).equals(&scalar)
+            },
             (Value::Imaginary { coefficient: x, .. }, Value::Imaginary { coefficient: y, .. }) => x == y,
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))

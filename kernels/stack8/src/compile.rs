@@ -8058,7 +8058,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     if let Some(last) = text.chars().last().filter(|c| lang.imaginary_letters.contains(c)) {
         let coefficient = text[..text.len() - last.len_utf8()].parse::<f64>().map_err(|_| unreadable_number(text, lang))?;
         let words = lang.imaginary_unready.as_deref().unwrap_or("Imaginary arithmetic is not ready");
-        return Ok(if lang.builtins.values().any(|b| *b == Builtin::Complex) { crate::complex::made(0.0, coefficient) } else { Value::Imaginary(coefficient, Rc::from(words)) });
+        return Ok(if lang.builtins.values().any(|b| *b == Builtin::Complex) { crate::complex::made(lang, 0.0, coefficient) } else { Value::Imaginary(coefficient, Rc::from(words)) });
     }
     for (prefix, base) in &lang.base_prefixes {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {

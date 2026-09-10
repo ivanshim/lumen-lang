@@ -369,7 +369,7 @@ impl Value {
     /// text is parsed, the rest refuse.
     pub fn as_big(&self) -> Result<BigInt, String> {
         match self {
-            Value::Complex(_) => Err("Cannot coerce complex to integer".to_string()),
+            Value::Complex(z) => Err(z.integer_fault.to_string()),
             Value::Imaginary(_, words) => Err(words.to_string()),
             Value::Small(n) => Ok(BigInt::from(*n)),
             Value::Huge(n) => Ok((**n).clone()),
@@ -403,7 +403,8 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
-            (Value::Complex(z), other) | (other, Value::Complex(z)) => crate::complex::parts(other).map_or(false, |(a,b)| z.real == a && z.imag == b),
+            (Value::Complex(z), Value::Complex(w)) => z.real == w.real && z.imag == w.imag,
+            (Value::Complex(z), other) | (other, Value::Complex(z)) => z.imag == 0.0 && crate::complex::real(z.real).equals(&if let Value::Flag(b) = other { Value::Small(i64::from(*b)) } else { other.clone() }),
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Native(a,_), Value::Native(b,_)) => a == b,
