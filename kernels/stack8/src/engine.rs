@@ -2290,9 +2290,12 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::Positive => {
-                let value = self.drop_top()?;
-                if let Value::Imaginary(_, words) = &value { return Err(words.to_string().into()); }
-                value
+                match self.drop_top()? {
+                    Value::Imaginary(_, words) => return Err(words.to_string().into()),
+                    Value::Flag(flag) => Value::Small(i64::from(flag)),
+                    number @ (Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
+                    _ => return Err(self.lang.plus_non_number.clone().unwrap_or_default().into()),
+                }
             }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
@@ -3492,8 +3495,8 @@ impl<'a> Engine<'a> {
                         } else if x == BigInt::from(0) {
                             x
                         } else {
-                            let by = y.to_usize().ok_or_else(|| self.lang.operand_fault.clone()
-                                .unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
+                            let by = y.to_usize().filter(|n| (*n as u128) + u128::from(x.bits()) < isize::MAX as u128)
+                                .ok_or_else(|| self.lang.bit_room.clone().unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
                             if matches!(op, Action::BitUp) { x << by } else { x >> by }
                         }
                     }

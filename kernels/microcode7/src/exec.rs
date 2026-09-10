@@ -3508,7 +3508,7 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
-            | Prim::Positive | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
+            | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
             for value in v {
                 if let Value::Imaginary { unready, .. } = value { return Err(unready.to_string()); }
             }
@@ -3535,7 +3535,12 @@ impl<'a> Machine<'a> {
                 match op {
                     Prim::BitsDown if right >= BigInt::from(left.bits()) => BigInt::from(i32::from(left.sign() == num_bigint::Sign::Minus) * -1),
                     _ if left == BigInt::from(0) => left,
-                    Prim::BitsUp => left << right.to_usize().ok_or_else(fault)?,
+                    Prim::BitsUp => {
+                        let by = right.to_usize().filter(|count| {
+                            (*count as u128) + u128::from(left.bits()) < isize::MAX as u128
+                        }).ok_or_else(|| self.table.single("ext.op.bit.whole.room").unwrap_or("Bit shift count is too large").to_owned())?;
+                        left << by
+                    },
                     _ => left >> right.to_usize().ok_or_else(fault)?,
                 }
             } else {
@@ -3555,6 +3560,11 @@ impl<'a> Machine<'a> {
         Ok(match op {
             Prim::Positive => { n(1)?; v[0].clone() }
             Prim::Pointed => v[0].clone().keeping_point(true),
+            Prim::NumberAlone => match &v[0] {
+                Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
+                Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
+                _ => return Err(self.table.single("ext.op.plus.non_number").unwrap_or("").to_owned()),
+            },
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

@@ -5442,7 +5442,7 @@ impl<'a> Compiler<'a> {
                 self.take();
                 let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
                 self.expr(tier)?;
-                if !lang.imaginary_letters.is_empty() { self.put(Instr::Act(Action::Positive, 1)); }
+                if !lang.imaginary_letters.is_empty() || lang.plus_non_number.is_some() { self.act(Action::Positive, 1); }
                 return Ok(());
             }
         }

@@ -348,6 +348,7 @@ pub enum Prim {
     Invert,
     Negate,
     Positive,
+    NumberAlone,
     Join,
     At,
     /// What a value holds at that place, read while the value is being

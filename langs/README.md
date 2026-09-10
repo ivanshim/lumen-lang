@@ -754,7 +754,11 @@ only. The extension labels so far, all from PHP:
   `ext.lexical.number.amiss.octal.digit` hold two pieces, before and
   after the first decimal digit that the base cannot hold.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
-  tightly as negation.
+  tightly as negation. Python spells it too, including repeated signs
+  and a sign standing before a power.
+- `ext.op.plus.non_number`: what is said when unary plus is handed
+  something other than a number. Where spelled, a flag becomes its
+  whole-number worth and other numbers keep their kind.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
   loops (a switch counting as one).
 - `ext.builtin.array`: a builtin that gathers what it is given into an
@@ -980,7 +984,9 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
 - `ext.builtin.range.value`: a switch; a call of the range builtin
   yields an eager array from one, two or three whole-number bounds,
-  the last a nonzero step. Without it the range remains loop syntax.
+  the last a nonzero step. A loop walks that value by the collection
+  path, so one bound and a descending step are read there too. Without
+  it the range remains loop syntax.
   `ext.builtin.list` gathers one collection into an array;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.
@@ -1084,6 +1090,11 @@ only. The extension labels so far, all from PHP:
   nothing when the number is read. A mark with no digit on either hand
   is refused with `ext.lexical.number.amiss`, save where
   `ext.lexical.number.separator.after_prefix` allows the first one.
+  nothing when the number is read.
+- `ext.lexical.number.separator.after_prefix`: a switch; one separator
+  may stand just after a base prefix. Other separators must have digits
+  on both sides. Python spells this with its binary, octal and hexadecimal
+  prefixes and the separator `_`; whole literals keep every digit.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -1918,6 +1929,17 @@ only. The extension labels so far, all from PHP:
   whole number. A shift below nought says `ext.system.fault.shift`.
   A left shift whose count the host cannot hold is refused with
   `ext.system.fault.operands`.
+- `ext.op.bit.whole`: a switch; the bit signs take whole numbers of
+  any length, keeping the sign as though it went on without end.
+  Fractions, text and objects are refused; flags stand for nought or one,
+  and two flags joined by and, or or xor give a flag back. Python spells
+  all six bit signs with this switch, in its own precedence tiers;
+  compound writes use those same operations.
+- `ext.op.bit.whole.room`: the words for a left shift whose length
+  cannot fit in the host's address space. An operand that is no whole
+  number is refused with `ext.system.fault.operands`. A right shift
+  beyond every bit gives nought or minus one according to the sign;
+  either shift by a negative count uses `ext.system.fault.shift`.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -2416,6 +2438,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.room` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
@@ -2471,6 +2494,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
+| `ext.op.plus.non_number` | - | - | `TypeError: unary plus requires a number` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |

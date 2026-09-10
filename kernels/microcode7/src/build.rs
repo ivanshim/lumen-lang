@@ -5121,7 +5121,8 @@ impl<'a> Builder<'a> {
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
                 let held = self.expr(tier)?;
-                return Ok(if table.strings("ext.lexical.number.imaginary").is_empty() { held } else { prim_call(Prim::Positive, vec![held]) });
+                return Ok(if table.has_any("ext.op.plus.non_number") { prim_call(Prim::NumberAlone, vec![held]) }
+                    else if !table.strings("ext.lexical.number.imaginary").is_empty() { prim_call(Prim::Positive, vec![held]) } else { held });
             }
         }
         let node = match t.shape {

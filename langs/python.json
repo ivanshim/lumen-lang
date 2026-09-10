@@ -593,6 +593,9 @@
     ">>"
   ],
   "ext.op.bit.whole": true,
+  "ext.op.bit.whole.room": [
+    "OverflowError: too many digits in integer"
+  ],
   "ext.op.bit.xor": [
     "^"
   ],
@@ -695,6 +698,9 @@
   "ext.op.member.pipes": true,
   "ext.op.plus": [
     "+"
+  ],
+  "ext.op.plus.non_number": [
+    "TypeError: unary plus requires a number"
   ],
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
