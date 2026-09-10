@@ -288,7 +288,7 @@ impl<'a> Machine<'a> {
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
                 let blueprint = Blueprint {
-                    parents: Vec::new(), order: Vec::new(), presentation: None,
+                    parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     name: idents[at].clone(), under: None, answers: Vec::new(),
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(),
