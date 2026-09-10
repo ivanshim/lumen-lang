@@ -4269,7 +4269,11 @@ impl<'a> Engine<'a> {
             if args.len() < place { return Err(self.lang.call_amiss[0].clone()); }
             args.push(value);
         }
-        self.builtin(builtin, name, &mut args)
+        let mut result = self.builtin(builtin, name, &mut args)?;
+        if builtin == Builtin::AsReal && self.lang.converted_floating {
+            if let Value::Real(number) = &mut result { Rc::make_mut(number).floating = true; }
+        }
+        Ok(result)
     }
 
     fn integer_call(&self, args: &[Value]) -> Res<Value> {

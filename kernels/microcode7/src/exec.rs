@@ -2909,6 +2909,14 @@ impl<'a> Machine<'a> {
         Ok(None)
     }
 
+    fn converted_decimal(&self, mut value: Value) -> Value {
+        match &mut value {
+            Value::Frac(decimal) if self.table.flag("ext.builtin.to_real.floating") => Rc::make_mut(decimal).float_style = true,
+            _ => (),
+        }
+        value
+    }
+
     fn whole_from_call(&self, values: &[Value]) -> Result<Value, String> {
         let complaint = |ending: &str| self.argument_fault(&format!("ext.builtin.to_int.{}", ending), None);
         if values.len() > 2 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
@@ -5086,14 +5094,14 @@ impl<'a> Machine<'a> {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
-                math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?
+                self.converted_decimal(math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?)
             }
             Prim::AsReal => {
                 n(1)?;
-                match &v[0] {
+                self.converted_decimal(match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
                     x => math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?,
-                }
+                })
             }
             Prim::Length => {
                 n(1)?;

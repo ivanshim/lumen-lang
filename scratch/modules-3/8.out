@@ -1,0 +1,5 @@
+[1.0, -0.0]
+[NaN, Infinity, -Infinity, -0.0]
+{"1.0": "x"}
+bad indent
+finite only

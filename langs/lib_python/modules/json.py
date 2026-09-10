@@ -51,11 +51,17 @@ def dumps(obj, *, skipkeys=False, ensure_ascii=True, check_circular=True, allow_
     if cls is not None or len(kw) != 0:
         raise 'NotImplementedError: json.dumps custom encoders are not supported'
     gap = None
+    if indent is not None and not isinstance(indent, type('')) and not isinstance(indent, type(1)) and not isinstance(indent, type(True)):
+        raise 'TypeError: JSON indentation must be an integer or a string'
     if indent is not None:
         gap = indent if type(indent) == type('') else _repeat(' ', indent)
     comma = ', ' if gap is None else ','
     colon = ': '
     if separators is not None:
+        if len(separators) != 2:
+            raise 'ValueError: JSON separators need two values'
+        if not isinstance(separators[0], type('')) or not isinstance(separators[1], type('')):
+            raise 'TypeError: JSON separators must be strings'
         comma = separators[0]
         colon = separators[1]
     return _encode(obj, gap, comma, colon, ensure_ascii, sort_keys, default, allow_nan, skipkeys, 0)
@@ -78,6 +84,8 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
             if text == 'nan':
                 return 'NaN'
             return '-Infinity' if text == '-inf' else 'Infinity'
+        if isinstance(obj, type(1.0)) and '.' not in text and 'e' not in text and 'E' not in text:
+            text += '.0'
         return text
     if __is_mapping(obj):
         keys = list(obj)
@@ -99,7 +107,7 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
             elif isinstance(key, type(True)):
                 word = 'true' if key else 'false'
             elif isinstance(key, type(1)) or isinstance(key, type(1.0)):
-                word = str(key)
+                word = _encode(key, None, comma, colon, ascii, False, None, allow_nan, False, depth + 1)
             elif skipkeys:
                 continue
             else:
@@ -238,7 +246,9 @@ class _Reader:
         for special in ['NaN', 'Infinity', '-Infinity']:
             if self.text[self.at:self.at + len(special)] == special:
                 self.at += len(special)
-                return float(special)
+                if special == 'NaN':
+                    return __math('fdiv', 0.0, 0.0)
+                return __math('fdiv', -1.0 if special == '-Infinity' else 1.0, 0.0)
         for word, answer in [('null', None), ('true', True), ('false', False)]:
             if self.text[self.at:self.at + len(word)] == word:
                 self.at += len(word)
@@ -274,7 +284,12 @@ class _Reader:
             if first == self.at:
                 self.bad('Expecting exponent digits')
         text = self.text[start:self.at]
-        return float(text) if real else int(text)
+        if not real:
+            return int(text)
+        number = float(text)
+        if number == 0 and text[:1] == '-':
+            return __math('fdiv', -0.0, 1.0)
+        return number
 
 
 def loads(s, *, cls=None, object_hook=None, parse_float=None, parse_int=None, parse_constant=None, object_pairs_hook=None, **kw):
