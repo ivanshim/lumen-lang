@@ -196,3 +196,158 @@ def length_hint(value, default=0):
 
 def setitem(sequence, key, value):
     raise 'NotImplementedError: setitem needs shared mutable sequence storage'
+
+class _MethodCaller:
+    def __init__(self, name, args, kwargs):
+        self.name = name
+        self.args = args
+        self.kwargs = kwargs
+
+    def call(self, obj):
+        return getattr(obj, self.name)(*self.args, **self.kwargs)
+
+def methodcaller(name, *args, **kwargs):
+    if type(name) != type(''):
+        raise 'TypeError: method name must be a string'
+    return _MethodCaller(name, args, kwargs).call
+
+def delitem(a, b):
+    raise 'NotImplementedError: delitem needs shared mutable sequence storage'
+
+def is_none(a):
+    return a is None
+
+def is_not_none(a):
+    return a is not None
+
+inv = invert
+
+__add__ = add
+
+__sub__ = sub
+
+__mul__ = mul
+
+__truediv__ = truediv
+
+__floordiv__ = floordiv
+
+__mod__ = mod
+
+__pow__ = pow
+
+__neg__ = neg
+
+__pos__ = pos
+
+__abs__ = abs
+
+__eq__ = eq
+
+__ne__ = ne
+
+__lt__ = lt
+
+__le__ = le
+
+__gt__ = gt
+
+__ge__ = ge
+
+__contains__ = contains
+
+__getitem__ = getitem
+
+__index__ = index
+
+__and__ = and_
+
+__or__ = or_
+
+__xor__ = xor
+
+__invert__ = invert
+
+__lshift__ = lshift
+
+__rshift__ = rshift
+
+__concat__ = concat
+
+__matmul__ = matmul
+
+__setitem__ = setitem
+
+__delitem__ = delitem
+
+__not__ = not_
+
+def iadd(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__iadd__ = iadd
+
+def isub(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__isub__ = isub
+
+def imul(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__imul__ = imul
+
+def itruediv(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__itruediv__ = itruediv
+
+def ifloordiv(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__ifloordiv__ = ifloordiv
+
+def imod(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__imod__ = imod
+
+def ipow(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__ipow__ = ipow
+
+def iand(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__iand__ = iand
+
+def ior(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__ior__ = ior
+
+def ixor(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__ixor__ = ixor
+
+def ilshift(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__ilshift__ = ilshift
+
+def irshift(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__irshift__ = irshift
+
+def iconcat(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__iconcat__ = iconcat
+
+def imatmul(a, b):
+    raise 'NotImplementedError: in-place operators need shared mutable storage and object methods'
+
+__imatmul__ = imatmul

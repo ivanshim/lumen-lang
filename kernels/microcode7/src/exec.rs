@@ -2227,6 +2227,14 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Thing(thing) = &stands {
+                    let callable = self.table.strings("ext.op.object.protocol").get(7)
+                        .and_then(|word| thing.class.method(word)).is_some();
+                    if callable {
+                        let supplied = self.value_list(args, frame)?;
+                        return Ok(self.protocol_value(&stands, 7, &supplied)?.expect("the call was found"));
+                    }
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2840,6 +2848,14 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Thing(thing) = &stands {
+                    let callable = self.table.strings("ext.op.object.protocol").get(7)
+                        .and_then(|word| thing.class.method(word)).is_some();
+                    if callable {
+                        let supplied = self.value_list(args, frame)?;
+                        return Ok(Next::Value(self.protocol_value(&stands, 7, &supplied)?.expect("the call was found")));
+                    }
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));

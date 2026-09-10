@@ -2392,6 +2392,12 @@ impl<'a> Engine<'a> {
                 let callee = self.what_it_spells(top);
                 return match callee {
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
+                    Value::Object(object) if self.lang.object_protocol.get(7).and_then(|word| object.class.method(word)).is_some() => {
+                        let method = object.class.method(&self.lang.object_protocol[7]).cloned().expect("a call method");
+                        let mut values = vec![Value::Object(object)];
+                        values.extend(self.drop_many(argc - 1)?);
+                        self.invoke(&method, values)
+                    }
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
                         let mut given = vec![Value::Object(object)];

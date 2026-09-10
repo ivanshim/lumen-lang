@@ -497,9 +497,10 @@ only. The extension labels so far, all from PHP:
   this one, as the system knows it, for a program that wants to find
   itself again. It stands beside `ext.system.source.file` and comes the
   same way, from the request the host carried in.
-- `ext.op.object.protocol`: seven method names, in order: an object's
+- `ext.op.object.protocol`: eight method names, in order: an object's
   representation, equality, subscription, a class's value lookup, its
-  member walk, its inherited preparation method, and its plain text. A missing method
+  member walk, its inherited preparation method, its plain text, and an
+  instance call. The instance call receives its owner before its arguments. A missing method
   leaves the ordinary operation in place. Preparation receives the new
   class and its shared members before it is bound to its name.
 - `ext.stmt.class.annotations`: two names: the shared member holding a map of
@@ -2354,7 +2355,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
-| `ext.op.object.protocol` | - | - | `__repr__` `__eq__` `__getitem__` `__class_call__` `__class_iter__` `__init_subclass__` `__str__` | - | - | - | - | - | - | - |
+| `ext.op.object.protocol` | - | - | `__repr__` `__eq__` `__getitem__` `__class_call__` `__class_iter__` `__init_subclass__` `__str__` `__call__` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |

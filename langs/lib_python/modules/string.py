@@ -64,3 +64,18 @@ class Template:
             else:
                 raise 'KeyError: ' + name
         return result
+
+def capwords(s, sep=None):
+    words = s.split(sep)
+    result = []
+    for word in words:
+        result.append(word[:1].upper() + word[1:].lower())
+    return (' ' if sep is None else sep).join(result)
+
+class Formatter:
+    def format(self, format_string, *args, **kwargs):
+        return self.vformat(format_string, args, kwargs)
+
+    def vformat(self, format_string, args, kwargs):
+        # The text formatter itself owns conversion and format clauses.
+        return format_string.format(*args, **kwargs)

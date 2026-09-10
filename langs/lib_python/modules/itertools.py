@@ -107,3 +107,67 @@ def accumulate(iterable, func=None, initial=None):
             value = func(value, item)
         result.append(value)
     return result
+
+# These finite walks share the eager gathering of this library's first
+# routines. An unbounded source is refused before gathering begins.
+def _finite(iterable):
+    if isinstance(iterable, _Count) or isinstance(iterable, _Repeat) or isinstance(iterable, _Cycle):
+        raise 'NotImplementedError: this operation needs a finite iterable'
+    return list(iterable)
+
+def takewhile(predicate, iterable):
+    result = []
+    for value in _finite(iterable):
+        if not predicate(value):
+            break
+        result.append(value)
+    return result
+
+def dropwhile(predicate, iterable):
+    result = []
+    dropping = True
+    for value in _finite(iterable):
+        if dropping and predicate(value):
+            continue
+        dropping = False
+        result.append(value)
+    return result
+
+def starmap(function, iterable):
+    return [function(*args) for args in _finite(iterable)]
+
+def compress(data, selectors):
+    data, selectors = _finite(data), _finite(selectors)
+    return [data[i] for i in range(min(len(data), len(selectors))) if selectors[i]]
+
+def filterfalse(predicate, iterable):
+    if predicate is None:
+        return [value for value in _finite(iterable) if not value]
+    return [value for value in _finite(iterable) if not predicate(value)]
+
+class _Cycle:
+    def __init__(self, values):
+        self.values = values
+        self.position = 0
+
+def cycle(iterable):
+    return _Cycle(_finite(iterable))
+
+def groupby(iterable, key=None):
+    raise 'NotImplementedError: groupby needs tuple values and shared group iterators'
+
+def pairwise(iterable):
+    raise 'NotImplementedError: pairwise needs tuple values'
+
+def tee(iterable, n=2):
+    raise 'NotImplementedError: tee needs tuple values and independent iterators'
+
+def batched(iterable, n, strict=False):
+    if n < 1:
+        raise 'ValueError: n must be at least one'
+    raise 'NotImplementedError: batched needs tuple values'
+
+def combinations_with_replacement(iterable, r):
+    if r < 0:
+        raise 'ValueError: r must be non-negative'
+    raise 'NotImplementedError: combinations_with_replacement needs tuple values'

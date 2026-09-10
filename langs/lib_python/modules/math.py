@@ -120,3 +120,173 @@ def prod(values, start=1):
     for x in values:
         start *= x
     return start
+
+tau = 2 * pi
+
+def comb(n, k):
+    if type(n) != type(1) or type(k) != type(1):
+        raise 'TypeError: comb needs integers'
+    if n < 0 or k < 0:
+        raise 'ValueError: comb arguments must be non-negative'
+    if k > n:
+        return 0
+    k = min(k, n - k)
+    result = 1
+    for i in range(1, k + 1):
+        result = result * (n - k + i) // i
+    return result
+
+def perm(n, k=None):
+    if k is None:
+        return factorial(n)
+    if type(n) != type(1) or type(k) != type(1):
+        raise 'TypeError: perm needs integers'
+    if n < 0 or k < 0:
+        raise 'ValueError: perm arguments must be non-negative'
+    if k > n:
+        return 0
+    result = 1
+    for i in range(n - k + 1, n + 1):
+        result *= i
+    return result
+
+def isqrt(n):
+    if type(n) != type(1):
+        raise 'TypeError: isqrt needs an integer'
+    if n < 0:
+        raise 'ValueError: isqrt argument must be non-negative'
+    low = 0
+    high = n + 1
+    while high - low > 1:
+        mid = (low + high) // 2
+        if mid * mid <= n:
+            low = mid
+        else:
+            high = mid
+    return low
+
+def hypot(*coordinates):
+    result = 0.0
+    for value in coordinates:
+        result = __math('hypot', result, value)
+    return result
+
+def dist(p, q):
+    p, q = list(p), list(q)
+    if len(p) != len(q):
+        raise 'ValueError: both points must have the same number of dimensions'
+    return hypot(*[p[i] - q[i] for i in range(len(p))])
+
+def log2(x):
+    if x <= 0:
+        raise 'ValueError: math domain error'
+    return __math('log2', x)
+
+def log10(x):
+    if x <= 0:
+        raise 'ValueError: math domain error'
+    return __math('log10', x)
+
+def log1p(x):
+    if x <= -1:
+        raise 'ValueError: math domain error'
+    return __math('log1p', x)
+
+def expm1(x):
+    return __math('expm1', x)
+
+def degrees(x):
+    return __math('fdiv', x * 180, pi)
+
+def radians(x):
+    return __math('fdiv', x * pi, 180)
+
+def sin(x):
+    if isinf(x):
+        raise 'ValueError: math domain error'
+    return __math('sin', x)
+
+def cos(x):
+    if isinf(x):
+        raise 'ValueError: math domain error'
+    return __math('cos', x)
+
+def tan(x):
+    if isinf(x):
+        raise 'ValueError: math domain error'
+    return __math('tan', x)
+
+def asin(x):
+    if x < -1 or x > 1:
+        raise 'ValueError: math domain error'
+    return __math('asin', x)
+
+def acos(x):
+    if x < -1 or x > 1:
+        raise 'ValueError: math domain error'
+    return __math('acos', x)
+
+def atan(x):
+    return __math('atan', x)
+
+def atan2(y, x):
+    return __math('atan2', y, x)
+
+def sinh(x):
+    return __math('sinh', x)
+
+def cosh(x):
+    return __math('cosh', x)
+
+def tanh(x):
+    return __math('tanh', x)
+
+def asinh(x):
+    return __math('asinh', x)
+
+def acosh(x):
+    if x < 1:
+        raise 'ValueError: math domain error'
+    return __math('acosh', x)
+
+def atanh(x):
+    if x <= -1 or x >= 1:
+        raise 'ValueError: math domain error'
+    return __math('atanh', x)
+
+# These operations require binary representation or a special-function
+# floor. Their names may be read, but no approximation is passed off.
+def erf(x):
+    raise 'NotImplementedError: erf is not supported'
+
+def erfc(x):
+    raise 'NotImplementedError: erfc is not supported'
+
+def gamma(x):
+    raise 'NotImplementedError: gamma is not supported'
+
+def lgamma(x):
+    raise 'NotImplementedError: lgamma is not supported'
+
+def nextafter(x, y, steps=1):
+    raise 'NotImplementedError: nextafter needs binary floating-point neighbours'
+
+def ulp(x):
+    raise 'NotImplementedError: ulp needs binary floating-point neighbours'
+
+def remainder(x, y):
+    raise 'NotImplementedError: remainder needs nearest-even binary division'
+
+def fmod(x, y):
+    raise 'NotImplementedError: fmod needs binary floating-point division'
+
+def modf(x):
+    raise 'NotImplementedError: modf needs tuple values'
+
+def frexp(x):
+    raise 'NotImplementedError: frexp needs tuple values'
+
+def ldexp(x, i):
+    if type(i) != type(1):
+        raise 'TypeError: ldexp exponent must be an integer'
+    return __math('fdiv', x * 2 ** i, 1.0)
