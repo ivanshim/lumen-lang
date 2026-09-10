@@ -92,7 +92,7 @@ ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \
 ext.builtin.module.load:L \
-ext.builtin.copy:L ext.builtin.copy.hooks:L ext.builtin.pickle.pack:L ext.builtin.pickle.unpack:L ext.builtin.pickle.hooks:L ext.builtin.pickle.amiss:L \
+ext.syntax.collection.cycle.unready:L ext.builtin.copy:L ext.builtin.copy.hooks:L ext.builtin.pickle.pack:L ext.builtin.pickle.unpack:L ext.builtin.pickle.hooks:L ext.builtin.pickle.amiss:L \
 ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
 ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L \

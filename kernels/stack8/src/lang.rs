@@ -429,6 +429,7 @@ pub struct Lang {
     pub copy_hooks: Vec<String>,
     pub pickle_hooks: Vec<String>,
     pub pickle_amiss: Vec<String>,
+    pub collection_cycle_unready: Option<String>,
     pub member_absent: Vec<String>,
     pub object_protocol: Vec<String>,
     pub clock_parts: bool,
@@ -837,7 +838,7 @@ w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
 w ext.builtin.module.load
-w ext.builtin.copy | w ext.builtin.copy.hooks | w ext.builtin.pickle.pack | w ext.builtin.pickle.unpack | w ext.builtin.pickle.hooks | w ext.builtin.pickle.amiss
+w ext.syntax.collection.cycle.unready | w ext.builtin.copy | w ext.builtin.copy.hooks | w ext.builtin.pickle.pack | w ext.builtin.pickle.unpack | w ext.builtin.pickle.hooks | w ext.builtin.pickle.amiss
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
@@ -1677,6 +1678,7 @@ impl Lang {
             copy_hooks: r.strings("ext.builtin.copy.hooks")?,
             pickle_hooks: r.strings("ext.builtin.pickle.hooks")?,
             pickle_amiss: r.strings("ext.builtin.pickle.amiss")?,
+            collection_cycle_unready: r.head("ext.syntax.collection.cycle.unready")?,
             module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
             member_absent: r.strings("ext.builtin.member.absent")?,
             object_protocol: r.strings("ext.op.object.protocol")?,

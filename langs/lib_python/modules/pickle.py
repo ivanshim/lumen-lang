@@ -33,11 +33,19 @@ def loads(data, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=
 
 
 def dump(obj, file, protocol=None, *, fix_imports=True, buffer_callback=None):
-    file.write(dumps(obj, protocol, fix_imports=fix_imports, buffer_callback=buffer_callback))
+    file.write(dumps(obj, protocol, fix_imports=fix_imports, buffer_callback=buffer_callback) + "\n")
 
 
 def load(file, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=None):
-    return loads(file.read(), fix_imports=fix_imports, encoding=encoding, errors=errors, buffers=buffers)
+    data = ''
+    while True:
+        letter = file.read(1)
+        if letter == '' or letter == '\n':
+            break
+        data += letter
+    if data == '':
+        raise 'EOFError: Ran out of input'
+    return loads(data, fix_imports=fix_imports, encoding=encoding, errors=errors, buffers=buffers)
 
 
 class Pickler:

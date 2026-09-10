@@ -1673,6 +1673,9 @@ only. The extension labels so far, all from PHP:
   and a deep copy retains it when none of its members had to change.
 - `ext.builtin.copy.hooks`: the shallow and deep copying methods, in
   that order. A deep method receives the map of objects already copied.
+- `ext.syntax.collection.cycle.unready`: the complaint when appending a
+  sequence to itself would need shared mutable storage. The run stops
+  before a copy of the old sequence could stand for the self-reference.
 - `ext.builtin.pickle.pack` and `ext.builtin.pickle.unpack`: builtins
   keeping a value as text and restoring it. The text begins with a version
   mark and carries counted references, whole numbers in full, and the
@@ -2517,6 +2520,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
+| `ext.syntax.collection.cycle.unready` | - | - | `NotImplementedError: cyclic lists need shared mutable sequence storage` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: value is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |

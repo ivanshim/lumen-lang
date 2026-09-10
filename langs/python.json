@@ -956,6 +956,9 @@
   "ext.syntax.call.spread.pairs.amiss": [
     "TypeError: argument after ** must be a mapping with string keys"
   ],
+  "ext.syntax.collection.cycle.unready": [
+    "NotImplementedError: cyclic lists need shared mutable sequence storage"
+  ],
   "ext.syntax.collection.unwalkable": [
     "TypeError: value is not iterable"
   ],

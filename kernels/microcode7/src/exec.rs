@@ -2463,6 +2463,15 @@ impl<'a> Machine<'a> {
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    if *op == Prim::Append {
+                        if let Some(complaint) = self.table.single("ext.syntax.collection.cycle.unready") {
+                            let held = f.cells.borrow()[i].clone();
+                            let original = match held { Value::Shared(c) => c.borrow().clone(), v => v };
+                            if let (Value::Vector(old), Value::Vector(new)) = (&original, &value) {
+                                if Rc::ptr_eq(old, new) { return Err(complaint.to_string().into()); }
+                            }
+                        }
+                    }
                     if let Some(Value::Span(bounds)) = &key {
                         let old = f.cells.borrow()[i].clone();
                         match old {

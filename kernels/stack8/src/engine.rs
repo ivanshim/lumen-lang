@@ -5280,6 +5280,11 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
+                if let Some(words) = &self.lang.collection_cycle_unready {
+                    if matches!((&target, &v), (Value::Array(a), Value::Array(b)) if Rc::ptr_eq(a, b)) {
+                        return Err(words.clone());
+                    }
+                }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {
