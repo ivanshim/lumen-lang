@@ -218,6 +218,7 @@ pub enum Action {
     GatherItem { map: bool, spread: bool },
     /// The values walked by a comprehension, with maps handing out keys.
     ComprehensionItems,
+    ForItems,
     UnpackCount(usize),
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.

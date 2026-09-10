@@ -377,6 +377,7 @@ pub enum Prim {
     /// The growing literal and the next part of it.
     ExtendLiteral(bool, bool),
     Iterated,
+    ForSource,
     CheckUnpack(usize),
     // control
     Seq,

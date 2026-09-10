@@ -3397,7 +3397,7 @@ impl<'a> Builder<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 let source = match table.single("ext.op.comprehension.for") {
-                    Some(_) => prim_call(Prim::Iterated, vec![start]),
+                    Some(_) => prim_call(if table.has_any("ext.stmt.class.special") { Prim::ForSource } else { Prim::Iterated }, vec![start]),
                     None => start,
                 };
                 self.address_to_write(&var);

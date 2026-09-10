@@ -955,7 +955,8 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.class.binary.amiss` supplies four pieces enclosing the sign
   and the two operand kinds when neither method accepts a working.
   `ext.stmt.class.format.amiss` encloses the class name when a format
-  specification has no method to answer it.
+  specification has no method to answer it. These complaints already
+  name their fault kind and are told without a further language title.
 - `ext.builtin.abs`, `ext.builtin.bin`, `ext.builtin.hex`, `ext.builtin.oct`, `ext.builtin.pow`, `ext.builtin.divmod`, `ext.builtin.format`, `ext.builtin.round`, `ext.builtin.reversed`, `ext.builtin.sizeof`, `ext.builtin.dir`, `ext.builtin.complex`, `ext.builtin.index`, `ext.builtin.trunc`, `ext.builtin.floor`, `ext.builtin.ceil`:
   names for absolute value, radix rendering, power, division with
   remainder, formatting, rounding, reverse walking, size, directory and

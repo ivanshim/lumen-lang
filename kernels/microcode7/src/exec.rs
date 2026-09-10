@@ -3922,6 +3922,8 @@ impl<'a> Machine<'a> {
             }
         }
         let value = match (operation, operands) {
+            (Prim::ForSource, [source @ (Value::Thing(_) | Value::Cursor(_))]) => source.clone(),
+            (Prim::ForSource, [source]) => Value::Vector(Rc::new(self.object_members(source)?)),
             (Prim::ClassReady, [subject @ Value::Blueprint(class), rest @ ..]) => {
                 let members = class.shared.borrow().clone();
                 for (word, member) in members { self.ask_special(&member, 79, &[subject.clone(), Value::text(&word)])?; }
@@ -4004,7 +4006,9 @@ impl<'a> Machine<'a> {
                 values.reverse();
                 Value::Cursor(Rc::new(RefCell::new(values.into())))
             }
-            (Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::RoundCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_), _) => return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()),
+            (Prim::RoundCall, [Value::Thing(_), ..]) => return Err(self.bad_answer()),
+            (Prim::RoundCall, _) => return Ok(None),
+            (Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_), _) => return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()),
             (Prim::Of | Prim::HasMember, [Value::Backtrace(words), _]) => return Err(words.to_string()),
             (Prim::StartContext, [manager]) => {
                 if matches!(manager, Value::Thing(_)) {
@@ -4291,7 +4295,21 @@ impl<'a> Machine<'a> {
                 return Err(words.to_owned());
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
-            Prim::ClassReady | Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::RoundCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
+            Prim::RoundCall => {
+                let (body, scope) = match self.lookup(name) {
+                    Some(Value::Bound(body, scope)) => (body, scope),
+                    Some(Value::Routine(body)) => (body, self.outermost.clone()),
+                    _ => return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()),
+                };
+                let mut arguments = v.to_vec();
+                if arguments.len() == 1 { arguments.push(Value::Small(0)); }
+                match self.invoke(body, scope, arguments) {
+                    Ok(answer) => answer,
+                    Err(Escape::Error(words)) => return Err(words),
+                    Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                }
+            }
+            Prim::ForSource | Prim::ClassReady | Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
             Prim::StartContext | Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -5627,11 +5645,13 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::Say => {
-                self.utter(&format!("{}\n", self.show(v)));
+                let text = self.shown_objects(v)?;
+                self.utter(&(text + "\n"));
                 Value::Nil
             }
             Prim::Out => {
-                self.utter(&self.show(v));
+                let text = self.shown_objects(v)?;
+                self.utter(&text);
                 Value::Nil
             }
             Prim::Tell => {
@@ -6152,6 +6172,11 @@ impl<'a> Machine<'a> {
             Value::Shared(held) => return self.gathered_members(&held.borrow()),
             _ => return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Cannot gather members from this value").to_string()),
         })
+    }
+
+    fn shown_objects(&mut self, values: &[Value]) -> Result<String, String> {
+        if !self.table.has_any("ext.stmt.class.special") || !values.iter().any(Self::carries_instance) { return Ok(self.show(values)); }
+        values.iter().map(|value| self.object_words(value, false)).collect::<Result<Vec<_>, _>>().map(|parts| parts.join(" "))
     }
 
     fn show(&self, v: &[Value]) -> String {

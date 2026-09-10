@@ -2810,7 +2810,7 @@ impl<'a> Compiler<'a> {
                     self.put(w);
                 }
                 if !lang.comprehension_for.is_empty() {
-                    self.act(Action::ComprehensionItems, 1);
+                    self.act(if lang.class_special.is_empty() { Action::ComprehensionItems } else { Action::ForItems }, 1);
                 }
                 self.write(&bag);
                 return self.walk(&bag, None, &var, false, target);

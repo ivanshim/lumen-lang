@@ -2424,7 +2424,11 @@ impl<'a> Engine<'a> {
                 let mut items = self.special_items(&args[0])?; items.reverse();
                 Value::Walk(Rc::new(RefCell::new((items, 0))))
             }
-            Builtin::Absolute | Builtin::BinaryText | Builtin::HexText | Builtin::OctalText | Builtin::PowerCall | Builtin::DividePair | Builtin::FormatCall | Builtin::RoundCall | Builtin::ReversedCall | Builtin::SizeCall | Builtin::DirCall | Builtin::ComplexCall | Builtin::IndexCall | Builtin::TruncCall | Builtin::FloorCall | Builtin::CeilCall => return Err(self.lang.special_unready.first().cloned().unwrap_or_default()),
+            Builtin::RoundCall => {
+                if matches!(first, Some(Value::Object(_))) { return Err(self.special_fault()); }
+                return Ok(None);
+            }
+            Builtin::Absolute | Builtin::BinaryText | Builtin::HexText | Builtin::OctalText | Builtin::PowerCall | Builtin::DividePair | Builtin::FormatCall | Builtin::ReversedCall | Builtin::SizeCall | Builtin::DirCall | Builtin::ComplexCall | Builtin::IndexCall | Builtin::TruncCall | Builtin::FloorCall | Builtin::CeilCall => return Err(self.lang.special_unready.first().cloned().unwrap_or_default()),
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
             Builtin::ToText if args.len() == 1 => Value::text(&self.special_text(&args[0], false)?),
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
@@ -3010,6 +3014,11 @@ impl<'a> Engine<'a> {
                     return Err(self.lang.unpack_long.clone().unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)
+            }
+            Action::ForItems => {
+                let source = collection_contents(&self.drop_top()?);
+                if matches!(source, Value::Object(_) | Value::Walk(_)) { source }
+                else { Value::array(self.special_items(&source)?) }
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
@@ -3675,7 +3684,8 @@ impl<'a> Engine<'a> {
                 } else { object }
             }
             Action::SettleObjects => {
-                let Value::Array(items) = self.drop_top()? else { return Err(self.special_fault().into()) };
+                let held = collection_contents(&self.drop_top()?);
+                let Value::Array(items) = held else { return Err(self.special_fault().into()) };
                 let mut kept = Vec::new();
                 for item in items.iter() {
                     if matches!(item, Value::Object(_)) {
@@ -4907,6 +4917,13 @@ impl<'a> Engine<'a> {
 
     /// print and write: the values joined by spaces, or a template holding
     /// the definition's placeholders filled from the rest.
+    fn render_special(&mut self, values: &[Value]) -> Res<String> {
+        if self.lang.class_special.is_empty() || !values.iter().any(Self::holds_object) { return Ok(self.render(values)); }
+        let mut pieces = Vec::new();
+        for value in values { pieces.push(self.special_text(value, false)?); }
+        Ok(pieces.join(" "))
+    }
+
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
@@ -5111,7 +5128,17 @@ impl<'a> Engine<'a> {
         };
         Ok(match builtin {
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
-            Builtin::Absolute | Builtin::BinaryText | Builtin::HexText | Builtin::OctalText | Builtin::PowerCall | Builtin::DividePair | Builtin::FormatCall | Builtin::RoundCall | Builtin::ReversedCall | Builtin::SizeCall | Builtin::DirCall | Builtin::ComplexCall | Builtin::IndexCall | Builtin::TruncCall | Builtin::FloorCall | Builtin::CeilCall |
+            Builtin::RoundCall => {
+                let Some(Value::Routine(routine)) = self.lookup(name).cloned() else { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); };
+                let mut given = args.clone();
+                if given.len() == 1 { given.push(Value::Small(0)); }
+                match self.invoke(&routine, given) {
+                    Ok(()) => self.drop_top().map_err(|_| self.special_fault())?,
+                    Err(Fault::Note(message)) => return Err(message),
+                    Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+                }
+            }
+            Builtin::Absolute | Builtin::BinaryText | Builtin::HexText | Builtin::OctalText | Builtin::PowerCall | Builtin::DividePair | Builtin::FormatCall | Builtin::ReversedCall | Builtin::SizeCall | Builtin::DirCall | Builtin::ComplexCall | Builtin::IndexCall | Builtin::TruncCall | Builtin::FloorCall | Builtin::CeilCall |
             Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::IsInstance => return Err(self.special_fault()),
             Builtin::Echo => {
                 arity(1)?;
@@ -5602,11 +5629,13 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::Say => {
-                self.utter(&format!("{}\n", self.render(&args)));
+                let text = self.render_special(args)?;
+                self.utter(&(text + "\n"));
                 Value::Null
             }
             Builtin::Out => {
-                self.utter(&self.render(&args));
+                let text = self.render_special(args)?;
+                self.utter(&text);
                 Value::Null
             }
             Builtin::Tell => {
@@ -6600,7 +6629,7 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
 /// Read the contents without giving up the collection's own cell.
 fn collection_contents(value: &Value) -> Value {
     match value {
-        Value::Bond(cell) => cell.borrow().clone(),
+        Value::Bond(cell) => collection_contents(&cell.borrow()),
         other => other.clone(),
     }
 }

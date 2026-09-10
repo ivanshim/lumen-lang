@@ -55,10 +55,13 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
-        match table.strings("ext.syntax.call.amiss.builtin") {
-            [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
-            _ => format!("{}: {}", prefix, e),
+        for label in ["ext.stmt.class.format.amiss", "ext.stmt.class.binary.amiss", "ext.stmt.class.index.amiss", "ext.syntax.call.amiss.builtin"] {
+            let words = table.strings(label);
+            if let (Some(first), Some(last)) = (words.first(), words.last()) {
+                if words.len() > 1 && e.starts_with(first) && e.ends_with(last) { return e; }
+            }
         }
+        format!("{}: {}", prefix, e)
     })
 }
 
