@@ -205,8 +205,10 @@ class Fraction:
     def __eq__(self, other):
         if isinstance(other, float) and (other != other or other == inf or other == -inf):
             return self.__float__() == other
-        if not isinstance(other, Fraction) and not isinstance(other, int) and not isinstance(other, float) and not isinstance(other, bool):
+        if other is None or isinstance(other, str):
             return False
+        if not isinstance(other, Fraction) and not isinstance(other, int) and not isinstance(other, float) and not isinstance(other, bool):
+            raise 'NotImplementedError: comparison with this Fraction operand is not supported'
         right = _number(other)
         return self.numerator == right.numerator and self.denominator == right.denominator
 

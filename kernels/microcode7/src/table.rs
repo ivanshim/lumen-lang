@@ -87,7 +87,7 @@ ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.incremen
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.import.value:B ext.stmt.import.missing:L ext.stmt.import.member.missing:L ext.stmt.import.relative.unready:L \
 ext.builtin.program.namespace:L \
-ext.builtin.member.get:L \
+ext.builtin.member.has:L ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \
 ext.builtin.module.load:L \
@@ -159,7 +159,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 80] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 81] = [
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
@@ -181,6 +181,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 80] = [
     ("ext.builtin.classes", Prim::ClassesBound), ("ext.builtin.routines", Prim::RoutinesBound), ("ext.builtin.spelled", Prim::WordsSpelled), ("ext.builtin.class.methods", Prim::ClassMethods), ("ext.builtin.class.properties", Prim::ClassProperties),
     ("ext.builtin.class.beneath", Prim::ClassBeneath), ("ext.builtin.math", Prim::Reckon),
     ("ext.builtin.program.namespace", Prim::ProgramNames),
+    ("ext.builtin.member.has", Prim::MemberPresent),
     ("ext.builtin.member.get", Prim::ReadMember),
     ("ext.builtin.member.set", Prim::WriteMember),
     ("ext.builtin.instance", Prim::IsInstance),

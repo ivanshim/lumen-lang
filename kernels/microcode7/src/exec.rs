@@ -2101,6 +2101,9 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
+                        Some(Value::KindOf(_)) if self.table.has_any("ext.stmt.class.unready") => {
+                            return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string().into());
+                        }
                         _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
                     },
                 };
@@ -3873,6 +3876,13 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Dict(Rc::new(bindings))
+            }
+            Prim::MemberPresent => {
+                n(2)?;
+                let Value::Text(member) = &v[1] else {
+                    return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into());
+                };
+                Value::Flag(self.attribute(&v[0], member).map_or(false, |value| !matches!(value, Value::Unset)))
             }
             Prim::ReadMember => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
@@ -6203,7 +6213,14 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => Value::Unset,
+                    true => Value::text(path),
+                    false => {
+                        let kind = KIND_LABELS.iter().find(|(_, key)| self.table.single(key) == Some(name.as_str()));
+                        match kind {
+                            Some((kind, _)) if !self.table.flag("ext.system.kind.spelled") => Value::KindOf(*kind),
+                            _ => Value::Unset,
+                        }
+                    }
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));

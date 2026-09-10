@@ -422,6 +422,7 @@ pub struct Lang {
     pub math_floating: bool,
     pub output_error: bool,
     pub object_unary: Vec<String>,
+    pub member_has: Vec<String>,
     pub object_binary: Vec<String>,
     pub object_call: Vec<String>,
     pub object_text: Vec<String>,
@@ -825,6 +826,7 @@ w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc 
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
 w ext.builtin.program.namespace
+w ext.builtin.member.has
 w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
@@ -1346,6 +1348,7 @@ impl Lang {
             ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
             ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
             ("ext.builtin.program.namespace", Builtin::ProgramNamespace),
+            ("ext.builtin.member.has", Builtin::MemberHas),
             ("ext.builtin.member.get", Builtin::MemberGet),
             ("ext.builtin.member.set", Builtin::MemberSet),
             ("ext.builtin.instance", Builtin::InstanceOf),
@@ -1661,6 +1664,7 @@ impl Lang {
             math_floating: r.flag("ext.builtin.math.floating")?,
             output_error: r.flag("ext.builtin.output.error")?,
             object_unary: r.strings("ext.op.object.unary")?,
+            member_has: r.strings("ext.builtin.member.has")?,
             object_binary: r.strings("ext.op.object.binary")?,
             object_call: r.strings("ext.op.object.call")?,
             object_text: r.strings("ext.builtin.object.text")?,

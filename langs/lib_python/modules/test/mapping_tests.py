@@ -625,10 +625,14 @@ class TestHashMappingProtocol(TestMappingProtocol):
         d = self._full_mapping({1: BadRepr()})
         self.assertRaises(Exc, repr, d)
 
-    @support.run_with_limited_c_stack()
-    @support.skip_wasi_stack_overflow()
-    @support.skip_emscripten_stack_overflow()
-    @support.skip_if_sanitizer("requires deep stack", ub=True)
+    # Trim: class method decorators cannot yet be carried here.
+    # @support.run_with_limited_c_stack() is an identity in this runtime.
+    # Trim: class method decorators cannot yet be carried here.
+    # @support.skip_wasi_stack_overflow() is an identity in this runtime.
+    # Trim: class method decorators cannot yet be carried here.
+    # @support.skip_emscripten_stack_overflow() is an identity in this runtime.
+    # Trim: class method decorators cannot yet be carried here.
+    # @support.skip_if_sanitizer("requires deep stack", ub=True) is an identity in this runtime.
     def test_repr_deep(self):
         d = self._empty_mapping()
         for i in range(support.exceeds_recursion_limit()):

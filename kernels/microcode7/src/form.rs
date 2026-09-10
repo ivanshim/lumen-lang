@@ -42,6 +42,7 @@ pub enum Prim {
     LoadModule,
     IsInstance,
     WriteMember,
+    MemberPresent,
     ReadMember,
     ProgramNames,
     BringModule,

@@ -331,6 +331,7 @@ pub enum Builtin {
     ModuleLoad,
     InstanceOf,
     MemberSet,
+    MemberHas,
     MemberGet,
     ProgramNamespace,
     Sum,

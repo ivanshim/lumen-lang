@@ -354,6 +354,7 @@
     "AttributeError: object has no attribute '",
     "'"
   ],
+  "ext.builtin.member.has": ["hasattr"],
   "ext.builtin.member.get": [
     "getattr"
   ],

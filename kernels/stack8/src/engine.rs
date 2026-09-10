@@ -2553,6 +2553,7 @@ impl<'a> Engine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Class(c)) => Some(c),
+                        Some(Value::SortOf(_)) if !self.lang.class_unready.is_empty() => return Err(self.lang.class_unready[0].clone().into()),
                         Some(v) => return Err(format!("Class {} cannot stand on {}", plan.name, v.plain()).into()),
                         None => return Err("Stack underflow".to_string().into()),
                     },
@@ -4688,6 +4689,15 @@ impl<'a> Engine<'a> {
                     else { Some((Value::text(name), value.clone())) }
                 }).collect()))
             }
+            Builtin::MemberHas => {
+                arity(2)?;
+                if !matches!(args[1], Value::Text(_)) { return Err(self.lang.module_helper_amiss.clone()); }
+                let mut lookup = args.clone();
+                lookup.push(Value::Fence);
+                let called = self.lang.member_has.first().cloned().unwrap_or_else(|| name.to_string());
+                let found = self.builtin(Builtin::MemberGet, &called, &mut lookup)?;
+                Value::Flag(!matches!(found, Value::Fence | Value::Blank | Value::Gap))
+            }
             Builtin::MemberGet => {
                 if args.len() != 2 && args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
                 let name = args[1].display(&sp);
@@ -5956,7 +5966,12 @@ impl Engine<'_> {
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { Value::Blank };
+            let initial = if self.lang.module_names.contains(name) {
+                Value::text(path)
+            } else if !self.lang.kind_spelled {
+                self.lang.sort_bindings.iter().find(|(word, _)| word == name)
+                    .map_or(Value::Blank, |(_, kind)| Value::SortOf(*kind))
+            } else { Value::Blank };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
             fields.push((name.clone(), shared));

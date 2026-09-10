@@ -68,9 +68,12 @@ class CommonTest(seq_tests.CommonTest):
         self.assertEqual(str(a2), "[0, 1, 2, [...], 3]")
         self.assertEqual(repr(a2), "[0, 1, 2, [...], 3]")
 
-    @run_with_limited_c_stack(200_000)
-    @skip_wasi_stack_overflow()
-    @skip_emscripten_stack_overflow()
+    # Trim: class method decorators cannot yet be carried here.
+    # @run_with_limited_c_stack(200_000) is an identity in this runtime.
+    # Trim: class method decorators cannot yet be carried here.
+    # @skip_wasi_stack_overflow() is an identity in this runtime.
+    # Trim: class method decorators cannot yet be carried here.
+    # @skip_emscripten_stack_overflow() is an identity in this runtime.
     def test_repr_deep(self):
         a = self.type2test([])
         for i in range(200_000):

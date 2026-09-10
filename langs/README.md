@@ -1645,6 +1645,9 @@ only. The extension labels so far, all from PHP:
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
   program has declared without teaching the kernel a test runner.
+- `ext.builtin.member.has`: a builtin asking whether the object or
+  namespace given first has the member named second. A member holding
+  nothing still exists; an unbound name does not.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
@@ -2164,6 +2167,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.member.has` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
