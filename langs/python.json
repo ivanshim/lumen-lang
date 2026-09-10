@@ -715,7 +715,9 @@
   ],
   "ext.op.sequence.subscript": [
     "TypeError: ",
-    " indices must be integers or slices, not "
+    " indices must be integers or slices, not ",
+    "TypeError: string indices must be integers, not '",
+    "'"
   ],
   "ext.op.sequence.unhashable": [
     "TypeError: unhashable type: '",

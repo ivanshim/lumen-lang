@@ -357,11 +357,17 @@ impl Value {
             }
             Value::Null => Ok(0x1234_abcd),
             Value::Real(real) if real.outside() => {
-                Ok(if real.no_number() { Rc::as_ptr(real) as usize as i64 }
-                    else if real.p.is_negative() { -314159 } else { 314159 })
+                if real.no_number() { Err(()) }
+                else { Ok(if real.p.is_negative() { -314159 } else { 314159 }) }
             }
             _ => {
-                let (top, bottom) = crate::arith::parts(self).ok_or(())?;
+                let (top, bottom) = if let Value::Real(real) = self {
+                    // Hash the number the binary width holds, not the
+                    // written ratio which was rounded to reach it.
+                    let rounded = as_binary(&real.p, &real.q);
+                    if rounded.is_infinite() { return Ok(if rounded.is_sign_negative() { -314159 } else { 314159 }); }
+                    from_binary(rounded).ok_or(())?
+                } else { crate::arith::parts(self).ok_or(())? };
                 let modulus = BigInt::from((1_u64 << 61) - 1);
                 let divisor = bottom.mod_floor(&modulus);
                 let number = if divisor.is_zero() { 314159 } else {

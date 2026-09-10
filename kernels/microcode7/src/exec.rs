@@ -51,7 +51,10 @@ pub fn sequence_complaint<'s>(table: &Table, said: &'s str) -> Option<(&'s str, 
     let recognized = SEQUENCE_FAULTS.iter().any(|label| {
         let words = table.strings(label);
         if *label == "ext.op.sequence.missing" && words.iter().skip(2).any(|word| word == said) { return true; }
-        let portions = if *label == "ext.op.sequence.missing" { &words[..words.len().min(2)] } else { words };
+        let portions = if *label == "ext.op.sequence.subscript" {
+            if words.get(2).map_or(false, |head| said.starts_with(head)) { &words[2..] }
+            else { &words[..words.len().min(2)] }
+        } else if *label == "ext.op.sequence.missing" { &words[..words.len().min(2)] } else { words };
         let Some(first) = portions.first() else { return false; };
         if !said.starts_with(first) { return false; }
         if portions.len() == 1 { return said == first; }
@@ -1048,30 +1051,48 @@ impl<'a> Machine<'a> {
     }
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
+        self.quoted_within(item, &std::collections::HashSet::new())
+    }
+
+    /// Only holders on the way to this value mark a return upon itself;
+    /// the same holder in a neighbouring place is written out afresh.
+    fn quoted_within(&self, item: &Value, ancestors: &std::collections::HashSet<usize>) -> Result<String, String> {
+        let holder = match item {
+            Value::List(row) => Some((Rc::as_ptr(row) as usize, "[...]")),
+            Value::Tuple(row) => Some((Rc::as_ptr(row) as usize, "(...)")),
+            Value::Set(row) => Some((Rc::as_ptr(row) as usize, "{...}")),
+            Value::Vector(row) => Some((Rc::as_ptr(row) as usize, "[...]")),
+            Value::Dict(row) => Some((Rc::as_ptr(row) as usize, "{...}")),
+            _ => None,
+        };
+        let mut within = ancestors.clone();
+        if let Some((identity, mark)) = holder {
+            if !within.insert(identity) { return Ok(mark.to_string()); }
+        }
         match item {
-            Value::Shared(cell) => return self.quoted_remainder(&cell.borrow()),
+            Value::Shared(cell) => return self.quoted_within(&cell.borrow(), &within),
             Value::List(elements) => {
                 let mut parts = Vec::new();
-                for element in elements.borrow().iter() { parts.push(self.quoted_remainder(element)?); }
+                for element in elements.borrow().iter() { parts.push(self.quoted_within(element, &within)?); }
                 return Ok(format!("[{}]", parts.join(", ")));
             }
             Value::Tuple(elements) | Value::Set(elements) => {
                 let mut parts = Vec::new();
-                for element in elements.iter() { parts.push(self.quoted_remainder(element)?); }
+                for element in elements.iter() { parts.push(self.quoted_within(element, &within)?); }
                 return Ok(if matches!(item, Value::Tuple(_)) {
                     format!("({}{})", parts.join(", "), if elements.len() == 1 { "," } else { "" })
                 } else if elements.is_empty() { "set()".to_string() } else { format!("{{{}}}", parts.join(", ")) });
             }
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
-                for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
+                for element in elements.iter() { shown.push(self.quoted_within(element, &within)?); }
                 return Ok(format!("[{}]", shown.join(", ")));
             }
             Value::Dict(entries) => {
                 let mut shown = Vec::new();
                 for (key, value) in entries.iter() {
-                    let key = self.quoted_remainder(key)?;
-                    let value = self.quoted_remainder(value)?;
+                    let key = self.quoted_within(key, &within)?;
+                    let value = self.quoted_within(value, &within)?;
                     shown.push(format!("{}: {}", key, value));
                 }
                 return Ok(format!("{{{}}}", shown.join(", ")));
@@ -4764,6 +4785,9 @@ impl<'a> Machine<'a> {
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
+                if self.table.flag("ext.op.sequence.values") && matches!(&v[1], Value::Dict(_) | Value::Set(_)) {
+                    self.sequence_hash(&v[0])?;
+                }
                 let present = match (&v[0], &v[1]) {
                     (needle, Value::List(hay)) => hay.borrow().iter().any(|item| Self::sequence_item_equal(needle, item)),
                     (needle, Value::Tuple(hay) | Value::Set(hay)) => hay.iter().any(|item| Self::sequence_item_equal(needle, item)),
@@ -5643,7 +5667,17 @@ impl<'a> Machine<'a> {
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => n.as_ref().clone(),
             Value::Flag(b) => BigInt::from(u8::from(*b)),
-            _ => return Err(self.sequence_fault("subscript", &[kind, Self::sequence_kind(value)])),
+            Value::Thing(_) => return Err(self.sequence_fault("unready", &[])),
+            _ => {
+                let words = self.table.strings("ext.op.sequence.subscript");
+                let fragment = |at| words.get(at).map(String::as_str).unwrap_or("");
+                let given = Self::sequence_kind(value);
+                return Err(if kind == "str" {
+                    format!("{}{}{}", fragment(2), given, fragment(3))
+                } else {
+                    format!("{}{}{}{}", fragment(0), kind, fragment(1), given)
+                });
+            }
         };
         if index < BigInt::from(0) { index += extent; }
         index.to_usize().filter(|&i| i < extent).ok_or_else(|| self.sequence_fault("index", &[if kind == "str" { "string" } else { kind }]))
@@ -5666,11 +5700,12 @@ impl<'a> Machine<'a> {
                 Ok(if residue == -1 { -2 } else { residue })
             }
             Value::Text(text) => {
+                if text.is_empty() { return Ok(0); }
                 let mut hash = 0xcbf29ce484222325_u64;
                 for byte in text.bytes() { hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3); }
                 Ok(if hash == u64::MAX { -2 } else { hash as i64 })
             }
-            Value::Nil => Ok(0x12d687),
+            Value::Nil => Ok(305441741),
             Value::Frac(number) => {
                 let binary = crate::data::nearest_binary(&number.above, &number.beneath);
                 if binary.is_nan() { return Err(self.sequence_fault("unready", &[])); }
@@ -5716,7 +5751,9 @@ impl<'a> Machine<'a> {
         let (row, copies) = if is_row(left) { (left, right) } else { (right, left) };
         if matches!(copies, Value::Thing(_)) { return Err(self.sequence_fault("unready", &[])); }
         if !matches!(copies, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.sequence_fault("repeat", &[Self::sequence_kind(copies)])); }
-        let count = copies.as_big()?.max(BigInt::from(0)).to_usize().ok_or_else(|| self.sequence_fault("unready", &[]))?;
+        let count = copies.as_big()?;
+        if count.to_isize().is_none() { return Err(self.sequence_fault("unready", &[])); }
+        let count = count.max(BigInt::from(0)).to_usize().ok_or_else(|| self.sequence_fault("unready", &[]))?;
         if let Value::Text(text) = row {
             if text.is_empty() { return Ok(Some(row.clone())); }
             let size = text.len().checked_mul(count).ok_or_else(|| self.sequence_fault("unready", &[]))?;

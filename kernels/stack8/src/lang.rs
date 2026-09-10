@@ -1104,7 +1104,8 @@ impl Lang {
             &self.sequence_unhashable, &self.sequence_empty, &self.sequence_operands];
         let known = templates.iter().any(|words| words.first().map_or(false, |head| told.starts_with(head)
             && words.get(1).map_or(told == head, |tail| told.contains(tail))))
-            || self.sequence_missing.iter().skip(2).any(|words| words == told);
+            || self.sequence_missing.iter().skip(2).any(|words| words == told)
+            || self.sequence_subscript.get(2).map_or(false, |head| told.starts_with(head));
         if !known { return None; }
         told.split_once(": ")
     }

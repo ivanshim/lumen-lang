@@ -1,0 +1,4 @@
+unhashable type: 'list'
+unhashable type: 'list'
+True
+string indices must be integers, not 'float'

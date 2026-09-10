@@ -3272,6 +3272,7 @@ impl<'a> Engine<'a> {
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
         Ok(match value {
+            Value::List(_) | Value::Tuple(_) | Value::Set(_) => value.display(&self.wording()),
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);
@@ -3374,15 +3375,18 @@ impl<'a> Engine<'a> {
             Value::Bond(cell) => return Self::sequence_needs_protocol(&cell.borrow(), seen),
             _ => return false,
         };
-        if seen.contains(&pointer) { return false; }
+        if seen.len() > 128 || seen.contains(&pointer) { return true; }
         seen.push(pointer);
-        match value {
+        let needed = match value {
             Value::Map(items) => items.iter().any(|(k, v)| Self::sequence_needs_protocol(k, seen) || Self::sequence_needs_protocol(v, seen)),
             _ => value.sequence_items().unwrap_or_default().iter().any(|v| Self::sequence_needs_protocol(v, seen)),
-        }
+        };
+        seen.pop();
+        needed
     }
 
     fn sequence_hash_checked(&self, v: &Value) -> Res<i64> {
+        if v.no_number() { return Err(self.lang.sequence_unready[0].clone()); }
         if Self::sequence_needs_protocol(v, &mut Vec::new()) { return Err(self.lang.sequence_unready[0].clone()); }
         if let Value::Tuple(items) = v {
             for item in items.iter() { self.sequence_hash_checked(item)?; }
@@ -3489,7 +3493,9 @@ impl<'a> Engine<'a> {
             Value::Huge(n) => (**n).clone(),
             Value::Flag(b) => BigInt::from(i64::from(*b)),
             Value::Object(_) => return Err(self.lang.sequence_unready[0].clone()),
-            _ => return Err(self.sequence_complaint(&self.lang.sequence_subscript, &[value.sequence_kind(), at.sequence_kind()])),
+            _ => return Err(if matches!(value, Value::Text(_)) {
+                self.sequence_complaint(&self.lang.sequence_subscript[2..], &[at.sequence_kind()])
+            } else { self.sequence_complaint(&self.lang.sequence_subscript[..2], &[value.sequence_kind(), at.sequence_kind()]) }),
         };
         let shifted = if raw < BigInt::from(0) { raw + length } else { raw };
         let found = shifted.to_usize().filter(|i| *i < length);
@@ -3526,6 +3532,9 @@ impl<'a> Engine<'a> {
             return Some(Ok(Value::Flag(a.sequence_equal(b) != matches!(op, Action::Ne))));
         }
         if matches!(op, Action::Contains | Action::Lacks) {
+            if matches!(b, Value::Map(_) | Value::Set(_)) {
+                if let Err(message) = self.sequence_hash_checked(a) { return Some(Err(message)); }
+            }
             let answer = match b {
                 Value::Text(text) => match a { Value::Text(needle) => Ok(text.contains(needle.as_ref())), _ => Err(self.lang.membership_unsupported.clone().unwrap_or_default()) },
                 _ => b.sequence_items().map(|items| items.iter().any(|v| a.sequence_member_equal(v)))
@@ -3561,6 +3570,7 @@ impl<'a> Engine<'a> {
                 return Some(Err(if matches!(times, Value::Object(_)) { self.lang.sequence_unready[0].clone() }
                     else { self.sequence_complaint(&self.lang.sequence_repeat, &[times.sequence_kind()]) }));
             };
+            if count.to_isize().is_none() { return Some(Err(self.lang.sequence_unready[0].clone())); }
             let count = if count < BigInt::from(0) { Some(0) } else { count.to_usize() };
             let Some(count) = count else { return Some(Err(self.lang.sequence_unready[0].clone())); };
             let items = source.sequence_items().unwrap();

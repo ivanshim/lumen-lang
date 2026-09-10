@@ -1793,7 +1793,8 @@ only. The extension labels so far, all from PHP:
   no hash. `ext.op.sequence.index` surrounds the name of a sequence
   whose requested place lies beyond either end. `ext.op.sequence.subscript`
   holds the words before the sequence kind and between that kind and
-  the kind of an unfit index.
+  the kind of an unfit index, then two words surrounding an unfit text
+  index's kind.
 - `ext.op.sequence.missing` holds the words before and after a missing
   list item, then the whole complaints for a missing tuple item and a
   missing substring. `ext.op.sequence.empty` surrounds the name of a
@@ -2395,7 +2396,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.sequence.operands` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.op.sequence.order` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.op.sequence.repeat` | - | - | `TypeError: can't multiply sequence by non-int of type '` `'` | - | - | - | - | - | - | - |
-| `ext.op.sequence.subscript` | - | - | `TypeError: ` ` indices must be integers or slices, not ` | - | - | - | - | - | - | - |
+| `ext.op.sequence.subscript` | - | - | `TypeError: ` ` indices must be integers or slices, not ` `TypeError: string indices must be integers, not '` `'` | - | - | - | - | - | - | - |
 | `ext.op.sequence.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
 | `ext.op.sequence.unready` | - | - | `NotImplementedError: this sequence operation is not supported` | - | - | - | - | - | - | - |
 | `ext.op.sequence.values` | - | - | `true` | - | - | - | - | - | - | - |
