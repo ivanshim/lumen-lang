@@ -246,6 +246,10 @@ impl Value {
     }
 
     pub fn raised_words(&self, words: Names) -> Option<String> {
+        if let Value::Thing(t) = self {
+            let fields = t.holds.borrow();
+            if let Some((_, Value::Text(s))) = fields.iter().find(|(k, _)| k == "\0displayed-fault") { return Some(s.to_string()); }
+        }
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
         Some(if row.is_empty() { String::new() }

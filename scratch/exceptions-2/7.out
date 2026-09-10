@@ -1,0 +1,6 @@
+g 2
+ValueError TypeError
+V 1
+T 1
+g (2 sub-exceptions)
+[Errno 2] missing

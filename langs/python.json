@@ -394,6 +394,11 @@
   "ext.builtin.exceptions.group.subgroup": [
     "subgroup"
   ],
+  "ext.builtin.exceptions.group.summary": [
+    " (",
+    " sub-exception)",
+    " sub-exceptions)"
+  ],
   "ext.builtin.exceptions.info": [
     "sys.exc_info"
   ],
@@ -418,6 +423,10 @@
   "ext.builtin.exceptions.os": [
     "errno",
     "strerror"
+  ],
+  "ext.builtin.exceptions.os.message": [
+    "[Errno ",
+    "] "
   ],
   "ext.builtin.exceptions.suppress": [
     "__suppress_context__"

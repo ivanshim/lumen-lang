@@ -289,6 +289,12 @@ impl<'a> Machine<'a> {
         }
         if let Some(key) = self.table.single("ext.builtin.exceptions.suppress") { holds.push((key.into(), Value::Flag(false))); }
         if self.table.strings("ext.builtin.exceptions").get(20).map_or(false, |n| kind.goes_by(n, false)) {
+            if row.len() >= 2 {
+                if let [first, second] = self.table.strings("ext.builtin.exceptions.os.message") {
+                    let message = format!("{first}{}{second}{}", row[0].render(self.wording()), row[1].render(self.wording()));
+                    holds.push(("\0displayed-fault".into(), Value::text(&message)));
+                }
+            }
             for (i, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
                 holds.push((key.clone(), if row.len() < 2 { Value::Nil } else { row.get(i).cloned().unwrap_or(Value::Nil) }));
             }
@@ -358,6 +364,11 @@ impl<'a> Machine<'a> {
         if let Value::Thing(t) = &group {
             let mut fields = t.holds.borrow_mut();
             fields.push(("\0group-title".into(), message.clone()));
+            if let [before, one, many] = self.table.strings("ext.builtin.exceptions.group.summary") {
+                let count = contents.len();
+                let suffix = if count == 1 { one } else { many };
+                fields.push(("\0displayed-fault".into(), Value::text(&format!("{}{before}{count}{suffix}", message.render(self.wording())))));
+            }
             fields.push(("\0group-row".into(), Value::Arguments(Rc::new(contents.clone()))));
             if let Some(k) = self.table.single("ext.builtin.exceptions.group.message") { fields.push((k.into(), message.clone())); }
             if let Some(k) = self.table.single("ext.builtin.exceptions.group.members") { fields.push((k.into(), Value::Arguments(Rc::new(contents)))); }
@@ -2700,6 +2711,8 @@ impl<'a> Machine<'a> {
                     };
                     if self.is_fault_kind(&class) {
                         if Self::fault_methods(&class) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
+                        let os = self.table.strings("ext.builtin.exceptions").get(20).map_or(false, |word| class.goes_by(word, false));
+                        if os && values.len() > 2 { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
                         return if class.every_field().iter().any(|(key, _)| key == "\0group-kind") {
                             self.group_made(class, values)
                         } else { Ok(self.make_fault(class, values, Value::Nil)) };
@@ -3093,6 +3106,9 @@ impl<'a> Machine<'a> {
             if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
             }
+            if class.every_field().iter().any(|(key, _)| key == "\0group-kind") { return self.group_made(class, args); }
+            let os = self.table.strings("ext.builtin.exceptions").get(20).map_or(false, |n| class.goes_by(n, false));
+            if os && args.len() > 2 { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
             return Ok(self.make_fault(class, args, Value::Nil));
         }
         self.made += 1;
@@ -5985,7 +6001,7 @@ impl<'a> Machine<'a> {
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
-            Value::Vector(values) => values.to_vec(),
+            Value::Arguments(values) | Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
                 let mut values = Vec::new();

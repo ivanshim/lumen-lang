@@ -2063,6 +2063,12 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.exceptions.name` and `.object`: the members for an absent
   name and the object upon which a member was sought. `.os` holds two
   names in order: error number and error words.
+- `ext.builtin.exceptions.os.message`: the words before an error number
+  and between that number and its message. This account admits one or two
+  operating-system arguments; further file arguments say `.unready`.
+- `ext.builtin.exceptions.group.summary`: the words before the count of
+  children and after it, the latter given once for one child and once for
+  many. These make the group's message when shown as text.
 - `ext.builtin.exceptions.group.members` and `.group.message`: the tuple
   of children and the message held by an exception group. `.group.derive`
   makes another group from a row of children; `.group.subgroup` takes the
@@ -2804,6 +2810,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.group.message` | - | - | `message` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.group.split` | - | - | `split` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.group.subgroup` | - | - | `subgroup` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.summary` | - | - | ` (` ` sub-exception)` ` sub-exceptions)` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.info` | - | - | `sys.exc_info` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.name` | - | - | `name` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.note` | - | - | `add_note` | - | - | - | - | - | - | - |
@@ -2812,6 +2819,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.notes.invalid` | - | - | `TypeError: Cannot add note: __notes__ is not a list` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.object` | - | - | `obj` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.os` | - | - | `errno` `strerror` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |

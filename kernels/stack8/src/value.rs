@@ -240,6 +240,9 @@ impl Value {
     }
 
     pub fn exception_message(&self, sp: &Wording) -> Option<String> {
+        if let Value::Object(o) = self {
+            if let Some((_, Value::Text(words))) = o.fields.borrow().iter().find(|(n, _)| n == "\0display-words") { return Some(words.to_string()); }
+        }
         let args = self.raised_arguments()?;
         let Value::Object(o) = self else { return None };
         Some(match args.as_slice() {

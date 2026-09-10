@@ -246,6 +246,9 @@ impl<'a> Engine<'a> {
             for name in &self.lang.builtin_exceptions_object { fields.push((name.clone(), Value::Null)); }
         }
         if self.lang.exceptions.get(20).map_or(false, |name| class.named(name, false)) {
+            if args.len() >= 2 && self.lang.os_message.len() == 2 {
+                fields.push(("\0display-words".into(), Value::text(&format!("{}{}{}{}", self.lang.os_message[0], args[0].display(&self.wording()), self.lang.os_message[1], args[1].display(&self.wording())))));
+            }
             for (at, name) in self.lang.builtin_exceptions_os.iter().enumerate() {
                 fields.push((name.clone(), if args.len() >= 2 { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
             }
@@ -312,6 +315,10 @@ impl<'a> Engine<'a> {
             let mut fields = o.fields.borrow_mut();
             fields.push(("\0members".into(), Value::Tuple(members.clone())));
             fields.push(("\0group-message".into(), args[0].clone()));
+            if self.lang.group_summary.len() == 3 {
+                let ending = if members.len() == 1 { &self.lang.group_summary[1] } else { &self.lang.group_summary[2] };
+                fields.push(("\0display-words".into(), Value::text(&format!("{}{}{}{}", args[0].display(&self.wording()), self.lang.group_summary[0], members.len(), ending))));
+            }
             for name in &self.lang.builtin_exceptions_group_members { fields.push((name.clone(), Value::Tuple(members.clone()))); }
             for name in &self.lang.builtin_exceptions_group_message { fields.push((name.clone(), args[0].clone())); }
         }
@@ -2925,6 +2932,7 @@ impl<'a> Engine<'a> {
                 };
                 if self.exception_class(&class) {
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+                    if args.len() > 2 && self.lang.exceptions.get(20).map_or(false, |n| class.named(n, false)) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
                     let object = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
                         self.make_group(class, args)?
                     } else { self.exception_instance(class, args, Value::Null) };
@@ -4632,7 +4640,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
