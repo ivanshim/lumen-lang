@@ -158,7 +158,12 @@ impl<'a> Engine<'a> {
             return match w.0 {
                 45 if subject.is_some()=>{let Value::Object(o)=subject.unwrap() else{return Err(self.class_refusal());};let found=o.fields.borrow().iter().find(|(n,_)|n==&w.1[0].plain()).map(|(_,v)|v.clone());Ok(found.unwrap_or(Value::Null))},
                 20..=26 if subject.is_some()=>Ok(Self::adapter(3,vec![value.clone(),subject.unwrap()])),
-                40 if subject.is_some()=>{let obj=subject.unwrap();let Value::Object(o)=&obj else{return Err(self.class_refusal());};o.fields.borrow().iter().find(|(n,_)|n==&format!("#slot:{}",w.1[0].plain())).map(|(_,v)|v.clone()).ok_or_else(||self.missing_member(&obj,&w.1[0].plain()))},
+                40 if subject.is_some()=>{
+                    let obj=subject.unwrap();
+                    let Value::Object(o)=&obj else{return Err(self.class_refusal());};
+                    let found=o.fields.borrow().iter().find(|(n,_)|n==&format!("#slot:{}",w.1[0].plain())).map(|(_,v)|v.clone());
+                    found.ok_or_else(||self.missing_member(&obj,&w.1[0].plain()))
+                },
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
@@ -454,18 +459,19 @@ impl Engine<'_> {
     }
     fn instance_value(&self, object: &Instance, name: &str) -> Option<Value> {
         if let Some((_,Value::Collection(cell,_)))=object.fields.borrow().iter().find(|(n,_)|n=="#namespace") {
-            if let Value::Map(entries)=&*cell.borrow() {return entries.iter().find(|(k,_)|matches!(k,Value::Text(s) if s.as_ref()==name)).map(|(_,v)|v.clone());}
+            if let Value::Map(entries)=cell.borrow().contents() {return entries.iter().find(|(k,_)|matches!(k,Value::Text(s) if s.as_ref()==name)).map(|(_,v)|v.clone());}
         }
         object.fields.borrow().iter().find(|(n,_)|n==name).map(|(_,v)|v.clone())
     }
     fn instance_write(&self, object: &Instance, name: &str, value: Option<Value>) -> Result<(),()> {
         let saved=object.fields.borrow().iter().find(|(n,_)|n=="#namespace").map(|(_,v)|v.clone());
         if let Some(Value::Collection(cell,_))=saved {
-            let mut contents=cell.borrow_mut();
-            if let Value::Map(entries)=&mut *contents {
+            let mut contents=cell.borrow().contents();
+            if let Value::Map(entries)=&mut contents {
                 let entries=Rc::make_mut(entries);
                 let at=entries.iter().position(|(k,_)|matches!(k,Value::Text(s) if s.as_ref()==name));
                 match (at,value) {(Some(i),Some(v))=>entries[i].1=v,(None,Some(v))=>entries.push((Value::text(name),v)),(Some(i),None)=>{entries.remove(i);},_=>return Err(())}
+                cell.replace(contents);
                 return Ok(());
             }
         }

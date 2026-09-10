@@ -445,21 +445,21 @@ impl Machine<'_> {
     fn object_entry(&self,t:&Thing,key:&str)->Option<Value> {
         let entries=t.holds.borrow();
         if let Some((_,Value::Mutable(cell,_)))=entries.iter().find(|(n,_)|n=="#dictionary") {
-            let storage=cell.borrow();
-            if let Value::Dict(pairs)=&*storage{return pairs.iter().find(|(k,_)|matches!(k,Value::Text(n) if n.as_ref()==key)).map(|(_,v)|v.clone());}
+            let storage=cell.borrow().settled();
+            if let Value::Dict(pairs)=&storage{return pairs.iter().find(|(k,_)|matches!(k,Value::Text(n) if n.as_ref()==key)).map(|(_,v)|v.clone());}
         }
         entries.iter().find(|(n,_)|n==key).map(|(_,v)|v.clone())
     }
     fn object_change(&self,t:&Thing,key:&str,new:Option<Value>)->bool {
         let dict=t.holds.borrow().iter().find(|(n,_)|n=="#dictionary").map(|(_,v)|v.clone());
         if let Some(Value::Mutable(cell,_))=dict {
-            let mut dictionary=cell.borrow_mut();
-            let Value::Dict(pairs)=&mut *dictionary else{return false;};
+            let mut dictionary=cell.borrow().settled();
+            let Value::Dict(pairs)=&mut dictionary else{return false;};
             let pairs=Rc::make_mut(pairs);
             if let Some(at)=pairs.iter().position(|(k,_)|matches!(k,Value::Text(n) if n.as_ref()==key)) {
-                if let Some(v)=new{pairs[at].1=v;}else{pairs.remove(at);}return true;
+                if let Some(v)=new{pairs[at].1=v;}else{pairs.remove(at);}cell.replace(dictionary);return true;
             }
-            if let Some(v)=new{pairs.push((Value::text(key),v));return true;}
+            if let Some(v)=new{pairs.push((Value::text(key),v));cell.replace(dictionary);return true;}
             return false;
         }
         Self::change_entry(&mut t.holds.borrow_mut(),key,new)
