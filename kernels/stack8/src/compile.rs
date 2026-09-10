@@ -276,6 +276,7 @@ fn compile_pass(
     plans: &mut HashMap<usize, BindingPlan>,
     discovering: bool,
 ) -> Res<Rc<Routine>> {
+    for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let top = Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
@@ -1274,13 +1275,14 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Reraise, 0);
                 } else {
                     self.expr(0)?;
+                    let mut count = 1;
                     if self.on_keyword(&lang.throw_from) {
                         self.take();
                         let from = self.mark();
                         self.expr(0)?;
-                        self.piece().instrs.truncate(from);
+                        if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
                     }
-                    self.act(Action::Hurl, 1);
+                    self.act(Action::Hurl, count);
                 }
                 return Ok(());
             }

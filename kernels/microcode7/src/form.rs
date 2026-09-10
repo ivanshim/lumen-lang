@@ -41,6 +41,9 @@ pub enum Prim {
     Adorn(char),
     StartContext,
     DistinctObjects,
+    Repr,
+    Iterate,
+    NextOne,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.

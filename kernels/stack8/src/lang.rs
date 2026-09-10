@@ -379,6 +379,21 @@ pub struct Lang {
     pub method_binding: Option<String>,
     /// The class a fault of the kernel's own is raised as, where a
     /// language names one, so that a program may take it like any other.
+    pub exceptions: Vec<String>,
+    pub exception_args: Option<String>,
+    pub exception_cause: Option<String>,
+    pub class_name: Option<String>,
+    pub exception_unready: Option<String>,
+    pub fault_index: Option<String>,
+    pub fault_key: Option<String>,
+    pub fault_name: Option<String>,
+    pub fault_attribute: Option<String>,
+    pub fault_stop: Option<String>,
+    pub division_words: Option<String>,
+    pub index_words: Option<String>,
+    pub name_words: Vec<String>,
+    pub attribute_words: Vec<String>,
+    pub kind_words: Option<String>,
     pub fault_class: Option<String>,
     /// The class a fault over what was handed over to be walked is
     /// raised as.
@@ -938,7 +953,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1490,7 +1505,7 @@ impl Lang {
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
-            ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText),
+            ("builtin.precision", Builtin::Places), ("ext.builtin.iter", Builtin::Iter), ("ext.builtin.next", Builtin::Next), ("ext.builtin.repr", Builtin::Repr), ("builtin.to_string", Builtin::ToText),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
@@ -1815,6 +1830,21 @@ impl Lang {
             routine_binding: r.head("ext.system.source.routine")?,
             class_binding: r.head("ext.system.source.class")?,
             method_binding: r.head("ext.system.source.method")?,
+            exceptions: r.strings("ext.builtin.exceptions")?,
+            exception_args: r.head("ext.builtin.exceptions.args")?,
+            exception_cause: r.head("ext.builtin.exceptions.cause")?,
+            class_name: r.head("ext.builtin.class.name")?,
+            exception_unready: r.head("ext.builtin.exceptions.unready")?,
+            division_words: r.head("ext.system.fault.division")?,
+            index_words: r.head("ext.system.fault.index")?,
+            name_words: r.strings("ext.system.fault.name")?,
+            attribute_words: r.strings("ext.system.fault.attribute")?,
+            kind_words: r.head("ext.system.fault.kind")?,
+            fault_index: r.head("ext.system.fault.class.index")?,
+            fault_key: r.head("ext.system.fault.class.key")?,
+            fault_name: r.head("ext.system.fault.class.name")?,
+            fault_attribute: r.head("ext.system.fault.class.attribute")?,
+            fault_stop: r.head("ext.system.fault.class.stop")?,
             fault_class: r.head("ext.system.fault.class")?,
             fault_arithmetic: r.head("ext.system.fault.class.arithmetic")?,
             fault_division: r.head("ext.system.fault.class.division")?,
