@@ -1246,7 +1246,12 @@ impl<'a> Machine<'a> {
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
         let message = self.protocol_complaint(told).map_or_else(|| told.to_owned(), |(_, text)| text);
-        let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
+        let class = match self.class_bound(&named) {
+            Some(value) => Some(value),
+            None if self.protocol_complaint(told).is_some() => self.lookup(&named),
+            None => None,
+        };
+        let Some(Value::Blueprint(of)) = class else { return None };
         self.made += 1;
         let mut holds = of.every_field();
         // A fault of the kernel's own carries the words said and the

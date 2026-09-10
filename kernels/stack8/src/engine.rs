@@ -896,7 +896,10 @@ impl<'a> Engine<'a> {
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
         let message = self.protocol_fault(told).map(|(_, message)| message).unwrap_or_else(|| told.to_string());
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let held = self.class_named(&named).or_else(|| {
+            if self.protocol_fault(told).is_some() { self.lookup(&named) } else { None }
+        });
+        let Some(Value::Class(class)) = held.cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
