@@ -284,6 +284,9 @@ impl<'a> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
         if table.has_any("ext.stmt.catch.as") {
+            if let Some(at) = find("ext.system.fault.class.kind") {
+                outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(Blueprint { name: idents[at].clone(), under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }));
+            }
             if let Some(at) = find("ext.system.fault.class.value") {
                 let blueprint = Blueprint {
                     name: idents[at].clone(), under: None, answers: Vec::new(),
@@ -1191,6 +1194,7 @@ impl<'a> Machine<'a> {
     /// its own faults are of which kind, being the one that words them.
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
+        if let Some((kind, _)) = self.protocol_complaint(told) { return Some(kind); }
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
             // Words the definition itself gave for a place outside the
@@ -1241,13 +1245,14 @@ impl<'a> Machine<'a> {
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
+        let message = self.protocol_complaint(told).map_or_else(|| told.to_owned(), |(_, text)| text);
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
         // A fault of the kernel's own carries the words said and the
         // place in the program they were said of.
         let carried = [
-            ("message", Value::text(told)),
+            ("message", Value::text(&message)),
             ("file", Value::text(&self.written_in)),
             ("line", Value::Small(self.row as i64)),
         ];
@@ -4022,6 +4027,7 @@ impl<'a> Machine<'a> {
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if self.table.has_any("ext.op.identical.negated") {
             if matches!(op, Prim::Selfsame | Prim::Unlike) {
+                if v[0].identity_stamp().is_none() || v[1].identity_stamp().is_none() { return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_owned()); }
                 return Ok(Value::Flag(v[0].shares_identity(&v[1]) == (op == Prim::Selfsame)));
             }
             if op == Prim::IdentityOf { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
@@ -4098,6 +4104,9 @@ impl<'a> Machine<'a> {
             let words = self.table.strings("ext.op.order.unsupported");
             let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
             return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], v[0].kind_word(), words[2], v[1].kind_word(), words[3]));
+        }
+        if op == Prim::AsText && v.len() == 1 {
+            if let Some(message) = self.caught_message(&v[0]) { return Ok(Value::text(&message)); }
         }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
@@ -6133,6 +6142,7 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
+            if let Some(message) = self.caught_message(x) { return message; }
             let text = x.render(w);
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
@@ -6928,6 +6938,28 @@ fn suspension_within(form: &Form) -> bool {
 // Each primitive is given the values already worked out by the caller.
 // Only the few names belonging to that primitive may fill its places.
 impl Machine<'_> {
+    fn protocol_complaint(&self, words: &str) -> Option<(String, String)> {
+        if !self.table.has_any("ext.op.eq.method") { return None; }
+        let labels = ["ext.builtin.core.unhashable", "ext.builtin.core.uncallable", "ext.builtin.hash.result", "ext.builtin.bool.result", "ext.builtin.bool.base", "ext.builtin.len.negative", "ext.op.order.unsupported"];
+        if !labels.iter().any(|label| self.table.single(label).map_or(false, |head| words.starts_with(head))) { return None; }
+        for label in ["ext.system.fault.class.kind", "ext.system.fault.class.value"] {
+            if let Some(class) = self.table.single(label) {
+                let opening = format!("{class}: ");
+                if let Some(text) = words.strip_prefix(&opening) { return Some((class.to_owned(), text.to_owned())); }
+            }
+        }
+        None
+    }
+
+    fn caught_message(&self, value: &Value) -> Option<String> {
+        if let Value::Thing(thing) = value {
+            if self.table.single("ext.system.fault.class.kind") == Some(thing.of.name.as_str()) {
+                return thing.holds.borrow().iter().find(|(key, _)| key == "message").map(|(_, value)| value.bare());
+            }
+        }
+        None
+    }
+
     fn protocol(&self, item: &Value, label: &str) -> Option<Value> {
         let word = self.table.single(label)?;
         let Value::Thing(thing) = item else { return None; };
@@ -6991,7 +7023,7 @@ impl Machine<'_> {
                     Some(method) => {
                         let result = self.core_run(&method, Vec::new())?;
                         if matches!(result, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
-                            Ok(result.hash_number().expect("whole hash"))
+                            Ok(match result.as_big()?.to_i64() { Some(h) => if h == -1 { -2 } else { h }, None => result.hash_number().expect("whole hash") })
                         } else { Err(self.table.single("ext.builtin.hash.result").unwrap_or_default().to_owned()) }
                     }
                     None => Ok((Rc::as_ptr(thing) as usize / 16) as i64),

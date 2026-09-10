@@ -215,6 +215,9 @@ impl<'a> Engine<'a> {
             lang.builtins.get(word).map_or(Value::Blank, |b| Value::Native(*b, Rc::from(word.as_str())))
         } else { Value::Blank }).collect();
         if !lang.catch_as.is_empty() {
+            if let (Some(slot), Some(name)) = (find(&lang.fault_kind), &lang.fault_kind) {
+                world[slot] = Value::Class(Rc::new(Class { name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }));
+            }
             if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
                 world[slot] = Value::Class(Rc::new(Class {
                     name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
@@ -845,6 +848,7 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        if let Some((kind, _)) = self.protocol_fault(told) { return Some(kind); }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -891,6 +895,7 @@ impl<'a> Engine<'a> {
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
+        let message = self.protocol_fault(told).map(|(_, message)| message).unwrap_or_else(|| told.to_string());
         let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
@@ -898,7 +903,7 @@ impl<'a> Engine<'a> {
         // What a fault of the kernel's own holds: the words said, and
         // where in the program it was raised.
         for (named, held) in [
-            ("message", Value::text(told)),
+            ("message", Value::text(&message)),
             ("file", Value::text(&self.source)),
             ("line", Value::Small(self.line as i64)),
         ] {
@@ -1738,6 +1743,12 @@ impl<'a> Engine<'a> {
         let depth = self.data.len();
         let active = self.caught.len();
         let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match ending {
+            Err(Fault::Note(told)) if self.protocol_fault(&told).is_some() => match self.as_fault(&told) {
+                Some(raised) => Err(Fault::Thrown(raised)), None => Err(Fault::Note(told)),
+            },
+            other => other,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -3681,6 +3692,7 @@ impl<'a> Engine<'a> {
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if !self.lang.identity_not.is_empty() && matches!(op, Action::Same | Action::Unsame) {
+            if a.identity_mark().is_none() || b.identity_mark().is_none() { return Err(self.lang.identity_unsupported.clone().unwrap_or_default()); }
             return Ok(Value::Flag(a.same_identity(b) != matches!(op, Action::Unsame)));
         }
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
@@ -4600,6 +4612,7 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
+            if let Some(message) = self.exception_text(v) { return message; }
             let mut said = v.display(&sp);
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
@@ -4864,8 +4877,11 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
+        if !matches!(builtin, Builtin::Identity | Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
+        if builtin == Builtin::ToText && args.len() == 1 {
+            if let Some(message) = self.exception_text(&args[0]) { return Ok(Value::text(&message)); }
+        }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -6402,6 +6418,25 @@ fn collection_contents(value: &Value) -> Value {
 // Collection calls share the opening of arguments, but keep their own
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
+    /// These complaints already carry the class named by the definition.
+    fn protocol_fault(&self, told: &str) -> Option<(String, String)> {
+        let builtin = ["core.unhashable", "core.uncallable"];
+        let own = ["ext.builtin.bool.base", "ext.builtin.bool.result", "ext.builtin.hash.result", "ext.builtin.len.negative", "ext.op.order.unsupported"];
+        let recognized = builtin.iter().any(|key| self.lang.core_words.get(*key).and_then(|w| w.first()).map_or(false, |head| told.starts_with(head)))
+            || own.iter().any(|key| self.lang.identity_words.get(*key).and_then(|w| w.first()).map_or(false, |head| told.starts_with(head)));
+        if !recognized || self.identity_word("ext.op.eq.method").is_empty() { return None; }
+        for kind in [&self.lang.fault_kind, &self.lang.fault_value].into_iter().flatten() {
+            if let Some(message) = told.strip_prefix(&format!("{}: ", kind)) { return Some((kind.clone(), message.to_string())); }
+        }
+        None
+    }
+
+    fn exception_text(&self, value: &Value) -> Option<String> {
+        let Value::Object(object) = value else { return None; };
+        if self.lang.fault_kind.as_deref() != Some(&object.class.name) { return None; }
+        object.fields.borrow().iter().find_map(|(n, v)| if n == "message" { Some(v.plain()) } else { None })
+    }
+
     fn identity_word(&self, label: &str) -> &str {
         self.lang.identity_words.get(label).and_then(|w| w.first()).map(String::as_str).unwrap_or("")
     }
@@ -6467,7 +6502,7 @@ impl Engine<'_> {
                 if matches!(method, Value::Null) { return Err(self.core_fault("core.unhashable", &object.class.name)); }
                 let answer = self.core_apply(&method, Vec::new())?;
                 return if matches!(answer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
-                    Ok(answer.core_hash().expect("a whole number hashes"))
+                    Ok(match answer.as_big()?.to_i64() { Some(-1) => -2, Some(h) => h, None => answer.core_hash().expect("a whole number hashes") })
                 } else { Err(self.identity_word("ext.builtin.hash.result").to_string()) };
             }
             return Ok((Rc::as_ptr(object) as usize >> 4) as i64);
@@ -6549,7 +6584,12 @@ impl Engine<'_> {
         }
     }
 
-    fn worked_pair(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+    fn worked_pair(&mut self, op: &Action, a: &Value, b: &Value) -> Flow<Value> {
+        let answer = self.worked_pair_value(op, a, b);
+        match self.carried.take() { Some(fault) => Err(fault), None => answer.map_err(Fault::Note) }
+    }
+
+    fn worked_pair_value(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if self.identity_word("ext.op.eq.method").is_empty() { return self.dyadic(op, a, b); }
         let (x, y) = (a.contents(), b.contents());
         if matches!(op, Action::Eq | Action::Ne) {

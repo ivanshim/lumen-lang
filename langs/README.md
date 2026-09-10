@@ -1301,12 +1301,12 @@ only. The extension labels so far, all from PHP:
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
-  Arrays, maps and objects ask whether both names hold the same thing.
-  Nothing, ellipsis, flags and the small whole numbers from -5 through
-  256 have fixed identities. Unlike values cannot be identical. For
-  other alike values the kernels keep no identity that answers this
-  question; `ext.op.identical.unsupported` gives the plain complaint,
-  rather than answering equality in its stead.
+  Held values ask whether both names hold the same thing. Collections
+  keep their identity through writes. Nothing, ellipsis and flags have
+  fixed identities; unboxed whole numbers share by worth. Text and real
+  numbers keep the identity of their held value, including a real which
+  answers no equality. `ext.op.identical.unsupported` gives the complaint
+  where the value has no identity the run can retain.
 
 - `ext.op.lambda` introduces unbracketed parameters and one expression,
   separated by `block.intro`. Defaults are evaluated once when the value
@@ -1481,6 +1481,9 @@ only. The extension labels so far, all from PHP:
   the kind of an answer which is not truth. `ext.builtin.len.negative`
   refuses a length below nought. `ext.builtin.bool.base` refuses a class
   standing upon the truth kind.
+- `ext.system.fault.class.kind` names the class taking the complaints
+  about hashing, truth and comparison operands. Such a caught complaint
+  holds its message without the class name at the front.
 - `ext.op.order.unsupported` holds four pieces around an ordering sign
   and its two operand kinds, where no ordering is given between them.
 - `ext.builtin.id` names a value's identity in this run. Unboxed integers
@@ -2431,12 +2434,12 @@ only. The extension labels so far, all from PHP:
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
-  Arrays, maps and objects ask whether both names hold the same thing.
-  Nothing, ellipsis, flags and the small whole numbers from -5 through
-  256 have fixed identities. Unlike values cannot be identical. For
-  other alike values the kernels keep no identity that answers this
-  question; `ext.op.identical.unsupported` gives the plain complaint,
-  rather than answering equality in its stead.
+  Held values ask whether both names hold the same thing. Collections
+  keep their identity through writes. Nothing, ellipsis and flags have
+  fixed identities; unboxed whole numbers share by worth. Text and real
+  numbers keep the identity of their held value, including a real which
+  answers no equality. `ext.op.identical.unsupported` gives the complaint
+  where the value has no identity the run can retain.
 - `ext.op.if_else`: two words, the first before the condition and the
   second before the other arm (`a if c else b`). It binds below every
   binary operator and above a lambda. The condition runs first, and
@@ -2636,12 +2639,12 @@ only. The extension labels so far, all from PHP:
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
-  Arrays, maps and objects ask whether both names hold the same thing.
-  Nothing, ellipsis, flags and the small whole numbers from -5 through
-  256 have fixed identities. Unlike values cannot be identical. For
-  other alike values the kernels keep no identity that answers this
-  question; `ext.op.identical.unsupported` gives the plain complaint,
-  rather than answering equality in its stead.
+  Held values ask whether both names hold the same thing. Collections
+  keep their identity through writes. Nothing, ellipsis and flags have
+  fixed identities; unboxed whole numbers share by worth. Text and real
+  numbers keep the identity of their held value, including a real which
+  answers no equality. `ext.op.identical.unsupported` gives the complaint
+  where the value has no identity the run can retain.
 - `ext.op.if_else`: two words, the first before the condition and the
   second before the other arm (`a if c else b`). It binds below every
   binary operator and above a lambda. The condition runs first, and
@@ -3579,7 +3582,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
-| `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
+| `ext.system.fault.class.kind` | - | - | `TypeError` | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |

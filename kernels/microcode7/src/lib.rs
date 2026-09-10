@@ -58,6 +58,10 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        for label in ["ext.op.order.unsupported", "ext.builtin.len.negative", "ext.builtin.hash.result", "ext.builtin.bool.result", "ext.builtin.bool.base"] {
+            let parts = table.strings(label);
+            if !parts.is_empty() && e.starts_with(&parts[0]) && parts.iter().all(|part| e.contains(part)) { return e; }
+        }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

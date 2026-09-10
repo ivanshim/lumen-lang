@@ -1560,6 +1560,9 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.fault.class.kind": [
+    "TypeError"
+  ],
   "ext.system.fault.class.value": [
     "ValueError"
   ],

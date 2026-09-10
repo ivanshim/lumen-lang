@@ -120,6 +120,8 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
+        let own = ["ext.builtin.bool.base", "ext.builtin.bool.result", "ext.builtin.hash.result", "ext.builtin.len.negative", "ext.op.order.unsupported"];
+        if own.iter().any(|key| lang.identity_words.get(*key).map_or(false, |parts| !parts.is_empty() && e.starts_with(&parts[0]) && parts.iter().all(|part| e.contains(part)))) { return e; }
         let words = &lang.call_builtin_amiss;
         if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
