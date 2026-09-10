@@ -327,6 +327,7 @@ impl Value {
 
     pub fn as_big(&self) -> Result<BigInt, String> {
         Ok(match self {
+            Value::Complex(_) => return Err(String::from("Cannot coerce complex to integer")),
             Value::Imaginary { unready, .. } => return Err(unready.to_string()),
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => (**n).clone(),

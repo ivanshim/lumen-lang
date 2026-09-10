@@ -369,6 +369,7 @@ impl Value {
     /// text is parsed, the rest refuse.
     pub fn as_big(&self) -> Result<BigInt, String> {
         match self {
+            Value::Complex(_) => Err("Cannot coerce complex to integer".to_string()),
             Value::Imaginary(_, words) => Err(words.to_string()),
             Value::Small(n) => Ok(BigInt::from(*n)),
             Value::Huge(n) => Ok((**n).clone()),
