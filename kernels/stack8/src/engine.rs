@@ -2809,9 +2809,10 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())

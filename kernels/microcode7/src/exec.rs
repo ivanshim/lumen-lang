@@ -4256,11 +4256,14 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag(own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
+                if matches!(v[0], Value::Member(..)) {
+                    return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
+                }
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
                 }

@@ -1338,17 +1338,21 @@ impl<'a> Builder<'a> {
                 return self.forget_list(false, true, None);
             }
             if self.key("ext.stmt.nonlocal") {
+                let in_class = self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len());
                 self.advance();
                 loop {
                     let word = self.need_word("after the nonlocal keyword")?;
-                    if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) { layer.borrowed.push(word.clone()); }
-                    if !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, true).is_none() {
+                    if !in_class {
+                        if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) { layer.borrowed.push(word.clone()); }
+                    }
+                    if !in_class && !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, true).is_none() {
                         let pieces = self.table.strings("ext.stmt.nonlocal.amiss");
                         return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), word, pieces.get(1).map_or("", String::as_str)));
                     }
                     if !self.on_any("syntax.call.separator") { break; }
                     self.advance();
                 }
+                if in_class { return Ok(self.class_not_ready()); }
                 if self.table.flag("ext.stmt.function.closes_over") { return Ok(constant(Value::Nil)); }
                 return Ok(prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.nonlocal.unrun").unwrap_or_default()))]));
             }

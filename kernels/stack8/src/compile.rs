@@ -1194,16 +1194,18 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             if Lang::spells(&lang.nonlocal_words, &w) {
+                let class_scope = self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len());
                 self.take();
                 loop {
                     let name = self.want_name("after the nonlocal keyword")?;
-                    self.piece().nonlocals.push(name.clone());
-                    if lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
+                    if !class_scope { self.piece().nonlocals.push(name.clone()); }
+                    if !class_scope && lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
                         return Err(format!("{}{}{}", lang.nonlocal_amiss.first().map_or("", String::as_str), name, lang.nonlocal_amiss.get(1).map_or("", String::as_str)));
                     }
                     if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                     self.take();
                 }
+                if class_scope { self.class_cannot_run(); return Ok(()); }
                 if lang.closes_over { return Ok(()); }
                 self.constant(Value::text(lang.nonlocal_unrun.first().map_or("", String::as_str)));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
@@ -4487,7 +4489,8 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
-        let writing_target = !self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty();
+        let writing_signs: Vec<String> = self.lang.assign_words.iter().cloned().chain(self.lang.compound.keys().cloned()).collect();
+        let writing_target = !self.outer_marks(self.pos, self.tokens.len(), &writing_signs).0.is_empty();
         let saved_place = std::mem::replace(&mut self.writing_place, writing_target);
         let expression = self.expr_at(0, false);
         self.writing_place = saved_place;
@@ -6775,7 +6778,14 @@ impl<'a> Compiler<'a> {
                 if let Some(operation) = lang.value_methods.get(&named) {
                     self.read(&held);
                     self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
-                    self.indexing(from)?;
+                    if let Some(brackets) = &call {
+                        let callable = self.gensym("value_member");
+                        self.write(&callable);
+                        self.take();
+                        let argc = self.arguments_of(&named, brackets)?;
+                        self.read(&callable);
+                        self.act(Action::Invoke(named.as_str().into()), argc + 1);
+                    }
                     self.land(finish);
                     continue;
                 }
