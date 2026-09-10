@@ -7310,7 +7310,7 @@ fn at_language_width(v: Value, table: &Table) -> Value {
     // A real written in a program is brought to the width the language
     // holds its reals in, as one worked out while it runs is, so that
     // the two are the one number and not merely near enough.
-    crate::data::at_binary_width(v, table.count("ext.system.real.bits"), figures)
+    crate::data::at_binary_width(v, table.count("ext.system.real.bits"), figures, table.lone("system.real.render") == Some("shortest"))
 }
 
 /// What a language says of a run of digits it cannot read, where it

@@ -924,7 +924,17 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
 /// A real brought to the nearest of a width of bits, held exactly.
 /// Where the language holds no width, or the number stands past every
 /// one of that width, it is left as it is.
-pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
+pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: bool) -> Value {
+    if brief {
+        return match &v {
+            Value::Frac(r) if r.places.is_some() => {
+                let mut worth = rounded_binary(&r.above, &r.beneath);
+                if r.under && worth == 0.0 { worth = -0.0; }
+                worth_of_binary(worth, figures).keeping_point(r.pointed)
+            }
+            _ => v,
+        };
+    }
     if bits.is_none() {
         return v;
     }
@@ -1076,4 +1086,33 @@ pub(crate) fn decimal_roundtrip(worth: f64) -> String {
         figures.push_str(".0");
     }
     format!("{sign}{figures}")
+}
+
+/// Keep fifty-three bits, or the fewer bits left near nought, and let
+/// the exact remainder choose the last one. No rounded quotient is used.
+fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
+    if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
+    let positive = above.abs();
+    let divisor = beneath.abs();
+    let guessed = positive.bits() as i64 - divisor.bits() as i64;
+    match guessed {
+        ..=-1076 => return f64::from_bits(signed),
+        1025.. => return f64::from_bits(signed + (2047u64 << 52)),
+        _ => (),
+    }
+    let reaches = if guessed >= 0 { positive >= (&divisor << guessed as usize) }
+        else { (&positive << guessed.unsigned_abs() as usize) >= divisor };
+    let mut power = guessed - if reaches { 0 } else { 1 };
+    let shift = 52 - power.max(-1022);
+    let scaled_top = if shift > 0 { &positive << shift as usize } else { positive };
+    let scaled_bottom = if shift < 0 { &divisor << shift.unsigned_abs() as usize } else { divisor };
+    let (mut quotient, residue) = scaled_top.div_rem(&scaled_bottom);
+    let twice = residue << 1usize;
+    if twice > scaled_bottom || twice == scaled_bottom && quotient.is_odd() { quotient += 1; }
+    let mut significand = quotient.to_u64().unwrap();
+    if significand == 0x20000000000000 { power += 1; significand /= 2; }
+    let field = if significand < 0x10000000000000 { 0 } else { power.max(-1022) + 1023 };
+    if field >= 2047 { return f64::from_bits(signed + (2047u64 << 52)); }
+    f64::from_bits(signed + ((field as u64) << 52) + (significand & 0xfffffffffffff))
 }

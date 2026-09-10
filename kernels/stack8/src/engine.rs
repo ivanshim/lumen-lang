@@ -4049,7 +4049,7 @@ impl<'a> Engine<'a> {
     /// its reals are exact, it is left as it stands.
     fn at_real_width(&self, v: Value) -> Value {
         let places = self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES);
-        crate::value::to_binary_width(v, self.lang.real_bits, places)
+        crate::value::to_binary_width(v, self.lang.real_bits, places, self.lang.shortest_reals)
     }
 
     /// The arithmetic itself, both values already numbers as far as they

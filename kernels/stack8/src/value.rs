@@ -519,13 +519,13 @@ impl Value {
         let mut shown = self.display(words);
         if let Value::Real(real) = self {
             if !words.shortest_reals {
-            let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
-            shown = format!("{number:?}").to_ascii_lowercase();
-            if let Some((mantissa, exponent)) = shown.split_once('e') {
-                let power = exponent.parse::<i32>().ok()?;
-                shown = format!("{mantissa}e{power:+03}");
+                let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
+                shown = format!("{number:?}").to_ascii_lowercase();
+                if let Some((mantissa, exponent)) = shown.split_once('e') {
+                    let power = exponent.parse::<i32>().ok()?;
+                    shown = format!("{mantissa}e{power:+03}");
+                }
             }
-        }
         }
         if let Value::Text(text) = self {
             if conversion == "r" || conversion == "a" {
@@ -967,7 +967,14 @@ pub fn outside_number(x: f64, places: usize) -> Value {
 /// A real brought to the nearest one of a width of bits, held exactly.
 /// Where the language holds no width, or the number is past every one
 /// of that width, it is left as it stands.
-pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
+pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: bool) -> Value {
+    if shortest {
+        if let Value::Real(r) = &v {
+            let number = nearest_real(&r.p, &r.q);
+            return real_of(if number == 0.0 && r.below { -0.0 } else { number }, places).with_point(r.point);
+        }
+        return v;
+    }
     if bits.is_none() {
         return v;
     }
@@ -1127,4 +1134,32 @@ pub(crate) fn real_roundtrip(x: f64) -> String {
     if !body.contains('.') { body.push_str(".0"); }
     if minus { body.insert(0, '-'); }
     body
+}
+
+/// Round a ratio once, including at the smallest binary places. The
+/// remainder decides a tie before any bits are handed to the host real.
+fn nearest_real(p: &BigInt, q: &BigInt) -> f64 {
+    let minus = p.is_negative() != q.is_negative();
+    let sign = u64::from(minus) << 63;
+    if q.is_zero() || p.is_zero() { return as_binary(p, q); }
+    let n = p.abs();
+    let d = q.abs();
+    let mut order = n.bits() as i64 - d.bits() as i64;
+    if order > 1024 { return f64::from_bits(sign | 0x7ff0000000000000); }
+    if order < -1075 { return f64::from_bits(sign); }
+    if if order < 0 { (&n << -order as usize) < d } else { n < (&d << order as usize) } { order -= 1; }
+    let place = (order - 52).max(-1074);
+    let (n, d) = match place {
+        0.. => (n, d << place as usize),
+        _ => (n << -place as usize, d),
+    };
+    let (integral, remainder) = n.div_rem(&d);
+    let halfway = (remainder * 2u8).cmp(&d);
+    let mut bits = integral.to_u64().expect("the significand fits");
+    bits += u64::from(halfway.is_gt() || (halfway.is_eq() && bits & 1 != 0));
+    if bits >= 1 << 53 { bits >>= 1; order += 1; }
+    if order > 1023 { return f64::from_bits(sign | 0x7ff0000000000000); }
+    let magnitude = if bits < 1 << 52 { bits }
+        else { ((order.max(-1022) + 1023) as u64) << 52 | (bits - (1 << 52)) };
+    f64::from_bits(sign | magnitude)
 }

@@ -599,7 +599,11 @@ impl Def {
             no: r.list("literal.false")?,
             none: r.list("literal.null")?,
             none_silent: r.switch("literal.null.silent")?,
-            shortest: r.text("system.real.render")? == "shortest",
+            shortest: match r.text("system.real.render")?.as_str() {
+                "library" => false,
+                "shortest" => true,
+                mode => return Err(format!("Unknown real rendering '{mode}'")),
+            },
             flag_counts: r.switch("system.flag.counts")?,
             div_stays_whole,
             rem_whole: r.switch("op.mod.whole")?,

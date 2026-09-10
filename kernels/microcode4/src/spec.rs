@@ -312,6 +312,10 @@ impl Spec {
         if self.on("op.index.strings") && !self.any("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
         }
+        match self.word("system.real.render") {
+            Some("library" | "shortest") => (),
+            _ => return Err("Unknown way of rendering a real".to_string()),
+        }
         if !matches!(self.word("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
             return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());
         }

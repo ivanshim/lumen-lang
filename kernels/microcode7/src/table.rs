@@ -323,6 +323,9 @@ impl Table {
             keywords: HashSet::new(),
             signs: Vec::new(),
         };
+        if !matches!(table.lone("system.real.render"), Some("library" | "shortest")) {
+            return Err(String::from("The real rendering is neither 'library' nor 'shortest'"));
+        }
         table.ident = table.lone("language").unwrap_or("").to_string();
         table.check()?;
         let extra_ends = table.strings("ext.stmt.terminator").to_vec();

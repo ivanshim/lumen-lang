@@ -215,7 +215,12 @@ impl Definition {
                 ("op.index.strings", Json::Bool(flag)) => definition.index_strings = *flag,
                 ("literal.null.silent", Json::Bool(flag)) => definition.nothing_silent = *flag,
                 ("system.flag.counts", Json::Bool(flag)) => definition.flag_counts = *flag,
-                ("system.real.render", Json::String(mode)) => definition.shortest_reals = mode == "shortest",
+                ("system.real.render", Json::String(mode)) => {
+                    definition.shortest_reals = match mode.as_str() {
+                        "library" => false, "shortest" => true,
+                        _ => return Err(format!("unknown system.real.render setting '{mode}'")),
+                    };
+                }
                 ("op.mod.whole", Json::Bool(flag)) => definition.rem_whole = *flag,
                 ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {

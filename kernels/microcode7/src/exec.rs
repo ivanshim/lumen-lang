@@ -1056,7 +1056,7 @@ impl<'a> Machine<'a> {
                 return math::make_number((**n).clone(), BigInt::from(1), Some(self.real_figures()));
             }
         }
-        crate::data::at_binary_width(v, self.table.count("ext.system.real.bits"), self.real_figures())
+        crate::data::at_binary_width(v, self.table.count("ext.system.real.bits"), self.real_figures(), self.table.lone("system.real.render") == Some("shortest"))
     }
 
     /// The number a piece of text says, brought to the width the

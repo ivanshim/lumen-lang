@@ -394,6 +394,9 @@ impl Spec {
         if self.flag("op.index.strings") && !self.has("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
         }
+        if !matches!(self.text("system.real.render"), Some("library") | Some("shortest")) {
+            return Err("system.real.render must name 'library' or 'shortest'".to_owned());
+        }
         if !matches!(self.text("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
             return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());
         }

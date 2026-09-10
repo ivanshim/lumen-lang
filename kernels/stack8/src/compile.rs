@@ -8017,7 +8017,7 @@ fn within_width(v: Value, lang: &Lang) -> Value {
     // A real written in a program is brought to the width the language
     // holds its reals in, as a real worked out while it runs is, so
     // that the two are the same number and not merely alike.
-    crate::value::to_binary_width(v, lang.real_bits, places)
+    crate::value::to_binary_width(v, lang.real_bits, places, lang.shortest_reals)
 }
 
 /// What a language says of a run of digits it cannot read, where it
