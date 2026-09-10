@@ -3335,6 +3335,94 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn map_extend(&self, into: &mut Vec<(Value, Value)>, source: &Value) -> Res<()> {
+        let pairs = match collection_contents(source) {
+            Value::Map(pairs) => pairs.as_ref().clone(),
+            other => {
+                let mut pairs = Vec::new();
+                for item in self.comprehension_items(&other)? {
+                    let parts = self.comprehension_items(&item)?;
+                    if parts.len() != 2 { return Err(self.lang.map_pairs_amiss.first().cloned().unwrap_or_default()); }
+                    pairs.push((parts[0].clone(), parts[1].clone()));
+                }
+                pairs
+            }
+        };
+        for (key, value) in pairs {
+            self.map_key(&key)?;
+            self.replace_item(into, key, value);
+        }
+        Ok(())
+    }
+
+    fn dictionary(&self, operation: u8, name: &str, args: &[Value], named: &[(String, Value)]) -> Res<Value> {
+        let bad = || self.lang.call_amiss.first().cloned().unwrap_or_default();
+        if !named.is_empty() && operation != 0 && operation != 6 { return Err(bad()); }
+        if operation == 0 {
+            if args.len() > 1 { return Err(bad()); }
+            let mut pairs = Vec::new();
+            if let Some(source) = args.first() { self.map_extend(&mut pairs, source)?; }
+            for (key, value) in named { self.replace_item(&mut pairs, Value::text(key), value.clone()); }
+            return Ok(self.keep_collection(Value::Map(Rc::new(pairs))));
+        }
+        if operation == 1 {
+            let offset = usize::from(self.lang.map_fromkeys.first().map_or(false, |word| word != name));
+            if args.len() <= offset || args.len() > offset + 2 { return Err(bad()); }
+            let default = args.get(offset + 1).cloned().unwrap_or(Value::Null);
+            let mut pairs = Vec::new();
+            for key in self.comprehension_items(&args[offset])? {
+                self.map_key(&key)?;
+                self.replace_item(&mut pairs, key, default.clone());
+            }
+            return Ok(self.keep_collection(Value::Map(Rc::new(pairs))));
+        }
+        let Some(receiver) = args.first() else { return Err(bad()); };
+        let Value::Map(held) = collection_contents(receiver) else { return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_default()); };
+        let mut pairs = held.as_ref().clone();
+        let mut changed = false;
+        let result = match operation {
+            2..=4 => {
+                if !(2..=3).contains(&args.len()) { return Err(bad()); }
+                let key = &args[1];
+                self.map_key(key)?;
+                let place = pairs.iter().position(|(old, _)| self.map_equal(old, key));
+                match (operation, place) {
+                    (4, Some(at)) => { changed = true; pairs.remove(at).1 }
+                    (_, Some(at)) => pairs[at].1.clone(),
+                    (4, None) if args.len() == 2 => return Err(self.missing_key(key)),
+                    (_, None) => {
+                        let default = args.get(2).cloned().unwrap_or(Value::Null);
+                        if operation == 3 { pairs.push((key.clone(), default.clone())); changed = true; }
+                        default
+                    }
+                }
+            }
+            5 => return Err(self.lang.tuple_unready.first().cloned().unwrap_or_default()),
+            6 => {
+                if args.len() > 2 { return Err(bad()); }
+                if let Some(source) = args.get(1) { self.map_extend(&mut pairs, source)?; }
+                for (key, value) in named { self.replace_item(&mut pairs, Value::text(key), value.clone()); }
+                changed = true;
+                Value::Null
+            }
+            7 => {
+                if args.len() != 1 { return Err(bad()); }
+                pairs.clear(); changed = true;
+                Value::Null
+            }
+            8 => {
+                if args.len() != 1 { return Err(bad()); }
+                self.keep_collection(Value::Map(Rc::new(pairs.clone())))
+            }
+            _ => unreachable!(),
+        };
+        if changed {
+            let Value::Bond(cell) = receiver else { return Err(bad()); };
+            *cell.borrow_mut() = Value::Map(Rc::new(pairs));
+        }
+        Ok(result)
+    }
+
     fn map_key(&self, key: &Value) -> Res<()> {
         if !self.lang.map_value_keys { return Ok(()); }
         match key {
@@ -4287,6 +4375,7 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if let Builtin::Dictionary(operation) = builtin { return self.dictionary(operation, name, &args, &named); }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4376,6 +4465,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if let Builtin::Dictionary(operation) = builtin { return self.dictionary(operation, name, args, &[]); }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
@@ -4411,6 +4501,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Dictionary(operation) => return self.dictionary(operation, name, args, &[]),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

@@ -891,6 +891,20 @@ only. The extension labels so far, all from PHP:
   remains a map. Line ends within these braces are space. This stage
   does not provide a distinct set value. These arrays and maps keep
   the kernel's accustomed printed form: `[1, hello]` and `[a => 1]`.
+- `ext.builtin.map.new`: a constructor taking at most one map or walk
+  of pairs, followed by named values. A fresh map keeps the order of
+  its source; named values prevail over those already there.
+  `ext.builtin.map.fromkeys` builds a fresh map over the keys of a walk,
+  each holding the same given value, or nothing when none was given.
+  `ext.builtin.map.get`, `.setdefault` and `.pop` look up a key with
+  an optional default; the second puts an absent key there, and the
+  third takes a present one away. `ext.builtin.map.popitem` takes the
+  last pair away; where pairs have no tuple value yet it stops with
+  `ext.op.tuple.unready` before altering the map.
+  `ext.builtin.map.update` takes a map or pairs and then named values;
+  `.clear` empties the receiver, and `.copy` makes a fresh shallow copy.
+  `ext.builtin.map.pairs.amiss` gives plain words for a source whose
+  items are not pairs. The receiver stands before the other arguments.
 - `ext.syntax.map.value_keys`: a switch; maps compare their keys by value,
   whole numbers and equal flags naming the same place. Their equality
   disregards insertion order, and the bitwise union sign joins maps,
@@ -2225,6 +2239,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.map.clear` | - | - | `clear` | - | - | - | - | - | - | - |
+| `ext.builtin.map.copy` | - | - | `copy` | - | - | - | - | - | - | - |
+| `ext.builtin.map.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
+| `ext.builtin.map.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.map.new` | - | - | `dict` | - | - | - | - | - | - | - |
+| `ext.builtin.map.pairs.amiss` | - | - | `ValueError: dictionary update requires pairs` | - | - | - | - | - | - | - |
+| `ext.builtin.map.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.map.popitem` | - | - | `popitem` | - | - | - | - | - | - | - |
+| `ext.builtin.map.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
+| `ext.builtin.map.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |

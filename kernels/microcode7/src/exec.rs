@@ -999,7 +999,91 @@ impl<'a> Machine<'a> {
         number_spelled_in(v).map(|n| self.at_width(n))
     }
 
-    fn admits_key(&self, item: &Value) -> Res<()> {
+    fn filled_map(&self, entries: &mut Vec<(Value, Value)>, source: &Value) -> Result<(), String> {
+        let source = collection_read(source);
+        if let Value::Dict(held) = source {
+            for entry in held.iter() { self.enter_pair(entries, entry.0.clone(), entry.1.clone()); }
+        } else {
+            for item in self.gathered_members(&source)? {
+                let parts = self.gathered_members(&item)?;
+                let [key, value] = parts.as_slice() else {
+                    return Err(self.argument_fault("ext.builtin.map.pairs.amiss", None));
+                };
+                self.admits_key(key)?;
+                self.enter_pair(entries, key.clone(), value.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn map_call(&self, code: u8, called: &str, given: &[Value], names: &[(String, Value)]) -> Result<Value, String> {
+        let bad = || self.argument_fault("ext.syntax.call.amiss", None);
+        if code != 0 && code != 6 && !names.is_empty() { return Err(bad()); }
+        let mut entries = Vec::new();
+        if code == 0 {
+            if given.len() > 1 { return Err(bad()); }
+            if let Some(source) = given.first() { self.filled_map(&mut entries, source)?; }
+            for (key, value) in names { self.enter_pair(&mut entries, Value::text(key), value.clone()); }
+            return Ok(self.collection_cell(Value::Dict(Rc::new(entries))));
+        }
+        if code == 1 {
+            let full = self.table.single("ext.builtin.map.fromkeys").unwrap_or_default();
+            let arguments = if called == full { given } else { given.get(1..).ok_or_else(bad)? };
+            if arguments.is_empty() || arguments.len() > 2 { return Err(bad()); }
+            let default = arguments.get(1).cloned().unwrap_or(Value::Nil);
+            for key in self.gathered_members(&arguments[0])? {
+                self.admits_key(&key)?;
+                self.enter_pair(&mut entries, key, default.clone());
+            }
+            return Ok(self.collection_cell(Value::Dict(Rc::new(entries))));
+        }
+        let receiver = given.first().ok_or_else(bad)?;
+        let Value::Dict(held) = collection_read(receiver) else {
+            return Err(self.argument_fault("ext.syntax.map.spread.unmapped", None));
+        };
+        entries.extend(held.iter().cloned());
+        let mut write_back = false;
+        let answer;
+        if (2..5).contains(&code) {
+            if given.len() < 2 || given.len() > 3 { return Err(bad()); }
+            let key = &given[1];
+            self.admits_key(key)?;
+            let found = entries.iter().position(|entry| Self::equal_contents(&entry.0, key));
+            answer = if let Some(at) = found {
+                if code == 4 { write_back = true; entries.remove(at).1 }
+                else { entries[at].1.clone() }
+            } else {
+                if code == 4 && given.len() == 2 { return Err(self.key_absent(key)); }
+                let fallback = given.get(2).cloned().unwrap_or(Value::Nil);
+                if code == 3 { entries.push((key.clone(), fallback.clone())); write_back = true; }
+                fallback
+            };
+        } else {
+            answer = match code {
+                5 => return Err(self.argument_fault("ext.op.tuple.unready", None)),
+                6 => {
+                    if given.len() > 2 { return Err(bad()); }
+                    if let Some(source) = given.get(1) { self.filled_map(&mut entries, source)?; }
+                    for (key, value) in names { self.enter_pair(&mut entries, Value::text(key), value.clone()); }
+                    write_back = true;
+                    Value::Nil
+                }
+                7 | 8 => {
+                    if given.len() != 1 { return Err(bad()); }
+                    if code == 8 { self.collection_cell(Value::Dict(Rc::new(entries.clone()))) }
+                    else { entries.clear(); write_back = true; Value::Nil }
+                }
+                _ => unreachable!(),
+            };
+        }
+        if write_back {
+            if let Value::Shared(cell) = receiver { cell.replace(Value::Dict(Rc::new(entries))); }
+            else { return Err(bad()); }
+        }
+        Ok(answer)
+    }
+
+    fn admits_key(&self, item: &Value) -> Result<(), String> {
         if self.table.flag("ext.syntax.map.value_keys") {
             let value = collection_read(item);
             let kind = match value {
@@ -2868,6 +2952,7 @@ impl<'a> Machine<'a> {
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
         }
+        if let Prim::MapCall(code) = op { return Ok(Some(self.map_call(code, name, positional, &keywords)?)); }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let mut join = String::from(" ");
             let mut tail = String::from("\n");
@@ -3547,6 +3632,7 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if let Prim::MapCall(code) = op { return self.map_call(code, name, v, &[]); }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -4976,6 +5062,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::MapCall(code) => return self.map_call(code, name, v, &[]),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),

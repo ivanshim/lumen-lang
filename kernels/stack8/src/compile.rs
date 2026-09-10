@@ -6493,7 +6493,8 @@ impl<'a> Compiler<'a> {
                 if !changes { self.read(&held); }
                 let argc = if let Some(brackets) = &call {
                     self.take();
-                    self.arguments(brackets)?
+                    if matches!(native, Some(Builtin::Dictionary(_))) { self.arguments_of(&named, brackets)? }
+                    else { self.arguments(brackets)? }
                 } else { 0 };
                 if changes {
                     let needed = if native == Some(Builtin::Append) { 1 } else { 2 };

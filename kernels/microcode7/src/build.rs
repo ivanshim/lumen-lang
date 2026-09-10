@@ -5911,7 +5911,10 @@ impl<'a> Builder<'a> {
                     let mut args = vec![Form::Read(held.clone())];
                     if calling {
                         r.advance();
-                        args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
+                        let more = if matches!(table.prims.get(&named), Some(Prim::MapCall(_))) {
+                            r.arguments_of(&named, "syntax.call.close", "syntax.call.separator")?
+                        } else { r.args("syntax.call.close", "syntax.call.separator")? };
+                        args.extend(more);
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {

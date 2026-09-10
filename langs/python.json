@@ -339,6 +339,37 @@
   "ext.builtin.list": [
     "list"
   ],
+  "ext.builtin.map.clear": [
+    "clear"
+  ],
+  "ext.builtin.map.copy": [
+    "copy"
+  ],
+  "ext.builtin.map.fromkeys": [
+    "dict.fromkeys",
+    "fromkeys"
+  ],
+  "ext.builtin.map.get": [
+    "get"
+  ],
+  "ext.builtin.map.new": [
+    "dict"
+  ],
+  "ext.builtin.map.pairs.amiss": [
+    "ValueError: dictionary update requires pairs"
+  ],
+  "ext.builtin.map.pop": [
+    "pop"
+  ],
+  "ext.builtin.map.popitem": [
+    "popitem"
+  ],
+  "ext.builtin.map.setdefault": [
+    "setdefault"
+  ],
+  "ext.builtin.map.update": [
+    "update"
+  ],
   "ext.builtin.print.end": [
     "end"
   ],
