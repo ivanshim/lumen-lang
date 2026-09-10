@@ -346,6 +346,9 @@
   "ext.builtin.copy": [
     "__copy_value"
   ],
+  "ext.builtin.exit": [
+    "__finish"
+  ],
   "ext.builtin.instance": [
     "isinstance"
   ],

@@ -1,9 +1,12 @@
 import unittest
 from io import StringIO
 
+def cleanup(message):
+    print(message)
+
 class Subtests(unittest.TestCase):
     def test_numbers(self):
-        self.addCleanup(print, 'cleaned')
+        self.addCleanup(cleanup, 'cleaned')
         for number in [1, 2, 3]:
             with self.subTest(number=number):
                 self.assertNotEqual(number, 2)

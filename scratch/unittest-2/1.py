@@ -1,12 +1,15 @@
 import unittest
 
+def cleanup(message):
+    print(message)
+
 class LifecycleTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         print('class setup')
 
     def test_cases(self):
-        self.addCleanup(print, 'cleanup')
+        self.addCleanup(cleanup, 'cleanup')
         for number in [1, 2, 3]:
             with self.subTest(number=number):
                 self.assertNotEqual(number, 2)

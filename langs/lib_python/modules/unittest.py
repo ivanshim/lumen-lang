@@ -80,7 +80,7 @@ class TestCase:
     def fail(self, msg=None):
         if msg is None:
             msg = 'test failed'
-        raise AssertionError(msg)
+        raise self.failureException(msg)
 
     def _check(self, condition, message, msg=None):
         if not condition:
@@ -336,7 +336,7 @@ class TestCase:
             return result
         error = outcome[1]
         entry = [self._method, getattr(error, 'message', outcome[2]), self.id()]
-        if isinstance(error, AssertionError):
+        if isinstance(error, self.failureException):
             result.failures = [*result.failures, entry]
         elif isinstance(error, SkipTest):
             result.skipped = [*result.skipped, entry]
@@ -452,7 +452,10 @@ class TestLoader:
         return _ordered([name for name in __class_methods(cls) if name[:4] == 'test'])
 
     def loadTestsFromTestCase(self, cls):
-        suite = TestSuite([cls(name) for name in self.getTestCaseNames(cls)])
+        methods = self.getTestCaseNames(cls)
+        if len(methods) == 0 and getattr(cls, 'runTest', None) is not None:
+            methods = ['runTest']
+        suite = TestSuite([cls(name) for name in methods])
         suite.class_ = cls
         return suite
 
@@ -612,7 +615,7 @@ def _ordered(values):
     result = []
     for value in values:
         at = 0
-        while at < len(result) and result[at] < value:
+        while at < len(result) and _word_before(result[at], value):
             at += 1
         result = [*result[:at], value, *result[at:]]
     return result
@@ -737,6 +740,24 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     if testRunner is None:
         testRunner = TextTestRunner(verbosity=verbosity)
     result = testRunner.run(suite)
-    if exit and not result.wasSuccessful():
-        raise 'test run failed'
-    return result
+    if exit:
+        if not result.wasSuccessful():
+            raise 'test run failed'
+        __finish()
+    return _TestProgram(result)
+
+
+def _word_before(left, right):
+    index = 0
+    while index < len(left) and index < len(right):
+        a = ord(left[index])
+        b = ord(right[index])
+        if a != b:
+            return a < b
+        index += 1
+    return len(left) < len(right)
+
+
+class _TestProgram:
+    def __init__(self, result):
+        self.result = result

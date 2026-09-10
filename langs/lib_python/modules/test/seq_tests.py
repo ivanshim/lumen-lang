@@ -5,3 +5,6 @@ import unittest
 class CommonTest(unittest.TestCase):
     def __init__(self, methodName='runTest'):
         raise 'NotImplementedError: common sequence tests are not available'
+
+    def runTest(self):
+        raise 'NotImplementedError: common sequence tests are not available'
