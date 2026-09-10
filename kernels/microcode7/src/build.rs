@@ -2110,6 +2110,7 @@ impl<'a> Builder<'a> {
         }
         let previous = self.within.replace((named.clone(), parent.as_ref().map(|s| s.ident.to_string())));
         let full_name=previous.as_ref().map_or(named.clone(),|(n,_)|format!("{n}.{named}"));
+        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
         self.need_intro()?;
         let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
         if !on_one_line {
@@ -5131,6 +5132,10 @@ impl<'a> Builder<'a> {
                     given.extend(self.arguments_of(&maker, "syntax.call.close", "syntax.call.separator")?);
                 }
                 prim_call(Prim::Spawn, given)
+            }
+            Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
+                && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
+                self.advance();constant(Value::Wrapped(9,Rc::new(Vec::new())))
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();

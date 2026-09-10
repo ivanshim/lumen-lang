@@ -741,6 +741,10 @@ only. The extension labels so far, all from PHP:
   Nested routine names keep their enclosing functions. Defaults carried at
   definition time may be read; method defaults still worked in the body,
   and replacement of code, defaults or namespace maps, say the unready words.
+  The parent word may stand as a value; calling such an alias says those
+  words too, since its defining class has not been carried with it.
+  A base requiring a builtin storage kind is read, but construction is
+  likewise refused until that storage may belong to a subclass.
 - `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close`: lists of
   marks enclosing the classes a declaration stands on. With the fuller
   class details spelled, every base is kept and ordered by C3. Without

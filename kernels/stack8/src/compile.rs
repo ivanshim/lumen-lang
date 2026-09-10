@@ -3156,6 +3156,7 @@ impl<'a> Compiler<'a> {
         }
         let outer = self.within.replace((name.clone(), base.clone()));
         let qualification=outer.as_ref().map_or_else(||name.clone(),|(n,_)|format!("{n}.{name}"));
+        if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
         self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
         if !inline {
@@ -5451,6 +5452,11 @@ impl<'a> Compiler<'a> {
                     _ => 0,
                 };
                 self.act(Action::Make, argc + 1);
+            }
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
+                && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
+                && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
+                self.take();self.constant(Value::Adapter(Rc::new((9,vec![]))));
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();

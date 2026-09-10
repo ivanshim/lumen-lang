@@ -2091,7 +2091,7 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
-                        _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
+                        _ => return Err(if self.has_class_order(){self.detail("unready").to_owned()}else{format!("Class {} cannot be built on that", plan.name)}.into()),
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);

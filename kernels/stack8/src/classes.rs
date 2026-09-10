@@ -41,7 +41,8 @@ impl<'a> Engine<'a> {
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(members) });
         if let Some(hook) = c.lineage.iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
-            self.class_apply(hook, vec![Value::Class(c.clone())])?;
+            if matches!(&hook,Value::Adapter(w) if w.0==5){let bound=self.bind_class_value(hook,None,c.clone())?;self.class_apply(bound,vec![])?;}
+            else{self.class_apply(hook, vec![Value::Class(c.clone())])?;}
         }
         Ok(Value::Class(c))
     }
@@ -63,11 +64,12 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) => match w.0 {
                 0 => Ok(w.1[0].clone()),
                 1 => {
+                    if args.len()!=1{return Err(self.class_refusal());}
                     let Some(Value::Class(c)) = args.first() else { return Err(self.class_refusal()); };
                     self.made += 1;
                     Ok(Value::Object(Rc::new(Instance {class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
                 }
-                2 => Ok(Value::Null),
+                2 if args.len()==1 => Ok(Value::Null),
                 3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
                 10..=12 => {
@@ -100,8 +102,8 @@ impl<'a> Engine<'a> {
             if Rc::ptr_eq(&o.class,&c) || o.class.lineage.iter().any(|b| Rc::ptr_eq(b,&c)) {
                 let init = self.lang.constructor.as_deref().and_then(|n| self.class_value(&o.class,n));
                 if let Some(f) = init {
-                    let mut given = vec![object.clone()]; given.extend(args);
-                    let answer = self.class_apply(f,given)?;
+                    let bound=self.bind_class_value(f,Some(object.clone()),o.class.clone())?;
+                    let answer = self.class_apply(bound,args)?;
                     if !matches!(answer,Value::Null) { return Err(self.class_refusal()); }
                 } else if !args.is_empty() { return Err(self.class_refusal()); }
             }
@@ -258,15 +260,24 @@ impl<'a> Engine<'a> {
     fn beneath(&self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         if let Value::Class(c)=wanted {
-            if c.name==self.class_word("root"){return Ok(!subclass||matches!(value,Value::Class(_)));}
+            if c.name==self.class_word("root"){
+                if !subclass||matches!(value,Value::Class(_)){return Ok(true);}
+                if let Value::Adapter(w)=value{if w.0==8{if let Value::Text(n)=&w.1[0]{return Ok(matches!(self.lang.builtins.get(n.as_ref()),Some(Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf)));}}}
+                return Err(self.class_refusal());
+            }
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class),Value::Class(c) if subclass=>Some(c),_=>None};
             return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()) else{return Err(self.class_refusal());};
-                if subclass{return Err(self.class_refusal());}
-                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),_=>return Err(self.class_refusal())});
+                if subclass{
+                    if !matches!(builtin,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf){return Err(self.class_refusal());}
+                    if let Value::Class(_)=value{return Ok(false);}
+                    if let Value::Adapter(other)=value {if other.0==8{return Ok(other.1[0].equals(&w.1[0]));}}
+                    return Err(self.class_refusal());
+                }
+                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),Builtin::SortOf=>matches!(value,Value::Class(_)),_=>return Err(self.class_refusal())});
             }}
         }
         Err(self.class_refusal())
@@ -275,7 +286,7 @@ impl<'a> Engine<'a> {
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8|10..=12))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
             3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{v}),Err(Fault::Note(s)) if s.starts_with(self.class_word("attribute.amiss"))=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{Err(s.into())},Err(e)=>Err(e)}},
             4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.class_refusal());};self.class_write(one,n,args.get(2).cloned(),false)},
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
@@ -292,11 +303,14 @@ impl<'a> Engine<'a> {
     pub(super) fn class_super(&mut self,subject:Value,owner:&str,name:&str,args:Vec<Value>)->Flow<Value> {
         let receiver=match &subject{Value::Object(o)=>o.class.clone(),Value::Class(c)=>c.clone(),_=>return Err(self.class_refusal())};
         let mut sequence=vec![receiver.clone()];sequence.extend(receiver.lineage.iter().cloned());
-        let at=sequence.iter().position(|c|c.name==owner).ok_or_else(||self.class_refusal())?;
+        let at=sequence.iter().position(|c|c.name==owner || Self::own_class_value(c,self.class_word("qualified")).map_or(false,|v|v.plain()==owner)).ok_or_else(||self.class_refusal())?;
         for c in sequence.iter().skip(at+1) {
             if let Some(f)=Self::own_class_value(c,name){let mut all=if name==self.class_word("allocate"){vec![]}else{vec![subject.clone()]};all.extend(args);return self.class_apply(f,all);}
             if c.name==self.class_word("root") && name==self.class_word("allocate"){let allocator=self.class_get(Value::Class(c.clone()),name,true)?;return self.class_apply(allocator,args);}
-            if c.name==self.class_word("root") && self.lang.constructor.as_deref()==Some(name){return Ok(Value::Null);}
+            if c.name==self.class_word("root") {
+                let f=self.class_get(Value::Class(c.clone()),name,true)?;
+                let mut all=vec![subject.clone()];all.extend(args);return self.class_apply(f,all);
+            }
         }
         Err(self.missing_member(&subject,name))
     }

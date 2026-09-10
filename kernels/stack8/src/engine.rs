@@ -2575,7 +2575,7 @@ impl<'a> Engine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Class(c)) => Some(c),
-                        Some(v) => return Err(format!("Class {} cannot stand on {}", plan.name, v.plain()).into()),
+                        Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
                         None => return Err("Stack underflow".to_string().into()),
                     },
                 };
