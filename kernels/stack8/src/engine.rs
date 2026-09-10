@@ -1288,6 +1288,16 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Captured bindings must be loaded before an optimized operation:
+    /// the wrapper is a binding, not an operand or a collection value.
+    fn operand_value(&mut self, operand: &Operand, frame: &mut [Value]) -> Res<Option<Value>> {
+        match operand {
+            Operand::Top => self.drop_top().map(Some),
+            Operand::Cell(slot) if slot.near.iter().any(|at| matches!(frame[*at], Value::Binding(_))) => self.load_cell(slot, frame).map(Some),
+            _ => Ok(None),
+        }
+    }
+
     /// Two both read in place: a binding by reference, a constant
     /// from the word, a data value from the ones already popped.
     fn both<'f>(&'f self, a: &'f Operand, b: &'f Operand, at: &'f Option<Value>, bt: &'f Option<Value>, frame: &'f [Value]) -> Res<(&'f Value, &'f Value)> {
@@ -2019,8 +2029,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::SkipCmp { op, a, b, to } => {
-                    let bt = if matches!(b, Operand::Top) { Some(self.drop_top()?) } else { None };
-                    let at = if matches!(a, Operand::Top) { Some(self.drop_top()?) } else { None };
+                    let bt = self.operand_value(b, frame)?;
+                    let at = self.operand_value(a, frame)?;
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
                     let holds = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
@@ -2042,8 +2052,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Dyad { op, a, b } => {
-                    let bt = if matches!(b, Operand::Top) { Some(self.drop_top()?) } else { None };
-                    let at = if matches!(a, Operand::Top) { Some(self.drop_top()?) } else { None };
+                    let bt = self.operand_value(b, frame)?;
+                    let at = self.operand_value(a, frame)?;
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
                     let fast = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {

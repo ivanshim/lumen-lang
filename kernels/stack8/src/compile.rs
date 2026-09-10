@@ -1180,11 +1180,12 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             if Lang::spells(&lang.nonlocal_words, &w) {
-                if lang.closes_over && self.piece().outermost { return Err(lang.nonlocal_module.clone().unwrap_or_default()); }
+                if lang.closes_over && self.piece().outermost && self.class_names.is_empty() { return Err(lang.nonlocal_module.clone().unwrap_or_default()); }
                 self.take();
                 loop {
                     let name = self.want_name("after the nonlocal keyword")?;
-                    self.piece().nonlocals.push(name.clone());
+                    let in_class = self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len());
+                    if !in_class { self.piece().nonlocals.push(name.clone()); }
                     if lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
                         return Err(format!("{}{}{}", lang.nonlocal_amiss.first().map_or("", String::as_str), name, lang.nonlocal_amiss.get(1).map_or("", String::as_str)));
                     }
@@ -1555,6 +1556,7 @@ impl<'a> Compiler<'a> {
     fn decorated_function(&mut self) -> Res<()> {
         let lang = self.lang;
         let amiss = || lang.decorator_amiss.clone().unwrap_or_default();
+        let before_decorators = self.mark();
         let mut held = Vec::new();
         while self.on_any(&lang.decorator_words) {
             self.take();
@@ -1572,7 +1574,12 @@ impl<'a> Compiler<'a> {
         if self.on_keyword(&lang.async_words) { self.take(); }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
-            self.class_decl()?;
+            if self.explicit_class()? {
+                self.piece().instrs.truncate(before_decorators);
+                self.class_cannot_run();
+                self.discard();
+                return Ok(());
+            }
             name
         } else {
             if !self.on_keyword(&lang.function_words) { return Err(amiss()); }
@@ -3258,7 +3265,7 @@ impl<'a> Compiler<'a> {
 
     /// A class whose methods name their object themselves. Its first base
     /// is kept once, so the parent's name may be an expression as well.
-    fn explicit_class(&mut self) -> Res<()> {
+    fn explicit_class(&mut self) -> Res<bool> {
         let lang = self.lang;
         self.take();
         let name = self.want_name("as the class name")?;
@@ -3371,7 +3378,7 @@ impl<'a> Compiler<'a> {
             self.write(&private);
             self.class_names.last_mut().expect("the enclosing class").1.insert(name, private);
         } else { self.write(&name); }
-        Ok(())
+        Ok(unready)
     }
 
     fn class_type_parameters(&mut self) -> Res<()> {
@@ -3397,7 +3404,7 @@ impl<'a> Compiler<'a> {
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.explicit_this {
-            return self.explicit_class();
+            return self.explicit_class().map(|_| ());
         }
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;

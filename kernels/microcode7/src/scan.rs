@@ -584,7 +584,9 @@ impl Quotation<'_> {
         let mut saved = String::new();
         let mut missing = false;
         while !self.source[self.next..].starts_with(end) {
-            let ch = self.here().ok_or_else(|| self.bad())?;
+            let ch = self.here().ok_or_else(|| {
+                if end.len() > 1 && !fields { format!("Unterminated {} string", end[0]) } else { self.bad() }
+            })?;
             if bytes && !ch.is_ascii() { return Err(self.bad()); }
             match ch {
                 '\n' if end.len() == 1 => return Err(self.bad()),

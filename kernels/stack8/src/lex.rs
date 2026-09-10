@@ -511,7 +511,9 @@ impl<'a> Cursor<'a> {
                 for _ in mark.chars() { self.step(); }
                 break;
             }
-            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            let Some(c) = self.look(0) else {
+                return Err(if mark.chars().count() > 1 && !format { format!("Unterminated {} string", mark.chars().next().unwrap()) } else { self.string_words() });
+            };
             if bytes && !c.is_ascii() { return Err(self.string_words()); }
             if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
             if format && (c == '{' || c == '}') {

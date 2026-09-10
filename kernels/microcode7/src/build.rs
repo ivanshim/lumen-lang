@@ -1329,14 +1329,17 @@ impl<'a> Builder<'a> {
                 return self.forget_list(false, true, None);
             }
             if self.key("ext.stmt.nonlocal") {
-                if self.table.flag("ext.stmt.function.closes_over") && !self.layers.iter().any(|layer| layer.holds == Holds::Every) {
+                if self.table.flag("ext.stmt.function.closes_over") && !self.layers.iter().skip(1).any(|layer| layer.holds == Holds::Every) && self.class_bindings.is_empty() {
                     return Err(self.table.single("ext.stmt.nonlocal.module").unwrap_or_default().into());
                 }
                 self.advance();
                 loop {
                     let word = self.need_word("after the nonlocal keyword")?;
-                    if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) { layer.borrowed.push(word.clone()); }
-                    if !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, true).is_none() {
+                    let in_class = self.class_bindings.last().map_or(false, |(depth, _)| *depth == self.layers.len());
+                    if !in_class {
+                        if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) { layer.borrowed.push(word.clone()); }
+                    }
+                    if !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, !in_class).is_none() {
                         let pieces = self.table.strings("ext.stmt.nonlocal.amiss");
                         return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), word, pieces.get(1).map_or("", String::as_str)));
                     }
@@ -1638,7 +1641,9 @@ impl<'a> Builder<'a> {
         let named;
         if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
             named = self.glance(1).lexeme.clone();
-            forms.push(self.class_decl()?);
+            let (definition, cannot) = self.class_with_receiver()?;
+            if cannot { return Ok(self.class_not_ready()); }
+            forms.push(definition);
         } else {
             if !self.key("stmt.function") {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
@@ -2178,7 +2183,7 @@ impl<'a> Builder<'a> {
 
     /// The class header encloses expressions for bases. Only the first
     /// is taken as a parent; the others are read without being run.
-    fn class_with_receiver(&mut self) -> Res<Form> {
+    fn class_with_receiver(&mut self) -> Res<(Form, bool)> {
         self.advance();
         let named = self.need_word("as the class name")?;
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
@@ -2245,7 +2250,7 @@ impl<'a> Builder<'a> {
                 let member = self.look().lexeme.clone();
                 let value = if self.key("ext.stmt.class") {
                     let member = self.glance(1).lexeme.clone();
-                    setup.push(self.class_with_receiver()?);
+                    setup.push(self.class_with_receiver()?.0);
                     attributes.push(member.clone());
                     Some(self.read(&member))
                 } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
@@ -2297,7 +2302,7 @@ impl<'a> Builder<'a> {
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
             setup.push(Form::Write(slot, Box::new(declaration)));
         } else { setup.push(self.write(&named, declaration)); }
-        Ok(sequence(setup))
+        Ok((sequence(setup), cannot))
     }
 
     fn class_type_parameters(&mut self) -> Res<()> {
@@ -2321,7 +2326,7 @@ impl<'a> Builder<'a> {
 
     fn class_decl(&mut self) -> Res<Form> {
         if self.table.flag("ext.stmt.class.this.explicit") {
-            return self.class_with_receiver();
+            return self.class_with_receiver().map(|(form, _)| form);
         }
         let table = self.table;
         let word = self.advance().lexeme;
