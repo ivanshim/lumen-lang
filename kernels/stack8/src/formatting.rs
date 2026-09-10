@@ -127,7 +127,7 @@ impl Writer<'_> {
             };
             return self.field(&Value::text(&text), spec, "");
         }
-        if spec.is_empty() { return self.representation_plain(value); }
+        if spec.is_empty() && !matches!(value, Value::Real(_)) { return self.representation_plain(value); }
         let mut rule = self.parse(spec)?;
         let kind = rule.code;
         if kind == 'n' { return Err(self.fault("ext.text.format.unready", &[])); }

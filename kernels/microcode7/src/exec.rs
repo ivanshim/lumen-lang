@@ -1336,7 +1336,7 @@ impl<'a> Machine<'a> {
         };
         by_kind
             .and_then(|label| self.table.single(label))
-            .or_else(|| self.table.single("ext.system.fault.class"))
+            .or_else(|| if self.table.has_any("ext.builtin.exceptions") { None } else { self.table.single("ext.system.fault.class") })
             .map(str::to_string)
     }
 
@@ -4418,7 +4418,8 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
-        if matches!(subject, Value::Shared(_) | Value::Mutable(..)) { return self.object_words(&subject.settled(), quoted); }
+        if let Value::Mutable(place, represented) = subject { return self.object_words(&place.borrow(), quoted || *represented); }
+        if matches!(subject, Value::Shared(_)) { return self.object_words(&subject.settled(), quoted); }
         if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
         if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(self.show(std::slice::from_ref(subject))); }
         match subject {
@@ -4660,7 +4661,10 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(ordered))
             }
             (Prim::Iterated, [one @ Value::Thing(_)]) => one.clone(),
-            (Prim::Listed, [one]) => Value::Vector(Rc::new(self.object_members(one)?)),
+            (Prim::Listed, [one]) => {
+                let result = Value::Vector(Rc::new(self.object_members(one)?));
+                if matches!(one, Value::Window(..) | Value::Mutable(_, true)) { result.keep(true) } else { result }
+            },
             (Prim::Iterator, [one @ Value::Cursor(_)]) => one.clone(),
             (Prim::Iterator, [one]) => match self.ask_special(one, 15, &[])? {
                 Some(iterator) => iterator,

@@ -142,8 +142,7 @@ impl Layout<'_> {
             };
             return self.present(&Value::text(&rendered), pattern, "");
         }
-        if pattern.is_empty() {
-            if matches!(item, Value::Frac(_)) { return Ok(item.render(self.names)); }
+        if pattern.is_empty() && !matches!(item, Value::Frac(_)) {
             return self.plain(item);
         }
         let mut shape = self.description(pattern)?;

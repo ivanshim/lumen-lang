@@ -952,7 +952,7 @@ impl<'a> Engine<'a> {
             _ if self.unreadable(told) => &self.lang.fault_reading,
             _ => &None,
         };
-        named.clone().or_else(|| self.lang.fault_class.clone())
+        named.clone().or_else(|| if self.lang.exceptions.is_empty() { self.lang.fault_class.clone() } else { None })
     }
 
     /// Whether these are the words of a reading that stopped: any of
@@ -2520,7 +2520,8 @@ impl<'a> Engine<'a> {
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
         if let Value::Binding(cell) = value { return self.special_text(&cell.borrow(), representation); }
-        if matches!(value, Value::Bond(_) | Value::Collection(..)) { return self.special_text(&value.contents(), representation); }
+        if let Value::Collection(cell, quoted) = value { return self.special_text(&cell.borrow(), representation || *quoted); }
+        if matches!(value, Value::Bond(_)) { return self.special_text(&value.contents(), representation); }
         if let Value::Trace(words) = value { return Err(words.to_string()); }
         if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(self.render(std::slice::from_ref(value))); }
         if let Value::Object(object) = value {
@@ -2716,7 +2717,10 @@ impl<'a> Engine<'a> {
                 }
                 Value::array(items)
             }
-            Builtin::List if args.len() == 1 => Value::array(self.special_items(&args[0])?),
+            Builtin::List if args.len() == 1 => {
+                let row = Value::array(self.special_items(&args[0])?);
+                if matches!(args[0], Value::View(_) | Value::Collection(_, true)) { row.held(true) } else { row }
+            },
             Builtin::Iter if args.len() == 1 => {
                 if matches!(&args[0], Value::Walk(_)) { return Ok(Some(args[0].clone())); }
                 if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? { answer }
@@ -5195,6 +5199,7 @@ impl<'a> Engine<'a> {
             }
         }
         if let Value::Tuple(items) = target {
+            if let Value::Slice(parts) = at { return self.read_slice(target, parts); }
             let index = match at {
                 Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
                 _ => as_index(at).ok(),
