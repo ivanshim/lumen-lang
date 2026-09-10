@@ -74,6 +74,8 @@ pub struct Lang {
     pub format_prefixes: Vec<char>,
     pub adjacent_strings: bool,
     pub string_amiss: Option<String>,
+    pub bytes_unavailable: Option<String>,
+    pub format_unavailable: Option<String>,
     pub string_unready: Option<String>,
     pub range_zero_start: bool,
     pub byte_digits: Option<usize>,
@@ -871,6 +873,7 @@ w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.
 b ext.stmt.terminator.only | w ext.stmt.separator
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
 
+w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
  | w ext.lexical.string.value.unready | b ext.builtin.range.zero_start | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable
 b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
@@ -1428,6 +1431,8 @@ impl Lang {
             format_prefixes: r.letters("ext.lexical.string.prefix.format")?,
             adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
             string_amiss: r.head("ext.lexical.string.amiss")?,
+            bytes_unavailable: r.head("ext.lexical.string.bytes.unavailable")?,
+            format_unavailable: r.head("ext.lexical.string.format.unavailable")?,
             string_unready: r.head("ext.lexical.string.value.unready")?,
             range_zero_start: r.flag("ext.builtin.range.zero_start")?,
             byte_digits: r.count("ext.lexical.escape.byte.digits")?,

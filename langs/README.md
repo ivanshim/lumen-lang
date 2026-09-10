@@ -280,6 +280,11 @@ only. The extension labels so far, all from PHP:
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
+- `ext.lexical.line_continuation`: marks which, immediately before a line
+  end outside a string or comment, join the next line to this one. The
+  mark and line end say nothing, and the next line's indentation opens
+  no block. Escaped ends within text belong to
+  `ext.lexical.escape.continued`; a comment never carries a line on.
 - `ext.stmt.class.bases.open` and `.close`: marks about the expressions
   naming a class's bases. The body is read in its own scope, including
   its methods and their bodies. Class member annotations are not local
@@ -318,22 +323,25 @@ only. The extension labels so far, all from PHP:
   letters before a quote that ask for raw text, byte text, plain text,
   or text with expressions between braces. A raw letter may stand on
   either side of a byte or format letter. Raw text keeps its backslashes,
-  even one shielding a quote. Byte text is read whole; its distinct value
-  awaits the run. Doubled braces in formatted text stand for single braces;
-  fields may carry conversions, format specifications and a debug equals
-  sign. Each field and each field in its specification is read as code.
-  Plain fields and whole-number debug fields run. Further conversions
-  and nonempty specifications stop with `ext.lexical.string.value.unready`.
-- `ext.lexical.string.value.unready`: what is said upon reaching byte
-  text or a field presentation the run cannot honour. Reading continues
-  through these forms even in the bodies of routines never called.
   even one shielding a quote. Byte text is held as ordinary text at
-  present. Doubled braces in formatted text stand for single braces;
-  fields may carry conversions, format specifications and a debug equals
-  sign. Each field and each field in its specification is read as code.
-  Text conversions quote strings and make escapes visible; simple field
-  alignment and fixed decimal places are honoured. Other specifications
-  are evaluated and the value is rendered plainly at present.
+  present; non-ASCII characters written directly in a byte literal are
+  rejected. Doubled braces in formatted text stand for single braces.
+  Fields may carry conversions, specifications and a debug equals sign.
+  Each field and each nested field in its specification is read as code.
+  Text conversions quote strings and make escapes visible. Alignment,
+  bare widths, fixed decimal places, decimal integer padding and plain
+  binary, octal and hexadecimal integer formats are supported. Reals
+  retain a decimal point or an exponent with at least two digits.
+  Unsupported presentations are evaluated and then refused.
+- `ext.lexical.string.bytes.unavailable` and
+  `ext.lexical.string.value.unready`: diagnostic words retained for
+  implementations that cannot hold byte text or render a field. The
+  current kernels hold byte text as ordinary text and use the following
+  label when a field presentation is unsupported.
+- `ext.lexical.string.format.unavailable`: what is said when a field's
+  value or specification asks for a rendering the run has no rule for.
+  The field and its specification are read and worked out before this
+  complaint; no part of the specification is quietly put by.
 - `ext.lexical.string.adjacent`: whether string literals standing beside
   one another make one string, including within brackets over lines.
 - `ext.lexical.string.amiss`: what is said of a string or a formatted
@@ -965,7 +973,8 @@ only. The extension labels so far, all from PHP:
   written in a base of its own, alongside the core
   `lexical.number.hex_prefix`. Each is a digit and one letter (`0b`,
   `0o`), and a language may list more than one spelling of the letter so
-  that `0B` and `0O` are read too.
+  that `0B` and `0O` are read too. Python's byte masks use this
+  eightfold writing: `0o377` has its lowest eight bits set.
 - `ext.lexical.number.octal_lead`: a switch; a nought before more digits
   means those digits are read in base eight, as in the languages that
   grew from C.
@@ -1783,7 +1792,8 @@ only. The extension labels so far, all from PHP:
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
-  A value is read as a whole number of sixty-four bits, sign and all:
+  Python spells the taking-together sign too, for the byte masks in
+  its literal tests. A value is read as a whole number of sixty-four bits, sign and all:
   what lies past a decimal point is dropped towards nothing, so -1.5
   stands for -1, and text that spells no number stands for zero. Moving
   by a negative count is an error, whose words are
@@ -1974,7 +1984,8 @@ the next whole number, as PHP does: `[5, "k" => 6, 7]` has the keys 0,
 and `"1"` are different keys, where PHP would fold them together.
 
 `syntax.map.open`/`.close`/`.separator` spell a literal of a map's own
-(Python's `{...}`); a language whose array literal doubles as its map
+(Python's `{...}`); line ends within these brackets are space, as they
+are within an array or a call. A language whose array literal doubles as its map
 literal, as PHP's does, leaves them empty and fills only the pair sign.
 
 ## Comparison
@@ -2262,6 +2273,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.string.amiss` | - | - | `invalid string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes.unready` | - | - | `NotImplementedError: bytes literals are not supported` | - | - | - | - | - | - | - |

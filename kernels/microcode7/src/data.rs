@@ -368,8 +368,27 @@ impl Value {
 
     /// Common field presentations, with the ordinary spelling kept for
     /// those whose further rules the machine does not yet know.
-    pub fn in_field(&self, names: Names, pattern: &str, manner: &str) -> String {
+    pub fn in_field(&self, names: Names, pattern: &str, manner: &str) -> Option<String> {
+        match self {
+            Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) => {},
+            Value::Flag(_) | Value::Nil if pattern.is_empty() || !manner.is_empty() => {},
+            _ => return None,
+        }
         let mut result = self.render(names);
+        if let Self::Frac(ratio) = self {
+            if ratio.places.is_some() {
+                let mut worth = nearest_binary(&ratio.above, &ratio.beneath);
+                if ratio.under && worth == 0.0 { worth = -0.0; }
+                let raw = format!("{:?}", worth).to_lowercase();
+                result = match raw.find('e') {
+                    None => raw,
+                    Some(cut) => {
+                        let power: i32 = raw[cut + 1..].parse().ok()?;
+                        format!("{}e{:+03}", &raw[..cut], power)
+                    },
+                };
+            }
+        }
         if matches!(manner, "a" | "r") {
             if let Value::Text(chars) = self {
                 let delimiter = match (chars.contains('\''), chars.contains('"')) { (true, false) => '"', _ => '\'' };
@@ -390,6 +409,20 @@ impl Value {
                 result = format!("{delimiter}{body}{delimiter}");
             }
         }
+        if manner.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            let alternative = pattern.starts_with('#');
+            let kind = pattern.strip_prefix('#').unwrap_or(pattern);
+            let radix = match kind { "b" => 2, "o" => 8, "x" | "X" => 16, _ => 0 };
+            if radix > 0 {
+                let rendered = self.as_big().ok()?.to_str_radix(radix);
+                let negative = rendered.starts_with('-');
+                let magnitude = rendered.trim_start_matches('-');
+                let digits = if kind == "X" { magnitude.to_ascii_uppercase() } else { magnitude.to_string() };
+                let sign = if negative { "-" } else { "" };
+                let header = if alternative { format!("0{kind}") } else { String::new() };
+                return Some(format!("{sign}{header}{digits}"));
+            }
+        }
         if matches!(self, Value::Small(_) | Value::Huge(_)) && manner.is_empty() {
             let decimal_width = pattern.strip_suffix('d').filter(|text| text.bytes().all(|byte| byte.is_ascii_digit()));
             if let Some(field) = decimal_width {
@@ -401,9 +434,9 @@ impl Value {
                             let minus = result.starts_with('-');
                             let head = if minus { "-" } else { "" };
                             let body = if minus { &result[1..] } else { &result };
-                            return format!("{head}{}{body}", "0".repeat(extra));
+                            return Some(format!("{head}{}{body}", "0".repeat(extra)));
                         }
-                        return " ".repeat(extra) + &result;
+                        return Some(" ".repeat(extra) + &result);
                     }
                 }
             }
@@ -411,25 +444,30 @@ impl Value {
         if manner.is_empty() && !matches!(self, Value::Text(_)) && pattern.starts_with('.') && pattern.ends_with('f') {
             let precision = pattern[1..pattern.len() - 1].parse::<usize>();
             if let (Ok(digits), Ok(number)) = (precision, result.parse::<f64>()) {
-                if digits <= 1000 { return format!("{:.*}", digits, number); }
+                if digits <= 1000 { return Some(format!("{:.*}", digits, number)); }
             }
         }
         let mut marks = pattern.chars();
-        let Some(first) = marks.next() else { return result; };
+        let Some(first) = marks.next() else { return Some(result); };
         let (padding, direction, rest) = if ['<', '^', '>'].contains(&first) {
             (' ', first, marks.as_str())
         } else {
-            let Some(second) = marks.next().filter(|c| ['<', '^', '>'].contains(c)) else { return result; };
-            (first, second, marks.as_str())
+            match marks.next() {
+                Some(second @ ('<' | '^' | '>')) => (first, second, marks.as_str()),
+                _ if first != '0' && pattern.chars().all(|c| c.is_ascii_digit()) => {
+                    (' ', if manner.is_empty() && !matches!(self, Value::Text(_)) { '>' } else { '<' }, pattern)
+                },
+                _ => return None,
+            }
         };
-        let Ok(target) = rest.parse::<usize>() else { return result; };
-        if target > 100000 { return result; }
+        let target = if rest.is_empty() { 0 } else { rest.parse::<usize>().ok()? };
+        if target > 100000 { return None; }
         let extra = target.saturating_sub(result.chars().count());
         let before = if direction == '<' { 0 } else if direction == '^' { extra / 2 } else { extra };
         let mut padded = padding.to_string().repeat(before);
         padded.push_str(&result);
         padded.push_str(&padding.to_string().repeat(extra - before));
-        padded
+        Some(padded)
     }
 
     pub fn bare(&self) -> String {

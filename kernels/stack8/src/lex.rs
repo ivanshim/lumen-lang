@@ -512,6 +512,7 @@ impl<'a> Cursor<'a> {
                 break;
             }
             let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            if bytes && !c.is_ascii() { return Err(self.string_words()); }
             if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
             if format && (c == '{' || c == '}') {
                 if self.look(1) == Some(c) {

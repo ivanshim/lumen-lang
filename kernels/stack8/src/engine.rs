@@ -3135,7 +3135,9 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
-                Value::text(&value.string_field(&self.wording(), &specification, &conversion))
+                let rendered = value.string_field(&self.wording(), &specification, &conversion)
+                    .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_else(|| "This formatted value is not supported".into()))?;
+                Value::text(&rendered)
             }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {

@@ -496,6 +496,12 @@
   "ext.lexical.string.amiss": [
     "invalid string literal"
   ],
+  "ext.lexical.string.bytes.unavailable": [
+    "bytes literals are not supported"
+  ],
+  "ext.lexical.string.format.unavailable": [
+    "this formatted value is not supported"
+  ],
   "ext.lexical.string.long": [
     "\"\"\"",
     "'''"

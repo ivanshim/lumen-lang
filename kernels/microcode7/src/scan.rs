@@ -585,6 +585,7 @@ impl Quotation<'_> {
         let mut missing = false;
         while !self.source[self.next..].starts_with(end) {
             let ch = self.here().ok_or_else(|| self.bad())?;
+            if bytes && !ch.is_ascii() { return Err(self.bad()); }
             match ch {
                 '\n' if end.len() == 1 => return Err(self.bad()),
                 '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing)?,
