@@ -281,6 +281,10 @@ impl<'a> Machine<'a> {
         Value::Thing(Rc::new(Thing { of: kind, turn: self.made, holds: RefCell::new(holds) }))
     }
 
+    fn fault_descends(kind: &Rc<Blueprint>, ancestor: &Rc<Blueprint>) -> bool {
+        Rc::ptr_eq(kind, ancestor) || kind.under.as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
+    }
+
     fn fault_methods(kind: &Blueprint) -> bool {
         let mut current = Some(kind);
         while let Some(class) = current {
@@ -2169,7 +2173,10 @@ impl<'a> Machine<'a> {
                                             if let Value::Blueprint(kind) = class {
                                                 if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
                                                 if let Value::Thing(value) = &raised {
-                                                    fits |= value.of.goes_by(&kind.name, self.classes_either_way);
+                                                    fits |= match self.table.has_any("ext.builtin.exceptions") {
+                                                        true => Self::fault_descends(&value.of, &kind),
+                                                        false => value.of.goes_by(&kind.name, self.classes_either_way),
+                                                    };
                                                 }
                                             }
                                             if fits { break; }

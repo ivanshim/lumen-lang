@@ -1564,6 +1564,8 @@ only. The extension labels so far, all from PHP:
   Unicode upon value. Exit and interruption stand directly upon the root;
   the rest stand upon ordinary faults. The spellings belong wholly to the
   definition. A program may call these classes or stand a class upon one.
+  Catching follows the classes themselves and their bases: a new class
+  bearing an old name is still another class.
 - `ext.builtin.exceptions.args` and `.cause`: names of the argument tuple
   and the explicit cause held by an exception. A class raised alone is
   made with no arguments. A cause is worked out and kept where these

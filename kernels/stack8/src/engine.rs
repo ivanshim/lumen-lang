@@ -242,6 +242,15 @@ impl<'a> Engine<'a> {
         !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
     }
 
+    fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+        let mut class = Some(actual);
+        while let Some(current) = class {
+            if Rc::ptr_eq(current, wanted) { return true; }
+            class = current.base.as_ref();
+        }
+        false
+    }
+
     fn exception_has_methods(class: &Class) -> bool {
         !class.methods.is_empty() || class.base.as_ref().map_or(false, |parent| Self::exception_has_methods(parent))
     }
@@ -1800,7 +1809,8 @@ impl<'a> Engine<'a> {
                                 Value::Class(class) => {
                                     if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
                                     if let Value::Object(object) = &raised {
-                                        takes |= object.class.named(&class.name, self.lang.classes_folded);
+                                        takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
+                                            else { Self::exception_beneath(&object.class, &class) };
                                     }
                                 }
                                 _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
