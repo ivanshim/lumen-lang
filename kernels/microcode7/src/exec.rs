@@ -3181,6 +3181,12 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "conjugate" {
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(crate::complex::complaint(self.table, "arguments").into()); }
+            let subject = receiver.settled();
+            let pair = crate::complex::coordinates(&subject).ok_or_else(|| crate::complex::complaint(self.table, "unready"))?;
+            return Ok(crate::complex::pair(pair.0, -pair.1));
+        }
         let mut found = Vec::new();
         for (word, _) in &keywords {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
@@ -4057,6 +4063,7 @@ impl<'a> Machine<'a> {
         };
         if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
             | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
+            if v.iter().any(|value| matches!(value, Value::Complex(_))) { return crate::complex::reckon(self.table, op, v); }
             for value in v {
                 if let Value::Imaginary { unready, .. } = value { return Err(unready.to_string()); }
             }
@@ -4109,6 +4116,7 @@ impl<'a> Machine<'a> {
         Ok(match op {
             Prim::Positive => { n(1)?; v[0].clone() }
             Prim::Pointed => v[0].clone().keeping_point(true),
+            Prim::ComplexMade => crate::complex::create(self.table, v)?,
             Prim::NumberAlone => match &v[0] {
                 Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
                 Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
@@ -4365,6 +4373,11 @@ impl<'a> Machine<'a> {
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
+                if let Value::Complex(pair) = &v[0] {
+                    if self.table.spells("ext.builtin.complex.real", &called) { return Ok(crate::complex::decimal_value(pair.0)); }
+                    if self.table.spells("ext.builtin.complex.imag", &called) { return Ok(crate::complex::decimal_value(pair.1)); }
+                    return Err(crate::complex::complaint(self.table, "unready"));
+                }
                 if matches!(v[0], Value::Member(..)) {
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
@@ -5624,6 +5637,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 Value::text(&v[0].render(w))
             }
+            Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,
             Prim::AsInt => {
                 n(1)?;
@@ -7008,6 +7022,7 @@ impl Machine<'_> {
             Value::Intrinsic(word) => {
                 let op = self.table.prims.get(word.as_ref());
                 let answer = match op {
+                    Some(Prim::ComplexMade) => matches!(item, Value::Complex(_)),
                     Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
                     Some(Prim::AsReal) => matches!(item, Value::Frac(r) if r.places.is_some()),
                     Some(Prim::AsText) => matches!(item, Value::Text(_)),
@@ -7216,6 +7231,7 @@ impl Machine<'_> {
             }
             Magnitude => {
                 require(1, 1)?;
+                if let Value::Complex(pair) = &input[0] { return Ok(crate::complex::decimal_value(pair.0.hypot(pair.1))); }
                 let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
             }
@@ -7229,6 +7245,7 @@ impl Machine<'_> {
             }
             QuotRem => {
                 require(2, 2)?;
+                if input.iter().any(|x| matches!(x, Value::Complex(_))) { return Err(crate::complex::floor(self.table, &input[0], &input[1])); }
                 let one = as_number(&input[0]); let two = as_number(&input[1]);
                 let integral = |v: &Value| matches!(v, Value::Huge(_) | Value::Small(_));
                 if integral(&one) && integral(&two) {
@@ -7253,6 +7270,10 @@ impl Machine<'_> {
             }
             Powered => {
                 require(2, 3)?;
+                if input.iter().any(|x| matches!(x, Value::Complex(_))) {
+                    if input.len() != 2 { return Err(crate::complex::complaint(self.table, "unready")); }
+                    return crate::complex::reckon(self.table, Prim::Power, &input);
+                }
                 if input.len() < 3 || matches!(input[2], Value::Nil) {
                     let base = as_number(&input[0]); let exponent = as_number(&input[1]);
                     let e = math::ratio_of(&exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;

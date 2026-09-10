@@ -65,6 +65,24 @@ Python selects the shared labels instead of a separate capture path.
 `ext.op.index.spread.unsupported` supplies the runtime complaint for a
 starred subscript, after the entire subscript has been read.
 
+- `ext.builtin.complex` names the maker of a number with real and imaginary
+  parts. When spelled, imaginary numerals yield these values. The lists
+  `ext.builtin.complex.real` and `ext.builtin.complex.imag` name the two
+  read-only parts; `ext.builtin.method.conjugate` names the method which
+  turns the imaginary sign about. Arithmetic admits whole, real and complex
+  operands; powers admit real exponents. The ordinary real writer supplies
+  the figures, preserving signed noughts and nonfinite parts.
+- `ext.builtin.complex.arguments`, `ext.builtin.complex.invalid`,
+  `ext.builtin.complex.integer`, `ext.builtin.complex.zero`,
+  `ext.builtin.complex.power.zero` and `ext.builtin.complex.unready`
+  give plain complaints for wrong arguments, ill-written text, integer
+  conversion, division by nought, a forbidden power of nought, and work
+  still owed. Each is a list holding one message.
+- `ext.builtin.complex.order` holds four pieces surrounding the sign and
+  the two operand kinds in an ordering complaint. `ext.builtin.complex.floor`
+  holds three pieces surrounding the kinds for floor division, remainder
+  and divmod. Neither operation is reckoned for complex operands.
+
 ## Format rules
 
 1. A file is one flat JSON object. Every file carries the same labels in the
@@ -3009,6 +3027,17 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
+| `ext.builtin.complex` | - | - | `complex` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.arguments` | - | - | `TypeError: complex() requires one or two numeric arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.floor` | - | - | `TypeError: unsupported operand type(s) for //: '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.imag` | - | - | `imag` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.integer` | - | - | `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.invalid` | - | - | `ValueError: complex() arg is a malformed string` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.order` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.power.zero` | - | - | `ZeroDivisionError: 0.0 to a negative or complex power` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.real` | - | - | `real` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.unready` | - | - | `NotImplementedError: this complex operation is not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.complex.zero` | - | - | `ZeroDivisionError: complex division by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
@@ -3077,6 +3106,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.capitalize` | - | - | `capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.method.center` | - | - | `center` | - | - | - | - | - | - | - |
 | `ext.builtin.method.clear` | - | - | `clear` | - | - | - | - | - | - | - |
+| `ext.builtin.method.conjugate` | - | - | `conjugate` | - | - | - | - | - | - | - |
 | `ext.builtin.method.copy` | - | - | `copy` | - | - | - | - | - | - | - |
 | `ext.builtin.method.count` | - | - | `count` | - | - | - | - | - | - | - |
 | `ext.builtin.method.encode` | - | - | `encode` | - | - | - | - | - | - | - |

@@ -153,6 +153,7 @@ pub enum Value {
     Frac(Rc<Ratio>),
     /// The coefficient of an imaginary literal, with its unready words.
     Imaginary { coefficient: f64, unready: Rc<str> },
+    Complex(Rc<(f64, f64)>),
     Text(Rc<str>),
     Flag(bool),
     Nil,
@@ -293,7 +294,7 @@ impl Value {
             Value::Flag(_) => Kind::Truth,
             Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
-            Value::Member(..) => return None,
+            Value::Member(..) | Value::Complex(_) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
@@ -304,6 +305,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Complex(pair) => pair.0 != 0.0 || pair.1 != 0.0,
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
             Value::Mutable(cell, _) => cell.borrow().is_true(),
             Value::Row(items) => !items.is_empty(),
@@ -367,6 +369,7 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Complex(pair), rhs) | (rhs, Value::Complex(pair)) => crate::complex::coordinates(rhs).map_or(false, |other| **pair == other),
             (Value::Imaginary { coefficient: x, .. }, Value::Imaginary { coefficient: y, .. }) => x == y,
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
@@ -578,6 +581,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Mutable(place, _) => place.borrow().bare(),
             Value::Member(..) => String::from("<built-in method>"),
@@ -1027,7 +1031,7 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
 
 /// The figures before an imaginary mark, with a signed two-place
 /// exponent beyond the plain range.
-fn brief_decimal(number: f64) -> String {
+pub(crate) fn brief_decimal(number: f64) -> String {
     if number.is_nan() { return "nan".into(); }
     if number.is_infinite() { return if number.is_sign_negative() { "-inf" } else { "inf" }.into(); }
     let written = format!("{number:e}");

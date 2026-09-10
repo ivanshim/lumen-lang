@@ -9,6 +9,7 @@ use std::hash::{Hasher, Hash};
 impl Value {
     pub fn kind_word(&self) -> String {
         let word = match self {
+            Self::Complex(_) => "complex",
             Self::Thing(thing) => return thing.of.name.to_owned(),
             Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().kind_word(),
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Set(_) => "set", Self::Dict(_) => "dict",
@@ -66,6 +67,12 @@ impl Value {
 
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
+            Self::Complex(pair) => {
+                if pair.0.is_nan() || pair.1.is_nan() { return Some((std::rc::Rc::as_ptr(pair) as usize / 16) as i64); }
+                let real = crate::complex::decimal_value(pair.0).hash_number()?;
+                let imaginary = crate::complex::decimal_value(pair.1).hash_number()?;
+                real.wrapping_add(1_000_003i64.wrapping_mul(imaginary))
+            }
             Self::Text(chars) if chars.is_empty() => 0,
             Self::Text(chars) => {
                 let mut state = std::collections::hash_map::DefaultHasher::new();
