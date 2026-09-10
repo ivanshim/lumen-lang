@@ -1097,8 +1097,16 @@ impl Lang {
     }
 
     pub fn sequence_fault<'a>(&self, told: &'a str) -> Option<(&'a str, &'a str)> {
-        let (name, message) = told.split_once(": ")?;
-        self.sequence_fault_names().contains(&name).then_some((name, message))
+        if !self.sequence_values { return None; }
+        let templates = [&self.sequence_assign, &self.sequence_delete, &self.sequence_index,
+            &self.sequence_missing, &self.sequence_unready, &self.sequence_concat,
+            &self.sequence_order, &self.sequence_repeat, &self.sequence_subscript,
+            &self.sequence_unhashable, &self.sequence_empty, &self.sequence_operands];
+        let known = templates.iter().any(|words| words.first().map_or(false, |head| told.starts_with(head)
+            && words.get(1).map_or(told == head, |tail| told.contains(tail))))
+            || self.sequence_missing.iter().skip(2).any(|words| words == told);
+        if !known { return None; }
+        told.split_once(": ")
     }
 
     pub fn parse(text: &str) -> Result<Lang, String> {

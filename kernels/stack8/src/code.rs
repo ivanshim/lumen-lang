@@ -136,13 +136,18 @@ impl Pattern {
                 Ok(false)
             }
             Self::Sequence(parts, star) => {
-                let Value::Array(items) = subject else { return Ok(false); };
+                let items = match subject {
+                    Value::Array(items) | Value::Tuple(items) => items.as_ref().clone(),
+                    Value::List(items) => items.borrow().clone(),
+                    _ => return Ok(false),
+                };
                 let fixed = parts.len() - usize::from(star.is_some());
                 if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
                 let extra = items.len() - fixed;
                 for (i, part) in parts.iter().enumerate() {
                     let held = if *star == Some(i) {
-                        Value::Array(Rc::new(items[i..i + extra].to_vec()))
+                        if matches!(subject, Value::List(_) | Value::Tuple(_)) { Value::list(items[i..i + extra].to_vec()) }
+                        else { Value::Array(Rc::new(items[i..i + extra].to_vec())) }
                     } else {
                         let at = if star.map_or(false, |s| i > s) { i + extra - 1 } else { i };
                         items[at].clone()
@@ -419,6 +424,7 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    SequenceRestore,
     SequenceTuple, SequenceHash, SequenceIndex, SequenceCount,
     SequenceMin, SequenceMax, SequenceSorted, SequenceReversed,
     Sum,

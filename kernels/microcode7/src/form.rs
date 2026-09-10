@@ -59,6 +59,7 @@ pub enum Prim {
     MakeTuple,
     MakeSet,
     GrowSequence(bool),
+    RestoreSequence,
     /// A step onward or back (`++`, `--`): adding or taking away one,
     /// save where a language walks text along its letters instead.
     Onward(bool),

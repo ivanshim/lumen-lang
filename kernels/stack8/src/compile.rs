@@ -4559,7 +4559,8 @@ impl<'a> Compiler<'a> {
                     self.read(&held[i]);
                     self.read(&made);
                     self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    let writer = if self.lang.sequence_values { Builtin::SequenceRestore } else { Builtin::Replace };
+                    self.act(Action::Builtin(writer, Rc::from("put")), 3);
                     self.write(&made);
                 }
                 // What it stood on is written back into, read again as
@@ -4634,7 +4635,8 @@ impl<'a> Compiler<'a> {
                     self.read(&held[i]);
                     self.read(&made);
                     self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    let writer = if self.lang.sequence_values { Builtin::SequenceRestore } else { Builtin::Replace };
+                    self.act(Action::Builtin(writer, Rc::from("put")), 3);
                     self.write(&made);
                 }
                 self.read(&made);

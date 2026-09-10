@@ -4240,6 +4240,7 @@ impl<'a> Builder<'a> {
     }
 
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        let compound = compound.map(|op| if self.table.flag("ext.op.sequence.values") && matches!(op, Prim::Plus | Prim::Times) { Prim::GrowSequence(op == Prim::Times) } else { op });
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
         if let Form::Silenced(inner) = expr {
@@ -4431,7 +4432,7 @@ impl<'a> Builder<'a> {
                 });
                 for i in (0..deep).rev() {
                     let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                    steps.push(prim_call(if self.table.flag("ext.op.sequence.values") { Prim::RestoreSequence } else { Prim::Replace }, vec![holds, key, done]));
                 }
                 // The cells the rewriting stood on were scaffolding, and
                 // are let go now the write has landed: a cell the program
@@ -4516,7 +4517,7 @@ impl<'a> Builder<'a> {
                 });
                 for i in (0..deep).rev() {
                     let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                    steps.push(prim_call(if self.table.flag("ext.op.sequence.values") { Prim::RestoreSequence } else { Prim::Replace }, vec![holds, key, done]));
                 }
                 let back = self.read(&in_cells[0]);
                 steps.push(self.write(&name, back));
@@ -6040,7 +6041,8 @@ impl<'a> Builder<'a> {
         let mapped = family == "map" && (!self.table.flag("ext.syntax.set") || self.sign(&closing)
             || self.ahead_in_item("syntax.map.pair").is_some() || self.on_any("ext.syntax.map.spread"));
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
-            return self.gather_comprehension(next, &closing, mapped);
+            let gathered = self.gather_comprehension(next, &closing, mapped)?;
+            return Ok(if family == "map" && !mapped && self.table.flag("ext.op.sequence.values") { prim_call(Prim::MakeSet, vec![gathered]) } else { gathered });
         }
         let mut value = prim_call(if mapped { Prim::MakeMap } else if self.table.flag("ext.op.sequence.values") { Prim::MakeList } else { Prim::MakeArray }, vec![]);
         while !self.sign(&closing) {

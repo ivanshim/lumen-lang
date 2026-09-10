@@ -1167,7 +1167,7 @@ impl<'a> Engine<'a> {
                 return Ok(shared.borrow().clone());
             }
             if !matches!(frame[s], Value::Blank) {
-                return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
+                return Ok(if slot.moving && !self.lang.sequence_values { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
             }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
@@ -1190,7 +1190,7 @@ impl<'a> Engine<'a> {
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
-            _ if slot.moving => Ok(std::mem::replace(g, Value::Gap)),
+            _ if slot.moving && !self.lang.sequence_values => Ok(std::mem::replace(g, Value::Gap)),
             v => Ok(v.clone()),
         }
     }
@@ -1924,9 +1924,9 @@ impl<'a> Engine<'a> {
                         Value::Bond(cell) => {
                             let cell = cell.clone();
                             let mut inside = cell.borrow_mut();
-                            shared_deep(&mut inside, &keys, makes)?
+                            shared_deep(&mut inside, &keys, makes, self.lang)?
                         }
-                        _ => shared_deep(held, &keys, makes)?,
+                        _ => shared_deep(held, &keys, makes, self.lang)?,
                     };
                     self.data.push(Value::Bond(shared));
                 }
@@ -2170,7 +2170,7 @@ impl<'a> Engine<'a> {
                     Value::Bond(cell) => {
                         let shared = {
                             let mut inside = cell.borrow_mut();
-                            shared_deep(&mut inside, &keys, makes)?
+                            shared_deep(&mut inside, &keys, makes, self.lang)?
                         };
                         Value::Bond(shared)
                     }
@@ -3312,7 +3312,9 @@ impl<'a> Engine<'a> {
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
+        let held;
         let values: Vec<&Value> = match arguments {
+            Value::List(items) => { held = items.borrow(); held.iter().collect() }
             Value::Tuple(items) | Value::Array(items) => items.iter().collect(),
             one => vec![one],
         };
@@ -3362,7 +3364,25 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn sequence_needs_protocol(value: &Value, seen: &mut Vec<usize>) -> bool {
+        let pointer = match value {
+            Value::Object(_) => return true,
+            Value::List(items) => Rc::as_ptr(items) as usize,
+            Value::Tuple(items) | Value::Set(items) | Value::Array(items) => Rc::as_ptr(items) as usize,
+            Value::Map(items) => Rc::as_ptr(items) as usize,
+            Value::Bond(cell) => return Self::sequence_needs_protocol(&cell.borrow(), seen),
+            _ => return false,
+        };
+        if seen.contains(&pointer) { return false; }
+        seen.push(pointer);
+        match value {
+            Value::Map(items) => items.iter().any(|(k, v)| Self::sequence_needs_protocol(k, seen) || Self::sequence_needs_protocol(v, seen)),
+            _ => value.sequence_items().unwrap_or_default().iter().any(|v| Self::sequence_needs_protocol(v, seen)),
+        }
+    }
+
     fn sequence_hash_checked(&self, v: &Value) -> Res<i64> {
+        if Self::sequence_needs_protocol(v, &mut Vec::new()) { return Err(self.lang.sequence_unready[0].clone()); }
         if let Value::Tuple(items) = v {
             for item in items.iter() { self.sequence_hash_checked(item)?; }
         }
@@ -3372,9 +3392,12 @@ impl<'a> Engine<'a> {
     fn sequence_builtin(&self, which: Builtin, args: &[Value]) -> Res<Value> {
         let unready = || self.lang.sequence_unready[0].clone();
         let amiss = || self.lang.call_amiss[0].clone();
+        if matches!(which, Builtin::SequenceIndex | Builtin::SequenceCount | Builtin::SequenceMin | Builtin::SequenceMax | Builtin::SequenceSorted)
+            && args.iter().any(|v| Self::sequence_needs_protocol(v, &mut Vec::new())) { return Err(unready()); }
         match which {
             Builtin::SequenceTuple => {
                 if args.len() > 1 { return Err(amiss()); }
+                if matches!(args.first(), Some(Value::Tuple(_))) { return Ok(args[0].clone()); }
                 let parts = if let Some(source) = args.first() { self.comprehension_items(source)? } else { Vec::new() };
                 Ok(Value::Tuple(Rc::new(parts)))
             }
@@ -3419,7 +3442,7 @@ impl<'a> Engine<'a> {
                 let items = self.comprehension_items(source)?;
                 let bound = |at: usize, default: usize| -> Res<usize> {
                     let Some(v) = args.get(at) else { return Ok(default); };
-                    let n = match v { Value::Small(n) => BigInt::from(*n), Value::Huge(n) => (**n).clone(), Value::Flag(b) => BigInt::from(i64::from(*b)), Value::Null => return Ok(default), _ => return Err(unready()) };
+                    let n = match v { Value::Small(n) => BigInt::from(*n), Value::Huge(n) => (**n).clone(), Value::Flag(b) => BigInt::from(i64::from(*b)), Value::Null if matches!(source, Value::Text(_)) => return Ok(default), _ => return Err(unready()) };
                     let n = if n < BigInt::from(0) { n + items.len() } else { n };
                     Ok(if n < BigInt::from(0) { 0 } else { n.to_usize().unwrap_or(usize::MAX) })
                 };
@@ -3474,6 +3497,10 @@ impl<'a> Engine<'a> {
     }
 
     fn sequence_operation(&self, op: &Action, a: &Value, b: &Value) -> Option<Res<Value>> {
+        if matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Contains | Action::Lacks)
+            && [a, b].iter().any(|v| Self::sequence_needs_protocol(v, &mut Vec::new())) {
+            return Some(Err(self.lang.sequence_unready[0].clone()));
+        }
         let word = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", Action::Ge => ">=", _ => "" };
         if !word.is_empty() {
             if a.sequence_kind() == b.sequence_kind() && matches!(a, Value::List(_) | Value::Tuple(_) | Value::Array(_)) {
@@ -4299,7 +4326,7 @@ impl<'a> Engine<'a> {
     fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
         if let Value::List(items) = &target {
             let old = Value::array(items.borrow().clone());
-            let replacement = Value::array(self.comprehension_items(&given)?);
+            let replacement = Value::array(self.comprehension_items(&given).map_err(|_| self.lang.slice_assign.clone().unwrap_or_default())?);
             let changed = self.write_slice(old, parts, replacement)?;
             let Value::Array(next) = changed else { unreachable!() };
             *items.borrow_mut() = next.as_ref().clone();
@@ -4487,6 +4514,9 @@ impl<'a> Engine<'a> {
                 }
                 named.push((key, value));
             } else { args.push(value); }
+        }
+        if !named.is_empty() && matches!(builtin, Builtin::SequenceMin | Builtin::SequenceMax | Builtin::SequenceSorted) {
+            return Err(self.lang.sequence_unready[0].clone());
         }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
@@ -5290,11 +5320,22 @@ impl<'a> Engine<'a> {
                     _ => return Err(self.not_an_array()),
                 }
             }
-            Builtin::Replace => {
+            Builtin::SequenceRestore | Builtin::Replace => {
                 arity(3)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if builtin == Builtin::SequenceRestore {
+                    if let Value::Tuple(items) = &target {
+                        let place = self.sequence_place(&target, &at, items.len())?;
+                        let same = match (&items[place], &v) {
+                            (Value::List(a), Value::List(b)) => Rc::ptr_eq(a, b),
+                            (Value::Tuple(a), Value::Tuple(b)) => Rc::ptr_eq(a, b),
+                            _ => false,
+                        };
+                        return if same { Ok(target) } else { Err(self.lang.sequence_unready[0].clone()) };
+                    }
+                }
                 if self.lang.sequence_values && matches!(target, Value::Tuple(_) | Value::Text(_)) {
                     return Err(self.sequence_complaint(&self.lang.sequence_assign, &[target.sequence_kind()]));
                 }
@@ -5826,7 +5867,32 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
 /// The cell of the place a chain of keys names, the arrays and places
 /// along the way made where they are not there yet and the language
 /// makes what a write needs.
-fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<Value>>> {
+fn shared_deep(held: &mut Value, keys: &[Value], makes: bool, lang: &Lang) -> Res<Rc<RefCell<Value>>> {
+    if let Value::Bond(cell) = held { return shared_deep(&mut cell.borrow_mut(), keys, makes, lang); }
+    if let Value::List(items) = held {
+        let (first, rest) = keys.split_first().ok_or("No place was named")?;
+        let mut places = items.borrow_mut();
+        let fault = || format!("{}list{}", lang.sequence_index[0], lang.sequence_index[1]);
+        let raw = match first {
+            Value::Small(n) => *n, Value::Huge(n) => n.to_i64().ok_or_else(fault)?, Value::Flag(b) => i64::from(*b),
+            _ => return Err(format!("{}list{}{}", lang.sequence_subscript[0], lang.sequence_subscript[1], first.sequence_kind())),
+        };
+        let index = if raw < 0 { places.len() as i64 + raw } else { raw };
+        let place = usize::try_from(index).ok().and_then(|i| places.get_mut(i)).ok_or_else(fault)?;
+        if !rest.is_empty() { return shared_deep(place, rest, makes, lang); }
+        if let Value::Bond(cell) = place { return Ok(cell.clone()); }
+        let cell = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
+        *place = Value::Bond(cell.clone());
+        return Ok(cell);
+    }
+    if let Value::Tuple(items) = held {
+        let (first, rest) = keys.split_first().ok_or("No place was named")?;
+        let raw = match first { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None };
+        let index = raw.map(|n| if n < 0 { items.len() as i64 + n } else { n }).and_then(|n| usize::try_from(n).ok());
+        let mut child = index.and_then(|i| items.get(i)).cloned().ok_or_else(|| format!("{}tuple{}", lang.sequence_index[0], lang.sequence_index[1]))?;
+        if !rest.is_empty() { return shared_deep(&mut child, rest, makes, lang); }
+        return Ok(Rc::new(RefCell::new(child)));
+    }
     let Some((last, first)) = keys.split_last() else {
         return Err("No place was named".to_string());
     };
