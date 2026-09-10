@@ -4604,6 +4604,14 @@ impl<'a> Engine<'a> {
                 answer
             }
             Builtin::ProgramNamespace => {
+                if args.len() == 1 {
+                    let Value::Object(module) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()); };
+                    let members = module.fields.borrow().iter().map(|(name, value)| {
+                        let value = match value { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                        (Value::text(name), value)
+                    }).collect();
+                    return Ok(Value::Map(Rc::new(members)));
+                }
                 arity(0)?;
                 Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
                     if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }

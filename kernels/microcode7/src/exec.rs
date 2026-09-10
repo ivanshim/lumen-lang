@@ -3779,7 +3779,17 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(items))
             }
             Prim::ProgramNames => {
-                n(0)?;
+                if !v.is_empty() {
+                    n(1)?;
+                    return match &v[0] {
+                        Value::Thing(owner) => {
+                            let contents = owner.holds.borrow();
+                            let pairs = contents.iter().map(|(key, item)| (Value::text(key), item.clone())).collect();
+                            Ok(Value::Dict(Rc::new(pairs)))
+                        }
+                        _ => Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                    };
+                }
                 let cells = self.outermost.cells.borrow();
                 let mut bindings = Vec::new();
                 for (word, value) in self.idents.iter().zip(cells.iter()) {

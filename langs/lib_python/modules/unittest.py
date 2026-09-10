@@ -214,7 +214,7 @@ class TestCase:
                 successful = False
                 if self._result is None:
                     raise outcome[1]
-                self._result.errors = [*self._result.errors, [self._method, _message(outcome[1], outcome[2])]]
+                self._result.errors = [*self._result.errors, [self._method, _message(outcome[1], outcome[2]), self.id()]]
         return successful
 
     def shortDescription(self):
@@ -306,10 +306,7 @@ class TestCase:
         try:
             getattr(self, self._method)()
         finally:
-            try:
-                self.tearDown()
-            finally:
-                self.doCleanups()
+            self.tearDown()
 
     def run(self, result=None):
         if result is None:
@@ -317,10 +314,11 @@ class TestCase:
         self._result = result
         result.testsRun += 1
         outcome = __call_outcome(self._run_test)
+        self.doCleanups()
         if outcome[0]:
             return result
         error = outcome[1]
-        entry = [self._method, getattr(error, 'message', outcome[2])]
+        entry = [self._method, getattr(error, 'message', outcome[2]), self.id()]
         if isinstance(error, AssertionError):
             result.failures = [*result.failures, entry]
         elif isinstance(error, SkipTest):
@@ -413,10 +411,34 @@ class TestSuite:
 
 class TestLoader:
     def getTestCaseNames(self, cls):
-        return [name for name in __class_methods(cls) if name[:4] == 'test']
+        return _ordered([name for name in __class_methods(cls) if name[:4] == 'test'])
 
     def loadTestsFromTestCase(self, cls):
         return TestSuite([cls(name) for name in self.getTestCaseNames(cls)])
+
+    def loadTestsFromModule(self, module, pattern=None):
+        if module is None or module == '__main__':
+            names = __program_namespace()
+            module_name = '__main__'
+        else:
+            if type(module) == type(''):
+                module = __load_module(module)
+            names = __program_namespace(module)
+            module_name = __class_name(module)
+        suite = TestSuite()
+        for name in _ordered(list(names)):
+            cls = names[name]
+            if isinstance(cls, TestCase) or not getattr(cls, '_test_case', False):
+                continue
+            tests = self.loadTestsFromTestCase(cls)
+            for test in tests.tests:
+                test._test_module = module_name
+            suite.addTest(tests)
+        return suite
+
+    def discover(self, start_dir, pattern='test*.py', top_level_dir=None):
+        raise 'NotImplementedError: test discovery needs filesystem access'
+
 
 def main(module=None, exit=True, verbosity=1):
     names = __program_namespace()
@@ -494,7 +516,7 @@ class _SubTest:
             words += name + '=' + _representation(self.parameters[name])
         if words != '':
             detail += ' (' + words + ')'
-        entry = [detail, _message(value)]
+        entry = [detail, _message(value), self.case.id()]
         result = self.case._result
         if isinstance(value, SkipTest):
             result.skipped = [*result.skipped, entry]
@@ -562,3 +584,130 @@ def _line_diff(first, second):
                 text += '+ ' + right[index]
         index += 1
     return text
+
+
+def _ordered(values):
+    result = []
+    for value in values:
+        at = 0
+        while at < len(result) and result[at] < value:
+            at += 1
+        result = [*result[:at], value, *result[at:]]
+    return result
+
+
+class TextTestRunner:
+    def __init__(self, stream=None, descriptions=True, verbosity=1, failfast=False, buffer=False, resultclass=None, warnings=None, **kwargs):
+        import sys
+        if stream is None:
+            stream = sys.stderr
+        if buffer or warnings is not None or len(kwargs) != 0:
+            raise 'NotImplementedError: these test runner options are not supported'
+        self.stream = stream
+        self.descriptions = descriptions
+        self.verbosity = verbosity
+        self.failfast = failfast
+        self.resultclass = resultclass
+
+    def _write(self, words):
+        self.stream.write(words)
+
+    def _run(self, test, result):
+        if isinstance(test, TestSuite):
+            for member in test.tests:
+                self._run(member, result)
+                if self.failfast and not result.wasSuccessful():
+                    break
+            return None
+        failures = len(result.failures)
+        errors = len(result.errors)
+        skips = len(result.skipped)
+        expected = len(result.expectedFailures)
+        unexpected = len(result.unexpectedSuccesses)
+        if self.verbosity > 1:
+            self._write(test._method + ' (' + test.id() + ') ... ')
+        test.run(result)
+        mark = '.'
+        description = 'ok'
+        if len(result.errors) > errors:
+            mark = 'E'
+            description = 'ERROR'
+        elif len(result.failures) > failures:
+            mark = 'F'
+            description = 'FAIL'
+        elif len(result.skipped) > skips:
+            mark = 's'
+            description = 'skipped ' + repr(result.skipped[-1][1])
+        elif len(result.expectedFailures) > expected:
+            mark = 'x'
+            description = 'expected failure'
+        elif len(result.unexpectedSuccesses) > unexpected:
+            mark = 'u'
+            description = 'unexpected success'
+        if self.verbosity > 1:
+            self._write(description + '\n')
+        elif self.verbosity == 1:
+            self._write(mark)
+
+    def run(self, test):
+        result = TestResult()
+        if self.resultclass is not None:
+            result = self.resultclass()
+        started = __clock()
+        self._run(test, result)
+        elapsed = __clock() - started
+        if self.verbosity > 0:
+            self._write('\n')
+        for error in result.errors:
+            self._failure('ERROR', error, '')
+        for failure in result.failures:
+            self._failure('FAIL', failure, 'AssertionError: ')
+        self._write('-' * 70 + '\n')
+        self._write('Ran ' + str(result.testsRun) + ' tests in ' + ('%.3f' % elapsed) + 's\n\n')
+        counts = []
+        if len(result.failures) > 0:
+            counts = [*counts, 'failures=' + str(len(result.failures))]
+        if len(result.errors) > 0:
+            counts = [*counts, 'errors=' + str(len(result.errors))]
+        if len(result.skipped) > 0:
+            counts = [*counts, 'skipped=' + str(len(result.skipped))]
+        if len(result.expectedFailures) > 0:
+            counts = [*counts, 'expected failures=' + str(len(result.expectedFailures))]
+        if len(result.unexpectedSuccesses) > 0:
+            counts = [*counts, 'unexpected successes=' + str(len(result.unexpectedSuccesses))]
+        status = 'OK'
+        if not result.wasSuccessful():
+            status = 'FAILED'
+        if len(counts) > 0:
+            tail = ''
+            for count in counts:
+                if tail != '':
+                    tail += ', '
+                tail += count
+            status += ' (' + tail + ')'
+        self._write(status + '\n')
+        return result
+
+    def _failure(self, label, entry, prefix):
+        self._write('=' * 70 + '\n')
+        self._write(label + ': ' + entry[0] + ' (' + entry[2] + ')\n')
+        self._write('-' * 70 + '\n')
+        self._write('Traceback (most recent call last):\n')
+        self._write(prefix + entry[1] + '\n\n')
+
+
+def enterModuleContext(context):
+    raise 'NotImplementedError: module context cleanup is not supported'
+
+
+def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
+    if argv is not None and len(argv) > 1:
+        raise 'NotImplementedError: selecting tests from command arguments is not supported'
+    loader = TestLoader()
+    suite = loader.loadTestsFromModule(module)
+    if testRunner is None:
+        testRunner = TextTestRunner(verbosity=verbosity)
+    result = testRunner.run(suite)
+    if exit and not result.wasSuccessful():
+        raise 'test run failed'
+    return result

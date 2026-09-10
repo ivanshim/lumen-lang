@@ -1632,7 +1632,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
-  program has declared without teaching the kernel a test runner.
+  program has declared without teaching the kernel a test runner. Given
+  an object, it instead yields that object's own named members.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
