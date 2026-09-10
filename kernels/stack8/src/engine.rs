@@ -1755,6 +1755,12 @@ impl<'a> Engine<'a> {
         let depth = self.data.len();
         let active = self.caught.len();
         let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match ending {
+            Err(Fault::Note(told)) if !self.slice_word("ext.builtin.slice").is_empty() => {
+                Err(self.as_fault(&told).map_or(Fault::Note(told), Fault::Thrown))
+            }
+            other => other,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
