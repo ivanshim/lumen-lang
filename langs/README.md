@@ -264,6 +264,10 @@ only. The extension labels so far, all from PHP:
   call gives empty text. Encoding and errors are read but cannot yet be
   run, nor can their positional forms; `ext.builtin.to_string.unready`
   gives the plain complaint rather than pretending to decode bytes.
+- `ext.builtin.to_string.method`: the object method used by the text
+  conversion builtin before its usual value rendering.
+- `ext.builtin.class_method`: wraps a callable so reading it from a class
+  or an instance supplies the actual class as its first argument.
 - `ext.builtin.range.value`: a switch making the range builtin a value
   with one, two or three whole-number arguments: end; start and end;
   start, end and step. Its bounds are kept, so its length, indexed places
@@ -428,7 +432,9 @@ only. The extension labels so far, all from PHP:
   words said when the line does not end there or what follows is neither.
   Where `ext.stmt.class.unready` is given, a class may follow as well:
   its whole body is read, but reaching the class gives that complaint
-  before any decorator can be applied to it.
+  before any decorator can be applied to it. With explicit receivers,
+  supported classes and their methods apply decorators and retain the
+  decorated members in the class namespace.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -1573,7 +1579,7 @@ only. The extension labels so far, all from PHP:
   ordinary tuple expressions still heed their own label.
 - `ext.builtin.exceptions.unready`: words said when an exception operation
   asks for means the kernel does not yet possess.
-- `ext.builtin.class.name`: the member naming a class itself. Where the
+- `ext.builtin.class.title`: the member naming a class itself. Where the
   native exception classes are furnished, the kind builtin returns an
   object's class, so this member can name it.
 - `ext.builtin.iter` and `ext.builtin.next`: a walk over a sequence, text,
@@ -1647,6 +1653,14 @@ only. The extension labels so far, all from PHP:
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.
 
+- `ext.builtin.repr`: a builtin yielding quoted text for a value. Text
+  escapes its quotes and control marks; lists and maps show their members
+  in the same fashion. Tuples and sets still share the list's vessel at
+  this stage and therefore share its rendering.
+- `ext.builtin.class.name`: a builtin yielding the name of a class, or of
+  the class an object belongs to. A value of another kind is refused with
+  the module helper's complaint.
+
 - `ext.builtin.class.derive`: a builtin making a fresh class from a name,
   one parent class and a map of shared members. The new class inherits
   its parent's methods. This lets a library make named records without
@@ -1665,7 +1679,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
-  program has declared without teaching the kernel a test runner.
+  program has declared without teaching the kernel a test runner. Given
+  an object, it instead yields that object's own named members.
 - `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
   and writing a member by its name, the owner given first. The reader
   may be given a third value for an absent member; the writer takes the
@@ -2157,10 +2172,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
-| `ext.builtin.class.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.builtin.class.name` | - | - | `__class_name` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
+| `ext.builtin.class.title` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.builtin.class_method` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
-| `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
@@ -2174,7 +2191,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
-| `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
+| `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
@@ -2239,6 +2256,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.method` | - | - | `__str__` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |

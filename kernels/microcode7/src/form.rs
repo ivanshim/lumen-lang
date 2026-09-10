@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    QuotedWorth,
+    ClassTitle,
     MakeHeir,
     CallResult,
     CopyWorth,
@@ -249,6 +251,7 @@ pub enum Prim {
     MakeReal,
     Places,
     AsText,
+    BindClass,
     AsInt,
     AsReal,
     Length,

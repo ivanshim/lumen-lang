@@ -613,6 +613,10 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Read(slot));
             return;
         }
+        if self.lang.builtins.get(name) == Some(&Builtin::ClassBind) {
+            self.constant(Value::text(name));
+            return;
+        }
         if self.refuse_uncarried(name) { return; }
         // The name a language gives the line it is written on stands
         // for that line itself, known while assembling.
@@ -2931,6 +2935,19 @@ impl<'a> Compiler<'a> {
         let mut shared: Vec<(String, String)> = Vec::new();
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
+            let mut decorators = Vec::new();
+            while self.on_any(&lang.decorator_words) {
+                self.take();
+                self.expr(0)?;
+                let held = self.gensym("method_decorator");
+                self.write(&held);
+                decorators.push(held);
+                if self.look().shape != Shape::LineEnd { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
+                self.skip_seps();
+            }
+            if !decorators.is_empty() && !self.on_keyword(&lang.function_words) {
+                return Err(lang.decorator_amiss.clone().unwrap_or_default());
+            }
             if self.on_keyword(&lang.function_words) {
                 self.take();
                 let named = self.want_name("as the method name")?;
@@ -2939,7 +2956,13 @@ impl<'a> Compiler<'a> {
                 shared.retain(|(old, _)| old != &named);
                 let slot = self.gensym("method");
                 self.constant(Value::Routine(method.clone()));
+                let decorated = !decorators.is_empty();
+                for decorator in decorators.into_iter().rev() {
+                    self.read(&decorator);
+                    self.act(Action::Invoke(Rc::from(lang.decorator_words[0].as_str())), 2);
+                }
                 self.write(&slot);
+                if decorated { shared.push((named.clone(), slot.clone())); }
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
                 methods.push((named, method));
             } else if self.on_keyword(&lang.pass_words) {

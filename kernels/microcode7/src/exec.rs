@@ -2339,6 +2339,13 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Receiver(binding) = &stands {
+                    if matches!(binding.1, Value::Nil) { return Err("Unbound class method".to_string().into()); }
+                    let mut given = vec![Form::Const(binding.1.clone())];
+                    given.extend(self.value_list(args, frame)?.into_iter().map(Form::Const));
+                    let call = Form::Apply(Callee::Code(Box::new(Form::Const(binding.0.clone()))), given);
+                    return self.value_of(&call, frame);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2835,7 +2842,7 @@ impl<'a> Machine<'a> {
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
-        if self.table.single("ext.builtin.class.name") == Some(name) {
+        if self.table.single("ext.builtin.class.title") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
         }
         let class = match value {
@@ -2859,7 +2866,9 @@ impl<'a> Machine<'a> {
         if let Some(keeper) = class.keeper(name) {
             return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| {
                 match (value, x) {
-                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    (_, Value::Receiver(pair)) if matches!(pair.1, Value::Nil) => Value::Receiver(Rc::new((pair.0.clone(), Value::Blueprint(class.clone())))),
+                    (Value::Thing(object), Value::Bound(..)) => Value::Receiver(Rc::new((x.clone(), Value::Thing(object.clone())))),
+                    (Value::Thing(object), Value::Routine(body)) => Value::Method(body.clone(), object.clone()),
                     _ => x.clone(),
                 }
             });
@@ -2939,6 +2948,12 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Receiver(binding) = &stands {
+                    let values = self.value_list(args, frame)?;
+                    let call = Form::Apply(Callee::Code(Box::new(Form::Const(stands.clone()))), values.into_iter().map(Form::Const).collect());
+                    if matches!(binding.1, Value::Nil) { return Err("Unbound class method".to_string().into()); }
+                    return self.value_of(&call, frame).map(Next::Value);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -3919,6 +3934,19 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::QuotedWorth => {
+                n(1)?;
+                Value::text(&self.quote_worth(&v[0]))
+            }
+            Prim::ClassTitle => {
+                n(1)?;
+                let title = match &v[0] {
+                    Value::Thing(thing) => Some(thing.of.name.as_str()),
+                    Value::Blueprint(plan) => Some(plan.name.as_str()),
+                    _ => None,
+                };
+                Value::text(title.ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?)
+            }
             Prim::MakeHeir => {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
@@ -3960,7 +3988,23 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(items))
             }
             Prim::ProgramNames => {
-                n(0)?;
+                if v.len() > 1 {
+                    return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_owned());
+                }
+                if !v.is_empty() {
+                    n(1)?;
+                    return match &v[0] {
+                        Value::Thing(owner) => {
+                            let contents = owner.holds.borrow();
+                            let pairs = contents.iter().map(|(key, item)| {
+                                let owned = if let Value::Shared(cell) = item { cell.borrow().clone() } else { item.clone() };
+                                (Value::text(key), owned)
+                            }).collect();
+                            Ok(Value::Dict(Rc::new(pairs)))
+                        }
+                        _ => Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
+                    };
+                }
                 let cells = self.outermost.cells.borrow();
                 let mut bindings = Vec::new();
                 for (word, value) in self.idents.iter().zip(cells.iter()) {
@@ -5187,6 +5231,10 @@ impl<'a> Machine<'a> {
                     _ => return Err(format!("{}() requires a real argument", name)),
                 }
             }
+            Prim::BindClass => {
+                n(1)?;
+                Value::Receiver(Rc::new((v[0].clone(), Value::Nil)))
+            }
             Prim::AsText if self.table.single("ext.builtin.to_string.object").is_some() && v.len() != 1 => {
                 if v.is_empty() { Value::text("") } else { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
             }
@@ -5230,6 +5278,14 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
+                if let Value::Thing(object) = &v[0] {
+                    if let Some(body) = self.table.single("ext.builtin.to_string.method").and_then(|name| object.of.program(name)).cloned() {
+                        return match self.invoke(body, self.outermost.clone(), vec![v[0].clone()]) {
+                            Ok(value) => Ok(value),
+                            Err(over) => { self.got_away = Some(over); Err("text conversion failed".into()) }
+                        };
+                    }
+                }
                 Value::text(&v[0].render(w))
             }
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,
@@ -6438,6 +6494,42 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 }
 
 impl Machine<'_> {
+    fn quote_worth(&self, worth: &Value) -> String {
+        if let Value::Text(letters) = worth {
+            let delimiter = if letters.contains('\'') && !letters.contains('"') { '"' } else { '\'' };
+            let mut body = String::new();
+            for ch in letters.chars() {
+                let piece = if ch == delimiter || ch == '\\' {
+                    format!("\\{ch}")
+                } else {
+                    match ch {
+                        '\t' => "\\t".to_owned(),
+                        '\r' => "\\r".to_owned(),
+                        '\n' => "\\n".to_owned(),
+                        other if other.is_control() => format!("\\x{:02x}", other as u32),
+                        other => other.to_string(),
+                    }
+                };
+                body.push_str(&piece);
+            }
+            return format!("{delimiter}{body}{delimiter}");
+        }
+        let (opening, closing, members) = match worth {
+            Value::Shared(cell) => return self.quote_worth(&cell.borrow()),
+            Value::Vector(values) => ("[", "]", values.iter().map(|one| self.quote_worth(one)).collect::<Vec<_>>()),
+            Value::Dict(entries) => {
+                let members = entries.iter().map(|entry| {
+                    let key = self.quote_worth(&entry.0);
+                    let item = self.quote_worth(&entry.1);
+                    format!("{key}: {item}")
+                }).collect();
+                ("{", "}", members)
+            }
+            _ => return worth.render(self.wording()),
+        };
+        format!("{}{}{}", opening, members.join(", "), closing)
+    }
+
     fn copy_worth(&mut self, value: &Value, descend: bool, known: &mut Vec<(usize, Value)>) -> Value {
         if let Value::Thing(original) = value {
             let key = Rc::as_ptr(original) as usize;

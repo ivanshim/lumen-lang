@@ -338,7 +338,16 @@
     "__class_methods"
   ],
   "ext.builtin.class.name": [
+    "__class_name"
+  ],
+  "ext.builtin.class.title": [
     "__name__"
+  ],
+  "ext.builtin.class_method": [
+    "classmethod"
+  ],
+  "ext.builtin.clock": [
+    "__clock"
   ],
   "ext.builtin.copy": [
     "__copy_value"
@@ -376,6 +385,9 @@
   ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
+  ],
+  "ext.builtin.exit": [
+    "__finish"
   ],
   "ext.builtin.instance": [
     "isinstance"
@@ -494,6 +506,9 @@
   ],
   "ext.builtin.to_string.errors": [
     "errors"
+  ],
+  "ext.builtin.to_string.method": [
+    "__str__"
   ],
   "ext.builtin.to_string.object": [
     "object"

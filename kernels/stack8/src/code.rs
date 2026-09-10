@@ -325,6 +325,8 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    ReprValue,
+    ClassName,
     DeriveClass,
     CallOutcome,
     CopyValue,
@@ -484,6 +486,7 @@ pub enum Builtin {
     MakeReal,
     Places,
     ToText,
+    ClassBind,
     ToInt,
     AsReal,
     Length,
