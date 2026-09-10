@@ -242,6 +242,13 @@ pub struct Wording<'a> {
 }
 
 impl Value {
+    pub fn builtin_value(&self) -> Option<Value> {
+        if let Value::Object(o) = self {
+            return o.fields.borrow().iter().find(|(n, _)| n == "\0builtin-value").map(|(_, v)| v.clone());
+        }
+        None
+    }
+
     pub fn keeps_point(&self) -> bool {
         match self {
             Value::Real(r) => r.point,
@@ -260,6 +267,7 @@ impl Value {
     }
 
     pub fn contents(&self) -> Value {
+        if let Some(v) = self.builtin_value() { return v.contents(); }
         match self {
             Value::Collection(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
             Value::View(view) => {
@@ -277,6 +285,7 @@ impl Value {
     }
 
     pub fn representation(&self, words: &Wording) -> String {
+        if let Some(v) = self.builtin_value() { return v.representation(words); }
         match self {
             Value::Collection(cell, _) => cell.borrow().representation(words),
             Value::Text(_) => self.string_field(words, "", "r").unwrap_or_else(|| self.plain()),
@@ -390,6 +399,7 @@ impl Value {
     }
 
     pub fn is_true(&self) -> bool {
+        if let Some(v) = self.builtin_value() { return v.is_true(); }
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
             Value::Collection(cell, _) => cell.borrow().is_true(),
@@ -417,6 +427,7 @@ impl Value {
     /// The integer a non-number stands in for: booleans and null count,
     /// text is parsed, the rest refuse.
     pub fn as_big(&self) -> Result<BigInt, String> {
+        if let Some(v) = self.builtin_value() { return v.as_big(); }
         match self {
             Value::Imaginary(_, words) => Err(words.to_string()),
             Value::Small(n) => Ok(BigInt::from(*n)),
@@ -445,6 +456,8 @@ impl Value {
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
     pub fn equals(&self, other: &Value) -> bool {
+        if let Some(v) = self.builtin_value() { return v.equals(other); }
+        if let Some(v) = other.builtin_value() { return self.equals(&v); }
         if let Value::Collection(cell, _) = self { return cell.borrow().equals(&other.contents()); }
         if let Value::Collection(cell, _) = other { return self.equals(&cell.borrow()); }
         if let Some(order) = crate::arith::order_values(self, other) {
@@ -519,6 +532,7 @@ impl Value {
     /// What print shows: the language's words for the literals, the
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
+        if let Some(v) = self.builtin_value() { return v.display(sp); }
         if let Some(told) = self.exception_message(sp) { return told; }
         match self {
             Value::Collection(cell, quote) => if *quote { cell.borrow().representation(sp) } else { cell.borrow().display(sp) },
@@ -650,6 +664,7 @@ impl Value {
 
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
+        if let Some(v) = self.builtin_value() { return v.plain(); }
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Collection(cell, _) => cell.borrow().plain(),
@@ -793,6 +808,12 @@ pub struct Class {
 }
 
 impl Class {
+    pub fn builtin_base(&self) -> Option<Value> {
+        self.constants.iter().find(|(n, _)| n == "\0builtin-base").map(|(_, v)| v.clone())
+            .or_else(|| self.base.as_ref().and_then(|c| c.builtin_base()))
+            .or_else(|| self.answers.iter().find_map(|c| c.builtin_base()))
+    }
+
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
     pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {

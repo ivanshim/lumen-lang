@@ -1284,17 +1284,48 @@
   "ext.stmt.class": [
     "class"
   ],
+  "ext.stmt.class.add": [
+    "__add__"
+  ],
+  "ext.stmt.class.allocate": [
+    "__new__"
+  ],
   "ext.stmt.class.bases.close": [
     ")"
   ],
   "ext.stmt.class.bases.open": [
     "("
   ],
+  "ext.stmt.class.builtin": [
+    "str",
+    "int",
+    "float",
+    "list",
+    "dict",
+    "tuple",
+    "set",
+    "object"
+  ],
   "ext.stmt.class.classmethod": [
     "classmethod"
   ],
   "ext.stmt.class.constructor": [
     "__init__"
+  ],
+  "ext.stmt.class.dictionary": [
+    "__dict__"
+  ],
+  "ext.stmt.class.equal": [
+    "__eq__"
+  ],
+  "ext.stmt.class.item": [
+    "__getitem__"
+  ],
+  "ext.stmt.class.layout": [
+    "TypeError: multiple bases have instance lay-out conflict"
+  ],
+  "ext.stmt.class.missing": [
+    "__missing__"
   ],
   "ext.stmt.class.parent": [
     "super"
@@ -1307,6 +1338,9 @@
   ],
   "ext.stmt.class.static": [
     "staticmethod"
+  ],
+  "ext.stmt.class.string": [
+    "__str__"
   ],
   "ext.stmt.class.this.explicit": true,
   "ext.stmt.class.unready": [

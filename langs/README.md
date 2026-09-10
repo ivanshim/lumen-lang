@@ -1047,6 +1047,15 @@ only. The extension labels so far, all from PHP:
   marks enclosing the classes a declaration stands on. The first base is
   its parent; further bases are read and set aside, without running them.
   A header may name a base by an expression, and may end with a separator.
+- `ext.stmt.class.builtin`: the names of builtin kinds on which a class
+  may stand. Such a thing keeps the worth of its kind beside its own
+  attributes. Further bases are retained when these words are given.
+  `ext.stmt.class.layout` gives the complaint when two bases require
+  unlike layouts. `ext.stmt.class.allocate` names the method which makes
+  a thing before its constructor runs. `ext.stmt.class.string`, `.equal`,
+  `.item`, `.missing` and `.add` name its own answers for text, equality,
+  indexing, an absent mapping key and addition. `.dictionary` names the
+  mapping of its own attributes.
 - `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
   for its object first, rather than having an unwritten parameter put there.
   Calling a class makes its object without a word for making; assignments
@@ -3452,17 +3461,25 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
+| `ext.stmt.class.add` | - | - | `__add__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
+| `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` `object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
+| `ext.stmt.class.dictionary` | - | - | `__dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.equal` | - | - | `__eq__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
 | `ext.stmt.class.hidden` | - | - | - | - | `private` | - | - | - | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | `implements` | - | - | - | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | `interface` | - | - | - | - | - |
+| `ext.stmt.class.item` | - | - | `__getitem__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.layout` | - | - | `TypeError: multiple bases have instance lay-out conflict` | - | - | - | - | - | - | - |
+| `ext.stmt.class.missing` | - | - | `__missing__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
@@ -3472,6 +3489,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.static` | - | - | `staticmethod` | - | - | - | - | - | - | - |
+| `ext.stmt.class.string` | - | - | `__str__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.this.explicit` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |

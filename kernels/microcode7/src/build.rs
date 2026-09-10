@@ -257,7 +257,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool) -> Res<Built> {
     let mut beginnings = seeded.to_vec();
-    for word in table.strings("ext.builtin.exceptions") {
+    for word in table.strings("ext.builtin.exceptions").iter().chain(table.strings("ext.stmt.class.builtin").iter()) {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
     let top = Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
@@ -2269,6 +2269,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let mut setup = Vec::new();
         let mut parent = None;
+        let mut others = Vec::new();
         let mut cannot = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
@@ -2284,6 +2285,10 @@ impl<'a> Builder<'a> {
                     let slot = self.gensym("parent");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
                     parent = Some(slot);
+                } else if table.has_any("ext.stmt.class.builtin") && !keyword && !expanded {
+                    let held = self.gensym("other_base");
+                    setup.push(Form::Write(held.clone(), Box::new(value)));
+                    others.push(held);
                 }
                 first = false;
                 match table.single("syntax.call.separator") {
@@ -2307,6 +2312,7 @@ impl<'a> Builder<'a> {
         let mut attributes = Vec::new();
         let mut values = Vec::new();
         if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
+        values.extend(others.iter().cloned().map(Form::Read));
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
@@ -2316,7 +2322,7 @@ impl<'a> Builder<'a> {
                 methods.retain(|(n, _)| n != &word);
                 if let Some(index) = attributes.iter().position(|n| n == &word) {
                     attributes.remove(index);
-                    values.remove(index + usize::from(parent.is_some()));
+                    values.remove(index + usize::from(parent.is_some()) + others.len());
                 }
                 attributes.push(word);
                 values.push(Form::Read(address));
@@ -2365,7 +2371,7 @@ impl<'a> Builder<'a> {
                     let word = attributes.last().expect("an attribute").clone();
                     if let Some(index) = attributes[..attributes.len() - 1].iter().position(|n| n == &word) {
                         attributes.remove(index);
-                        values.remove(index + usize::from(parent.is_some()));
+                        values.remove(index + usize::from(parent.is_some()) + others.len());
                     }
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(word, place.clone());
                     values.push(Form::Read(place));
@@ -2388,7 +2394,7 @@ impl<'a> Builder<'a> {
             setup.push(self.class_not_ready());
         }
         let plan = Plan {
-            name: named.clone(), answers: 0, field_names: vec![], field_reach: vec![],
+            name: named.clone(), answers: others.len(), field_names: vec![], field_reach: vec![],
             shared_names: attributes, constant_names: vec![], methods, extends: parent.is_some(),
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };

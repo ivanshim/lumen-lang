@@ -22,6 +22,7 @@ impl Value {
     }
 
     pub fn quoted(&self) -> String {
+        if let Some(worth) = self.native_worth() { return worth.quoted(); }
         fn surround(items: &[Value], left: &str, right: &str) -> String {
             let parts: Vec<_> = items.iter().map(Value::quoted).collect();
             format!("{}{}{}", left, parts.join(", "), right)
@@ -65,6 +66,7 @@ impl Value {
     }
 
     pub fn hash_number(&self) -> Option<i64> {
+        if let Some(worth) = self.native_worth() { return worth.hash_number(); }
         let raw = match self {
             Self::Text(chars) if chars.is_empty() => 0,
             Self::Text(chars) => {

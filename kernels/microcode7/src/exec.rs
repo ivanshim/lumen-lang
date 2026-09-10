@@ -351,6 +351,12 @@ impl<'a> Machine<'a> {
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = fault_kinds.get(word) { outermost.cells.borrow_mut()[i] = value.clone(); }
         }
+        for (slot, word) in idents.iter().enumerate() {
+            if table.strings("ext.stmt.class.builtin").contains(word) && !table.prims.contains_key(word) {
+                let root = Blueprint { name: word.to_string(), under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
+                outermost.cells.borrow_mut()[slot] = Value::Blueprint(Rc::new(root));
+            }
+        }
         Machine {
             table,
             fault_kinds,
@@ -2510,15 +2516,26 @@ impl<'a> Machine<'a> {
                 let under = match plan.extends {
                     false => None,
                     true => match given.next() {
-                        Some(Value::Blueprint(b)) => Some(b),
+                        Some(value) => Some(self.native_blueprint(value).ok_or_else(|| format!("Class {} cannot be built on that", plan.name))?),
                         _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
                 for _ in 0..plan.answers {
                     match given.next() {
-                        Some(Value::Blueprint(b)) => answers.push(b),
+                        Some(value) => answers.push(self.native_blueprint(value).ok_or_else(|| format!("Class {} cannot answer to that", plan.name))?),
                         _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
+                    }
+                }
+                if self.table.has_any("ext.stmt.class.builtin") {
+                    let mut layout = None;
+                    for kind in under.iter().chain(answers.iter()) {
+                        if let Some(native) = kind.native_parent() {
+                            if layout.as_ref().map_or(false, |old: &Value| !old.equals(&native)) {
+                                return Err(self.table.single("ext.stmt.class.layout").unwrap_or_default().to_string().into());
+                            }
+                            layout = Some(native);
+                        }
                     }
                 }
                 let mut named = |names: &[String]| -> Vec<(String, Value)> {
@@ -3160,6 +3177,9 @@ impl<'a> Machine<'a> {
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        if matches!(value, Value::Intrinsic(_)) && self.table.single("ext.stmt.class.allocate") == Some(name) {
+            return Some(Value::Member(Rc::new(value.clone()), "\0new-worth".into()));
+        }
         if self.table.single("ext.builtin.class.name") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
         }
@@ -3202,13 +3222,66 @@ impl<'a> Machine<'a> {
             });
         }
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
+        if class.program(name).is_none() && class.native_parent().is_some() {
+            if self.table.single("ext.stmt.class.dictionary") == Some(name) {
+                if let Value::Thing(thing) = value {
+                    return Some(Value::Dict(Rc::new(thing.holds.borrow().iter().filter(|entry| !entry.0.starts_with('\0')).map(|(key, worth)| (Value::text(key), worth.clone())).collect())));
+                }
+            }
+            if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, name)) {
+                return Some(Value::Member(Rc::new(value.clone()), label.trim_start_matches("ext.builtin.method.").to_string()));
+            }
+        }
         class.program(name).map(|body| match value {
             Value::Thing(o) => Value::Method(body.clone(), o.clone()),
             _ => Value::Bound(body.clone(), self.outermost.clone()),
         })
     }
 
+    fn native_blueprint(&self, worth: Value) -> Option<Rc<Blueprint>> {
+        match &worth {
+            Value::Blueprint(kind) => Some(kind.clone()),
+            Value::Intrinsic(word) if self.table.strings("ext.stmt.class.builtin").contains(&word.to_string()) => {
+                Some(Rc::new(Blueprint { name: word.to_string(), under: None, answers: vec![],
+                    reaches: vec![], fields: vec![], methods: vec![], shared: RefCell::new(vec![]),
+                    constants: vec![("\0native-parent".into(), worth)],
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    fn make_native_thing(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, allocate: bool) -> Res<Value> {
+        if !allocate {
+            if let Some(body) = self.table.single("ext.stmt.class.allocate").and_then(|word| kind.program(word)).cloned() {
+                let mut given = vec![Value::Blueprint(kind.clone())];
+                given.extend(row);
+                return self.invoke(body, self.outermost.clone(), given);
+            }
+        }
+        let Some(Value::Intrinsic(word)) = kind.native_parent() else { unreachable!() };
+        let operation = *self.table.prims.get(word.as_ref()).expect("the native maker");
+        let (mut positions, named) = self.open_arguments(row.clone())?;
+        let worth = match self.builtin_names(operation, &word, &mut positions, named)? {
+            Some(value) => value,
+            None => self.prim(operation, &word, &positions)?,
+        }.keep(true);
+        let mut holds = kind.every_field();
+        holds.push(("\0native-worth".into(), worth));
+        self.made += 1;
+        let thing = Rc::new(Thing { of: kind.clone(), holds: RefCell::new(holds), turn: self.made });
+        if !allocate {
+            if let Some(body) = self.table.single("ext.stmt.class.constructor").and_then(|word| kind.program(word)).cloned() {
+                let mut given = vec![Value::Thing(thing.clone())];
+                given.extend(row);
+                self.invoke(body, self.outermost.clone(), given)?;
+            }
+        }
+        Ok(Value::Thing(thing))
+    }
+
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if class.native_parent().is_some() { return self.make_native_thing(class, args, false); }
         if self.is_fault_kind(&class) {
             if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
@@ -3357,6 +3430,13 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "\0new-worth" {
+            if let Some(Value::Blueprint(kind)) = arguments.first() {
+                return self.make_native_thing(kind.clone(), arguments[1..].to_vec(), true);
+            }
+            return Err(self.method_fault("arguments").into());
+        }
+        if let Some(worth) = receiver.native_worth() { return self.value_member(&worth, name, arguments, keywords); }
         let mut found = Vec::new();
         for (word, _) in &keywords {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
@@ -3441,6 +3521,17 @@ impl<'a> Machine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+        }
+        if op == Prim::Say {
+            for worth in positional.iter_mut() {
+                if let Value::Thing(thing) = worth {
+                    if thing.of.native_parent().is_some() {
+                        if let Some(body) = table.single("ext.stmt.class.string").and_then(|n| thing.of.program(n)).cloned() {
+                            *worth = self.invoke(body, self.outermost.clone(), vec![worth.clone()])?;
+                        }
+                    }
+                }
+            }
         }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let mut join = String::from(" ");
@@ -4226,6 +4317,27 @@ impl<'a> Machine<'a> {
             let settled: Vec<Value> = v.iter().map(Value::settled).collect();
             return self.prim(op, name, &settled);
         }
+        if let Some(Value::Thing(thing)) = v.first() {
+            if thing.of.native_parent().is_some() && v.len() == 2 {
+                let label = match op { Prim::At => "ext.stmt.class.item", Prim::Plus => "ext.stmt.class.add", Prim::Eq => "ext.stmt.class.equal", _ => "" };
+                let mut body = self.table.single(label).and_then(|n| thing.of.program(n)).cloned();
+                if op == Prim::At && body.is_none() {
+                    if let Value::Dict(pairs) = v[0].settled() {
+                        if !pairs.iter().any(|pair| pair.0.equals(&v[1])) {
+                            body = self.table.single("ext.stmt.class.missing").and_then(|n| thing.of.program(n)).cloned();
+                        }
+                    }
+                }
+                if let Some(body) = body {
+                    return self.invoke(body, self.outermost.clone(), v.to_vec()).map_err(|fault| self.suspension_fault(fault));
+                }
+            }
+        }
+        if !matches!(op, Prim::Of | Prim::Pluck | Prim::SortOf | Prim::Belongs | Prim::Say | Prim::Out | Prim::HasMember | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::IdentityOf)
+            && v.iter().any(|worth| worth.native_worth().is_some()) {
+            let row = v.iter().map(Value::settled).collect::<Vec<_>>();
+            return self.prim(op, name, &row);
+        }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
@@ -4536,7 +4648,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag((self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag((matches!(&v[0], Value::Intrinsic(_)) && self.table.single("ext.stmt.class.allocate") == Some(word.as_str())) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -6055,6 +6167,7 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Some(worth) = target.native_worth() { return self.element(&worth.settled(), at, how); }
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if self.table.has_any("ext.builtin.exceptions") {
             if let Value::Dict(entries) = target {
@@ -7212,6 +7325,7 @@ impl Machine<'_> {
             Value::Blueprint(class) => Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false))),
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             Value::Intrinsic(word) => {
+                if let Some(worth) = item.native_worth() { return self.core_belongs(&worth.settled(), expected); }
                 let op = self.table.prims.get(word.as_ref());
                 let answer = match op {
                     Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
@@ -7231,7 +7345,7 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        for item in &mut input { *item = item.settled(); }
+        if op != Prim::Belongs { for item in &mut input { *item = item.settled(); } }
         if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};
         use num_integer::Integer;

@@ -30,6 +30,7 @@ impl Value {
     }
 
     pub fn core_repr(&self) -> String {
+        if let Some(v) = self.builtin_value() { return v.core_repr(); }
         match self {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
@@ -68,6 +69,7 @@ impl Value {
     }
 
     pub fn core_hash(&self) -> Option<i64> {
+        if let Some(v) = self.builtin_value() { return v.core_hash(); }
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {

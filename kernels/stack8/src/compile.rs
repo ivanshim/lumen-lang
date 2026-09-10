@@ -276,7 +276,7 @@ fn compile_pass(
     plans: &mut HashMap<usize, BindingPlan>,
     discovering: bool,
 ) -> Res<Rc<Routine>> {
-    for name in &lang.exceptions { table.slot(name); }
+    for name in lang.exceptions.iter().chain(lang.subclass_builtin.iter()) { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let top = Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
@@ -3351,6 +3351,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as the class name")?;
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
+        let mut further = Vec::new();
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
@@ -3368,6 +3369,10 @@ impl<'a> Compiler<'a> {
                     let held = self.gensym("base");
                     self.write(&held);
                     base = Some(held);
+                } else if !lang.subclass_builtin.is_empty() && !keyword && !spread {
+                    let held = self.gensym("base");
+                    self.write(&held);
+                    further.push(held);
                 } else {
                     self.piece().instrs.truncate(from);
                 }
@@ -3463,8 +3468,9 @@ impl<'a> Compiler<'a> {
         }
         let mut count = shared.len();
         if let Some(under) = &base { self.read(under); count += 1; }
+        for held in &further { self.read(held); count += 1; }
         for (_, held) in &shared { self.read(held); }
-        let plan = Plan { name: name.clone(), answers: 0, field_names: Vec::new(), field_reach: Vec::new(),
+        let plan = Plan { name: name.clone(), answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
             shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), count);
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {

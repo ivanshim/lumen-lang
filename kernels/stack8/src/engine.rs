@@ -278,6 +278,11 @@ impl<'a> Engine<'a> {
         for (slot, word) in idents.iter().enumerate() {
             if let Some(value) = native_exceptions.get(word) { world[slot] = value.clone(); }
         }
+        for (slot, word) in idents.iter().enumerate() {
+            if lang.subclass_builtin.contains(word) && !lang.builtins.contains_key(word) {
+                world[slot] = Value::Class(Rc::new(Class { name: word.clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) }));
+            }
+        }
         Engine {
             lang,
             native_exceptions,
@@ -2969,17 +2974,21 @@ impl<'a> Engine<'a> {
                 let base = match plan.extends {
                     false => None,
                     true => match given.next() {
-                        Some(Value::Class(c)) => Some(c),
-                        Some(v) => return Err(format!("Class {} cannot stand on {}", plan.name, v.plain()).into()),
+                        Some(v) => Some(self.subclass_base(v.clone()).ok_or_else(|| format!("Class {} cannot stand on {}", plan.name, v.plain()))?),
                         None => return Err("Stack underflow".to_string().into()),
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
                 for _ in 0..plan.answers {
                     match given.next() {
-                        Some(Value::Class(c)) => answers.push(c),
-                        Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
+                        Some(v) => answers.push(self.subclass_base(v.clone()).ok_or_else(|| format!("Class {} cannot answer to {}", plan.name, v.plain()))?),
                         None => return Err("Stack underflow".to_string().into()),
+                    }
+                }
+                if !self.lang.subclass_builtin.is_empty() {
+                    let kinds: Vec<Value> = base.iter().chain(answers.iter()).filter_map(|c| c.builtin_base()).collect();
+                    if kinds.iter().skip(1).any(|v| !v.equals(&kinds[0])) {
+                        return Err(self.lang.subclass_layout.first().cloned().unwrap_or_default().into());
                     }
                 }
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
@@ -3006,6 +3015,11 @@ impl<'a> Engine<'a> {
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
                     let object = self.exception_instance(class, args, Value::Null);
                     self.data.push(object);
+                    return Ok(());
+                }
+                if class.builtin_base().is_some() {
+                    let result = self.builtin_instance(class, args, false)?;
+                    self.data.push(result);
                     return Ok(());
                 }
                 self.made += 1;
@@ -3040,9 +3054,13 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag((!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag((matches!(&held, Value::Native(..)) && self.lang.subclass_allocate.first().map_or(false, |n| n == name.as_ref())) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Native(b, word) if self.lang.subclass_allocate.first().map_or(false, |n| n == name.as_ref()) => {
+                    Value::ValueMethod(Rc::new((Value::Native(b, word), "\0allocate".into())))
+                }
+
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
@@ -3091,6 +3109,12 @@ impl<'a> Engine<'a> {
                         None if self.lang.member_pipes && o.class.method(name).is_some() => {
                             let method = o.class.method(name).expect("the member exists").clone();
                             Value::Method(o, method)
+                        }
+                        None if o.class.builtin_base().is_some() && self.lang.value_methods.contains_key(name.as_ref()) => {
+                            Value::ValueMethod(Rc::new((Value::Object(o), self.lang.value_methods[name.as_ref()].clone())))
+                        }
+                        None if o.class.builtin_base().is_some() && self.lang.subclass_dictionary.first().map_or(false, |n| n == name.as_ref()) => {
+                            Value::Map(Rc::new(o.fields.borrow().iter().filter(|(n, _)| !n.starts_with('\0')).map(|(n, v)| (Value::text(n), v.clone())).collect()))
                         }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
@@ -3704,7 +3728,17 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                let label = match dyadic { Action::At => &self.lang.subclass_item, Action::Add => &self.lang.subclass_add, Action::Eq => &self.lang.subclass_equal, _ => &self.lang.subclass_layout };
+                let mut method = if let Value::Object(o) = &a { label.first().and_then(|n| o.class.method(n)).cloned() } else { None };
+                if method.is_none() && matches!(dyadic, Action::At) {
+                    if let (Value::Object(o), Value::Map(pairs)) = (&a, a.contents()) {
+                        if !pairs.iter().any(|(k, _)| k.equals(&b)) { method = self.lang.subclass_missing.first().and_then(|n| o.class.method(n)).cloned(); }
+                    }
+                }
+                if let Some(method) = method {
+                    self.invoke(&method, vec![a, b])?;
+                    self.drop_top()?
+                } else { self.dyadic(dyadic, &a, &b)? }
             }
         };
         self.data.push(self.keep_collection(result));
@@ -3846,6 +3880,7 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if a.builtin_value().is_some() || b.builtin_value().is_some() { return self.dyadic(op, &a.contents(), &b.contents()); }
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -4520,6 +4555,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if target.builtin_value().is_some() { return self.element(&target.contents(), at, how); }
         if matches!(target, Value::Collection(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if !self.lang.exceptions.is_empty() {
             if let Value::Map(pairs) = target {
@@ -4818,6 +4854,18 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if builtin == Builtin::Say {
+            for value in &mut args {
+                if let Value::Object(o) = value {
+                    if o.class.builtin_base().is_some() {
+                        if let Some(method) = self.lang.subclass_string.first().and_then(|n| o.class.method(n)).cloned() {
+                            self.invoke(&method, vec![value.clone()]).map_err(|f| f.told(&self.wording()))?;
+                            *value = self.drop_top()?;
+                        }
+                    }
+                }
+            }
+        }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4868,6 +4916,11 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "\0allocate" {
+            let Some(Value::Class(class)) = args.first() else { return Err(self.lang.class_unready[0].clone()); };
+            return self.builtin_instance(class.clone(), args[1..].to_vec(), true).map_err(|f| f.told(&self.wording()));
+        }
+        if let Some(worth) = receiver.builtin_value() { return self.value_method(&worth, operation, args, named); }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
@@ -5039,7 +5092,7 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
+        if !matches!(builtin, Builtin::SortOf | Builtin::InstanceOf | Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
@@ -6671,6 +6724,45 @@ impl Engine<'_> {
         }
     }
 
+    fn subclass_base(&self, value: Value) -> Option<Rc<Class>> {
+        if let Value::Class(class) = &value { return Some(class.clone()); }
+        let Value::Native(_, word) = &value else { return None };
+        if !self.lang.subclass_builtin.contains(&word.to_string()) { return None; }
+        Some(Rc::new(Class { name: word.to_string(), base: None, answers: Vec::new(),
+            fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), shared: RefCell::new(Vec::new()),
+            constants: vec![("\0builtin-base".into(), value)],
+        }))
+    }
+
+    fn builtin_instance(&mut self, class: Rc<Class>, raw: Vec<Value>, allocating: bool) -> Flow<Value> {
+        let native = class.builtin_base().expect("a builtin base");
+        if !allocating {
+            if let Some(method) = self.lang.subclass_allocate.first().and_then(|n| class.method(n)).cloned() {
+                let mut given = vec![Value::Class(class.clone())];
+                given.extend(raw.clone());
+                self.invoke(&method, given)?;
+                let made = self.drop_top()?;
+                return Ok(made);
+            }
+        }
+        let Value::Native(b, word) = native else { unreachable!() };
+        let items = self.call_items(raw.clone())?;
+        let worth = self.builtin_call(b, &word, items)?.held(true);
+        self.made += 1;
+        let mut fields = class.all_fields();
+        fields.push(("\0builtin-value".into(), worth));
+        let made = Rc::new(Instance { class: class.clone(), fields: RefCell::new(fields), mark: self.made });
+        if !allocating {
+            if let Some(method) = self.lang.constructor.as_ref().and_then(|n| class.method(n)).cloned() {
+                let mut given = vec![Value::Object(made.clone())];
+                given.extend(raw);
+                self.invoke(&method, given)?;
+                self.drop_top()?;
+            }
+        }
+        Ok(Value::Object(made))
+    }
+
     fn core_isinstance(&self, value: &Value, kind: &Value) -> Res<bool> {
         if let Value::Tuple(types) = kind {
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
@@ -6679,6 +6771,7 @@ impl Engine<'_> {
         if let Value::Class(class) = kind {
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
+        if let Some(worth) = value.builtin_value() { return self.core_isinstance(&worth.contents(), kind); }
         let b = match kind {
             Value::Native(b, _) => *b,
             Value::SortOf(Sort::Null) => return Ok(matches!(value, Value::Null)),
@@ -6700,7 +6793,7 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
-        for value in &mut args { *value = value.contents(); }
+        if b != Builtin::InstanceOf { for value in &mut args { *value = value.contents(); } }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
         let mut reverse = false;

@@ -221,6 +221,13 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn native_worth(&self) -> Option<Value> {
+        match self {
+            Self::Thing(thing) => thing.holds.borrow().iter().find(|entry| entry.0 == "\0native-worth").map(|entry| entry.1.clone()),
+            _ => None,
+        }
+    }
+
     pub fn point_kept(&self) -> bool {
         match self {
             Self::Frac(e) => e.pointed,
@@ -238,6 +245,7 @@ impl Value {
     }
 
     pub fn settled(&self) -> Value {
+        if let Some(worth) = self.native_worth() { return worth.settled(); }
         if let Value::Mutable(place, _) | Value::Shared(place) = self { return place.borrow().settled(); }
         if let Value::Window(owner, portion) = self {
             let mut items=Vec::new();
@@ -259,6 +267,7 @@ impl Value {
     }
 
     pub fn repr(&self, names: &Names) -> String {
+        if let Some(worth) = self.native_worth() { return worth.repr(names); }
         let settled = self.settled();
         match &settled {
             Value::Text(_) => settled.in_field(*names, "", "r").unwrap_or_else(|| settled.bare()),
@@ -354,6 +363,7 @@ impl Value {
     }
 
     pub fn is_true(&self) -> bool {
+        if let Some(worth) = self.native_worth() { return worth.is_true(); }
         match self {
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
             Value::Mutable(cell, _) => cell.borrow().is_true(),
@@ -402,6 +412,8 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        if let Some(v) = self.native_worth() { return v.equals(other); }
+        if let Some(v) = other.native_worth() { return self.equals(&v); }
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
@@ -492,6 +504,7 @@ impl Value {
     }
 
     pub fn render(&self, w: Names) -> String {
+        if let Some(worth) = self.native_worth() { return worth.render(w); }
         if let Some(words) = self.raised_words(w) { return words; }
         match self {
             Value::Mutable(cell, true) => cell.borrow().repr(&w),
@@ -632,6 +645,7 @@ impl Value {
     }
 
     pub fn bare(&self) -> String {
+        if let Some(worth) = self.native_worth() { return worth.bare(); }
         match self {
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Mutable(place, _) => place.borrow().bare(),
@@ -760,6 +774,12 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    pub fn native_parent(&self) -> Option<Value> {
+        if let Some((_, value)) = self.constants.iter().find(|entry| entry.0 == "\0native-parent") { return Some(value.clone()); }
+        self.under.as_ref().and_then(|parent| parent.native_parent())
+            .or_else(|| self.answers.iter().find_map(|parent| parent.native_parent()))
+    }
+
     pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p),
