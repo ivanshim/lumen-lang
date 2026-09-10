@@ -18,6 +18,7 @@ use crate::value::Value;
 /// them in that routine leaves their bindings and outward leaps whole.
 #[derive(Debug, Clone)]
 pub struct Attempt {
+    pub context: Option<Cell>,
     pub body: (usize, usize),
     pub clauses: Vec<Taking>,
     pub otherwise: Option<(usize, usize)>,
@@ -164,6 +165,8 @@ pub enum Action {
     Match(Rc<Pattern>, Vec<String>, bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
+    ContextEnter,
+    SettleObjects,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -419,6 +422,7 @@ pub enum Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     MapFrom,
+    Repr, Hash, Bool, Sorted, Iter, Next, IsInstance,
     Sum,
     List,
     Any,

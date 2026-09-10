@@ -38,6 +38,9 @@ pub enum Callee {
 pub enum Prim {
     /// A compound write may ask a real to retain its point.
     Pointed,
+    StartContext,
+    DistinctObjects,
+    SpecialRepr, SpecialHash, SpecialBool, SpecialSorted, SpecialIter, SpecialNext, SpecialIsInstance,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.
@@ -453,7 +456,7 @@ pub enum Form {
     /// part that runs however the body ends.
     Again,
     Assert { condition: Box<Form>, message: Box<Form> },
-    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
+    Attempt { context: Option<Address>, body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
     /// A statement together with the line of the source it was written
