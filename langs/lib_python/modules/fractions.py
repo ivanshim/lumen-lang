@@ -10,7 +10,7 @@ def _gcd(a, b):
 def _trim(text):
     while len(text) and text[0] in ' \t\n\r\v\f':
         text = text[1:]
-    while len(text) and text[-1] in ' \t\n\r\v\f':
+    while len(text) and text[len(text) - 1] in ' \t\n\r\v\f':
         text = text[:-1]
     return text
 
