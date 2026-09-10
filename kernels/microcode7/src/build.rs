@@ -5034,6 +5034,12 @@ impl<'a> Builder<'a> {
                     left = invoke(self.read(&name), vec![left]);
                     break;
                 }
+                if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &name)) {
+                    let operation = label.strip_prefix("ext.builtin.method.").expect("a method label");
+                    left = prim_call(Prim::BindValueMethod, vec![left, constant(Value::text(operation))]);
+                    left = self.subscript(left)?;
+                    continue;
+                }
                 let mut args = vec![left];
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
@@ -6155,6 +6161,16 @@ impl<'a> Builder<'a> {
                     if calling {
                         r.advance();
                         args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
+                    }
+                    if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &named)) {
+                        let receiver = args.remove(0);
+                        let operation = label.strip_prefix("ext.builtin.method.").expect("method entry");
+                        let member = prim_call(Prim::BindValueMethod, vec![receiver, constant(Value::text(operation))]);
+                        return Ok(if calling { invoke(member, args) } else { member });
+                    }
+                    if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|key| table.spells(key, &named)) {
+                        args.insert(1, constant(Value::text(&named)));
+                        return Ok(prim_call(Prim::Ask, args));
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {

@@ -5460,6 +5460,10 @@ impl<'a> Compiler<'a> {
             self.read(&name);
             return Ok(());
         }
+        if let Some(operation) = self.lang.value_methods.get(&name).cloned() {
+            self.act(Action::BindValueMethod(Rc::from(operation)), 1);
+            return self.indexing(left);
+        }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace))
             && !self.lang.scope_unready.is_empty()
@@ -6768,6 +6772,13 @@ impl<'a> Compiler<'a> {
                 let finish = self.leap();
                 self.land(fallback);
                 self.pos = resume;
+                if let Some(operation) = lang.value_methods.get(&named) {
+                    self.read(&held);
+                    self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
+                    self.indexing(from)?;
+                    self.land(finish);
+                    continue;
+                }
                 let native = lang.builtins.get(&named).copied();
                 let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
                 if !changes { self.read(&held); }
@@ -6782,6 +6793,8 @@ impl<'a> Compiler<'a> {
                         self.read(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
+                } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
+                    self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;

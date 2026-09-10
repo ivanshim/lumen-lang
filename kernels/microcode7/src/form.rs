@@ -50,6 +50,9 @@ pub enum Prim {
     Iterator,
     Tupled,
     MakeTuple,
+    ValueMethod,
+    BindValueMethod,
+    SortedValues,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

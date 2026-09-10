@@ -192,6 +192,7 @@ pub enum Action {
     Join,
     /// A field rendered with its specification and conversion.
     StringRender,
+    BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,
     At,
@@ -427,6 +428,8 @@ pub enum Builtin {
     Next,
     Iter,
     Tuple,
+    ValueMethod,
+    Sorted,
     Sum,
     List,
     Any,
