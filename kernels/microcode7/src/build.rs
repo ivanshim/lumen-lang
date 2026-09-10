@@ -65,6 +65,7 @@ struct Fork {
 pub struct Builder<'a> {
     surveyed: HashMap<usize, ScopeWords>,
     survey: bool,
+    kind_mark: Option<usize>,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -269,7 +270,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -2340,12 +2341,14 @@ impl<'a> Builder<'a> {
                     self.pos += 2;
                     attributes.push(member);
                     Some(self.expr(0)?)
-                } else if self.look().shape == Shape::Bare && table.spells("block.intro", &self.glance(1).lexeme) {
+                } else if self.look().shape == Shape::Bare && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                     self.pos += 2;
-                    let _annotation = self.expr(0)?;
-                    if self.on_assign() { self.advance(); let _value = self.expr(0)?; }
-                    cannot = true;
-                    None
+                    self.put_by_annotation(&["stmt.assign"])?;
+                    if self.on_assign() {
+                        self.advance();
+                        attributes.push(member);
+                        Some(self.comma_value()?)
+                    } else { None }
                 } else {
                     let _read = self.stmt()?;
                     cannot = true;
@@ -2363,7 +2366,11 @@ impl<'a> Builder<'a> {
                     values.push(Form::Read(place));
                 }
             }
-            if !on_one_line { self.skip_line_ends(); }
+            if on_one_line {
+                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+                    self.advance();
+                }
+            } else { self.skip_line_ends(); }
         }
         if !on_one_line {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
@@ -4351,50 +4358,14 @@ impl<'a> Builder<'a> {
         Ok(Some(sequence(forms)))
     }
 
-    fn with_annotation(&mut self, place: Form, began: usize) -> Res<Form> {
+    fn with_annotation(&mut self, place: Form) -> Res<Form> {
         let table = self.table;
-        let mut depth = 0usize;
-        let mut through_pipe = self.tokens[began..self.pos].iter().any(|word| {
-            if word.shape != Shape::Sign {
-                return false;
-            }
-            let opens = ["syntax.call.open", "syntax.array.open", "syntax.map.open"];
-            let closes = ["syntax.call.close", "syntax.array.close", "syntax.map.close"];
-            if opens.iter().any(|label| table.spells(label, &word.lexeme)) {
-                depth += 1;
-            } else if closes.iter().any(|label| table.spells(label, &word.lexeme)) {
-                depth = depth.saturating_sub(1);
-            } else if depth == 0 {
-                return table.spells("op.pipe", &word.lexeme);
-            }
-            false
-        });
-        let mut end = self.pos;
-        while end > began && self.tokens[end - 1].shape == Shape::Sign
-            && table.spells("syntax.group.close", &self.tokens[end - 1].lexeme) {
-            end -= 1;
-        }
-        if end >= began + 2 && self.tokens[end - 1].shape == Shape::Bare {
-            let before_name = &self.tokens[end - 2];
-            through_pipe |= before_name.shape == Shape::Sign && table.spells("op.pipe", &before_name.lexeme);
-        }
-        let ordinary = matches!(&place, Form::Read(_)
-            | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _));
-        if !ordinary && !through_pipe {
+        if !matches!(&place, Form::Read(_)
+            | Form::Apply(Callee::Prim(Prim::At | Prim::Of, _), _)) {
             return Err(table.single("ext.stmt.annotation.amiss").unwrap_or("Expected an assignment target").to_string());
         }
         self.advance();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
-        if through_pipe && (!table.has_any("ext.op.member") || table.flag("ext.op.member.pipes")) {
-            let mut steps = Vec::new();
-            if self.on_assign() {
-                self.advance();
-                steps.push(self.expr(0)?);
-            }
-            let words = table.single("ext.stmt.annotation.target.unready").unwrap_or("This annotation target cannot be written");
-            steps.push(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
-            return Ok(sequence(steps));
-        }
         if self.on_assign() {
             return self.written(place, false);
         }
@@ -4407,6 +4378,41 @@ impl<'a> Builder<'a> {
             Form::Apply(Callee::Prim(Prim::Of, _), mut parts) => parts.remove(0),
             _ => unreachable!("the annotation target was read above"),
         })
+    }
+
+    /// Seek the kind's sign before reading a statement's place. Marks
+    /// sheltered by brackets are part of the place, not its declaration.
+    fn declaration_mark(&self) -> Option<usize> {
+        if !self.table.has_any("ext.stmt.annotation") { return None; }
+        let mut closings = Vec::new();
+        let mut at = self.pos;
+        while let Some(token) = self.tokens.get(at) {
+            if closings.is_empty() {
+                match token.shape {
+                    Shape::Sign if self.table.spells("ext.stmt.annotation", &token.lexeme) => return Some(at),
+                    Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish => return None,
+                    _ => {}
+                }
+                if ["stmt.assign", "stmt.terminator"].iter().any(|label| self.table.spells(label, &token.lexeme)) {
+                    return None;
+                }
+            }
+            if token.shape == Shape::Sign {
+                if closings.last().copied() == Some(token.lexeme.as_str()) { closings.pop(); }
+                else {
+                    for (open, close) in [("syntax.group.open", "syntax.group.close"),
+                        ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close"),
+                        ("syntax.call.open", "syntax.call.close"), ("op.index.open", "op.index.close")] {
+                        if self.table.spells(open, &token.lexeme) {
+                            if let Some(end) = self.table.single(close) { closings.push(end); }
+                            break;
+                        }
+                    }
+                }
+            }
+            at += 1;
+        }
+        None
     }
 
     fn write_or_expr(&mut self) -> Res<Form> {
@@ -4425,7 +4431,10 @@ impl<'a> Builder<'a> {
         });
         let writing = !self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty();
         self.place_depth += usize::from(writing);
+        let enclosing_mark = self.kind_mark.take();
+        if boundary { self.kind_mark = self.declaration_mark(); }
         let read = self.expr_at(0, false);
+        self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let expr = read?;
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
@@ -4460,7 +4469,7 @@ impl<'a> Builder<'a> {
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
         if boundary && self.on_any("ext.stmt.annotation") {
-            return self.with_annotation(expr, began);
+            return self.with_annotation(expr);
         }
         if !self.on_writing() {
             return self.comma_tail(expr);
@@ -5109,15 +5118,6 @@ impl<'a> Builder<'a> {
                 }
                 self.advance();
                 let name = self.need_word("after the pipe")?;
-                let mut past = 0;
-                while self.glance(past).shape == Shape::Sign && table.spells("syntax.group.close", &self.glance(past).lexeme) {
-                    past += 1;
-                }
-                let next = self.glance(past);
-                if next.shape == Shape::Sign && table.spells("ext.stmt.annotation", &next.lexeme) {
-                    left = invoke(self.read(&name), vec![left]);
-                    break;
-                }
                 if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &name)) {
                     let operation = label.strip_prefix("ext.builtin.method.").expect("a method label");
                     left = prim_call(Prim::BindValueMethod, vec![left, constant(Value::text(operation))]);
@@ -6228,7 +6228,10 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || (self.place_depth == 0 && !self.on_writing())) {
+            let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
+                && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
+                    && table.spells("syntax.group.close", &token.lexeme)));
+            if reaching && table.flag("ext.op.member.pipes") && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
