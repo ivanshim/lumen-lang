@@ -4663,9 +4663,16 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            let mut said = if self.lang.print_real_point && matches!(v, Value::Real(_)) {
-                crate::methods::shown(v, &sp)
-            } else { v.display(&sp) };
+            let mut said = v.display(&sp);
+            if self.lang.print_real_point && matches!(v, Value::Real(_)) {
+                if matches!(v, Value::Real(r) if r.outside()) {
+                    said.make_ascii_lowercase();
+                } else if said.contains('.') && !said.contains(['e', 'E'])
+                    && said.chars().any(|c| matches!(c, '1'..='9')) {
+                    while said.ends_with('0') { said.pop(); }
+                    if said.ends_with('.') { said.push('0'); }
+                }
+            }
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
             {
@@ -5846,8 +5853,10 @@ impl<'a> Engine<'a> {
                     if byte == b'_' && (at == 0 || !bytes[at - 1].is_ascii_digit() || !bytes.get(at + 1).map_or(false, u8::is_ascii_digit)) { return Err(self.lang.to_real_text_amiss[0].clone()); }
                 }
                 let text = source.replace('_', "");
-                if let Some(number) = text.trim().to_ascii_lowercase().parse::<f64>().ok().filter(|n| !n.is_finite()) {
-                    return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES));
+                if let Ok(number) = text.trim().to_ascii_lowercase().parse::<f64>() {
+                    if !number.is_finite() || number == 0.0 && number.is_sign_negative() {
+                        return Ok(crate::value::real_of(number, arith::DEFAULT_PLACES).with_point(true));
+                    }
                 }
                 let number = number_spelled(&text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
                 arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?

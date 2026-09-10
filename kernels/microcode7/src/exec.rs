@@ -6050,7 +6050,9 @@ impl<'a> Machine<'a> {
                     if letters.iter().enumerate().any(|(i, ch)| *ch == '_' && (i == 0 || !letters[i - 1].is_ascii_digit() || letters.get(i + 1).map_or(true, |next| !next.is_ascii_digit()))) { return Err(failure()); }
                     let cleaned: String = letters.into_iter().filter(|ch| *ch != '_').collect();
                     if let Ok(binary) = cleaned.trim().to_ascii_lowercase().parse::<f64>() {
-                        if !binary.is_finite() { return Ok(crate::data::past_the_numbers(binary, math::DEFAULT_PLACES)); }
+                        if !binary.is_finite() || binary == 0.0 && binary.is_sign_negative() {
+                            return Ok(crate::data::worth_of_binary(binary, math::DEFAULT_PLACES).keeping_point(true));
+                        }
                     }
                     number_spelled_in(&Value::text(&cleaned)).ok_or_else(failure)?
                 } else { Value::Small(0) };
@@ -6537,9 +6539,20 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
-            let text = if self.table.flag("ext.builtin.print.real_point") && matches!(x, Value::Frac(r) if r.places.is_some()) {
-                x.in_field(w, "", "").unwrap_or_else(|| x.render(w))
-            } else { x.render(w) };
+            let mut text = x.render(w);
+            if self.table.flag("ext.builtin.print.real_point") {
+                if let Value::Frac(ratio) = x {
+                    if ratio.past_numbers() { text = text.to_ascii_lowercase(); }
+                    else if ratio.places.is_some() && text.contains('.') && !text.contains(['e', 'E']) {
+                        let has_significant_digit = text.bytes().any(|b| (b'1'..=b'9').contains(&b));
+                        if has_significant_digit {
+                            let end = text.trim_end_matches('0').len();
+                            text.truncate(end);
+                            if text.ends_with('.') { text.push('0'); }
+                        }
+                    }
+                }
+            }
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
