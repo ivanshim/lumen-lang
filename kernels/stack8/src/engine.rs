@@ -2292,6 +2292,12 @@ impl<'a> Engine<'a> {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
                 let mut inside = cell.borrow_mut();
+                let storage = match &*inside { Value::List(cell) => Some(cell.clone()), _ => None };
+                let mut contents;
+                let inside = match storage.as_ref() {
+                    Some(cell) => { contents = cell.borrow_mut(); &mut *contents }
+                    None => &mut *inside,
+                };
                 let left = match &*inside {
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
                         let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
@@ -4084,6 +4090,13 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if matches!(target, Value::List(_) | Value::Tuple(_)) && matches!(at, Value::Slice(_)) {
+            let answer = self.element(&target.sequence_view(), at, how)?;
+            if let Value::Array(items) = answer {
+                return Ok(if matches!(target, Value::Tuple(_)) { Value::Tuple(items) } else { Value::list(items.as_ref().clone()) });
+            }
+            return Ok(answer);
+        }
         let target = &target.sequence_view();
         if self.lang.read_from_end {
             if let Value::Small(index) = at {
@@ -6268,7 +6281,7 @@ impl Engine<'_> {
 }
 
 fn instance_matches(value: &Value, kind: &Value) -> bool {
-    if let Value::Array(kinds) = kind { return kinds.iter().any(|k| instance_matches(value, k)); }
+    if let Value::Array(kinds) | Value::Tuple(kinds) = kind { return kinds.iter().any(|k| instance_matches(value, k)); }
     match (value, kind) {
         (Value::Object(object), Value::Class(class)) => {
             let mut here = Some(object.class.clone());

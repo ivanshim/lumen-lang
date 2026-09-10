@@ -1933,6 +1933,12 @@ impl<'a> Machine<'a> {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
                 let mut inside = cell.borrow_mut();
+                let storage = match &*inside { Value::Mutable(cell) => Some(cell.clone()), _ => None };
+                let mut contents;
+                let inside = match storage.as_ref() {
+                    Some(cell) => { contents = cell.borrow_mut(); &mut *contents }
+                    None => &mut *inside,
+                };
                 let left = match &*inside {
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
@@ -3672,7 +3678,7 @@ impl<'a> Machine<'a> {
         }
         let opened;
         let v = if matches!(op, Prim::Length | Prim::Extent | Prim::Partition(..) | Prim::KeyAt | Prim::ItemAt
-            | Prim::Plus | Prim::Times | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+            | Prim::Contains | Prim::Absent | Prim::Plus | Prim::Times | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             opened = v.iter().map(Value::opened_sequence).collect::<Vec<_>>();
             opened.as_slice()
         } else { v };
@@ -5490,6 +5496,13 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if matches!(target, Value::Mutable(_) | Value::Row(_)) && matches!(at, Value::Span(_)) {
+            let answer = self.element(&target.opened_sequence(), at, how)?;
+            if let Value::Vector(items) = answer {
+                return Ok(if matches!(target, Value::Row(_)) { Value::Row(items) } else { Value::mutable_sequence(items.as_ref().clone()) });
+            }
+            return Ok(answer);
+        }
         let target = &target.opened_sequence();
         match (self.table.flag("ext.op.index.from_end"), target, at) {
             (true, Value::Vector(values), Value::Small(n)) if *n < 0 && n.unsigned_abs() <= values.len() as u64 => {
