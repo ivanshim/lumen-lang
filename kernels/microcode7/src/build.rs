@@ -2379,7 +2379,7 @@ impl<'a> Builder<'a> {
         let this = table.single("ext.stmt.class.this").unwrap_or_default().to_string();
         let mut params = Vec::new();
         if !explicit { params.push(this.clone()); }
-        let (given, spares, also_property, said) = self.parameters(name)?;
+        let (given, spares, also_property, said) = self.parameters(name, false)?;
         self.statics.extend(said);
         params.extend(given);
         // The thing it is for is always given, so every place moves by one.
@@ -3361,9 +3361,10 @@ impl<'a> Builder<'a> {
 
 
     /// The parameters of a function or a method, up to the closing bracket.
-    fn parameters(&mut self, named: &str) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
+    fn parameters(&mut self, named: &str, short: bool) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
         let table = self.table;
-        let close = table.single("syntax.call.close").unwrap().to_string();
+        let close = if short { table.strings("ext.stmt.function.short")[1].clone() }
+            else { table.single("syntax.call.close").unwrap().to_string() };
         let typed = table.flag("stmt.let.type_first");
         let mut params = Vec::new();
         let bind = table.flag("ext.syntax.call.bind_names");
@@ -3450,7 +3451,7 @@ impl<'a> Builder<'a> {
                 }
                 self.formal_kinds.push(kind);
                 params.push(self.need_word("as a parameter name")?);
-                if self.on_any("ext.stmt.annotation") {
+                if !short && self.on_any("ext.stmt.annotation") {
                     self.advance();
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().lexeme) {
@@ -3623,7 +3624,7 @@ impl<'a> Builder<'a> {
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
-        let (params, spares, _, said) = self.parameters(&name)?;
+        let (params, spares, _, said) = self.parameters(&name, false)?;
         let least = params.len() - spares.len();
         let formals = params.clone();
         let keep_defaults = table.flag("ext.syntax.call.bind_names");
@@ -3806,9 +3807,29 @@ impl<'a> Builder<'a> {
     fn short_func(&mut self) -> Res<Form> {
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        if table.flag("ext.syntax.call.bind_names") {
+            let (params, spares, _, _) = self.parameters(ANONYMOUS, true)?;
+            let manners = self.taking.take();
+            let body_at = self.pos;
+            let mut held = Vec::new();
+            for (_, from) in &spares {
+                self.pos = *from;
+                held.push(self.expr(0)?);
+            }
+            self.pos = body_at;
+            self.taking = manners;
+            let least = params.len() - spares.len();
+            let program = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, params, least, |r| {
+                for (place, _) in &spares { r.carrying.push(*place); }
+                r.expr(0)
+            })?;
+            if held.is_empty() { return Ok(program); }
+            held.insert(0, program);
+            return Ok(prim_call(Prim::Carry, held));
+        }
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after the word for a short routine")?;
-        let (params, spares, _, said) = self.parameters(ANONYMOUS)?;
+        let (params, spares, _, said) = self.parameters(ANONYMOUS, false)?;
         let least = params.len() - spares.len();
         let formals = params.clone();
         let returns_here = self.look().shape == Shape::Sign
@@ -5148,7 +5169,7 @@ impl<'a> Builder<'a> {
                 } else if table.spells("ext.builtin.print.file.error", &t.lexeme) {
                     constant(Value::Channel(2))
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
-                    && table.single("syntax.call.open").map_or(false, |o| self.sign(o))
+                    && (table.flag("ext.syntax.call.bind_names") || table.single("syntax.call.open").map_or(false, |o| self.sign(o)))
                 {
                     // A routine written short is one expression, and
                     // takes with it every name standing around it: it

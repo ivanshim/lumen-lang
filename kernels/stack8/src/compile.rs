@@ -3567,7 +3567,7 @@ impl<'a> Compiler<'a> {
                 self.formal_kinds.push(kind.clone());
                 kinded.push(kind);
                 formals.push(self.want_name("as a parameter name")?);
-                if self.on_any(&lang.annotation_marks) {
+                if call.close != lang.short_function.as_ref().map_or("", |(_, mark)| mark.as_str()) && self.on_any(&lang.annotation_marks) {
                     self.take();
                     let mut ends = lang.assign_words.clone();
                     ends.push(call.close.clone());
@@ -3886,6 +3886,30 @@ impl<'a> Compiler<'a> {
     fn short_value(&mut self) -> Res<()> {
         let lang = self.lang;
         let (_, mark) = lang.short_function.clone().expect("a word for a short routine");
+        if lang.bind_names {
+            let mut bounds = lang.calling.clone().ok_or("This language has no call syntax")?;
+            bounds.close = mark;
+            let (formals, spares, _) = self.parameters(ANONYMOUS, &bounds)?;
+            let rules = self.parameter_rules.take();
+            let began = self.pos;
+            for (_, from) in &spares {
+                self.pos = *from;
+                self.expr(0)?;
+            }
+            self.pos = began;
+            self.parameter_rules = rules;
+            let least = formals.len() - spares.len();
+            let program = self.routine(ANONYMOUS, formals, least, true, |a| {
+                a.carrying.extend(spares.iter().map(|(at, _)| *at));
+                a.expr(0)?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            })?;
+            self.constant(Value::Routine(program));
+            if !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
+            return Ok(());
+        }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after the word for a short routine")?;
@@ -5475,7 +5499,7 @@ impl<'a> Compiler<'a> {
                 } else if Lang::spells(&lang.print_file_output, &tok.lexeme) {
                     self.constant(Value::Stream(false));
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
-                    && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
+                    && (lang.bind_names || lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)))
                 {
                     // A routine written short is one expression, and
                     // takes with it every name standing around it: what

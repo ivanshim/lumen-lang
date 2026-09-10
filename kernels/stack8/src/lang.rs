@@ -735,7 +735,6 @@ pub struct Lang {
     pub call_builtin_amiss: Vec<String>,
     pub spread_amiss: Vec<String>,
     pub spread_pairs_amiss: Vec<String>,
-    pub defaults_amiss: Vec<String>,
     pub parameters_amiss: Vec<String>,
 
     /// The word a routine written short says, and the mark standing
@@ -1879,7 +1878,6 @@ impl Lang {
             range_index: r.strings("ext.builtin.range.index")?,
             spread_amiss: r.strings("ext.syntax.call.spread.amiss")?,
             spread_pairs_amiss: r.strings("ext.syntax.call.spread.pairs.amiss")?,
-            defaults_amiss: r.strings("ext.stmt.function.defaults.amiss")?,
             parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
 
             short_function: match r.strings("ext.stmt.function.short")?.as_slice() {

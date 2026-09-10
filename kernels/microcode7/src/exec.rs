@@ -428,6 +428,10 @@ impl<'a> Machine<'a> {
     /// asked of the thing where it is one, and counted through as an
     /// array is where it is not.
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
+        if self.table.flag("ext.syntax.call.bind_names") && v.iter().any(|x| matches!(x, Value::Shared(_))) {
+            let items: Vec<Value> = v.iter().map(collection_read).collect();
+            return self.walking(op, name, &items);
+        }
         let n = |want: usize| match v.len() == want {
             true => Ok(()),
             false => Err(Escape::Error(format!("{}() expects {} argument(s), got {}", name, want, v.len()))),
@@ -996,6 +1000,9 @@ impl<'a> Machine<'a> {
     }
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
+        if let Value::Shared(held) = item {
+            return self.quoted_remainder(&held.borrow());
+        }
         match item {
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
@@ -1499,7 +1506,7 @@ impl<'a> Machine<'a> {
         let f = ascend(frame, slot.up);
         let v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = v {
-            return Ok(cell.borrow().clone());
+            return Ok(if self.table.flag("ext.syntax.call.bind_names") { Value::Shared(cell) } else { cell.borrow().clone() });
         }
         if !matches!(v, Value::Unset) {
             return Ok(v);
@@ -1525,6 +1532,10 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
+        if self.table.flag("ext.syntax.call.bind_names") {
+            ascend(frame, slot.up).cells.borrow_mut()[slot.at] = self.collection_cell(value);
+            return Ok(());
+        }
         // A cell becomes a name's own only by being tied to it. A plain
         // write of one writes what it holds, so a routine giving back a
         // cell, called without the mark that shares one, hands over a
@@ -1601,7 +1612,7 @@ impl<'a> Machine<'a> {
         }
         match node {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
-            Form::Const(v) => Ok(v.clone()),
+            Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
@@ -1611,7 +1622,7 @@ impl<'a> Machine<'a> {
                     _ => held,
                 };
                 Ok(match held {
-                    Value::Shared(cell) => cell.borrow().clone(),
+                    Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
                     other => other,
                 })
             }
@@ -2282,10 +2293,6 @@ impl<'a> Machine<'a> {
                     {
                         let mut cells = took.cells.borrow_mut();
                         for (slot, held) in program.carried.iter().zip(values) {
-                            if program.taking.is_some() && program.formal_slots.contains(slot)
-                                && matches!(held, Value::Vector(_) | Value::Dict(_) | Value::Thing(_)) {
-                                return Err(self.argument_fault("ext.stmt.function.defaults.amiss", None).into());
-                            }
                             cells[*slot] = held;
                         }
                     }
@@ -2390,6 +2397,7 @@ impl<'a> Machine<'a> {
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
                     if let Some(Value::Span(bounds)) = &key {
+                        let value = collection_read(&value);
                         let old = f.cells.borrow()[i].clone();
                         match old {
                             Value::Shared(cell) => {
@@ -2411,11 +2419,11 @@ impl<'a> Machine<'a> {
                     let over = match shared {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
-                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter)?
+                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
                         }
                         None => {
                             let mut slots = f.cells.borrow_mut();
-                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter)?
+                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
                         }
                     };
                     // More letters handed to a place in text than it has
@@ -2926,7 +2934,7 @@ impl<'a> Machine<'a> {
                 Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
                 Value::Flag(true) => {
                     let fault = || self.argument_fault("ext.syntax.call.spread.pairs.amiss", None);
-                    if let Value::Dict(entries) = &pair.1 {
+                    if let Value::Dict(entries) = collection_read(&pair.1) {
                         for (k, v) in entries.iter() {
                             match k {
                                 Value::Text(text) => names.push((text.to_string(), v.clone())),
@@ -2936,7 +2944,7 @@ impl<'a> Machine<'a> {
                     } else { return Err(fault().into()); }
                 }
                 Value::Flag(false) => {
-                    match &pair.1 {
+                    match &collection_read(&pair.1) {
                         Value::Progression(walk) => {
                             let mut place = BigInt::from(0);
                             while place < walk.count() {
@@ -3469,7 +3477,32 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn collection_cell(&self, value: Value) -> Value {
+        match value {
+            Value::Vector(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
+                Value::Shared(Rc::new(RefCell::new(value))),
+            _ => value,
+        }
+    }
+
+    /// Literal members keep their cells. Other operations ask the
+    /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.table.flag("ext.syntax.call.bind_names") {
+            let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
+                self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple) {
+                self.prim_values(op, name, v)?
+            } else {
+                let unwrapped: Vec<Value> = v.iter().map(collection_read).collect();
+                self.prim_values(op, name, &unwrapped)?
+            };
+            return Ok(self.collection_cell(result));
+        }
+        self.prim_values(op, name, v)
+    }
+
+    fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -5140,7 +5173,7 @@ impl<'a> Machine<'a> {
         // cell holds: the sharing lies between the names, not in the
         // value itself.
         return self.element_within(target, at, how).map(|found| match found {
-            Value::Shared(cell) => cell.borrow().clone(),
+            Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
             held => held,
         });
     }
@@ -5200,6 +5233,10 @@ impl<'a> Machine<'a> {
     }
 
     fn span_written(&self, held: &mut Value, bounds: &[Value], handed: &Value) -> Result<(), String> {
+        if let Value::Shared(cell) = handed {
+            let contents = cell.borrow().clone();
+            return self.span_written(held, bounds, &contents);
+        }
         let Value::Vector(row) = held else { return Err(self.span_complaint("unsupported")) };
         let (span, picked, unit) = self.span_selection(bounds, row.len())?;
         let coming: Vec<Value> = match handed {
@@ -5658,7 +5695,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
     Ok(many)
 }
 
-fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>) -> Result<bool, String> {
+fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>, cells_are_places: bool) -> Result<bool, String> {
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {
@@ -5677,7 +5714,7 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
     if let (Value::Vector(items), true) = (&mut *held, stays) {
         // A place keeping a cell that names share is written through,
         // not written over.
-        if let Some(k) = &key {
+        if let Some(k) = key.as_ref().filter(|_| cells_are_places) {
             if let Some(Value::Shared(cell)) = items.get(as_index(k)?) {
                 *cell.borrow_mut() = value;
                 return Ok(false);
@@ -5701,7 +5738,11 @@ fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &
     };
     let entries = Rc::make_mut(entries);
     let key = key.unwrap_or_else(|| Value::Small(after_keys(entries)));
-    set_key(entries, key, value);
+    if cells_are_places {
+        set_key(entries, key, value);
+    } else if let Some(entry) = entries.iter_mut().find(|entry| entry.0.equals(&key)) {
+        entry.1 = value;
+    } else { entries.push((key, value)); }
     Ok(false)
 }
 
@@ -6000,6 +6041,14 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
     }
 }
 
+fn collection_read(held: &Value) -> Value {
+    if let Value::Shared(inside) = held {
+        inside.borrow().clone()
+    } else {
+        held.clone()
+    }
+}
+
 /// Try a case without touching any cell until all its parts have agreed.
 fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<Option<HashMap<String, Value>>, ()> {
     use crate::form::CaseTest;
@@ -6030,6 +6079,9 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
             gathered.insert(name.clone(), value.clone());
         }
         CaseTest::Series { members, spread } => {
+            if let Value::Shared(cell) = value {
+                return fit_case(test, &cell.borrow(), tuple);
+            }
             let Value::Vector(values) = value else { return Ok(None); };
             let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
             if values.len() < minimum { return Ok(None); }

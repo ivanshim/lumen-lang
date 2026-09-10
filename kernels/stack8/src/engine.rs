@@ -1153,14 +1153,14 @@ impl<'a> Engine<'a> {
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Bond(shared) = &frame[s] {
-                return Ok(shared.borrow().clone());
+                return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
             }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
-            return Ok(shared.borrow().clone());
+            return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
         }
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
@@ -1299,6 +1299,10 @@ impl<'a> Engine<'a> {
     /// A store: into the hole a taking load left, if one is addressed;
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
+        if self.lang.bind_names {
+            self.put_cell(slot, frame, self.keep_collection(v));
+            return Ok(());
+        }
         // A cell only ever becomes a name's own through fastening. A
         // plain write of one writes what it holds, so that a routine
         // giving back a cell, called without the mark that shares one,
@@ -1393,7 +1397,7 @@ impl<'a> Engine<'a> {
             match value {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
-                    Value::Flag(false) => match &pair.1 {
+                    Value::Flag(false) => match &collection_contents(&pair.1) {
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
@@ -1404,7 +1408,7 @@ impl<'a> Engine<'a> {
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
                     },
                     Value::Flag(true) => {
-                        let Value::Map(m) = &pair.1 else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
+                        let Value::Map(m) = collection_contents(&pair.1) else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                         for (key, held) in m.iter() {
                             let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                             items.push((Some(name.to_string()), held.clone()));
@@ -1771,7 +1775,7 @@ impl<'a> Engine<'a> {
                 }
             }
             match &instrs[pc] {
-                Instr::Const(v) => self.data.push(v.clone()),
+                Instr::Const(v) => self.data.push(self.keep_collection(v.clone())),
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
                     Ok(v) => self.data.push(v),
                     Err(told) => match self.offer_to_guard(&told, &mut guards) {
@@ -1790,7 +1794,7 @@ impl<'a> Engine<'a> {
                         .find(|v| !matches!(v, Value::Blank))
                         .unwrap_or_else(|| self.world[slot.far].clone());
                     self.data.push(match held {
-                        Value::Bond(shared) => shared.borrow().clone(),
+                        Value::Bond(shared) if !self.lang.bind_names => shared.borrow().clone(),
                         other => other,
                     });
                 }
@@ -2045,6 +2049,12 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        if self.lang.bind_names && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
+            | Action::WalkFrom | Action::WalkAlone | Action::WalkMore | Action::WalkThis
+            | Action::WalkKey | Action::WalkOnward) {
+            let at = self.data.len().saturating_sub(argc);
+            if let Some(value) = self.data.get_mut(at) { *value = collection_contents(value); }
+        }
         let result = match op {
             Action::Match(pattern, names, tuple) => {
                 let subject = self.drop_top()?;
@@ -2400,13 +2410,13 @@ impl<'a> Engine<'a> {
                 let portions = self.drop_many(2)?;
                 let mut together = Vec::new();
                 for portion in portions {
-                    let Value::Array(items) = portion else { return Err("Tuple portion is not an array".to_string().into()); };
+                    let Value::Array(items) = collection_contents(&portion) else { return Err("Tuple portion is not an array".to_string().into()); };
                     together.extend(items.iter().cloned());
                 }
                 Value::array(together)
             }
             Action::Unpack(count, rest) => {
-                let source = self.drop_top()?;
+                let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
                     Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Array(items) => items.as_ref().clone(),
@@ -2441,11 +2451,11 @@ impl<'a> Engine<'a> {
             }
             Action::GatherItem { map, spread } => {
                 let mut both = self.drop_many(2)?.into_iter();
-                let gathered_so_far = both.next().expect("growing literal");
+                let gathered_so_far = collection_contents(&both.next().expect("growing literal"));
                 let next = both.next().expect("literal item");
                 if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
-                    let new_pairs = match (spread, next) {
+                    let new_pairs = match (spread, collection_contents(&next)) {
                         (true, Value::Map(p)) => p.as_ref().clone(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
@@ -2897,10 +2907,6 @@ impl<'a> Engine<'a> {
                     return Err("Only a routine can carry names away with it".to_string().into());
                 };
                 let carried = self.drop_many(argc - 1)?;
-                if program.parameter_rules.is_some() && program.carried.iter().zip(&carried).any(|(slot, value)|
-                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::Map(_) | Value::Object(_))) {
-                    return Err(self.lang.defaults_amiss[0].clone().into());
-                }
                 let mut made = (*program).clone();
                 made.held = carried;
                 Value::Routine(Rc::new(made))
@@ -3177,7 +3183,7 @@ impl<'a> Engine<'a> {
                 self.dyadic(dyadic, &a, &b)?
             }
         };
-        self.data.push(result);
+        self.data.push(self.keep_collection(result));
         Ok(())
     }
 
@@ -3208,6 +3214,7 @@ impl<'a> Engine<'a> {
     }
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
+        if let Value::Bond(cell) = value { return self.rem_repr(&cell.borrow()); }
         Ok(match value {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
@@ -3953,7 +3960,7 @@ impl<'a> Engine<'a> {
         // holds, since the sharing is between the names and not
         // something the value itself carries.
         let seen = |v: Value| match v {
-            Value::Bond(shared) => shared.borrow().clone(),
+            Value::Bond(shared) if !self.lang.bind_names => shared.borrow().clone(),
             held => held,
         };
         return self.element_held(target, at, how).map(seen);
@@ -4018,6 +4025,7 @@ impl<'a> Engine<'a> {
     }
 
     fn write_slice(&self, target: Value, parts: &[Value; 3], given: Value) -> Res<Value> {
+        let given = collection_contents(&given);
         let Value::Array(mut items) = target else {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         };
@@ -4279,7 +4287,42 @@ impl<'a> Engine<'a> {
         Ok(Value::of_big(if minus { -whole } else { whole }))
     }
 
+    /// Collections kept by a routine remain the same thing when read,
+    /// passed on, or bound to another name.
+    fn keep_collection(&self, held: Value) -> Value {
+        if self.lang.bind_names && matches!(held, Value::Array(_) | Value::Map(_)) {
+            Value::Bond(Rc::new(RefCell::new(held)))
+        } else { held }
+    }
+
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
+        let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
+        let target = if writes { args.last().cloned() } else { None };
+        let last = args.len().saturating_sub(1);
+        for (at, value) in args.iter_mut().enumerate() {
+            if writes && at + 1 == last { continue; }
+            if let Value::Bond(cell) = value {
+                let held = cell.borrow().clone();
+                *value = held;
+            }
+        }
+        let result = self.builtin_values(builtin, name, args)?;
+        if let Some(Value::Bond(cell)) = target {
+            *cell.borrow_mut() = result;
+            Ok(Value::Bond(cell))
+        } else { Ok(self.keep_collection(result)) }
+    }
+
+    fn replace_item(&self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
+        if self.lang.bind_names {
+            if let Some((_, old)) = pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
+                *old = value;
+            } else { pairs.push((key, value)); }
+        } else { put_key(pairs, key, value); }
+    }
+
+    fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -5046,9 +5089,11 @@ impl<'a> Engine<'a> {
                         let i = as_index(&at)?;
                         // A place holding a cell that names share is
                         // written through, not written over.
-                        if let Value::Bond(shared) = &items[i] {
-                            *shared.borrow_mut() = v;
-                            return Ok(Value::Array(items));
+                        if !self.lang.bind_names {
+                            if let Value::Bond(shared) = &items[i] {
+                                *shared.borrow_mut() = v;
+                                return Ok(Value::Array(items));
+                            }
                         }
                         Rc::make_mut(&mut items)[i] = v;
                         Value::Array(items)
@@ -5057,11 +5102,11 @@ impl<'a> Engine<'a> {
                     Value::Array(items) => {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
-                        put_key(&mut pairs, at, v);
+                        self.replace_item(&mut pairs, at, v);
                         Value::Map(Rc::new(pairs))
                     }
                     Value::Map(mut pairs) => {
-                        put_key(Rc::make_mut(&mut pairs), at, v);
+                        self.replace_item(Rc::make_mut(&mut pairs), at, v);
                         Value::Map(pairs)
                     }
                     _ => return Err(self.not_an_array()),
@@ -5761,5 +5806,13 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
     match number_spelled(&text[..end]) {
         Some(opening) => (Some(opening), false),
         None => (None, false),
+    }
+}
+
+/// Read the contents without giving up the collection's own cell.
+fn collection_contents(value: &Value) -> Value {
+    match value {
+        Value::Bond(cell) => cell.borrow().clone(),
+        other => other.clone(),
     }
 }

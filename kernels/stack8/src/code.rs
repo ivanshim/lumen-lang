@@ -136,6 +136,7 @@ impl Pattern {
                 Ok(false)
             }
             Self::Sequence(parts, star) => {
+                if let Value::Bond(cell) = subject { return self.fit(&cell.borrow(), bound, tuple); }
                 let Value::Array(items) = subject else { return Ok(false); };
                 let fixed = parts.len() - usize::from(star.is_some());
                 if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }

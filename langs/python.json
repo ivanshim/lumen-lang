@@ -789,6 +789,10 @@
   "ext.stmt.function.returns": [
     "->"
   ],
+  "ext.stmt.function.short": [
+    "lambda",
+    ":"
+  ],
   "ext.stmt.global": [
     "global"
   ],

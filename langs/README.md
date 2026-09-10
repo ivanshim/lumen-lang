@@ -1496,13 +1496,16 @@ only. The extension labels so far, all from PHP:
   sign after a name in call position, bind arguments by name. Defaults
   fill the places left empty, and a name given twice or
   not wanted is refused. Defaults are worked out where the routine is
-  written and taken away with it. Parameter and call lists may run over
-  lines within their call brackets; a routine's body may also be one
-  statement on the line of its header. Without this switch labels retain their
+  written and taken away with it. Arrays and maps are held in shared
+  cells: changing an item changes the same collection for every name
+  holding it, whilst binding a name anew leaves the collection alone.
+  A default keeps that collection between calls, even when handed back
+  or taken from a name in the defining scope. Parameter and call lists may run over
+  lines within their call brackets; a routine's body may also be a
+  semicolon-separated suite on the line of its header. Without this switch labels retain their
   former meaning, and defaults are worked out when the call begins.
-- `ext.stmt.function.defaults.amiss`: the words said when such a default
-  is mutable. The kernels' arrays and maps are values, so they cannot yet
-  share a mutable default between calls as Python requires.
+- `ext.stmt.function.defaults.amiss`: retained as a diagnostic label;
+  arrays and maps in defaults now share their contents between calls.
 - `ext.syntax.call.spread`: a sign before a call argument handing out its
   items as positional arguments. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
@@ -1521,7 +1524,10 @@ only. The extension labels so far, all from PHP:
   host without another heading.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
-  expression it answers with: PHP's `fn ($x) => $x + $k`. Such a routine
+  expression it answers with: PHP's `fn ($x) => $x + $k`. With
+  `ext.syntax.call.bind_names`, the parameters stand without brackets,
+  as Python's `lambda x=[]: x`, and defaults are kept at definition time.
+  Such a routine
   has nowhere to say which of the names around it it wants, so its body
   is read once to find out and every name it writes goes with it, taken
   as it stands where the routine is written. A name never written to is
@@ -1956,9 +1962,10 @@ is how ordinary values come out and not a thing only the full ones do.
 A parameter may be given a value for calls that leave it out
 (`function f($a, $b = 2)`), in every language whose definition spells
 assignment. It is not a label of its own: it falls out of the parameter
-list. The value is read again inside the program, where its names mean
-what they mean there, and written only when the call left that parameter
-out.
+list. Without `ext.syntax.call.bind_names`, the value is read again
+inside the program, where its names mean what they mean there, and written
+only when the call left that parameter out. With that switch, it is kept
+once where the routine is defined.
 
 ## Hand-written source in a mirror
 
@@ -2466,7 +2473,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
-| `ext.stmt.function.short` | - | - | - | - | `fn` `=>` | - | - | - | - | - |
+| `ext.stmt.function.short` | - | - | `lambda` `:` | - | `fn` `=>` | - | - | - | - | - |
 | `ext.stmt.global` | - | - | `global` | - | `global` | - | - | - | - | - |
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
