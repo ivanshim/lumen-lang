@@ -1062,7 +1062,7 @@ impl<'a> Machine<'a> {
     /// A number as a real of the language's own width.
     fn as_wide_real(&self, v: &Value) -> Value {
         match math::ratio_of(v) {
-            Some(r) => math::make_number(r.above, r.beneath, Some(self.real_figures())).keeping_point(r.pointed),
+            Some(r) => math::made_number(r.above, r.beneath, Some(self.real_figures()), r.under).keeping_point(r.pointed),
             None => v.clone(),
         }
     }
@@ -1193,6 +1193,7 @@ impl<'a> Machine<'a> {
             // A language may show nothing as no text at all, as PHP does,
             // rather than as the word a program writes for it.
             real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
+            bit_reals: self.table.count("ext.system.real.bits").is_some(),
             nil: match self.table.flag("literal.null.silent") {
                 true => "",
                 false => self.table.single("literal.null").unwrap_or("null"),
@@ -3446,6 +3447,11 @@ impl<'a> Machine<'a> {
             Some(_) => return Err(self.argument_fault("ext.syntax.call.amiss", None)),
             None => 10,
         };
+        let invalid_text = || {
+            if let Some((head, middle)) = self.table.around("ext.builtin.to_int.text.detail") {
+                format!("{head}{radix}{middle}{}", self.quoted_remainder(&values[0]).unwrap_or_default())
+            } else { complaint("text.amiss") }
+        };
         if let Value::Text(text) = &values[0] {
             let mut source = text.trim();
             let negative = source.starts_with('-');
@@ -3463,18 +3469,18 @@ impl<'a> Machine<'a> {
             let mut was_digit = false;
             for c in source.chars() {
                 if c == '_' {
-                    if !was_digit { return Err(complaint("text.amiss")); }
+                    if !was_digit { return Err(invalid_text()); }
                     was_digit = false;
                 } else {
-                    if !c.is_ascii() || c.to_digit(base).is_none() { return Err(complaint("text.amiss")); }
+                    if !c.is_ascii() || c.to_digit(base).is_none() { return Err(invalid_text()); }
                     digits.push(c);
                     was_digit = true;
                 }
             }
             if !was_digit || (radix == 0 && !has_prefix && digits.starts_with('0') && digits.bytes().any(|b| b != b'0')) {
-                return Err(complaint("text.amiss"));
+                return Err(invalid_text());
             }
-            let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| complaint("text.amiss"))?;
+            let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| invalid_text())?;
             if negative { number = -number; }
             return Ok(Value::from_big(number));
         }
@@ -4057,6 +4063,72 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn bit_integer(&self, held: &Value) -> Result<BigInt, String> {
+        let number = match held {
+            Value::Flag(true) => BigInt::from(1),
+            Value::Flag(false) => BigInt::from(0),
+            Value::Huge(large) => large.as_ref().clone(),
+            Value::Small(small) => BigInt::from(*small),
+            _ => return Err(self.table.single("ext.op.bit.integer").unwrap_or_default().to_owned()),
+        };
+        Ok(number)
+    }
+
+    fn all_bits(&self, operation: Prim, values: &[Value]) -> Result<Value, String> {
+        let first = self.bit_integer(&values[0])?;
+        if operation == Prim::BitsOver { return Ok(Value::from_big(!first)); }
+        let second = self.bit_integer(&values[1])?;
+        if matches!(operation, Prim::BitsUp | Prim::BitsDown) {
+            if second < BigInt::from(0) {
+                return Err(self.table.single("ext.system.fault.shift").unwrap_or_default().to_owned());
+            }
+            let falls = operation == Prim::BitsDown;
+            if falls && second >= BigInt::from(first.bits()) {
+                return Ok(Value::Small(-i64::from(first < BigInt::from(0))));
+            }
+            if first == BigInt::from(0) { return Ok(Value::Small(0)); }
+            let distance = second.to_usize().ok_or_else(|| self.table.single("ext.op.bit.beyond").unwrap_or_default().to_owned())?;
+            return Ok(Value::from_big(if falls { first >> distance } else { first << distance }));
+        }
+        let combined = match operation {
+            Prim::BitsEither => first | second,
+            Prim::BitsOne => first ^ second,
+            _ => first & second,
+        };
+        match (&values[0], &values[1]) {
+            (Value::Flag(_), Value::Flag(_)) => Ok(Value::Flag(combined != BigInt::from(0))),
+            _ => Ok(Value::from_big(combined)),
+        }
+    }
+
+    fn powered_real(&self, pair: &[Value]) -> Result<Option<Value>, String> {
+        let take = |v: &Value| match v {
+            Value::Flag(t) => math::ratio_of(&Value::Small(if *t { 1 } else { 0 })),
+            _ => math::ratio_of(v),
+        };
+        let Some(base) = take(&pair[0]) else { return Ok(None) };
+        let Some(exponent) = take(&pair[1]) else { return Ok(None) };
+        if base.places.or(exponent.places).is_none() && exponent.above >= BigInt::from(0) {
+            return Ok(None);
+        }
+        let near = |r: &crate::data::Ratio| {
+            if r.under && r.above == BigInt::from(0) { -0.0 }
+            else { crate::data::nearest_binary(&r.above, &r.beneath) }
+        };
+        let b = near(&base);
+        let e = near(&exponent);
+        let fault = |label| self.table.single(label).unwrap_or_default().to_string();
+        if b == 0.0 && e < 0.0 { return Err(fault("ext.op.pow.zero")); }
+        if b < 0.0 && b.is_finite() && e.is_finite() && e.trunc() != e {
+            return Err(fault("ext.op.pow.nonreal"));
+        }
+        let result = b.powf(e);
+        if b.is_finite() && e.is_finite() && result.is_infinite() {
+            return Err(fault("ext.op.pow.overflow"));
+        }
+        Ok(Some(crate::data::worth_of_binary(result, math::DEFAULT_PLACES)))
+    }
+
     fn hash_key(&mut self, value: &Value) -> Result<Value, String> {
         if self.table.has_any("ext.stmt.class.special") && matches!(value, Value::Thing(_)) {
             let hash = self.user_operation(Prim::Hashed, std::slice::from_ref(value))?.ok_or_else(|| self.bad_answer())?;
@@ -4140,7 +4212,7 @@ impl<'a> Machine<'a> {
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         if matches!(subject, Value::Shared(_) | Value::Mutable(..)) { return self.object_words(&subject.settled(), quoted); }
         if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
-        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(subject.render(self.wording())); }
+        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(self.show(std::slice::from_ref(subject))); }
         match subject {
             Value::Keyed(value, _) => self.object_words(value, quoted),
             Value::Attributes(t) => {
@@ -4513,6 +4585,35 @@ impl<'a> Machine<'a> {
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
+        if self.table.flag("ext.op.arithmetic.flags") && v.iter().any(|x| matches!(x, Value::Flag(_))) {
+            let arithmetic = matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Negate | Prim::AsReal);
+            if arithmetic {
+                let counted: Vec<Value> = v.iter().map(|x| match x {
+                    Value::Flag(false) => Value::Small(0), Value::Flag(true) => Value::Small(1), other => other.clone(),
+                }).collect();
+                return self.prim(op, name, &counted);
+            }
+        }
+        if op == Prim::Power && self.table.flag("ext.op.pow.real_exponent") {
+            if let Some(result) = self.powered_real(v)? { return Ok(result); }
+        }
+        if self.table.has_any("ext.op.div.zero") && matches!(op, Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod) {
+            let zero = match &v[1] {
+                Value::Flag(false) => true,
+                other => math::ratio_of(other).map_or(false, |r| r.above == BigInt::from(0) && r.beneath != BigInt::from(0)),
+            };
+            if zero {
+                let reals = v.iter().any(|x| matches!(x, Value::Frac(r) if r.places.is_some()));
+                let label = match op {
+                    Prim::IntDiv if reals => "ext.op.quot.real_zero",
+                    Prim::IntDiv => "ext.op.quot.zero",
+                    Prim::Mod if reals => "ext.op.rem.real_zero",
+                    Prim::Mod => "ext.system.fault.modulo",
+                    _ => "ext.op.div.zero",
+                };
+                return Err(self.table.single(label).unwrap_or_default().to_owned());
+            }
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -5598,6 +5699,8 @@ impl<'a> Machine<'a> {
             Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
             // Turning text over works letter by letter; anything else is
             // read as a whole number of sixty-four bits first.
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown
+                if self.table.flag("ext.op.bit.unbounded") && !(op == Prim::BitsEither && self.table.flag("ext.op.bit.or.maps") && matches!(v, [Value::Dict(_), Value::Dict(_)])) => self.all_bits(op, v)?,
             Prim::BitsOver => match &v[0] {
                 Value::Text(s) => {
                     let over: Vec<u8> = self.table.raw_of(s).iter().map(|b| !b).collect();
@@ -5974,7 +6077,8 @@ impl<'a> Machine<'a> {
                     true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
                     false => (v[0].clone(), v[1].clone()),
                 };
-                let worked = match math::compute(sum, &left, &right) {
+                let binary = if self.table.flag("ext.op.arithmetic.binary") { math::binary_work(sum, &left, &right) } else { None };
+                let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
                     // A language may tell the remainder by nought apart
                     // from the division by it and word that its own
                     // way. The kind of fault is the same for both, so
@@ -6154,6 +6258,15 @@ impl<'a> Machine<'a> {
             }
             Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_)))) => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+                if let Some(Value::Text(source)) = v.first() {
+                    let source = source.trim().to_ascii_lowercase();
+                    let letters = source.strip_prefix(['+', '-']).unwrap_or(&source);
+                    let special = if self.table.spells("ext.builtin.to_real.nan", letters) { Some(f64::NAN) }
+                        else if self.table.spells("ext.builtin.to_real.infinity", letters) {
+                            Some(if source.starts_with('-') { -f64::INFINITY } else { f64::INFINITY })
+                        } else { None };
+                    if let Some(real) = special { return Ok(crate::data::worth_of_binary(real, math::DEFAULT_PLACES)); }
+                }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
                 if let Some(Value::Text(chars)) = v.first() {
                     if let Ok(binary) = chars.trim().to_ascii_lowercase().parse::<f64>() {
@@ -6161,13 +6274,13 @@ impl<'a> Machine<'a> {
                     }
                 }
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
-                math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?
+                self.at_width(math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?)
             }
             Prim::AsReal => {
                 n(1)?;
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
-                    x => math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?,
+                    x => self.at_width(math::to_decimal(x, math::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?),
                 }
             }
             Prim::Length => {

@@ -1147,6 +1147,7 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            binary_reals: self.lang.real_bits.is_some(),
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
             hidden_word: self.lang.hidden_words.first().map(String::as_str),
@@ -2383,7 +2384,7 @@ impl<'a> Engine<'a> {
         if let Value::Binding(cell) = value { return self.special_text(&cell.borrow(), representation); }
         if matches!(value, Value::Bond(_) | Value::Collection(..)) { return self.special_text(&value.contents(), representation); }
         if let Value::Trace(words) = value { return Err(words.to_string()); }
-        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(value.display(&self.wording())); }
+        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(self.render(std::slice::from_ref(value))); }
         if let Value::Object(object) = value {
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
@@ -2901,6 +2902,10 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
+            Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
+                let v = self.drop_top()?;
+                Value::of_big(!self.whole_bits(&v)?)
+            }
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 match &v {
@@ -2928,6 +2933,7 @@ impl<'a> Engine<'a> {
                     self.data.push(answer);
                     return Ok(());
                 }
+                let v = if self.lang.arithmetic_flags { match v { Value::Flag(b) => Value::Small(i64::from(b)), other => other } } else { v };
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -4172,6 +4178,37 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn whole_bits(&self, value: &Value) -> Res<BigInt> {
+        match value {
+            Value::Small(n) => Ok(BigInt::from(*n)),
+            Value::Huge(n) => Ok((**n).clone()),
+            Value::Flag(b) => Ok(BigInt::from(i64::from(*b))),
+            _ => Err(self.lang.bits_integer[0].clone()),
+        }
+    }
+
+    fn wide_bits(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let (left, right) = (self.whole_bits(a)?, self.whole_bits(b)?);
+        let result = match op {
+            Action::BitBoth => left & right,
+            Action::BitEither => left | right,
+            Action::BitOne => left ^ right,
+            _ => {
+                if right < BigInt::from(0) { return Err(self.lang.fault_shift.clone().unwrap_or_default()); }
+                if matches!(op, Action::BitDown) && right >= BigInt::from(left.bits()) {
+                    return Ok(Value::Small(if left < BigInt::from(0) { -1 } else { 0 }));
+                }
+                if left == BigInt::from(0) { return Ok(Value::Small(0)); }
+                let count = right.to_usize().ok_or_else(|| self.lang.bits_beyond[0].clone())?;
+                if matches!(op, Action::BitUp) { left << count } else { left >> count }
+            }
+        };
+        if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+            && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) {
+            Ok(Value::Flag(result != BigInt::from(0)))
+        } else { Ok(Value::of_big(result)) }
+    }
+
     fn mapping_equality(&self, left: &Value, right: &Value) -> bool {
         if let Value::Bond(cell) = left { return self.mapping_equality(&cell.borrow(), right); }
         if let Value::Bond(cell) = right { return self.mapping_equality(left, &cell.borrow()); }
@@ -4188,6 +4225,11 @@ impl<'a> Engine<'a> {
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
+        if self.lang.arithmetic_flags && matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && (matches!(a, Value::Flag(_)) || matches!(b, Value::Flag(_))) {
+            let counted = |v: &Value| match v { Value::Flag(t) => Value::Small(i64::from(*t)), _ => v.clone() };
+            return self.dyadic(op, &counted(a), &counted(b));
+        }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4446,6 +4488,7 @@ impl<'a> Engine<'a> {
                     Value::of_big(joined)
                 }
             }
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.bits_unbounded => self.wide_bits(op, a, b)?,
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));
@@ -4593,7 +4636,44 @@ impl<'a> Engine<'a> {
     /// can be made so. Where a language holds its reals to a width, a
     /// whole number meeting a real is brought to that width first, so
     /// that the two are added as such a language adds them.
+    fn real_power(&self, a: &Value, b: &Value) -> Res<Option<Value>> {
+        let as_number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), _ => v.clone() };
+        let (a, b) = (as_number(a), as_number(b));
+        let (Some(x), Some(y)) = (arith::Exact::from_value(&a), arith::Exact::from_value(&b)) else { return Ok(None) };
+        if x.places.is_none() && y.places.is_none() && y.p >= BigInt::from(0) { return Ok(None); }
+        let binary = |v: &Value, e: &arith::Exact| {
+            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { -0.0 }
+            else { crate::value::as_binary(&e.p, &e.q) }
+        };
+        let (left, right) = (binary(&a, &x), binary(&b, &y));
+        if left == 0.0 && right < 0.0 { return Err(self.lang.power_zero[0].clone()); }
+        if left.is_finite() && left < 0.0 && right.is_finite() && right.fract() != 0.0 {
+            return Err(self.lang.power_nonreal[0].clone());
+        }
+        let raised = left.powf(right);
+        if raised.is_infinite() && left.is_finite() && right.is_finite() {
+            return Err(self.lang.power_overflow[0].clone());
+        }
+        Ok(Some(crate::value::real_of(raised, arith::DEFAULT_PLACES)))
+    }
+
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.power_real && matches!(op, Action::Power) {
+            if let Some(answer) = self.real_power(a, b)? { return Ok(answer); }
+        }
+        if !self.lang.division_zero.is_empty() && matches!(op, Action::Div | Action::DivReal | Action::IntDiv | Action::Mod) {
+            if arith::Exact::from_value(b).map_or(false, |e| e.p == BigInt::from(0) && e.q != BigInt::from(0)) || matches!(b, Value::Flag(false)) {
+                let real = matches!(a, Value::Real(_)) || matches!(b, Value::Real(_));
+                let words = match (op, real) {
+                    (Action::Mod, true) => &self.lang.remainder_real_zero,
+                    (Action::Mod, false) => return Err(self.lang.fault_modulo.clone().unwrap_or_default()),
+                    (Action::IntDiv, true) => &self.lang.quotient_real_zero,
+                    (Action::IntDiv, false) => &self.lang.quotient_zero,
+                    _ => &self.lang.division_zero,
+                };
+                return Err(words[0].clone());
+            }
+        }
         // A language whose division gives a real may still give a whole
         // number where two whole ones divide evenly, which is what the
         // exact division answers with when they do.
@@ -4640,7 +4720,8 @@ impl<'a> Engine<'a> {
                     Action::Mod => Operation::Remainder,
                     _ => Operation::Raise,
                 };
-                match arith::calculate(calc, a, b) {
+                let result = if self.lang.arithmetic_binary { arith::binary_work(calc, a, b) } else { None };
+                match result.or_else(|| arith::calculate(calc, a, b)) {
                     // A language may tell taking the remainder by
                     // nought apart from dividing by it, and word the
                     // one its own way. The class is the same either
@@ -5429,6 +5510,11 @@ impl<'a> Engine<'a> {
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
             return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
         };
+        let invalid = || {
+            if self.lang.integer_text_detail.len() == 2 {
+                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], self.rem_repr(value).unwrap_or_default())
+            } else { self.lang.to_int_text_amiss[0].clone() }
+        };
         let text = text.trim();
         let (minus, digits) = if let Some(tail) = text.strip_prefix('-') { (true, tail) }
             else { (false, text.strip_prefix('+').unwrap_or(text)) };
@@ -5442,9 +5528,9 @@ impl<'a> Engine<'a> {
             && digits.chars().all(|c| c == '_' || c.is_ascii() && c.is_digit(radix));
         let cleaned = digits.replace('_', "");
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
-            return Err(self.lang.to_int_text_amiss[0].clone());
+            return Err(invalid());
         }
-        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(|| self.lang.to_int_text_amiss[0].clone())?;
+        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
         Ok(Value::of_big(if minus { -whole } else { whole }))
     }
 
@@ -6140,17 +6226,25 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
-                if let Some(number) = text.trim().to_ascii_lowercase().parse::<f64>().ok().filter(|n| !n.is_finite()) {
-                    return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES));
+                let plain = text.trim().to_ascii_lowercase();
+                let unsigned = plain.strip_prefix(['+', '-']).unwrap_or(&plain);
+                if Lang::spells(&self.lang.infinity_words, unsigned) || Lang::spells(&self.lang.nan_words, unsigned) {
+                    let special = if Lang::spells(&self.lang.nan_words, unsigned) { f64::NAN }
+                        else if plain.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+                    return Ok(crate::value::real_of(special, arith::DEFAULT_PLACES));
                 }
                 let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
-                arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?
+                self.at_real_width(arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?)
+            }
+            Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
+                let Value::Flag(b) = args[0] else { unreachable!() };
+                arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
             }
             Builtin::AsReal => {
                 arity(1)?;
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
-                    v => arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?,
+                    v => self.at_real_width(arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?),
                 }
             }
             Builtin::Length => {

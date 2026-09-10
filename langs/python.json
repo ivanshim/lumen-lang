@@ -914,8 +914,19 @@
   "ext.builtin.to_int.text.amiss": [
     "ValueError: invalid literal for int()"
   ],
+  "ext.builtin.to_int.text.detail": [
+    "ValueError: invalid literal for int() with base ",
+    ": "
+  ],
   "ext.builtin.to_int.text.required": [
     "TypeError: int() can't convert non-string with explicit base"
+  ],
+  "ext.builtin.to_real.infinity": [
+    "inf",
+    "infinity"
+  ],
+  "ext.builtin.to_real.nan": [
+    "nan"
   ],
   "ext.builtin.to_real.text": true,
   "ext.builtin.to_real.text.amiss": [
@@ -1046,6 +1057,7 @@
   ],
   "ext.lexical.number.point.bare": true,
   "ext.lexical.number.point_edge": true,
+  "ext.lexical.number.point_open": true,
   "ext.lexical.number.separator": [
     "_"
   ],
@@ -1102,6 +1114,8 @@
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
   ],
+  "ext.op.arithmetic.binary": true,
+  "ext.op.arithmetic.flags": true,
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="
@@ -1112,6 +1126,12 @@
   ],
   "ext.op.bit.and": [
     "&"
+  ],
+  "ext.op.bit.beyond": [
+    "OverflowError: too many digits in integer"
+  ],
+  "ext.op.bit.integer": [
+    "TypeError: bitwise operations require integers"
   ],
   "ext.op.bit.left": [
     "<<"
@@ -1132,6 +1152,7 @@
   "ext.op.bit.right": [
     ">>"
   ],
+  "ext.op.bit.unbounded": true,
   "ext.op.bit.whole": true,
   "ext.op.bit.whole.amiss": [
     "TypeError: bit operations require integers"
@@ -1168,6 +1189,9 @@
     "ValueError: comprehension target has the wrong number of values"
   ],
   "ext.op.contains": [],
+  "ext.op.div.zero": [
+    "ZeroDivisionError: division by zero"
+  ],
   "ext.op.eq.maps.unordered": true,
   "ext.op.identical": [
     "is"
@@ -1263,6 +1287,22 @@
   "ext.op.plus.non_number": [
     "TypeError: unary plus requires a number"
   ],
+  "ext.op.pow.nonreal": [
+    "NotImplementedError: complex powers are not supported"
+  ],
+  "ext.op.pow.overflow": [
+    "OverflowError: numerical result out of range"
+  ],
+  "ext.op.pow.real_exponent": true,
+  "ext.op.pow.zero": [
+    "ZeroDivisionError: 0.0 cannot be raised to a negative power"
+  ],
+  "ext.op.quot.real_zero": [
+    "ZeroDivisionError: float floor division by zero"
+  ],
+  "ext.op.quot.zero": [
+    "ZeroDivisionError: integer division or modulo by zero"
+  ],
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
   ],
@@ -1270,6 +1310,9 @@
     "Unsupported string format"
   ],
   "ext.op.rem.formats_text": true,
+  "ext.op.rem.real_zero": [
+    "ZeroDivisionError: float modulo"
+  ],
   "ext.op.tuple": [
     ","
   ],
@@ -1664,6 +1707,9 @@
   "ext.system.fault.class.value": [
     "ValueError"
   ],
+  "ext.system.fault.modulo": [
+    "ZeroDivisionError: integer modulo by zero"
+  ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
   ],
@@ -1673,6 +1719,7 @@
   "ext.system.module.name": [
     "__name__"
   ],
+  "ext.system.real.bits": 64,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

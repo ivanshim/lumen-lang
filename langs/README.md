@@ -279,6 +279,10 @@ only. The extension labels so far, all from PHP:
   are admitted. `ext.builtin.to_int.base.amiss`, `.text.amiss` and
   `.text.required` give plain complaints for a base outside its bounds,
   ill-written digits, and a base given with something other than text.
+- `ext.builtin.to_real.infinity` and `.nan`: lists of words the real
+  reader takes without regard to case, with a sign before them if given.
+  They stand for the number past all finite numbers and the value no
+  number equals. Output retains the kernels' existing `INF` and `NAN` spelling.
 - `ext.builtin.to_real.text`: a switch admitting text to the real reader,
   including a decimal point and a power of ten. An empty call gives
   nought. `ext.builtin.to_real.text.amiss` gives its complaint for text
@@ -905,6 +909,45 @@ only. The extension labels so far, all from PHP:
   its point and exponent. Such a literal can stand within an uncalled
   routine. Upon reaching it, `ext.lexical.number.imaginary.unready` gives
   the plain complaint, for the kernels do not yet hold complex numbers.
+- `ext.lexical.number.point_open`: a switch allowing the decimal point
+  to stand before all the digits or after them, as in `.5` and `5.`.
+- `ext.op.arithmetic.binary`: a switch selecting binary arithmetic for
+  real addition, subtraction, multiplication and division. Python enables
+  it; quotient and remainder keep the shared truncating rule.
+- `ext.op.arithmetic.flags`: a switch making flags count as nought and
+  one in arithmetic, numeric comparison and conversion to a real.
+  Identity keeps the kinds apart, and bit operations keep their own
+  rule for two flags.
+- Python keeps the shared arithmetic at this stage: `//` truncates toward
+  zero and `%` is `a - b * (a // b)`. Thus `-17 // 5` is `-3` and
+  `-17 % 5` is `-2`, unlike CPython's `-4` and `3`. The shared library's
+  `round(x, decimals)` rounds halfway away from zero: `round(2.5, 0)`
+  is `3`, unlike CPython's ties-to-even result `2`. Both arguments are
+  required; negative decimal counts act like zero, and CPython's omitted
+  or null places and `ndigits` keyword are not provided. The examples
+  require these shared rules across all six kernels.
+  Python retains 64-bit real arithmetic but uses the existing kernel
+  rendering, not CPython's shortest round-trip spelling: whole reals
+  omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
+  The usual precision budget includes the leading zero before a fraction;
+  `2 / 3` is shown as `0.66666666666666`, not CPython's `0.6666666666666666`.
+  For example, the kernels show `0.3`, `10000000000000000`,
+  `1`, `0.00001`, `-0`, `INF` and `NAN` where CPython shows
+  `0.30000000000000004`, `1e+16`, `1.0`, `1e-05`, `-0.0`, `inf` and `nan`.
+- `ext.op.pow.real_exponent`: a switch; a real operand or an exponent
+  below nought makes a real power. Whole nonnegative powers stay exact.
+  `ext.op.pow.overflow`, `.zero` and `.nonreal` give plain complaints
+  for a finite power past the real width, nought raised to a negative
+  power, and a power whose answer would not be real.
+- `ext.op.div.zero`, `ext.op.quot.zero`, `ext.op.quot.real_zero` and
+  `ext.op.rem.real_zero`: lists of plain words for division by nought,
+  whole quotient by nought, real quotient by nought and real remainder
+  by nought. Whole remainder uses `ext.system.fault.modulo` as before.
+  With `ext.op.div.zero`, these numeric complaints, the power and bit
+  complaints, and the detailed integer complaint carry their own kind
+  and reach the caller without the usual language banner.
+- `ext.builtin.to_int.text.detail`: two pieces framing the base in the
+  complaint for ill-written integer text; the quoted text follows.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.lexical.number.imaginary`: letters following a decimal number
@@ -2622,6 +2665,12 @@ only. The extension labels so far, all from PHP:
   worked out before the complaint. Method dispatch for this product is
   still owed. The sign may also stand before the assignment mark where
   compound assignment is given; decorator lines keep their own reading.
+- `ext.op.bit.unbounded`: a switch; bit operations take whole numbers
+  of any width, with flags standing for nought and one. Two flags keep
+  their kind under and, or and exclusive or. Text and reals are refused
+  with `ext.op.bit.integer`; a result too large to hold is refused with
+  `ext.op.bit.beyond`. Both are lists of plain words. A negative shift
+  count still takes its complaint from `ext.system.fault.shift`.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -3292,7 +3341,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.text.detail` | - | - | `ValueError: invalid literal for int() with base ` `: ` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.required` | - | - | `TypeError: int() can't convert non-string with explicit base` | - | - | - | - | - | - | - |
+| `ext.builtin.to_real.infinity` | - | - | `inf` `infinity` | - | - | - | - | - | - | - |
+| `ext.builtin.to_real.nan` | - | - | `nan` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
@@ -3346,6 +3398,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.octal_prefix` | - | - | `0o` `0O` | - | `0o` `0O` | - | - | - | - | - |
 | `ext.lexical.number.point.bare` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.point_edge` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.number.point_open` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | `_` | - | `_` | - | - | - | - | - |
 | `ext.lexical.number.separator.after_prefix` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.separator.strict` | - | - | `true` | - | - | - | - | - | - | - |
@@ -3370,11 +3423,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
 | `ext.literal.ellipsis.unready` | - | - | `NotImplementedError: ellipsis values are not supported` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.binary` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
+| `ext.op.bit.beyond` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
+| `ext.op.bit.integer` | - | - | `TypeError: bitwise operations require integers` | - | - | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.left.unready` | - | - | `NotImplementedError: left shifts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
@@ -3383,6 +3440,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.or.maps` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.bit.unbounded` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.whole.amiss` | - | - | `TypeError: bit operations require integers` | - | - | - | - | - | - | - |
 | `ext.op.bit.whole.large` | - | - | `OverflowError: shift count is too large` | - | - | - | - | - | - | - |
@@ -3401,6 +3459,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.contains` | - | - | - | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
+| `ext.op.div.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.op.eq.maps.unordered` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
@@ -3450,6 +3509,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.pipe.attribute` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.plus.non_number` | - | - | `TypeError: unary plus requires a number` | - | - | - | - | - | - | - |
+| `ext.op.pow.nonreal` | - | - | `NotImplementedError: complex powers are not supported` | - | - | - | - | - | - | - |
+| `ext.op.pow.overflow` | - | - | `OverflowError: numerical result out of range` | - | - | - | - | - | - | - |
+| `ext.op.pow.real_exponent` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.pow.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
+| `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: float floor division by zero` | - | - | - | - | - | - | - |
+| `ext.op.quot.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
@@ -3457,6 +3522,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.unsupported` | - | - | `Unsupported string format` | - | - | - | - | - | - | - |
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.rem.real_zero` | - | - | `ZeroDivisionError: float modulo` | - | - | - | - | - | - | - |
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
@@ -3653,7 +3719,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
-| `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
+| `ext.system.fault.modulo` | - | - | `ZeroDivisionError: integer modulo by zero` | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
@@ -3669,7 +3735,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.reading.unexpected` | - | - | - | - | `syntax error, unexpected` | - | - | - | - | - |
 | `ext.system.reading.unexpected.character` | - | - | - | - | `character 0x` | - | - | - | - | - |
 | `ext.system.reading.unmatched` | - | - | - | - | `Unmatched '` `'` | - | - | - | - | - |
-| `ext.system.real.bits` | - | - | - | - | `64` | - | - | - | - | - |
+| `ext.system.real.bits` | - | - | `64` | - | `64` | - | - | - | - | - |
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |

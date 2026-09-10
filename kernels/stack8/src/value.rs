@@ -295,6 +295,7 @@ pub struct Wording<'a> {
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
     pub real_digits: Option<usize>,
+    pub binary_reals: bool,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
@@ -603,6 +604,7 @@ impl Value {
             // to its own count of significant figures.
             Value::Real(r) if r.below && r.p.is_zero() => "-0".to_string(),
             Value::Real(r) if sp.real_digits.is_some() => written_out(as_binary(&r.p, &r.q), figures_now(false).unwrap_or(sp.real_digits)),
+            Value::Real(r) if sp.binary_reals => expanded_real(as_binary(&r.p, &r.q), r.places),
             other => other.plain(),
         }
     }
@@ -1077,10 +1079,11 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
         Value::Frac(r) => (r.p.clone(), r.q.clone(), false),
         _ => return v,
     };
-    match from_binary(as_binary(&p, &q)) {
+    let binary = as_binary(&p, &q);
+    match from_binary(binary) {
         // A nought below nought keeps its minus at any width.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below).with_point(v.keeps_point()),
-        None => v,
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below || binary.is_sign_negative()).with_point(v.keeps_point()),
+        None => real_of(binary, places),
     }
 }
 
@@ -1204,4 +1207,26 @@ fn shortest_real(x: f64) -> String {
         return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
     }
     x.to_string()
+}
+
+/// Keep the ordinary decimal spelling after arithmetic rounds to a binary
+/// width, without exposing the tail of the stored binary ratio.
+fn expanded_real(number: f64, places: usize) -> String {
+    let text = written_out(number, Some(places));
+    let mut text = match text.split_once('E') {
+        None => text,
+        Some((front, power)) => {
+            let sign = if front.starts_with('-') { "-" } else { "" };
+            let digits = front.trim_start_matches('-').replace('.', "");
+            let digits = digits.trim_end_matches('0');
+            format!("{}{}", sign, laid_flat(digits, power.parse().unwrap_or(0)))
+        }
+    };
+    // The ordinary writer counts the leading zero among the places and
+    // stops the fraction when those places are used, without rounding it.
+    if let Some(point) = text.find('.') {
+        let whole = point - usize::from(text.starts_with('-'));
+        text.truncate(text.len().min(point + 1 + places.saturating_sub(whole)));
+    }
+    text
 }
