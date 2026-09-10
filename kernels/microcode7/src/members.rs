@@ -344,14 +344,16 @@ fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)-
     if let Value::Mutable(place,_) = value {
         return Rc::ptr_eq(place,receiver)||circular(&place.borrow(),receiver,level+1);
     }
-    let parts=match value {
-        Value::Vector(items)|Value::Row(items)=>items.to_vec(),
-        Value::Window(owner,_)=>vec![owner.as_ref().clone()],
-        Value::Dict(entries)=>entries.iter().flat_map(|(key,value)|[key.clone(),value.clone()]).collect(),
-        _=>return false,
-    };
-    for part in parts {if circular(&part,receiver,level+1){return true;}}
-    false
+    match value {
+        Value::Vector(items) | Value::Row(items) => {
+            items.iter().any(|part| circular(part, receiver, level + 1))
+        }
+        Value::Window(owner, _) => circular(owner, receiver, level + 1),
+        Value::Dict(entries) => entries.iter().any(|(key, worth)| {
+            circular(key, receiver, level + 1) || circular(worth, receiver, level + 1)
+        }),
+        _ => false,
+    }
 }
 
 fn same_item(left:&Value,right:&Value)->bool{
