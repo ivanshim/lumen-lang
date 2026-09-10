@@ -24,6 +24,8 @@ enum Passage {
 }
 
 pub struct Engine<'a> {
+    class_root: Option<Rc<Class>>,
+    function_members: Vec<(Value, Vec<(String, Value)>)>,
     lang: &'a Lang,
     world: Vec<Value>,
     /// The names of the globals, kept whole so that source read while
@@ -211,6 +213,7 @@ impl<'a> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
+            class_root: None, function_members: Vec::new(),
             lang,
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
@@ -1175,6 +1178,10 @@ impl<'a> Engine<'a> {
             self.complain(Complaint::Warning, &told);
             return Ok(Value::Null);
         }
+        if matches!(self.world[slot.far], Value::Blank) && self.fuller_classes() {
+            if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
+            if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::text(&slot.ident)); }
+        }
         let g = &mut self.world[slot.far];
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
@@ -2045,6 +2052,18 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        if self.fuller_classes() {
+            let result = match op {
+                Action::Grab(name) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; Some(self.class_write(o,name,Some(v),false)?) },
+                Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
+                Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
+                Action::Builtin(Builtin::ClassTool(i), _) => {let args=self.drop_many(argc)?;Some(self.class_work(*i,args)?)},
+                Action::Builtin(Builtin::SortOf, _) => {let args=self.drop_many(argc)?;Some(self.class_type(args)?)},
+                _ => None,
+            };
+            if let Some(v)=result {self.data.push(v);return Ok(());}
+        }
         let result = match op {
             Action::Match(pattern, names, tuple) => {
                 let subject = self.drop_top()?;
@@ -2310,6 +2329,7 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Adapter(w) => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Adapter(w),args)?;self.data.push(v);Ok(())},
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -2548,7 +2568,15 @@ impl<'a> Engine<'a> {
                 let mut take = |names: &[String]| -> Vec<(String, Value)> {
                     names.iter().map(|n| (n.clone(), given.next().unwrap_or(Value::Null))).collect()
                 };
+                if self.fuller_classes() {
+                    let mut members=take(&plan.shared_names);
+                    members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
+                    let mut bases=base.into_iter().collect::<Vec<_>>();bases.extend(answers);
+                    let result=self.form_class(plan.name.clone(),bases,members)?;
+                    self.data.push(result);return Ok(());
+                }
                 Value::Class(Rc::new(Class {
+                    lineage: Vec::new(), direct: Vec::new(), outline: None,
                     name: plan.name.clone(),
                     base,
                     answers,
@@ -2565,6 +2593,7 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = stands else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
+                if self.fuller_classes() {let made=self.class_make(class,args)?;self.data.push(made);return Ok(());}
                 self.made += 1;
                 let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 if self.lang.destructor.is_some() {
@@ -2868,7 +2897,9 @@ impl<'a> Engine<'a> {
             Action::Summon(name) => {
                 let mut args = self.drop_many(argc)?;
                 let this = args.remove(0);
-                let stands = self.class_it_spells(args.remove(0));
+                let parent = args.remove(0);
+                if self.fuller_classes() {if let Value::Text(owner)=parent {let v=self.class_super(this,&owner,name,args)?;self.data.push(v);return Ok(());}}
+                let stands = self.class_it_spells(parent);
                 let Value::Class(class) = stands else {
                     let told = self.no_such_class(&stands).unwrap_or_else(|| format!("Cannot call '{}' on a value that is not a class", name));
                     return Err(told.into());
@@ -2927,6 +2958,7 @@ impl<'a> Engine<'a> {
             Action::AssertFault => {
                 let message = self.drop_top()?;
                 let class = Rc::new(Class {
+                    lineage: Vec::new(), direct: Vec::new(), outline: None,
                     name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
                     answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
                     methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
@@ -3399,6 +3431,8 @@ impl<'a> Engine<'a> {
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
+                    (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x,y),
+                    (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
@@ -4278,6 +4312,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::ClassTool(_) => return Err(self.class_word("unready").to_string()),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -5753,3 +5788,6 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
         None => (None, false),
     }
 }
+
+#[path = "classes.rs"]
+mod classes;

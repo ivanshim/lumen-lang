@@ -414,6 +414,7 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    ClassTool(u8),
     Sum,
     List,
     Any,
@@ -680,6 +681,7 @@ pub enum Instr {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub doc: Option<String>,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.

@@ -122,6 +122,8 @@ impl Progression {
 
 #[derive(Clone)]
 pub enum Value {
+    Tuple(Rc<Vec<Value>>),
+    Wrapped(u8, Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -220,7 +222,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Tuple(_) | Value::Wrapped(..) | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -252,7 +254,7 @@ impl Value {
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
-            Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
+            Value::Tuple(_) | Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
@@ -299,7 +301,9 @@ impl Value {
             // when they carry the same name.
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
-            (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
+            (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
+            (Value::Tuple(x), Value::Tuple(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(a,b)| a.equals(b)),
+            (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -495,7 +499,12 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
-            Value::Blueprint(b) => format!("<class {}>", b.name),
+            Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            Value::Wrapped(..) => "<member wrapper>".into(),
+            Value::Tuple(items) => {
+                let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
+                format!("({body}{})", if items.len() == 1 { "," } else { "" })
+            },
             Value::Thing(t) => format!("<object {}>", t.of.name),
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
@@ -573,6 +582,9 @@ pub enum Reach {
 
 #[derive(Debug)]
 pub struct Blueprint {
+    pub ancestry: Vec<Rc<Blueprint>>,
+    pub parents: Vec<Rc<Blueprint>>,
+    pub presentation: Option<String>,
     pub name: String,
     pub under: Option<Rc<Blueprint>>,
     /// The classes of method names only that this one answers to.

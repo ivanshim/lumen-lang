@@ -104,6 +104,8 @@ enum Next {
 }
 
 pub struct Machine<'a> {
+    ancestor: Option<Rc<Blueprint>>,
+    routine_members: Vec<(Value, Vec<(String, Value)>)>,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -244,6 +246,7 @@ impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         Machine {
+            ancestor: None, routine_members: Vec::new(),
             table,
             outermost: Env::make(idents.len(), None),
             args_cell: find("system.args"),
@@ -1521,6 +1524,10 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined variable {}", slot.ident));
             return Ok(Value::Nil);
         }
+        if self.has_class_order() {
+            if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
+            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::text(&slot.ident));}
+        }
         Err(format!("Undefined variable: {}", slot.ident))
     }
 
@@ -1593,6 +1600,7 @@ impl<'a> Machine<'a> {
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        if self.has_class_order() && self.ancestor.is_none() { self.common_ancestor(); }
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
         // reach back into the program to hand it on.
@@ -1988,6 +1996,7 @@ impl<'a> Machine<'a> {
                 if self.stands_true(&tested) { return Ok(Value::Nil); }
                 let held = self.value_of(message, frame)?;
                 let kind = Blueprint {
+                    ancestry: vec![], parents: vec![], presentation: None,
                     name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
                     fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
@@ -2094,7 +2103,14 @@ impl<'a> Machine<'a> {
                 let fields = named(&plan.field_names);
                 let shared = named(&plan.shared_names);
                 let constants = named(&plan.constant_names);
+                if self.has_class_order() {
+                    let mut entries=shared;
+                    entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
+                    let mut parents=Vec::new();parents.extend(under);parents.extend(answers);
+                    return self.build_class_value(plan.name.clone(),parents,entries);
+                }
                 Ok(Value::Blueprint(Rc::new(Blueprint {
+                    ancestry: vec![], parents: vec![], presentation: None,
                     name: plan.name.clone(),
                     under,
                     answers,
@@ -2157,6 +2173,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Wrapped(..)=&stands {let values=self.value_list(args,frame)?;return self.apply_class_member(stands,values);}
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2359,8 +2376,10 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a class and a method name", name).into());
                     }
                     let subject = values.remove(0);
-                    let holder = self.class_it_spells(values.remove(0));
+                    let parent = values.remove(0);
                     let called = values.remove(0).bare();
+                    if self.has_class_order(){if let Value::Text(owner)=&parent{return self.next_ancestor_call(subject,owner,&called,values);}}
+                    let holder = self.class_it_spells(parent);
                     let Value::Blueprint(class) = holder else {
                         let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
                         return Err(said.into());
@@ -2498,6 +2517,16 @@ impl<'a> Machine<'a> {
                     // not hold, and take the write of one: where the
                     // language names such methods and the class is
                     // written with them, they stand in its place.
+                    if self.has_class_order() {
+                        match op {
+                            Prim::ClassWork(k)=>return self.work_on_class(*k,values),
+                            Prim::SortOf=>return self.class_from_type(values),
+                            Prim::Of if values.len()==2=>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Onto if values.len()==3=>return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false),
+                            Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
+                            _=>{}
+                        }
+                    }
                     if let Some(done) = self.stands_for_property(*op, &values)? {
                         return Ok(done);
                     }
@@ -2659,6 +2688,7 @@ impl<'a> Machine<'a> {
     }
 
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if self.has_class_order(){return self.construct_ordered(class,args);}
         self.made += 1;
         let fields = class.every_field();
         let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
@@ -3514,6 +3544,7 @@ impl<'a> Machine<'a> {
             });
         }
         Ok(match op {
+            Prim::ClassWork(_) => return Err(self.detail("unready").to_owned()),
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -3714,6 +3745,7 @@ impl<'a> Machine<'a> {
             }
             Prim::HasMember => {
                 n(2)?;
+                if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
@@ -4574,6 +4606,8 @@ impl<'a> Machine<'a> {
                 let identical = match (&v[0], &v[1]) {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a,b),
+                    (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
@@ -6051,3 +6085,6 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
     }
     Ok(Some(gathered))
 }
+
+#[path = "classes.rs"]
+mod classes;

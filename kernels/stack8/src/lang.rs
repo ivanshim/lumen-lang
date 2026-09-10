@@ -40,6 +40,7 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub class_details: HashMap<String, Vec<String>>,
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
@@ -816,7 +817,7 @@ b system.flag.counts
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
 w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
-w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
+w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.detail.root | w ext.stmt.class.detail.mro | w ext.stmt.class.detail.order | w ext.stmt.class.detail.name | w ext.stmt.class.detail.qualified | w ext.stmt.class.detail.bases | w ext.stmt.class.detail.namespace | w ext.stmt.class.detail.kind | w ext.stmt.class.detail.allocate | w ext.stmt.class.detail.subclass | w ext.stmt.class.detail.slots | w ext.stmt.class.detail.set | w ext.stmt.class.detail.remove | w ext.stmt.class.detail.get | w ext.stmt.class.detail.getitem | w ext.stmt.class.detail.doc | w ext.stmt.class.detail.module | w ext.stmt.class.detail.defaults | w ext.stmt.class.detail.code | w ext.stmt.class.detail.argcount | w ext.stmt.class.detail.varnames | w ext.stmt.class.detail.receiver | w ext.stmt.class.detail.function | w ext.stmt.class.detail.main | w ext.stmt.class.detail.mro.amiss | w ext.stmt.class.detail.attribute.amiss | w ext.stmt.class.detail.unready | w ext.builtin.isinstance | w ext.builtin.issubclass | w ext.builtin.callable | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.hasattr | w ext.builtin.vars | w ext.builtin.dir | w ext.builtin.staticmethod | w ext.builtin.classmethod | w ext.builtin.property | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
@@ -1316,6 +1317,7 @@ impl Lang {
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
+            ("ext.builtin.isinstance", Builtin::ClassTool(0)), ("ext.builtin.issubclass", Builtin::ClassTool(1)), ("ext.builtin.callable", Builtin::ClassTool(2)), ("ext.builtin.getattr", Builtin::ClassTool(3)), ("ext.builtin.setattr", Builtin::ClassTool(4)), ("ext.builtin.delattr", Builtin::ClassTool(5)), ("ext.builtin.hasattr", Builtin::ClassTool(6)), ("ext.builtin.vars", Builtin::ClassTool(7)), ("ext.builtin.dir", Builtin::ClassTool(8)), ("ext.builtin.staticmethod", Builtin::ClassTool(9)), ("ext.builtin.classmethod", Builtin::ClassTool(10)), ("ext.builtin.property", Builtin::ClassTool(11)),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
             ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText),
@@ -1646,6 +1648,7 @@ impl Lang {
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
             module_names: r.strings("ext.system.module.name")?,
+            class_details: ["root", "mro", "order", "name", "qualified", "bases", "namespace", "kind", "allocate", "subclass", "slots", "set", "remove", "get", "getitem", "doc", "module", "defaults", "code", "argcount", "varnames", "receiver", "function", "main", "mro.amiss", "attribute.amiss", "unready"].into_iter().map(|part| Ok((part.to_string(), r.strings(&format!("ext.stmt.class.detail.{}", part))?))).collect::<Result<_, String>>()?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,

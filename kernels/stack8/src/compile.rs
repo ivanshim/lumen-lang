@@ -340,7 +340,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { doc: None, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -819,6 +819,8 @@ impl<'a> Compiler<'a> {
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let first_body = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).next();
+        let doc = first_body.filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.clone());
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
@@ -871,7 +873,7 @@ impl<'a> Compiler<'a> {
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { doc, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -3122,6 +3124,7 @@ impl<'a> Compiler<'a> {
         self.take();
         let name = self.want_name("as the class name")?;
         let mut base = None;
+        let mut further = Vec::new();
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
@@ -3135,10 +3138,10 @@ impl<'a> Compiler<'a> {
                 if keyword { self.take(); self.take(); unready = true; }
                 let from = self.mark();
                 self.expr(0)?;
-                if count == 0 && !keyword && !spread {
+                if !keyword && !spread {
                     let held = self.gensym("base");
                     self.write(&held);
-                    base = Some(held);
+                    if count == 0 { base = Some(held); } else { further.push(held); }
                 } else {
                     self.piece().instrs.truncate(from);
                 }
@@ -3220,8 +3223,9 @@ impl<'a> Compiler<'a> {
         }
         let mut count = shared.len();
         if let Some(under) = &base { self.read(under); count += 1; }
+        for held in &further { self.read(held); count += 1; }
         for (_, held) in &shared { self.read(held); }
-        let plan = Plan { name: name.clone(), answers: 0, field_names: Vec::new(), field_reach: Vec::new(),
+        let plan = Plan { name: name.clone(), answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
             shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), count);
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
@@ -5436,13 +5440,13 @@ impl<'a> Compiler<'a> {
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
                 for _ in 0..extra { self.discard(); }
-                let parent = self.within.as_ref().and_then(|(_, base)| base.clone());
+                let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
                 if let (0, Some(base), Some(this), Some(mark)) = (extra, parent, self.method_self.clone(), member) {
                     self.want_sign(&mark, "after the parent call")?;
                     let named = self.want_name("as the parent's member")?;
                     self.read(&this);
-                    self.read(&base);
+                    if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {self.constant(Value::text(&base));} else {self.read(&base);}
                     if self.at_symbol(&call.open) {
                         self.take();
                         let count = self.arguments(&call)?;

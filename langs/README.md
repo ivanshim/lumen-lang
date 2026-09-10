@@ -701,6 +701,31 @@ only. The extension labels so far, all from PHP:
 - `ext.op.member` and `ext.op.scope`: `object->member` and
   `class::member`, each reading a property, a constant or a method, and
   `class::class` giving the class's name.
+- `ext.stmt.class.detail.*`: words for the fuller account of classes.
+  `root` names the common forebear; `main` names the outermost module.
+  `mro`, `order`, `bases`, `name`, `qualified`, `namespace` and `kind`
+  name the ancestry tuple, the ancestry call, the direct bases, the name,
+  the full name, the map of own members and the class of an object.
+  `allocate`, `subclass`, `slots`, `set`, `remove`, `get` and `getitem`
+  name the hooks for making, inheriting, restricting members, writing,
+  removing, reading and subscripting a class. `doc`, `module`, `defaults`,
+  `code`, `argcount` and `varnames` name a routine's first string, module,
+  spare arguments, code, positional count and kept local names. `receiver`
+  and `function` take a bound method apart. Each takes a list of words.
+  Where `root` is spelled, all direct bases take part in the C3 ordering;
+  `mro.amiss` gives the words for an ordering that cannot be made.
+  `attribute.amiss` gives three pieces enclosing the class and member
+  names in a complaint; `unready` refuses a working not yet furnished.
+- `ext.builtin.isinstance` and `ext.builtin.issubclass` ask whether a
+  thing or class belongs beneath a class, or any class in a tuple.
+  `ext.builtin.callable` asks whether a value may be called.
+  `ext.builtin.getattr`, `ext.builtin.setattr`, `ext.builtin.delattr`
+  and `ext.builtin.hasattr` read, write, remove and ask after a member.
+  `ext.builtin.vars` yields the map of own members; `ext.builtin.dir`
+  yields the sorted names of own and inherited members.
+  `ext.builtin.staticmethod`, `ext.builtin.classmethod` and
+  `ext.builtin.property` make the corresponding member wrappers.
+  These labels each take a list of builtin words.
 - `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close`: lists of
   marks enclosing the classes a declaration stands on. The first base is
   its parent; further bases are read and set aside, without running them.
@@ -2160,16 +2185,20 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
+| `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
+| `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
+| `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
@@ -2179,11 +2208,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
+| `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
@@ -2203,6 +2236,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
@@ -2217,8 +2251,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
+| `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
@@ -2235,6 +2271,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
+| `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
@@ -2398,6 +2435,33 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
+| `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.kind` | - | - | `__class__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.main` | - | - | `__main__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.module` | - | - | `__module__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.mro` | - | - | `__mro__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.mro.amiss` | - | - | `TypeError: cannot create a consistent method resolution order` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.qualified` | - | - | `__qualname__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.receiver` | - | - | `__self__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.remove` | - | - | `__delattr__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.root` | - | - | `object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.set` | - | - | `__setattr__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.slots` | - | - | `__slots__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
 | `ext.stmt.class.hidden` | - | - | - | - | `private` | - | - | - | - | - |

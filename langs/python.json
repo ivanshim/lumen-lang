@@ -336,6 +336,30 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.callable": [
+    "callable"
+  ],
+  "ext.builtin.classmethod": [
+    "classmethod"
+  ],
+  "ext.builtin.delattr": [
+    "delattr"
+  ],
+  "ext.builtin.dir": [
+    "dir"
+  ],
+  "ext.builtin.getattr": [
+    "getattr"
+  ],
+  "ext.builtin.hasattr": [
+    "hasattr"
+  ],
+  "ext.builtin.isinstance": [
+    "isinstance"
+  ],
+  "ext.builtin.issubclass": [
+    "issubclass"
+  ],
   "ext.builtin.list": [
     "list"
   ],
@@ -367,6 +391,9 @@
   "ext.builtin.print.sep.amiss": [
     "TypeError: sep must be None or a string"
   ],
+  "ext.builtin.property": [
+    "property"
+  ],
   "ext.builtin.range.index": [
     "IndexError: range object index out of range"
   ],
@@ -383,6 +410,12 @@
   "ext.builtin.range.zero_start": true,
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
+  ],
+  "ext.builtin.setattr": [
+    "setattr"
+  ],
+  "ext.builtin.staticmethod": [
+    "staticmethod"
   ],
   "ext.builtin.sum": [
     "sum"
@@ -417,6 +450,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.vars": [
+    "vars"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -715,6 +751,89 @@
   ],
   "ext.stmt.class.constructor": [
     "__init__"
+  ],
+  "ext.stmt.class.detail.allocate": [
+    "__new__"
+  ],
+  "ext.stmt.class.detail.argcount": [
+    "co_argcount"
+  ],
+  "ext.stmt.class.detail.attribute.amiss": [
+    "AttributeError: '",
+    "' object has no attribute '",
+    "'"
+  ],
+  "ext.stmt.class.detail.bases": [
+    "__bases__"
+  ],
+  "ext.stmt.class.detail.code": [
+    "__code__"
+  ],
+  "ext.stmt.class.detail.defaults": [
+    "__defaults__"
+  ],
+  "ext.stmt.class.detail.doc": [
+    "__doc__"
+  ],
+  "ext.stmt.class.detail.function": [
+    "__func__"
+  ],
+  "ext.stmt.class.detail.get": [
+    "__getattribute__"
+  ],
+  "ext.stmt.class.detail.getitem": [
+    "__class_getitem__"
+  ],
+  "ext.stmt.class.detail.kind": [
+    "__class__"
+  ],
+  "ext.stmt.class.detail.main": [
+    "__main__"
+  ],
+  "ext.stmt.class.detail.module": [
+    "__module__"
+  ],
+  "ext.stmt.class.detail.mro": [
+    "__mro__"
+  ],
+  "ext.stmt.class.detail.mro.amiss": [
+    "TypeError: cannot create a consistent method resolution order"
+  ],
+  "ext.stmt.class.detail.name": [
+    "__name__"
+  ],
+  "ext.stmt.class.detail.namespace": [
+    "__dict__"
+  ],
+  "ext.stmt.class.detail.order": [
+    "mro"
+  ],
+  "ext.stmt.class.detail.qualified": [
+    "__qualname__"
+  ],
+  "ext.stmt.class.detail.receiver": [
+    "__self__"
+  ],
+  "ext.stmt.class.detail.remove": [
+    "__delattr__"
+  ],
+  "ext.stmt.class.detail.root": [
+    "object"
+  ],
+  "ext.stmt.class.detail.set": [
+    "__setattr__"
+  ],
+  "ext.stmt.class.detail.slots": [
+    "__slots__"
+  ],
+  "ext.stmt.class.detail.subclass": [
+    "__init_subclass__"
+  ],
+  "ext.stmt.class.detail.unready": [
+    "NotImplementedError: this class operation is not supported"
+  ],
+  "ext.stmt.class.detail.varnames": [
+    "co_varnames"
   ],
   "ext.stmt.class.parent": [
     "super"

@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    ClassWork(u8),
     /// A compound write may ask a real to retain its point.
     Pointed,
     /// Whether a member, rather than the pipe, takes the name.
@@ -589,6 +590,7 @@ pub enum Traps {
 
 #[derive(Debug)]
 pub struct Routine {
+    pub doc: Option<String>,
     /// Method parameters whose fallback is evaluated in the body.
     pub local_defaults: Vec<usize>,
     /// How many arguments must be given; the rest carry a value of their
