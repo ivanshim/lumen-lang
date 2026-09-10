@@ -9,7 +9,6 @@
 
 mod methods;
 mod formatting;
-mod unicode;
 
 pub mod compile;
 pub mod lang;
@@ -125,11 +124,6 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
         if !lang.exceptions.is_empty() {
             if let Some(told) = e.strip_prefix('\0') { return told.to_string(); }
         }
-        if lang.byte_words.iter().any(|(key, words)|
-            (key.starts_with("ext.system.bytes.") && !["repr", "type", "encodings", "order", "strict"].iter().any(|part| key.ends_with(&format!(".{}", part)))
-             || key == "ext.lexical.string.bytes.ascii" || key == "ext.lexical.string.bytes.mixed")
-            && words.first().map_or(false, |word| !word.is_empty() && e.starts_with(word))) { return e; }
-        if !lang.chr_range.is_empty() && e == lang.chr_range { return e; }
         let words = &lang.call_builtin_amiss;
         if crate::formatting::names_fault(lang, &e) { e }
         else if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }

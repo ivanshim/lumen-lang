@@ -1,1 +1,0 @@
-hash(bytearray(b"x"))

@@ -141,7 +141,6 @@ pub enum IteratorKind {
 
 #[derive(Clone)]
 pub enum Value {
-    Characters(Rc<[u32]>),
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
@@ -155,8 +154,6 @@ pub enum Value {
     Refusal(Rc<str>),
     Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
     Arguments(Rc<Vec<Value>>),
-    Octets { cell: Rc<RefCell<Vec<u8>>>, changeable: bool, lead: Rc<str> },
-    OctetKind { changeable: bool, shown: Rc<str> },
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -283,17 +280,6 @@ pub struct Names<'a> {
 }
 
 impl Value {
-    pub fn ordinals(&self) -> Option<Vec<u32>> {
-        if let Self::Text(s) = self { return Some(s.chars().map(u32::from).collect()); }
-        if let Self::Characters(row) = self { return Some(row.to_vec()); }
-        None
-    }
-
-    pub fn points(numbers: Vec<u32>) -> Self {
-        let ordinary: Option<String> = numbers.iter().copied().map(char::from_u32).collect();
-        match ordinary { Some(chars) => Self::text(&chars), None => Self::Characters(Rc::from(numbers)) }
-    }
-
     pub fn point_kept(&self) -> bool {
         match self {
             Self::Frac(e) => e.pointed,
@@ -444,7 +430,7 @@ impl Value {
         Some(match self {
             Value::Small(_) | Value::Huge(_) => Kind::Whole,
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
-            Value::Text(_) | Value::Characters(_) => Kind::Chars,
+            Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
             Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
@@ -452,7 +438,7 @@ impl Value {
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
@@ -466,7 +452,6 @@ impl Value {
             Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
             Value::Set(items) => !items.borrow().keys.is_empty(),
             Value::Arguments(row) => !row.is_empty(),
-            Value::Octets { cell, .. } => cell.borrow().len() > 0,
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -474,7 +459,6 @@ impl Value {
             // Neither worth standing past the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
-            Value::Characters(numbers) => numbers.len() > 0,
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
@@ -494,7 +478,6 @@ impl Value {
             Value::Frac(_) => return Err("Cannot coerce rational to integer".to_string()),
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
-            Value::Characters(_) => return Err(String::from("Cannot coerce text to number")),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
@@ -502,7 +485,7 @@ impl Value {
             Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -535,8 +518,6 @@ impl Value {
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
             (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
-            (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
-            (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -546,7 +527,6 @@ impl Value {
                     _ => left.first == right.first && left.stride == right.stride,
                 }
             }
-            (Value::Characters(one), Value::Characters(two)) => one == two,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -757,8 +737,6 @@ impl Value {
             Value::SetCursor { .. } => String::from("<set walk>"),
             Value::Set(items) => items.borrow().written(Value::bare),
             Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
-            Value::Octets { cell, changeable, lead } => octets_shown(&cell.borrow(), lead, *changeable),
-            Value::OctetKind { shown, .. } => shown.to_string(),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
@@ -772,7 +750,6 @@ impl Value {
                 Some(d) => decimal_string(&e.above, &e.beneath, d),
                 None => format!("{}/{}", e.above, e.beneath),
             },
-            Value::Characters(numbers) => crate::unicode::quoted_points(numbers, false),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),
@@ -1256,23 +1233,4 @@ fn ordinary_real(worth: f64, figures: usize) -> String {
             expanded.chars().take(dot + 1 + figures.saturating_sub(whole)).collect()
         }
     }
-}
-
-fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
-    let mark = match (content.contains(&39), content.contains(&34)) { (true, false) => 34, _ => 39 };
-    let mut pieces = Vec::new();
-    pieces.push(lead.to_owned());
-    pieces.push((mark as char).to_string());
-    for number in content.iter().copied() {
-        pieces.push(if number == mark || number == 92 {
-            format!("\\{}", number as char)
-        } else if let Some(letter) = match number { 9 => Some('t'), 10 => Some('n'), 13 => Some('r'), _ => None } {
-            format!("\\{}", letter)
-        } else if (32..127).contains(&number) {
-            (number as char).to_string()
-        } else { format!("\\x{number:02x}") });
-    }
-    pieces.push((mark as char).to_string());
-    if changing { pieces.push(")".to_owned()); }
-    pieces.concat()
 }

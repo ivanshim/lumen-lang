@@ -1,6 +1,0 @@
-print(b" a  b\t c ".split(), b"a,,b,".split(b","), b"a,b,c".split(b",", 1))
-print(b"-".join([b"a", b"b"]), b"abc".startswith(b"ab"), b"abcabc".find(b"bc"))
-print(b"aaa".replace(b"a", b"xy", 2), b"ab".replace(b"", b"-"), b"  ab\n".strip())
-print(b"\xffAz".lower(), b"\xffAz".upper(), bytes.fromhex("61 62\n00 ff"))
-print(bytes("é", "utf-8"), "abc".encode("ascii"), b"abc".decode("ascii"))
-print((258).to_bytes(2, "little"), int.from_bytes(b"\x01\x02", "big"), (0).to_bytes(0, "big"))

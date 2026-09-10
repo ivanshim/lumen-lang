@@ -1,7 +1,7 @@
 a\nb
-b'x'
+x
 y
 2
-b'\\d'
-a\nb b'x' y 4 b'\\d' b'\\d' b'\\d' b'\\d' b'\\d'
+\d
+a\nb x y 4 \d \d \d \d \d
 \n2 \n3 \n4 \n5 \n6 \n7 \n8 \n9

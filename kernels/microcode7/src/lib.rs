@@ -11,7 +11,6 @@
 
 mod members;
 mod formatting;
-mod unicode;
 
 pub mod math;
 pub mod indent;
@@ -62,10 +61,6 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     go(&table, source, program_args, request).map_err(|e| {
         if table.has_any("ext.builtin.exceptions") && e.starts_with('\0') { return e[1..].to_string(); }
         if crate::formatting::is_complaint(&table, &e) { return e; }
-        let byte_complaints = ["ext.system.bytes.arguments", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.system.bytes.hex", "ext.system.bytes.immutable", "ext.system.bytes.index", "ext.system.bytes.negative", "ext.system.bytes.overflow", "ext.system.bytes.range", "ext.system.bytes.separator", "ext.system.bytes.unhashable", "ext.system.bytes.unready", "ext.system.bytes.unsigned", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"];
-        for key in byte_complaints {
-            if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
-        }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
