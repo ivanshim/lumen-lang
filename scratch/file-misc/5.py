@@ -1,0 +1,2 @@
+def generic[T]():
+    pass

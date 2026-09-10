@@ -42,6 +42,8 @@ pub enum Prim {
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.
     MatrixProduct,
+    Membership,
+    Dictionary,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

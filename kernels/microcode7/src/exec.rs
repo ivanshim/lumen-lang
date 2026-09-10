@@ -2486,6 +2486,11 @@ impl<'a> Machine<'a> {
                     }
                     Err(Escape::Done)
                 }
+                Prim::Dictionary => {
+                    let supplied = self.value_list(args, frame)?;
+                    let (positional, keywords) = self.open_arguments(supplied)?;
+                    Ok(self.dictionary(&positional, keywords)?)
+                }
                 op => {
                     let mut values = self.value_list(args, frame)?;
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
@@ -3482,6 +3487,64 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn equal_contents(&self, one: &Value, other: &Value) -> bool {
+        match one { Value::Shared(cell) => return self.equal_contents(&cell.borrow(), other), _ => {} }
+        match other { Value::Shared(cell) => return self.equal_contents(one, &cell.borrow()), _ => {} }
+        if let (Value::Dict(entries), Value::Dict(against)) = (one, other) {
+            if entries.len() != against.len() { return false; }
+            for (key, value) in entries.iter() {
+                let found = against.iter().find(|entry| self.equal_contents(key, &entry.0));
+                match found {
+                    Some(entry) if self.equal_contents(value, &entry.1) => (),
+                    _ => return false,
+                }
+            }
+            return true;
+        }
+        if let (Value::Vector(values), Value::Vector(against)) = (one, other) {
+            return values.len() == against.len() && (0..values.len())
+                .all(|i| self.equal_contents(&values[i], &against[i]));
+        }
+        one.equals(other)
+    }
+
+    fn dictionary(&self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        let positional: Vec<Value> = positional.iter().map(collection_read).collect();
+        if positional.len() > 1 {
+            return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or("A map takes at most one source").to_string());
+        }
+        let mut result: Vec<(Value, Value)> = Vec::new();
+        let source_pairs = match positional.first() {
+            None => Vec::new(),
+            Some(Value::Dict(entries)) => entries.to_vec(),
+            Some(value) => {
+                let mut pairs = Vec::new();
+                for item in self.gathered_members(value)? {
+                    let members = self.gathered_members(&item)?;
+                    if members.len() != 2 {
+                        return Err(self.table.single("ext.builtin.map.pair.amiss").unwrap_or("A map item needs two values").to_string());
+                    }
+                    pairs.push((members[0].clone(), members[1].clone()));
+                }
+                pairs
+            }
+        };
+        let mut new_names = std::collections::HashSet::new();
+        let mut additions = source_pairs;
+        for (name, value) in keywords {
+            if !new_names.insert(name.clone()) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&name))); }
+            additions.push((Value::text(&name), value));
+        }
+        for (key, value) in additions {
+            if let Some((_, previous)) = result.iter_mut().find(|(known, _)| known.equals(&key)) {
+                *previous = value;
+            } else {
+                result.push((key, value));
+            }
+        }
+        Ok(Value::Dict(Rc::new(result)))
+    }
+
     fn collection_cell(&self, value: Value) -> Value {
         match value {
             Value::Vector(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
@@ -3520,6 +3583,7 @@ impl<'a> Machine<'a> {
         }
         if self.table.flag("ext.op.bit.whole") && matches!(op,
             Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown)
+            && !(op == Prim::BitsEither && self.table.flag("ext.op.bit.or.maps") && matches!(v, [Value::Dict(_), Value::Dict(_)]))
         {
             let fault = || self.table.single("ext.system.fault.operands").unwrap_or("Working on bits needs a whole number").to_string();
             let number = |value: &Value| {
@@ -3574,6 +3638,7 @@ impl<'a> Machine<'a> {
                 let words = self.table.single("ext.op.matrix.unready").unwrap_or_default();
                 return Err(words.to_owned());
             }
+            Prim::Dictionary => self.dictionary(v, Vec::new())?,
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -4503,6 +4568,10 @@ impl<'a> Machine<'a> {
             // Two pieces of text meet letter by letter. The shorter one
             // says how far it goes, save where either bit will do, and
             // there the longer one carries on alone.
+            Prim::BitsEither if self.table.flag("ext.op.bit.or.maps")
+                && matches!(v, [Value::Dict(_), Value::Dict(_)]) => {
+                return self.prim(Prim::ExtendLiteral(true, true), name, v);
+            }
             Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
                 if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
             {
@@ -4613,6 +4682,20 @@ impl<'a> Machine<'a> {
                     _ => left.equals(right),
                 };
                 Value::Flag((op == Prim::Eq) == alike)
+            }
+            Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
+                Value::Flag(self.equal_contents(&v[0], &v[1]) != (op == Prim::Ne))
+            }
+            Prim::Membership => {
+                n(2)?;
+                let present = if let (Value::Text(needle), Value::Text(text)) = (&v[0], &v[1]) {
+                    text.contains(needle.as_ref())
+                } else if matches!(&v[1], Value::Text(_)) {
+                    return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or("Membership needs an iterable").to_string());
+                } else {
+                    self.gathered_members(&v[1])?.iter().any(|item| self.equal_contents(&v[0], item))
+                };
+                Value::Flag(present)
             }
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),

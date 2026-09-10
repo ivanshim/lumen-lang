@@ -3169,6 +3169,13 @@ impl<'a> Engine<'a> {
                 let mut args = std::mem::take(&mut self.buffer);
                 args.clear();
                 args.extend(self.data.drain(at..));
+                if matches!(builtin, Builtin::MapFrom) {
+                    let items = self.call_items(std::mem::take(&mut args))?;
+                    let made = self.map_from(items)?;
+                    self.buffer = args;
+                    self.data.push(made);
+                    return Ok(());
+                }
                 let result = if self.lang.bind_names {
                     let items = self.call_items(std::mem::take(&mut args))?;
                     self.builtin_call(*builtin, name, items)
@@ -3309,6 +3316,20 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn mapping_equality(&self, left: &Value, right: &Value) -> bool {
+        if let Value::Bond(cell) = left { return self.mapping_equality(&cell.borrow(), right); }
+        if let Value::Bond(cell) = right { return self.mapping_equality(left, &cell.borrow()); }
+        match (left, right) {
+            (Value::Map(a), Value::Map(b)) => a.len() == b.len() && a.iter().all(|(key, value)| {
+                b.iter().find(|(other, _)| self.mapping_equality(key, other))
+                    .map_or(false, |(_, other)| self.mapping_equality(value, other))
+            }),
+            (Value::Array(a), Value::Array(b)) => a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|(x, y)| self.mapping_equality(x, y)),
+            _ => left.equals(right),
+        }
+    }
+
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3392,6 +3413,9 @@ impl<'a> Engine<'a> {
                     _ => a.equals(b),
                 };
                 Value::Flag(matches!(op, Action::Eq) == alike)
+            }
+            Action::Eq | Action::Ne if self.lang.unordered_maps => {
+                Value::Flag(self.mapping_equality(a, b) == matches!(op, Action::Eq))
             }
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
@@ -3485,6 +3509,14 @@ impl<'a> Engine<'a> {
             // is what a language that spells these operators means by
             // them; the shorter side decides the length, save for `or`,
             // where the longer one stands on as it is.
+            Action::BitEither if self.lang.or_maps && matches!((a, b), (Value::Map(_), Value::Map(_))) => {
+                let (Value::Map(left), Value::Map(right)) = (a, b) else { unreachable!() };
+                let mut merged = left.as_ref().clone();
+                for (key, value) in right.iter() {
+                    put_key(&mut merged, key.clone(), value.clone());
+                }
+                Value::Map(Rc::new(merged))
+            }
             Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.whole_bits => {
                 let (x, y) = (self.whole_for_bits(a)?, self.whole_for_bits(b)?);
                 let joined = match op {
@@ -4319,6 +4351,36 @@ impl<'a> Engine<'a> {
         } else { held }
     }
 
+    fn map_from(&self, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        let positional: Vec<Value> = items.iter().filter_map(|(name, value)| name.is_none().then(|| collection_contents(value))).collect();
+        if positional.len() > 1 {
+            return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| "A map takes at most one source".into()));
+        }
+        let mut pairs = Vec::new();
+        if let Some(source) = positional.first() {
+            match source {
+                Value::Map(prior) => pairs = prior.as_ref().clone(),
+                other => {
+                    for item in self.comprehension_items(other)? {
+                        let pair = self.comprehension_items(&item)?;
+                        if pair.len() != 2 {
+                            return Err(self.lang.map_pair_amiss.clone().unwrap_or_else(|| "A map item needs two values".into()));
+                        }
+                        put_key(&mut pairs, pair[0].clone(), pair[1].clone());
+                    }
+                }
+            }
+        }
+        let mut named = std::collections::HashSet::new();
+        for (key, value) in items {
+            if let Some(key) = key {
+                if !named.insert(key.clone()) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+                put_key(&mut pairs, Value::text(&key), value);
+            }
+        }
+        Ok(Value::Map(Rc::new(pairs)))
+    }
+
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
@@ -4355,6 +4417,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

@@ -1010,8 +1010,40 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn declaration_types(&mut self) -> Res<bool> {
+        let lang = self.lang;
+        let Some(pair) = &lang.index_brackets else { return Ok(false); };
+        if !lang.type_parameters || !self.at_symbol(&pair.open) { return Ok(false); }
+        self.take();
+        let mut ends = lang.tuple_marks.clone();
+        ends.push(pair.close.clone());
+        loop {
+            if self.on_any(&lang.carries_words) || self.on_any(&lang.carries_pairs) { self.take(); }
+            self.want_name("as a type parameter")?;
+            if self.on_any(&lang.annotation_marks) {
+                self.take();
+                let mut bound_ends = ends.clone();
+                bound_ends.extend(lang.assign_words.clone());
+                self.annotation_expression(&bound_ends)?;
+            }
+            if self.on_assign() { self.take(); self.annotation_expression(&ends)?; }
+            if !self.on_any(&lang.tuple_marks) { break; }
+            self.take();
+            if self.at_symbol(&pair.close) { break; }
+        }
+        self.want_sign(&pair.close, "after type parameters")?;
+        Ok(true)
+    }
+
     fn stmt(&mut self) -> Res<()> {
         let lang = self.lang;
+        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
+            self.take();
+            self.want_name("as the type alias")?;
+            self.declaration_types()?;
+            self.expect_assign("after the type alias")?;
+            return self.annotation_expression(&[]);
+        }
         if Lang::spells(&lang.ellipsis_words, &self.look().lexeme)
             && (matches!(self.look_ahead(1).shape, Shape::LineEnd | Shape::Close | Shape::Finish)
                 || lang.ends_stmt(&self.look_ahead(1).lexeme)) {
@@ -2727,8 +2759,8 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
-            self.scope_tail(from)?;
+            if self.on_any(&lang.array_spread) { self.scope_value()?; }
+            else { self.expr(tier + 1)?; self.scope_tail(from)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -3748,6 +3780,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
+        self.declaration_types()?;
         self.giving_cells.push(gives_cell);
         let built = self.function_body(name);
         self.giving_cells.pop();
@@ -3758,6 +3791,7 @@ impl<'a> Compiler<'a> {
     /// before its brackets binds it; one written where a value stands
     /// has none, and stands for itself.
     fn function_value(&mut self, name: &str) -> Res<()> {
+        self.declaration_types()?;
         let lang = self.lang;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -6951,8 +6985,9 @@ impl<'a> Compiler<'a> {
                 && (Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme)
                     || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)));
             let tagged = self.lang.bind_names && labelled;
-            let named_spread = Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
-            let spread = self.lang.bind_names && !labelled
+            let marker = matches!(self.look().shape, Shape::Sign | Shape::Instr);
+            let named_spread = marker && Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
+            let spread = marker && self.lang.bind_names && !labelled
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
             if tagged {

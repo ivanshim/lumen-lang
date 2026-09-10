@@ -1307,6 +1307,14 @@ impl<'a> Builder<'a> {
             if self.key("stmt.for") {
                 return self.for_stmt();
             }
+            if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+                self.advance();
+                self.need_word("as the type alias")?;
+                self.type_names()?;
+                self.need_assign("after the type alias")?;
+                self.put_by_annotation(&[])?;
+                return Ok(constant(Value::Nil));
+            }
             if self.key("stmt.return") {
                 self.advance();
                 // A routine giving back a cell answers with the cell of
@@ -3277,6 +3285,28 @@ impl<'a> Builder<'a> {
         Ok(self.choose(test, then, otherwise))
     }
 
+    fn type_names(&mut self) -> Res<bool> {
+        if !self.table.flag("ext.stmt.type_parameters") || !self.on_any("op.index.open") { return Ok(false); }
+        self.advance();
+        loop {
+            if self.on_any("ext.stmt.function.carries") || self.on_any("ext.stmt.function.carries.pairs") { self.advance(); }
+            self.need_word("among type parameters")?;
+            if self.on_any("ext.stmt.annotation") {
+                self.advance();
+                self.put_by_annotation(&["stmt.assign", "ext.op.tuple", "op.index.close"])?;
+            }
+            if self.on_assign() {
+                self.advance();
+                self.put_by_annotation(&["ext.op.tuple", "op.index.close"])?;
+            }
+            if !self.on_any("ext.op.tuple") { break; }
+            self.advance();
+            if self.on_any("op.index.close") { break; }
+        }
+        self.need_sign(self.table.single("op.index.close").unwrap(), "after the type names")?;
+        Ok(true)
+    }
+
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
@@ -3317,8 +3347,8 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let item = self.expr(tier + 1)?;
-            let start = self.comma_tail(item)?;
+            let start = if self.on_any("ext.syntax.array.spread") { self.comma_value()? }
+                else { let item = self.expr(tier + 1)?; self.comma_tail(item)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3650,6 +3680,7 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
+        self.type_names()?;
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -6360,7 +6391,7 @@ impl<'a> Builder<'a> {
             if label {
                 if bind { tag = Some(Value::text(&self.look().lexeme)); }
                 self.pos += 2;
-            } else if bind {
+            } else if bind && matches!(self.look().shape, Shape::Bare | Shape::Sign) {
                 let word = &self.look().lexeme;
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }
