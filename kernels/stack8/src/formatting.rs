@@ -72,6 +72,8 @@ impl Writer<'_> {
     pub fn representation(&self, value: &Value, ascii: bool) -> Result<String> {
         if matches!(value, Value::Collection(..) | Value::View(_)) { return self.representation(&value.contents(), ascii); }
         match value {
+            Value::Codepoints(row) => Ok(crate::unicode::quoted_points(row, ascii)),
+            Value::Text(text) if self.lang.unicode_text => Ok(crate::unicode::quoted(text, ascii)),
             Value::Text(_) => {
                 let quoted = value.string_field(&self.words, "", if ascii { "a" } else { "r" }).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?;
                 let mut out = String::new();

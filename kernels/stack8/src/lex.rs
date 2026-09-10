@@ -12,6 +12,8 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    Bytes,
+    Codepoints,
     StringBegin,
     StringEnd,
     StringField,
@@ -488,13 +490,17 @@ impl<'a> Cursor<'a> {
         self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())
     }
 
-    fn string_text(&mut self, text: &mut String, fault: &mut bool, line: usize, col: usize) {
+    fn string_text(&mut self, text: &mut String, fault: &mut bool, points: &mut Vec<(usize, u32)>, line: usize, col: usize) {
         if *fault {
             self.push(Shape::StringFault, self.lang.escape_unavailable.clone().unwrap_or_else(|| "Unicode escape cannot be represented".into()), 0, line, col);
+        } else if !points.is_empty() {
+            let numbers = text.chars().enumerate().map(|(i, c)| points.iter().find(|(at, _)| *at == i).map_or(c as u32, |(_, n)| *n).to_string()).collect::<Vec<_>>().join(" ");
+            self.push(Shape::Codepoints, numbers, 0, line, col);
         } else {
             self.push(Shape::Quote, std::mem::take(text), 0, line, col);
         }
         text.clear();
+        points.clear();
         *fault = false;
     }
 
@@ -506,6 +512,7 @@ impl<'a> Cursor<'a> {
         for _ in 0..prefix + mark.chars().count() { self.step(); }
         if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
         let (mut text, mut fault) = (String::new(), false);
+        let mut points = Vec::new();
         loop {
             if at_word(&self.text, self.at, mark) {
                 for _ in mark.chars() { self.step(); }
@@ -514,25 +521,28 @@ impl<'a> Cursor<'a> {
             let Some(c) = self.look(0) else {
                 return Err(if mark.chars().count() > 1 && !format { format!("Unterminated {} string", mark.chars().next().unwrap()) } else { self.string_words() });
             };
-            if bytes && !c.is_ascii() { return Err(self.string_words()); }
+            if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
+                return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
+            }
             if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
             if format && (c == '{' || c == '}') {
                 if self.look(1) == Some(c) {
                     self.step(); self.step(); text.push(c);
                 } else if c == '{' {
-                    self.string_text(&mut text, &mut fault, line, col);
+                    self.string_text(&mut text, &mut fault, &mut points, line, col);
                     self.string_field(raw)?;
                 } else { return Err(self.string_words()); }
             } else if c == '\\' {
-                self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
+                self.rich_escape(raw, format, bytes, &mut text, &mut fault, &mut points)?;
             } else { text.push(self.step()); }
         }
-        self.string_text(&mut text, &mut fault, line, col);
+        if bytes { self.push(Shape::Bytes, text, 0, line, col); }
+        else { self.string_text(&mut text, &mut fault, &mut points, line, col); }
         if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
         Ok(())
     }
 
-    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool) -> Result<(), String> {
+    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool, points: &mut Vec<(usize, u32)>) -> Result<(), String> {
         let Some(next) = self.look(1) else { return Err(self.string_words()); };
         if raw {
             text.push(self.step());
@@ -557,9 +567,13 @@ impl<'a> Cursor<'a> {
         }
         if Some(next) == lang.named_letter && self.look(2) == Some('{') {
             self.step(); self.step(); self.step();
-            while self.look(0).map_or(false, |c| c != '}') { self.step(); }
+            let mut name = String::new();
+            while self.look(0).map_or(false, |c| c != '}') { name.push(self.step()); }
             if self.look(0).is_none() { return Err(self.string_words()); }
-            self.step(); *fault = true;
+            self.step();
+            if lang.unicode_text {
+                if let Some(value) = crate::unicode::named(&name) { text.push_str(value); } else { *fault = true; }
+            } else { *fault = true; }
             return Ok(());
         }
         let digits = if Some(next) == lang.codepoint_letter { lang.codepoint_digits }
@@ -575,7 +589,11 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
             if number > 0x10ffff { return Err(lang.codepoint_beyond.clone().unwrap_or_else(|| self.string_words())); }
-            match char::from_u32(number) { Some(c) => text.push(c), None => *fault = true }
+            match char::from_u32(number) {
+                Some(c) => text.push(c),
+                None if lang.unicode_text => { points.push((text.chars().count(), number)); text.push('\0'); }
+                None => *fault = true,
+            }
             return Ok(());
         }
         if Some(next) == lang.byte_letter {
@@ -658,13 +676,14 @@ impl<'a> Cursor<'a> {
         self.push(Shape::Sign, group.close.clone(), 0, line, col);
         self.push(Shape::StringBegin, String::new(), 0, line, col);
         let (mut text, mut fault) = (String::new(), false);
+        let mut points = Vec::new();
         if self.look(0) == Some(':') {
             self.step();
             loop {
                 match self.look(0) {
                     Some('}') => break,
-                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw)?; }
-                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
+                    Some('{') => { self.string_text(&mut text, &mut fault, &mut points, line, col); self.string_field(raw)?; }
+                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault, &mut points)?,
                     Some(_) => text.push(self.step()),
                     None => return Err(self.string_words()),
                 }
@@ -672,7 +691,7 @@ impl<'a> Cursor<'a> {
         }
         if self.look(0) != Some('}') { return Err(self.string_words()); }
         self.step();
-        self.string_text(&mut text, &mut fault, line, col);
+        self.string_text(&mut text, &mut fault, &mut points, line, col);
         self.push(Shape::StringEnd, String::new(), 0, line, col);
         Ok(())
     }

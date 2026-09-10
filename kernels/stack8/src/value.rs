@@ -163,6 +163,7 @@ pub enum CursorSource {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Codepoints(Rc<Vec<u32>>),
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
@@ -174,6 +175,8 @@ pub enum Value {
     Walking(Rc<RefCell<(Value, Option<Value>)>>),
     Declined(Rc<str>),
     Walk(Rc<RefCell<(Vec<Value>, usize)>>),
+    Bytes(Rc<RefCell<Vec<u8>>>, bool, Rc<str>),
+    ByteKind(bool, Rc<str>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -308,6 +311,15 @@ pub struct Wording<'a> {
 }
 
 impl Value {
+    pub fn ordinals(&self) -> Option<Vec<u32>> {
+        match self { Value::Codepoints(row) => Some(row.as_ref().clone()), Value::Text(s) => Some(s.chars().map(|c| c as u32).collect()), _ => None }
+    }
+
+    pub fn points(row: Vec<u32>) -> Value {
+        if let Some(text) = row.iter().map(|n| char::from_u32(*n)).collect::<Option<String>>() { Value::text(&text) }
+        else { Value::Codepoints(Rc::new(row)) }
+    }
+
     pub fn keeps_point(&self) -> bool {
         match self {
             Value::Real(r) => r.point,
@@ -454,7 +466,7 @@ impl Value {
             Value::Small(_) | Value::Huge(_) => Sort::Integer,
             Value::Frac(_) => Sort::Rational,
             Value::Real(_) => Sort::Real,
-            Value::Text(_) => Sort::Text,
+            Value::Text(_) | Value::Codepoints(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
@@ -495,6 +507,8 @@ impl Value {
             Value::Native(..) | Value::Cursor(_) => true,
             Value::Set(s) => !s.borrow().held.is_empty(),
             Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Stream(_) => true,
+            Value::Bytes(row, ..) => !row.borrow().is_empty(),
+            Value::ByteKind(..) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -502,6 +516,7 @@ impl Value {
             // Neither what stands outside the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
+            Value::Codepoints(row) => !row.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
@@ -524,6 +539,7 @@ impl Value {
             Value::Real(r) => Ok(&r.p / &r.q),
             Value::Flag(b) => Ok(BigInt::from(*b as i64)),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
+            Value::Codepoints(_) => Err("Cannot coerce text to number".into()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
@@ -532,7 +548,7 @@ impl Value {
             Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
-            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Bytes(..) | Value::ByteKind(..) | Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -556,11 +572,14 @@ impl Value {
                 let (a, b) = (a.borrow(), b.borrow());
                 a.held.len() == b.held.len() && a.beneath(&b)
             }
+            (Value::Bytes(a, ..), Value::Bytes(b, ..)) => *a.borrow() == *b.borrow(),
+            (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
+            (Value::Codepoints(a), Value::Codepoints(b)) => a == b,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -761,6 +780,8 @@ impl Value {
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::SetWalk(..) => "<set walk>".into(),
             Value::Set(s) => s.borrow().show(Value::plain),
+            Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
+            Value::ByteKind(_, text) => text.to_string(),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -770,6 +791,7 @@ impl Value {
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             Value::Real(r) => decimal_string(&r.p, &r.q, r.places),
+            Value::Codepoints(row) => crate::unicode::quoted_points(row, false),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => "null".to_string(),
@@ -1281,4 +1303,23 @@ fn expanded_real(number: f64, places: usize) -> String {
         text.truncate(text.len().min(point + 1 + places.saturating_sub(whole)));
     }
     text
+}
+
+fn byte_repr(row: &[u8], mutable: bool, opening: &str) -> String {
+    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { '"' } else { '\'' };
+    let mut out = format!("{}{}", opening, quote);
+    for &byte in row {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b if b == quote as u8 => { out.push('\\'); out.push(quote); }
+            32..=126 => out.push(byte as char),
+            _ => { let _ = write!(out, "\\x{:02x}", byte); }
+        }
+    }
+    out.push(quote);
+    if mutable { out.push(')'); }
+    out
 }

@@ -4021,6 +4021,9 @@ impl<'a> Compiler<'a> {
 
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
         self.declaration_types()?;
+        if matches!(self.lang.builtins.get(&name), Some(Builtin::Bytes(_))) {
+            self.arg_names.entry(name.clone()).or_default();
+        }
         self.giving_cells.push(gives_cell);
         let built = self.function_body(name);
         self.giving_cells.pop();
@@ -4819,6 +4822,9 @@ impl<'a> Compiler<'a> {
     /// The newer compound forms keep a real's point; a plain working
     /// keeps the spelling it had before these forms were read.
     fn compound_act(&mut self, op: Action) {
+        let op = if !self.lang.byte_prefixes.is_empty() && matches!(op, Action::Add | Action::Mul) {
+            Action::ByteAssign(matches!(op, Action::Mul))
+        } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
@@ -5694,6 +5700,9 @@ impl<'a> Compiler<'a> {
     fn string_piece(&mut self) -> Res<()> {
         let token = self.take();
         match token.shape {
+            Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
+                Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
+            Shape::Codepoints => self.constant(Value::points(token.lexeme.split_whitespace().map(|n| n.parse().expect("an ordinal")).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),
             Shape::StringFault => {
                 self.constant(Value::text(&token.lexeme));
@@ -5879,11 +5888,15 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+            Shape::Codepoints | Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+                let bytes = tok.shape == Shape::Bytes;
                 self.string_piece()?;
-                while lang.adjacent_strings && matches!(self.look().shape, Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                while lang.adjacent_strings && matches!(self.look().shape, Shape::Codepoints | Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                    if bytes != (self.look().shape == Shape::Bytes) {
+                        return Err(lang.byte_words["ext.lexical.string.bytes.mixed"][0].clone());
+                    }
                     self.string_piece()?;
-                    self.act(Action::Join, 2);
+                    self.act(if bytes { Action::Add } else { Action::Join }, 2);
                 }
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
@@ -5949,6 +5962,13 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Stream(true));
                 } else if !self.writing_place && Lang::spells(&lang.print_file_output, &tok.lexeme) {
                     self.constant(Value::Stream(false));
+                } else if lang.builtins.get(&tok.lexeme) == Some(&Builtin::UnicodeMaximum) {
+                    self.constant(Value::Small(1114111));
+                } else if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::Bytes(0 | 1)))
+                    && !lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)) {
+                    let mutable = lang.builtins.get(&tok.lexeme) == Some(&Builtin::Bytes(1));
+                    let words = &lang.byte_words["ext.system.bytes.type"];
+                    self.constant(Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], tok.lexeme, words[1]))));
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
                     && (lang.bind_names || lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)))
                 {
@@ -6046,7 +6066,10 @@ impl<'a> Compiler<'a> {
                                 }
                             } else {
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
-                                self.call(&tok.lexeme, argc)?;
+                                if matches!(native, Some(Builtin::Bytes(_))) && self.arg_names.contains_key(&tok.lexeme) {
+                                    self.read_callee(&tok.lexeme);
+                                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
+                                } else { self.call(&tok.lexeme, argc)?; }
                             }
                         }
                         // A word standing for all the outermost bindings
@@ -6974,6 +6997,10 @@ impl<'a> Compiler<'a> {
                 } else if let Some(method) = native.filter(|b| b.set_method()) {
                     if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }
                     else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
+                } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
+                    self.discard();
+                    self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
+                    self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;

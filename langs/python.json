@@ -343,14 +343,71 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.ascii": [
+    "ascii"
+  ],
   "ext.builtin.bin": [
     "bin"
   ],
   "ext.builtin.bool": [
     "bool"
   ],
+  "ext.builtin.bytearray": [
+    "bytearray"
+  ],
+  "ext.builtin.bytes": [
+    "bytes"
+  ],
+  "ext.builtin.bytes.decode": [
+    "decode"
+  ],
+  "ext.builtin.bytes.encode": [
+    "encode"
+  ],
+  "ext.builtin.bytes.find": [
+    "find"
+  ],
+  "ext.builtin.bytes.from_int": [
+    "to_bytes"
+  ],
+  "ext.builtin.bytes.fromhex": [
+    "bytes.fromhex"
+  ],
+  "ext.builtin.bytes.hex": [
+    "hex"
+  ],
+  "ext.builtin.bytes.join": [
+    "join"
+  ],
+  "ext.builtin.bytes.lower": [
+    "lower"
+  ],
+  "ext.builtin.bytes.replace": [
+    "replace"
+  ],
+  "ext.builtin.bytes.signed": [
+    "signed"
+  ],
+  "ext.builtin.bytes.split": [
+    "split"
+  ],
+  "ext.builtin.bytes.startswith": [
+    "startswith"
+  ],
+  "ext.builtin.bytes.strip": [
+    "strip"
+  ],
+  "ext.builtin.bytes.to_int": [
+    "int.from_bytes"
+  ],
+  "ext.builtin.bytes.upper": [
+    "upper"
+  ],
   "ext.builtin.callable": [
     "callable"
+  ],
+  "ext.builtin.chr.range": [
+    "ValueError: chr() arg not in range(0x110000)"
   ],
   "ext.builtin.class.name": [
     "__name__"
@@ -559,6 +616,9 @@
   "ext.builtin.method.capitalize": [
     "capitalize"
   ],
+  "ext.builtin.method.casefold": [
+    "casefold"
+  ],
   "ext.builtin.method.center": [
     "center"
   ],
@@ -628,6 +688,9 @@
   "ext.builtin.method.error.unready": [
     "NotImplementedError: this value method cannot run yet"
   ],
+  "ext.builtin.method.expandtabs": [
+    "expandtabs"
+  ],
   "ext.builtin.method.extend": [
     "extend"
   ],
@@ -658,11 +721,26 @@
   "ext.builtin.method.isalpha": [
     "isalpha"
   ],
+  "ext.builtin.method.isascii": [
+    "isascii"
+  ],
+  "ext.builtin.method.isdecimal": [
+    "isdecimal"
+  ],
   "ext.builtin.method.isdigit": [
     "isdigit"
   ],
+  "ext.builtin.method.isidentifier": [
+    "isidentifier"
+  ],
   "ext.builtin.method.islower": [
     "islower"
+  ],
+  "ext.builtin.method.isnumeric": [
+    "isnumeric"
+  ],
+  "ext.builtin.method.isprintable": [
+    "isprintable"
   ],
   "ext.builtin.method.isspace": [
     "isspace"
@@ -687,6 +765,9 @@
   ],
   "ext.builtin.method.lstrip": [
     "lstrip"
+  ],
+  "ext.builtin.method.maketrans": [
+    "maketrans"
   ],
   "ext.builtin.method.pop": [
     "pop"
@@ -739,8 +820,14 @@
   "ext.builtin.method.strip": [
     "strip"
   ],
+  "ext.builtin.method.swapcase": [
+    "swapcase"
+  ],
   "ext.builtin.method.title": [
     "title"
+  ],
+  "ext.builtin.method.translate": [
+    "translate"
   ],
   "ext.builtin.method.update": [
     "update"
@@ -1107,6 +1194,12 @@
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
     "invalid string literal"
+  ],
+  "ext.lexical.string.bytes.ascii": [
+    "SyntaxError: bytes can only contain ASCII literal characters"
+  ],
+  "ext.lexical.string.bytes.mixed": [
+    "SyntaxError: cannot mix bytes and nonbytes literals"
   ],
   "ext.lexical.string.bytes.unavailable": [
     "bytes literals are not supported"
@@ -1785,6 +1878,69 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.bytes.arguments": [
+    "TypeError: invalid bytes arguments"
+  ],
+  "ext.system.bytes.bad_order": [
+    "ValueError: byteorder must be either 'little' or 'big'"
+  ],
+  "ext.system.bytes.decode": [
+    "UnicodeDecodeError: "
+  ],
+  "ext.system.bytes.encode": [
+    "UnicodeEncodeError: "
+  ],
+  "ext.system.bytes.encodings": [
+    "utf-8",
+    "utf8",
+    "ascii",
+    "us-ascii"
+  ],
+  "ext.system.bytes.hex": [
+    "ValueError: non-hexadecimal number found in fromhex() arg at position "
+  ],
+  "ext.system.bytes.immutable": [
+    "TypeError: 'bytes' object does not support item assignment"
+  ],
+  "ext.system.bytes.index": [
+    "IndexError: index out of range"
+  ],
+  "ext.system.bytes.negative": [
+    "ValueError: negative count"
+  ],
+  "ext.system.bytes.order": [
+    "big",
+    "little"
+  ],
+  "ext.system.bytes.overflow": [
+    "OverflowError: int too big to convert"
+  ],
+  "ext.system.bytes.range": [
+    "ValueError: bytes must be in range(0, 256)"
+  ],
+  "ext.system.bytes.repr": [
+    "b",
+    "bytearray(b"
+  ],
+  "ext.system.bytes.separator": [
+    "ValueError: empty separator"
+  ],
+  "ext.system.bytes.strict": [
+    "strict"
+  ],
+  "ext.system.bytes.type": [
+    "<class '",
+    "'>"
+  ],
+  "ext.system.bytes.unhashable": [
+    "TypeError: unhashable type: 'bytearray'"
+  ],
+  "ext.system.bytes.unready": [
+    "NotImplementedError: this bytes operation is not supported"
+  ],
+  "ext.system.bytes.unsigned": [
+    "OverflowError: can't convert negative int to unsigned"
+  ],
   "ext.system.fault.attribute": [
     "object has no attribute '",
     "'"
@@ -1847,6 +2003,22 @@
   "ext.system.real.bits": 64,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
+  ],
+  "ext.system.text.errors": [
+    "strict",
+    "ignore",
+    "replace",
+    "backslashreplace",
+    "surrogateescape",
+    "xmlcharrefreplace"
+  ],
+  "ext.system.text.options": [
+    "encoding",
+    "errors"
+  ],
+  "ext.system.text.unicode": true,
+  "ext.system.unicode.maximum": [
+    "sys.maxunicode"
   ],
   "ext.system.untrue.empty_array": true,
   "ext.text.format": [
