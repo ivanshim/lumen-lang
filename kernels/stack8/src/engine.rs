@@ -4762,7 +4762,7 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
-        if self.lang.byte_words.contains_key("ext.builtin.bytes") && (matches!(receiver.contents(), Value::Bytes(..)) || operation == "encode") {
+        if !self.lang.byte_words["ext.builtin.bytes"].is_empty() && (matches!(receiver.contents(), Value::Bytes(..)) || operation == "encode") {
             let task = match operation { "encode" => Some(2), "decode" => Some(3), "hex" => Some(4), "upper" => Some(6), "lower" => Some(7), "split" => Some(8), "join" => Some(9), "startswith" => Some(10), "replace" => Some(11), "strip" => Some(12), "find" => Some(13), _ => None };
             if let Some(task) = task {
                 if !named.is_empty() { return Err(self.byte_fault("unready")); }

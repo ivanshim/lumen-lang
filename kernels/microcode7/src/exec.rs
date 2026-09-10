@@ -7394,6 +7394,10 @@ impl Machine<'_> {
     }
 
     fn core_belongs(&self, item: &Value, expected: &Value) -> Result<bool, String> {
+        if let Value::OctetKind { changeable, .. } = expected {
+            return Ok(matches!(item, Value::Octets { changeable: actual, .. } if actual == changeable));
+        }
+
         match expected {
             Value::Tuple(kinds) => {
                 for kind in kinds.iter() { if self.core_belongs(item, kind)? { return Ok(true); } }
@@ -7404,6 +7408,7 @@ impl Machine<'_> {
             Value::Intrinsic(word) => {
                 let op = self.table.prims.get(word.as_ref());
                 let answer = match op {
+                    Some(Prim::Octets(n @ (0 | 1))) => matches!(item, Value::Octets { changeable, .. } if *changeable == (*n == 1)),
                     Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
                     Some(Prim::AsReal) => matches!(item, Value::Frac(r) if r.places.is_some()),
                     Some(Prim::AsText) => matches!(item, Value::Text(_)),
@@ -7479,6 +7484,7 @@ impl Machine<'_> {
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
+                if matches!(input[0], Value::Octets { .. }) { return self.octet_routine(17, &input); }
                 input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &input[0].kind_word()))
             }
             IdentityOf => {
