@@ -118,7 +118,9 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
-        if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        let plain = e.strip_prefix("Uncaught ").filter(|said| lang.sequence_fault(said).is_some());
+        if let Some(said) = plain { said.to_string() }
+        else if lang.sequence_fault(&e).is_some() || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }

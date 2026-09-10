@@ -1090,6 +1090,17 @@ fn name_like(s: &str, unicode: bool, prefix: Option<char>) -> bool {
 }
 
 impl Lang {
+    pub fn sequence_fault_names(&self) -> Vec<&str> {
+        if !self.sequence_values { return Vec::new(); }
+        [&self.sequence_assign, &self.sequence_index, &self.sequence_missing, &self.sequence_unready]
+            .iter().filter_map(|words| words.first()?.split_once(": ").map(|(name, _)| name)).collect()
+    }
+
+    pub fn sequence_fault<'a>(&self, told: &'a str) -> Option<(&'a str, &'a str)> {
+        let (name, message) = told.split_once(": ")?;
+        self.sequence_fault_names().contains(&name).then_some((name, message))
+    }
+
     pub fn parse(text: &str) -> Result<Lang, String> {
         let map = top_object(text)?;
         let shapes = number_shapes();

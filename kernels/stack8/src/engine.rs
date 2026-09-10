@@ -210,9 +210,19 @@ impl<'a> Engine<'a> {
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
+        let mut world = vec![Value::Blank; idents.len()];
+        for named in lang.sequence_fault_names() {
+            if let Some(at) = idents.iter().position(|n| n == named) {
+                world[at] = Value::Class(Rc::new(Class {
+                    name: named.to_string(), base: None, answers: Vec::new(),
+                    fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                    constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                }));
+            }
+        }
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world,
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -1669,6 +1679,18 @@ impl<'a> Engine<'a> {
         let depth = self.data.len();
         let active = self.caught.len();
         let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match ending {
+            Err(Fault::Note(told)) if self.lang.sequence_fault(&told).is_some() => {
+                let (name, message) = self.lang.sequence_fault(&told).unwrap();
+                let class = Rc::new(Class { name: name.to_string(), base: None,
+                    answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
+                    methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+                self.made += 1;
+                Err(Fault::Thrown(Value::Object(Rc::new(Instance { class,
+                    fields: RefCell::new(vec![("message".to_string(), Value::text(message))]), mark: self.made }))))
+            }
+            other => other,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -2934,7 +2956,7 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 if program.parameter_rules.is_some() && program.carried.iter().zip(&carried).any(|(slot, value)|
-                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::Map(_) | Value::Object(_))) {
+                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::List(_) | Value::Set(_) | Value::Map(_) | Value::Object(_))) {
                     return Err(self.lang.defaults_amiss[0].clone().into());
                 }
                 let mut made = (*program).clone();
@@ -3454,6 +3476,14 @@ impl<'a> Engine<'a> {
     fn sequence_operation(&self, op: &Action, a: &Value, b: &Value) -> Option<Res<Value>> {
         let word = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", Action::Ge => ">=", _ => "" };
         if !word.is_empty() {
+            if a.sequence_kind() == b.sequence_kind() && matches!(a, Value::List(_) | Value::Tuple(_) | Value::Array(_)) {
+                let left = a.sequence_items().unwrap();
+                let right = b.sequence_items().unwrap();
+                for (one, two) in left.iter().zip(right.iter()) {
+                    if !one.sequence_member_equal(two) { return Some(self.dyadic(op, one, two)); }
+                }
+                return Some(self.dyadic(op, &Value::Small(left.len() as i64), &Value::Small(right.len() as i64)));
+            }
             if a.no_number() || b.no_number() { return Some(Ok(Value::Flag(false))); }
             let order = a.sequence_order(b);
             return Some(match order {
@@ -5121,6 +5151,12 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
             Builtin::ToText => {
                 arity(1)?;
+                if let Value::Object(object) = &args[0] {
+                    if self.lang.sequence_fault_names().contains(&object.class.name.as_str()) {
+                        return Ok(object.fields.borrow().iter().find(|(key, _)| key == "message")
+                            .map(|(_, v)| v.clone()).unwrap_or_else(|| Value::text("")));
+                    }
+                }
                 Value::text(&args[0].display(&sp))
             }
             Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),

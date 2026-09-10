@@ -36,6 +36,23 @@ pub const COMPLAINT_LABELS: [(&str, &str); 4] = [
     ("fatal", "ext.system.complaint.fatal"),
 ];
 
+/// The words which already name the faults of a sequence. Their leading
+/// class names suffice for a handler to take the complaint as a value.
+const SEQUENCE_FAULTS: [&str; 12] = [
+    "ext.op.sequence.operands", "ext.op.sequence.concat", "ext.op.sequence.order",
+    "ext.op.sequence.repeat", "ext.op.sequence.assign", "ext.op.sequence.delete",
+    "ext.op.sequence.index", "ext.op.sequence.unhashable", "ext.op.sequence.missing",
+    "ext.op.sequence.unready", "ext.op.sequence.empty", "ext.op.sequence.subscript",
+];
+const SEQUENCE_FAULT_MARK: &str = "\0sequence complaint";
+
+pub fn sequence_complaint<'s>(table: &Table, said: &'s str) -> Option<(&'s str, &'s str)> {
+    if !table.flag("ext.op.sequence.values") { return None; }
+    let recognized = SEQUENCE_FAULTS.iter().any(|label| table.strings(label).iter()
+        .any(|word| word.contains(": ") && said.starts_with(word)));
+    if recognized { said.split_once(": ") } else { None }
+}
+
 /// The label under which a language spells each kind of value.
 pub const KIND_LABELS: [(&str, Kind); 7] = [
     ("system.kind.integer", Kind::Whole), ("system.kind.rational", Kind::Fraction), ("system.kind.real", Kind::Decimal),
@@ -710,10 +727,25 @@ impl<'a> Machine<'a> {
         if let found @ Some(_) = self.lookup(&filed) {
             return found;
         }
-        match self.classes_either_way {
+        let found = match self.classes_either_way {
             true => self.lookup(&format!("{}{}", name.to_lowercase(), crate::form::OF_A_CLASS)),
             false => None,
-        }
+        };
+        found.or_else(|| self.sequence_fault_class(name))
+    }
+
+    fn sequence_fault_class(&self, name: &str) -> Option<Value> {
+        if !self.table.flag("ext.op.sequence.values") { return None; }
+        let name = name.strip_suffix(crate::form::OF_A_CLASS).unwrap_or(name);
+        let spoken = SEQUENCE_FAULTS.iter().any(|label| self.table.strings(label).iter()
+            .any(|word| word.split_once(": ").map_or(false, |(kind, _)| kind == name)));
+        if !spoken { return None; }
+        Some(Value::Blueprint(Rc::new(Blueprint {
+            name: name.to_string(), under: None, answers: Vec::new(),
+            fields: vec![(SEQUENCE_FAULT_MARK.to_string(), Value::Nil)],
+            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+            shared: RefCell::new(Vec::new()),
+        })))
     }
 
     fn name_it_spells(&self, spelled: &Value) -> String {
@@ -1180,14 +1212,17 @@ impl<'a> Machine<'a> {
     }
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
-        let named = self.class_of_fault(told)?;
+        let (named, message) = match sequence_complaint(self.table, told) {
+            Some((kind, body)) => (kind.to_string(), body),
+            None => (self.class_of_fault(told)?, told),
+        };
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
         // A fault of the kernel's own carries the words said and the
         // place in the program they were said of.
         let carried = [
-            ("message", Value::text(told)),
+            ("message", Value::text(message)),
             ("file", Value::text(&self.written_in)),
             ("line", Value::Small(self.row as i64)),
         ];
@@ -1460,6 +1495,10 @@ impl<'a> Machine<'a> {
             Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
+                if thing.of.fields.iter().any(|(key, _)| key == SEQUENCE_FAULT_MARK) {
+                    let message = thing.holds.borrow().iter().find(|(key, _)| key == "message").map(|(_, v)| v.bare()).unwrap_or_default();
+                    return Err(format!("{}: {}", thing.of.name, message));
+                }
                 let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
                 let said = match told.filter(|m| !m.is_empty()) {
                     Some(told) => format!("Uncaught {}: {}", thing.of.name, told),
@@ -1525,6 +1564,7 @@ impl<'a> Machine<'a> {
                 return Ok(v);
             }
         }
+        if let Some(class) = self.sequence_fault_class(&slot.ident) { return Ok(class); }
         // A language with a word for a warning does not stop where a
         // binding was never written: it says so and reads nothing. Only
         // a variable counts — where variables carry a mark, a name
@@ -2708,6 +2748,14 @@ impl<'a> Machine<'a> {
     }
 
     fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if class.fields.iter().any(|(key, _)| key == SEQUENCE_FAULT_MARK) {
+            if args.len() > 1 { return Err(self.sequence_fault("unready", &[]).into()); }
+            self.made += 1;
+            return Ok(Value::Thing(Rc::new(Thing {
+                of: class, turn: self.made,
+                holds: RefCell::new(vec![("message".to_string(), args.first().cloned().unwrap_or_else(|| Value::text("")))]),
+            })));
+        }
         self.made += 1;
         let fields = class.every_field();
         let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
@@ -3530,7 +3578,7 @@ impl<'a> Machine<'a> {
                 if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
                     if math::no_order(&v[0], &v[1]) { return Ok(Value::Flag(false)); }
                     let mark = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
-                    let rank = self.sequence_order(&v[0], &v[1], mark)?;
+                    let Some(rank) = self.sequence_order(&v[0], &v[1], mark)? else { return Ok(Value::Flag(false)); };
                     return Ok(Value::Flag(match op { Prim::Lt => rank.is_lt(), Prim::Le => !rank.is_gt(), Prim::Gt => rank.is_gt(), _ => !rank.is_lt() }));
                 }
                 if matches!(op, Prim::Plus | Prim::Times | Prim::GrowSequence(_)) {
@@ -4673,8 +4721,8 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
-                    (needle, Value::List(hay)) => hay.borrow().iter().any(|item| Self::sequence_equal(needle, item)),
-                    (needle, Value::Tuple(hay) | Value::Set(hay)) => hay.iter().any(|item| Self::sequence_equal(needle, item)),
+                    (needle, Value::List(hay)) => hay.borrow().iter().any(|item| Self::sequence_item_equal(needle, item)),
+                    (needle, Value::Tuple(hay) | Value::Set(hay)) => hay.iter().any(|item| Self::sequence_item_equal(needle, item)),
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| if self.table.flag("ext.op.sequence.values") { Self::sequence_equal(key, k) } else { key.equals(k) }),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -5007,6 +5055,11 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
+                if let Value::Thing(raised) = &v[0] {
+                    if raised.of.fields.iter().any(|(key, _)| key == SEQUENCE_FAULT_MARK) {
+                        return Ok(raised.holds.borrow().iter().find(|(key, _)| key == "message").map(|(_, text)| text.clone()).unwrap_or_else(|| Value::text("")));
+                    }
+                }
                 Value::text(&v[0].render(w))
             }
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,
@@ -5457,6 +5510,16 @@ impl<'a> Machine<'a> {
         message
     }
 
+    fn sequence_item_equal(a: &Value, b: &Value) -> bool {
+        let shared = match (a, b) {
+            (Value::List(x), Value::List(y)) => Rc::ptr_eq(x, y),
+            (Value::Tuple(x), Value::Tuple(y)) | (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
+            (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
+            _ => false,
+        };
+        shared || Self::sequence_equal(a, b)
+    }
+
     fn sequence_equal(a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Shared(c), x) | (x, Value::Shared(c)) => Self::sequence_equal(&c.borrow(), x),
@@ -5465,12 +5528,12 @@ impl<'a> Machine<'a> {
             (Value::Flag(flag), number) | (number, Value::Flag(flag)) => Self::sequence_equal(&Value::Small(i64::from(*flag)), number),
             (Value::List(x), Value::List(y)) => {
                 let (x, y) = (x.borrow(), y.borrow());
-                x.len() == y.len() && x.iter().zip(y.iter()).all(|(u, v)| Self::sequence_equal(u, v))
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(u, v)| Self::sequence_item_equal(u, v))
             }
             (Value::Tuple(x), Value::Tuple(y)) | (Value::Vector(x), Value::Vector(y)) =>
-                x.len() == y.len() && x.iter().zip(y.iter()).all(|(u, v)| Self::sequence_equal(u, v)),
-            (Value::Set(x), Value::Set(y)) => x.len() == y.len() && x.iter().all(|u| y.iter().any(|v| Self::sequence_equal(u, v))),
-            (Value::Dict(x), Value::Dict(y)) => x.len() == y.len() && x.iter().all(|(k, u)| y.iter().any(|(j, v)| Self::sequence_equal(k, j) && Self::sequence_equal(u, v))),
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(u, v)| Self::sequence_item_equal(u, v)),
+            (Value::Set(x), Value::Set(y)) => x.len() == y.len() && x.iter().all(|u| y.iter().any(|v| Self::sequence_item_equal(u, v))),
+            (Value::Dict(x), Value::Dict(y)) => x.len() == y.len() && x.iter().all(|(k, u)| y.iter().any(|(j, v)| Self::sequence_item_equal(k, j) && Self::sequence_item_equal(u, v))),
             _ => a.equals(b),
         }
     }
@@ -5491,29 +5554,30 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn sequence_order(&self, a: &Value, b: &Value, sign: &str) -> Result<std::cmp::Ordering, String> {
+    fn sequence_order(&self, a: &Value, b: &Value, sign: &str) -> Result<Option<std::cmp::Ordering>, String> {
         use std::cmp::Ordering;
         if let Value::Flag(flag) = a { return self.sequence_order(&Value::Small(i64::from(*flag)), b, sign); }
         if let Value::Flag(flag) = b { return self.sequence_order(a, &Value::Small(i64::from(*flag)), sign); }
+        if math::no_order(a, b) { return Ok(None); }
         let bad = || self.sequence_fault("order", &[sign, Self::sequence_kind(a), Self::sequence_kind(b)]);
         let rows = match (a, b) {
-            (Value::Text(x), Value::Text(y)) => return Ok(x.cmp(y)),
+            (Value::Text(x), Value::Text(y)) => return Ok(Some(x.cmp(y))),
             (Value::List(x), Value::List(y)) => Some((x.borrow().clone(), y.borrow().clone())),
             (Value::Tuple(x), Value::Tuple(y)) => Some((x.to_vec(), y.to_vec())),
             _ => None,
         };
         if let Some((one, two)) = rows {
             for (x, y) in one.iter().zip(two.iter()) {
-                if !Self::sequence_equal(x, y) { return self.sequence_order(x, y, sign); }
+                if !Self::sequence_item_equal(x, y) { return self.sequence_order(x, y, sign); }
             }
-            return Ok(one.len().cmp(&two.len()));
+            return Ok(Some(one.len().cmp(&two.len())));
         }
         if matches!(a, Value::Nil) || matches!(b, Value::Nil) { return Err(bad()); }
         if Self::sequence_kind(a) == "str" || Self::sequence_kind(b) == "str" { return Err(bad()); }
         match math::below(a, b) {
-            Some(true) => Ok(Ordering::Less),
-            Some(false) if Self::sequence_equal(a, b) => Ok(Ordering::Equal),
-            Some(false) => Ok(Ordering::Greater),
+            Some(true) => Ok(Some(Ordering::Less)),
+            Some(false) if Self::sequence_equal(a, b) => Ok(Some(Ordering::Equal)),
+            Some(false) => Ok(Some(Ordering::Greater)),
             None => Err(bad()),
         }
     }
@@ -5650,7 +5714,7 @@ impl<'a> Machine<'a> {
                         } else { i += 1; }
                     }
                 } else if start < stop {
-                    places.extend((start..stop).filter(|&at| Self::sequence_equal(&members[at], &values[1])));
+                    places.extend((start..stop).filter(|&at| Self::sequence_item_equal(&members[at], &values[1])));
                 }
                 if op == Prim::Occurrences { return Ok(Value::Small(places.len() as i64)); }
                 if let Some(at) = places.first() { return Ok(Value::Small(*at as i64)); }
@@ -5665,7 +5729,7 @@ impl<'a> Machine<'a> {
                 let row = if values.len() == 1 { self.gathered_members(&values[0])? } else { values.to_vec() };
                 let Some(mut best) = row.first().cloned() else { return Err(self.sequence_fault("empty", &[if op == Prim::Least { "min" } else { "max" }])); };
                 for candidate in row.iter().skip(1) {
-                    let order = self.sequence_order(candidate, &best, if op == Prim::Least { "<" } else { ">" })?;
+                    let Some(order) = self.sequence_order(candidate, &best, if op == Prim::Least { "<" } else { ">" })? else { continue; };
                     if (op == Prim::Least && order.is_lt()) || (op == Prim::Greatest && order.is_gt()) { best = candidate.clone(); }
                 }
                 Ok(best)
@@ -5676,7 +5740,7 @@ impl<'a> Machine<'a> {
                 else {
                     for i in 1..row.len() {
                         let mut j = i;
-                        while j > 0 && self.sequence_order(&row[j], &row[j-1], "<")?.is_lt() { row.swap(j, j-1); j -= 1; }
+                        while j > 0 && self.sequence_order(&row[j], &row[j-1], "<")?.map_or(false, |rank| rank.is_lt()) { row.swap(j, j-1); j -= 1; }
                     }
                 }
                 Ok(Value::List(Rc::new(RefCell::new(row))))
