@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use num_bigint::BigInt;
 use std::rc::Rc;
 
-use num_traits::{ToPrimitive, Signed, Zero};
+use num_traits::{ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
 use crate::table::Table;
@@ -2400,6 +2400,17 @@ impl<'a> Machine<'a> {
                         }
                         return Ok(Value::Nil);
                     }
+                    let held = f.cells.borrow()[i].clone();
+                    let held = if let Value::Shared(cell) = held { cell.borrow().clone() } else { held };
+                    if let Value::Octets { cell, changeable, .. } = held {
+                        if !changeable { return Err(self.octet_error("immutable").into()); }
+                        let byte = self.octet_item(&value)?;
+                        if let Some(index) = key {
+                            let index = self.octet_at(&index, cell.borrow().len())?;
+                            cell.borrow_mut()[index] = byte;
+                        } else { cell.borrow_mut().push(byte); }
+                        return Ok(Value::Nil);
+                    }
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
                     let letter = self.letter_places.then(|| value.render(self.wording()));
@@ -2800,6 +2811,14 @@ impl<'a> Machine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+        }
+        if let Prim::Octets(which @ (14 | 15)) = op {
+            let mut negative_allowed = false;
+            for (key, worth) in keywords {
+                if !table.spells("ext.builtin.bytes.signed", &key) { return Err(self.octet_error("unready").into()); }
+                negative_allowed = worth.is_true();
+            }
+            return self.octet_work(which, positional, negative_allowed).map(Some).map_err(Into::into);
         }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let mut join = String::from(" ");
@@ -3575,6 +3594,16 @@ impl<'a> Machine<'a> {
     }
 
     fn octet_routine(&self, operation: u8, values: &[Value]) -> Result<Value, String> {
+        self.octet_work(operation, values, false)
+    }
+
+    fn octet_work(&self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if operation < 4 && values.len() == 3 {
+            match &values[2] {
+                Value::Text(word) if self.table.spells("ext.system.bytes.strict", word) => return self.octet_work(operation, &values[..2], negative_allowed),
+                _ => return Err(self.octet_error("unready")),
+            }
+        }
         let refusal = || self.octet_error("unready");
         let wrong = || self.octet_error("arguments");
         let amount = |value: Option<&Value>| -> Result<usize, String> {
@@ -3634,16 +3663,18 @@ impl<'a> Machine<'a> {
                 if operation == 15 {
                     let mut content = self.octet_contents(&values[0], true)?;
                     if reversed { content.reverse(); }
-                    return Ok(Value::from_big(BigInt::from_bytes_be(num_bigint::Sign::Plus, &content)));
+                    let value = if negative_allowed { BigInt::from_signed_bytes_be(&content) }
+                        else { BigInt::from_bytes_be(num_bigint::Sign::Plus, &content) };
+                    return Ok(Value::from_big(value));
                 }
                 let number = self.octet_whole(&values[0])?;
-                if number < BigInt::zero() { return Err(self.octet_error("unsigned")); }
+                if !negative_allowed && number < BigInt::zero() { return Err(self.octet_error("unsigned")); }
                 let width = match values.get(1) { None => 1, Some(n) => self.octet_whole(n)?.to_usize().ok_or_else(wrong)? };
-                let mut content = if number.is_zero() { Vec::new() } else { number.to_bytes_be().1 };
+                let mut content = if number.is_zero() { Vec::new() } else if negative_allowed { number.to_signed_bytes_be() } else { number.to_bytes_be().1 };
                 if content.len() > width { return Err(self.octet_error("overflow")); }
                 content.reverse();
                 content.try_reserve(width - content.len()).map_err(|_| refusal())?;
-                content.resize(width, 0);
+                content.resize(width, if number < BigInt::zero() { u8::MAX } else { 0 });
                 if !reversed { content.reverse(); }
                 return Ok(self.octets(content, false));
             }
@@ -3854,7 +3885,7 @@ impl<'a> Machine<'a> {
             },
             Prim::Partition(wanted, star) => {
                 let mut values: Vec<Value> = match &v[0] {
-                    Value::Progression(_) => self.gathered_members(&v[0])?,
+                    Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
                     Value::Vector(v) => v.to_vec(),
@@ -3913,6 +3944,8 @@ impl<'a> Machine<'a> {
                 let at = as_index(&v[1])?;
                 let wants_key = op == Prim::KeyAt;
                 match &v[0] {
+                    Value::Octets { cell, .. } => if wants_key { Value::Small(at as i64) }
+                        else { Value::Small(i64::from(*cell.borrow().get(at).ok_or_else(|| self.octet_error("index"))?)) },
                     Value::Progression(walk) => {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
@@ -3944,6 +3977,7 @@ impl<'a> Machine<'a> {
             Prim::Extent => {
                 n(1)?;
                 match &v[0] {
+                    Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
                     Value::Progression(walk) => Value::from_big(walk.count()),
                     Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),

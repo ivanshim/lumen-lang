@@ -2402,7 +2402,7 @@ impl<'a> Engine<'a> {
             Action::Unpack(count, rest) => {
                 let source = self.drop_top()?;
                 let mut items = match source {
-                    Value::Counted(_) => self.comprehension_items(&source)?,
+                    Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -2465,6 +2465,9 @@ impl<'a> Engine<'a> {
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
                 match &pair[0] {
+                    Value::Bytes(row, ..) => if key { Value::Small(at as i64) } else {
+                        Value::Small(*row.borrow().get(at).ok_or_else(|| self.byte_fault("index"))? as i64)
+                    },
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
@@ -3107,6 +3110,7 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::Extent => match self.drop_top()? {
+                Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
                 Value::Counted(r) => Value::of_big(r.length()),
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -4242,6 +4246,14 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if let Builtin::Bytes(task @ (14 | 15)) = builtin {
+            let mut signed = false;
+            for (key, value) in named {
+                if !Lang::spells(&self.lang.byte_words["ext.builtin.bytes.signed"], &key) { return Err(self.byte_fault("unready")); }
+                signed = self.truth(&value);
+            }
+            return self.byte_work(task, &args, signed);
+        }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4400,6 +4412,15 @@ impl<'a> Engine<'a> {
     }
 
     fn byte_call(&self, task: u8, args: &[Value]) -> Res<Value> {
+        self.byte_work(task, args, false)
+    }
+
+    fn byte_work(&self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if matches!(task, 0..=3) && args.len() == 3 {
+            let Value::Text(policy) = &args[2] else { return Err(self.byte_fault("arguments")); };
+            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
+            return self.byte_work(task, &args[..2], signed);
+        }
         let bad = || self.byte_fault("arguments");
         let unready = || self.byte_fault("unready");
         if task <= 1 {
@@ -4461,18 +4482,21 @@ impl<'a> Engine<'a> {
             };
             if task == 15 {
                 let row = self.byte_row(&args[0])?;
-                let number = if little { BigInt::from_bytes_le(num_bigint::Sign::Plus, &row) } else { BigInt::from_bytes_be(num_bigint::Sign::Plus, &row) };
+                let number = match (little, signed) {
+                    (true, true) => BigInt::from_signed_bytes_le(&row), (false, true) => BigInt::from_signed_bytes_be(&row),
+                    (true, false) => BigInt::from_bytes_le(num_bigint::Sign::Plus, &row), (false, false) => BigInt::from_bytes_be(num_bigint::Sign::Plus, &row),
+                };
                 return Ok(Value::of_big(number));
             }
             if !matches!(&args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(bad()); }
             let number = args[0].as_big()?;
-            if number.is_negative() { return Err(self.byte_fault("unsigned")); }
+            if !signed && number.is_negative() { return Err(self.byte_fault("unsigned")); }
             let width = match args.get(1) { None => 1, Some(n) => n.as_big()?.to_usize().ok_or_else(bad)? };
-            let mut row = number.to_bytes_le().1;
+            let mut row = if signed { number.to_signed_bytes_le() } else { number.to_bytes_le().1 };
             if number.is_zero() { row.clear(); }
             if row.len() > width { return Err(self.byte_fault("overflow")); }
             row.try_reserve(width - row.len()).map_err(|_| unready())?;
-            row.resize(width, 0);
+            row.resize(width, if number.is_negative() { 255 } else { 0 });
             if !little { row.reverse(); }
             return Ok(self.byte_make(row, false));
         }
@@ -5233,6 +5257,12 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
+                if let Value::Bytes(row, mutable, _) = &target {
+                    if !mutable { return Err(self.byte_fault("immutable")); }
+                    let byte = self.byte_number(&v)?;
+                    row.borrow_mut().push(byte);
+                    return Ok(target);
+                }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {

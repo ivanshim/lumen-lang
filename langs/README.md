@@ -322,7 +322,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.bytes.encode` and `.decode`: the methods taking text to
   bytes and bytes to text. `ext.system.bytes.encodings` names the wide
   encoding and its alias, then the seven-bit encoding and its alias.
-  Strict conversion is honoured; other error policies remain wanting.
+  `ext.system.bytes.strict` names strict conversion; other error policies
+  remain wanting.
 - `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
   with two hexadecimal figures, and the maker reading those figures back.
   White space may stand between pairs of figures.
@@ -338,7 +339,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.bytes.from_int` and `.to_int`: an integer's method making
   bytes and the integer maker's method reading bytes. `ext.system.bytes.order`
   names the order with the greatest byte first, then that with the least
-  first. The present running handles unsigned whole numbers.
+  first. `ext.builtin.bytes.signed` names the keyword admitting signed
+  whole numbers, whose high bit then carries the sign.
 - `ext.builtin.isinstance`: a builtin asking whether a value is of a byte
   kind. Other kind protocols remain wanting. `ext.builtin.hash` gives an
   immutable byte row a content hash; mutable rows cannot be hashed. The
@@ -2213,6 +2215,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.join` | - | - | `join` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.split` | - | - | `split` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.strip` | - | - | `strip` | - | - | - | - | - | - | - |
@@ -2567,6 +2570,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.range` | - | - | `ValueError: bytes must be in range(0, 256)` | - | - | - | - | - | - | - |
 | `ext.system.bytes.repr` | - | - | `b` `bytearray(b` | - | - | - | - | - | - | - |
 | `ext.system.bytes.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
+| `ext.system.bytes.strict` | - | - | `strict` | - | - | - | - | - | - | - |
 | `ext.system.bytes.type` | - | - | `<class '` `'>` | - | - | - | - | - | - | - |
 | `ext.system.bytes.unhashable` | - | - | `TypeError: unhashable type: 'bytearray'` | - | - | - | - | - | - | - |
 | `ext.system.bytes.unready` | - | - | `NotImplementedError: this bytes operation is not supported` | - | - | - | - | - | - | - |

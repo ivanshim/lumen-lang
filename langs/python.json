@@ -369,6 +369,9 @@
   "ext.builtin.bytes.replace": [
     "replace"
   ],
+  "ext.builtin.bytes.signed": [
+    "signed"
+  ],
   "ext.builtin.bytes.split": [
     "split"
   ],
@@ -1003,6 +1006,9 @@
   ],
   "ext.system.bytes.separator": [
     "ValueError: empty separator"
+  ],
+  "ext.system.bytes.strict": [
+    "strict"
   ],
   "ext.system.bytes.type": [
     "<class '",

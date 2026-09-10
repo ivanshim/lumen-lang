@@ -5580,7 +5580,10 @@ impl<'a> Compiler<'a> {
                                 }
                             } else {
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
-                                self.call(&tok.lexeme, argc)?;
+                                if matches!(native, Some(Builtin::Bytes(_))) && self.arg_names.contains_key(&tok.lexeme) {
+                                    self.read_callee(&tok.lexeme);
+                                    self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
+                                } else { self.call(&tok.lexeme, argc)?; }
                             }
                         }
                         // A word standing for all the outermost bindings

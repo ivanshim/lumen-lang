@@ -5218,6 +5218,9 @@ impl<'a> Builder<'a> {
                                 sequence(vec![Form::Write(slot, Box::new(value)), constant(Value::Flag(true))])
                             }
                         }
+                    } else if matches!(table.prims.get(&t.lexeme), Some(Prim::Octets(_))) && self.arg_names.contains_key(&t.lexeme) {
+                        let function = self.read(&t.lexeme);
+                        invoke(function, args)
                     } else {
                         self.named_call(&t.lexeme, args)?
                     }
