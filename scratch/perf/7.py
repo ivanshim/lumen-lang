@@ -1,8 +1,8 @@
 items = [1]
 alias = items
 copy = items.copy()
-append = items.append
-append(2)
+saved_append = items.append
+saved_append(2)
 print(items, alias, copy)
 print("|".join(["", "ab", "", "cd"]))
 print(len(range(5, -5, -3)), range(5, -5, -3)[-1])
