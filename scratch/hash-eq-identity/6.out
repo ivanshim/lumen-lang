@@ -1,0 +1,6 @@
+False True True True False True
+unhashable type: 'list'
+unhashable type: 'dict'
+unhashable type: 'set'
+unhashable type: 'Blocked'
+True False True True True
