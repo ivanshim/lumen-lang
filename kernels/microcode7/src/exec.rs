@@ -1263,7 +1263,7 @@ impl<'a> Machine<'a> {
         let told = told.trim_start_matches('\0');
         if self.table.has_any("ext.builtin.exceptions") {
             for kind in self.table.strings("ext.builtin.exceptions") {
-                if told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
+                if told == kind || told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
             }
             let label = if self.table.single("ext.stmt.catch.invalid") == Some(told) { Some("ext.system.fault.class.kind") }
                 else if told.starts_with("Undefined variable") { Some("ext.system.fault.class.name") }
@@ -1324,6 +1324,7 @@ impl<'a> Machine<'a> {
 
     fn fault_words(&self, raw: &str, kind: &str) -> String {
         let raw = raw.trim_start_matches('\0');
+        if raw == kind { return String::new(); }
         if self.table.single("ext.stmt.catch.invalid") == Some(raw) { return raw.into(); }
         let prefix = format!("{kind}: ");
         if let Some(words) = raw.strip_prefix(&prefix) { return words.to_string(); }
@@ -3571,7 +3572,7 @@ impl<'a> Machine<'a> {
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
         }
-        if op == Prim::Say {
+        if matches!(op, Prim::Say | Prim::AsText) {
             for worth in positional.iter_mut() {
                 if let Value::Thing(thing) = worth {
                     if thing.of.native_parent().is_some() {
@@ -7395,7 +7396,7 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        if op != Prim::Belongs { for item in &mut input { *item = item.settled(); } }
+        if !matches!(op, Prim::Belongs | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::IdentityOf) { for item in &mut input { *item = item.settled(); } }
         if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};
         use num_integer::Integer;

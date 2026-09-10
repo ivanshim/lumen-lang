@@ -909,7 +909,7 @@ impl<'a> Engine<'a> {
     fn class_for(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
         if !self.lang.exceptions.is_empty() {
-            if let Some(name) = self.lang.exceptions.iter().find(|n| told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
             let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
                 else if told.starts_with("Undefined variable") { &self.lang.fault_name }
                 else if told.starts_with("Undefined array key") { &self.lang.fault_key }
@@ -965,6 +965,7 @@ impl<'a> Engine<'a> {
 
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
+        if told == class { return String::new(); }
         if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
         if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
         if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
@@ -4879,7 +4880,7 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
-        if builtin == Builtin::Say {
+        if matches!(builtin, Builtin::Say | Builtin::ToText) {
             for value in &mut args {
                 if let Value::Object(o) = value {
                     if o.class.builtin_base().is_some() {
@@ -6850,7 +6851,7 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
-        if b != Builtin::InstanceOf { for value in &mut args { *value = value.contents(); } }
+        if !matches!(b, Builtin::InstanceOf | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::Identity) { for value in &mut args { *value = value.contents(); } }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
         let mut reverse = false;

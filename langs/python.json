@@ -1236,9 +1236,6 @@
   "ext.stmt.annotation.amiss": [
     "invalid syntax"
   ],
-  "ext.stmt.annotation.target.unready": [
-    "NotImplementedError: annotated attribute targets are not supported"
-  ],
   "ext.stmt.assert": [
     "assert"
   ],
