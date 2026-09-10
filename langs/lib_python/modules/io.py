@@ -73,6 +73,36 @@ class StringIO:
         return result
 
 
+    def readlines(self, hint=-1):
+        self._check()
+        lines = []
+        length = 0
+        while True:
+            line = self.readline()
+            if line == '':
+                return lines
+            lines = [*lines, line]
+            length += len(line)
+            if hint > 0 and length > hint:
+                return lines
+
+    def __iter__(self):
+        self._check()
+        return self
+
+    def _line_more(self):
+        self._line = self.readline()
+        return self._line != ''
+
+    def _line_value(self):
+        return self._line
+
+    def __next__(self):
+        line = self.readline()
+        if line == '':
+            raise 'StopIteration'
+        return line
+
     def _check(self):
         if self.closed:
             raise 'ValueError: I/O operation on closed file'

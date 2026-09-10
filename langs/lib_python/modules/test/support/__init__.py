@@ -93,33 +93,30 @@ class swap_attr:
         return False
 
 class captured_stdout:
-    def __init__(self):
-        self.text = ''
-        self.active = False
-
     def __enter__(self):
-        __output_hold()
-        self.active = True
-        return self
-
-    def write(self, text):
-        print(text, end='')
-        return len(text)
-
-    def getvalue(self):
-        if self.active:
-            return __output_held()
-        return self.text
+        import sys, io
+        self.saved = sys.stdout
+        self.stream = io.StringIO()
+        sys.stdout = self.stream
+        return self.stream
 
     def __exit__(self, kind, value, traceback):
-        self.text = __output_held()
-        __output_drop()
-        self.active = False
+        import sys
+        sys.stdout = self.saved
         return False
 
 class captured_stderr:
-    def __init__(self):
-        raise 'NotImplementedError: capturing stderr is not supported'
+    def __enter__(self):
+        import sys, io
+        self.saved = sys.stderr
+        self.stream = io.StringIO()
+        sys.stderr = self.stream
+        return self.stream
+
+    def __exit__(self, kind, value, traceback):
+        import sys
+        sys.stderr = self.saved
+        return False
 
 def check_impl_detail(**guards):
     # Stub: this run claims no reference implementation internals.

@@ -970,6 +970,7 @@ impl<'a> Cursor<'a> {
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
         for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
+            if !lang.print_redirect.is_empty() && (lang.print_file_error.contains(name) || lang.print_file_output.contains(name) || lang.builtins.get(name) == Some(&crate::code::Builtin::Echo)) { continue; }
             if name.len() <= s.len() || !name.starts_with(s.as_str()) {
                 continue;
             }

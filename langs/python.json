@@ -347,6 +347,13 @@
   "ext.builtin.copy": [
     "__copy_value"
   ],
+  "ext.builtin.input": [
+    "input"
+  ],
+  "ext.builtin.input.reader": [
+    "sys",
+    "_input"
+  ],
   "ext.builtin.instance": [
     "isinstance"
   ],
@@ -432,6 +439,18 @@
   ],
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
+  ],
+  "ext.builtin.stream.amiss": [
+    "TypeError: invalid stream arguments"
+  ],
+  "ext.builtin.stream.failed": [
+    "OSError: standard stream operation failed"
+  ],
+  "ext.builtin.stream.read": [
+    "__stream_read"
+  ],
+  "ext.builtin.stream.write": [
+    "__stream_write"
   ],
   "ext.builtin.sum": [
     "sum"
@@ -676,6 +695,15 @@
   ],
   "ext.op.tuple.unready": [
     "NotImplementedError: tuples are not supported"
+  ],
+  "ext.op.walk.class": [
+    "StringIO"
+  ],
+  "ext.op.walk.more": [
+    "_line_more"
+  ],
+  "ext.op.walk.this": [
+    "_line_value"
   ],
   "ext.stmt.annotation": [
     ":"

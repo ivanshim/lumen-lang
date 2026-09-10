@@ -36,6 +36,9 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    StreamWrite,
+    StreamRead,
+    ReadInput,
     MakeHeir,
     CallResult,
     CopyWorth,

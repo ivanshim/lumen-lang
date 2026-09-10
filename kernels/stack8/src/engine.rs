@@ -28,7 +28,6 @@ pub struct Engine<'a> {
     world: Vec<Value>,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
-    routing_output: bool,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -256,7 +255,6 @@ impl<'a> Engine<'a> {
             reading_amiss: None,
             module_sources: HashMap::new(),
             modules: HashMap::new(),
-            routing_output: false,
             registry,
         }
     }
@@ -2489,7 +2487,7 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                if let Some(items) = self.object_answer(&source, 4, vec![])? { items }
+                if let Some(items) = self.object_answer(&source, 4, vec![])? { self.stream_gather(items)? }
                 else { Value::array(self.comprehension_items(&source)?) }
             }
             Action::UnpackCount(wanted) => {
@@ -4254,6 +4252,55 @@ impl<'a> Engine<'a> {
 
     /// Builtins take the same opened arguments as a declared routine,
     /// but each names its own few places, where the definition spells them.
+    /// A stream's callable is kept until its call has returned, even if
+    /// the call gives the module another stream in its stead.
+    fn stream_gather(&mut self, source: Value) -> Res<Value> {
+        if self.walker(&source).is_none() { return Ok(source); }
+        let mut items = Vec::new();
+        loop {
+            let more = self.lang.walk_more.clone().unwrap_or_default();
+            let test = self.stream_member(source.clone(), &more, false)?;
+            if !self.stream_call(test, Vec::new())?.is_true() { break; }
+            let this = self.lang.walk_this.clone().unwrap_or_default();
+            let get = self.stream_member(source.clone(), &this, false)?;
+            items.push(self.stream_call(get, Vec::new())?);
+            if let Some(onward) = self.lang.walk_onward.clone() {
+                let step = self.stream_member(source.clone(), &onward, false)?;
+                self.stream_call(step, Vec::new())?;
+            }
+        }
+        Ok(Value::array(items))
+    }
+
+    fn stream_call(&mut self, callable: Value, arguments: Vec<Value>) -> Res<Value> {
+        let depth = self.data.len();
+        let count = arguments.len() + 1;
+        self.data.extend(arguments);
+        self.data.push(callable);
+        let result = self.perform(&Action::Invoke(Rc::from("")), count);
+        let answer = match result {
+            Ok(()) => self.drop_top(),
+            Err(Fault::Note(told)) => Err(told),
+            Err(fault) => { self.carried = Some(fault); Err(self.lang.stream_failed[0].clone()) }
+        };
+        self.data.truncate(depth);
+        answer
+    }
+
+    fn stream_member(&mut self, object: Value, name: &str, optional: bool) -> Res<Value> {
+        let mut args = vec![object, Value::text(name)];
+        if optional { args.push(Value::Null); }
+        self.builtin(Builtin::MemberGet, "", &mut args)
+    }
+
+    fn stream_module(&mut self, name: &str) -> Res<Value> {
+        match self.import_module(name) {
+            Ok(value) => Ok(value),
+            Err(Fault::Note(told)) => Err(told),
+            Err(fault) => { self.carried = Some(fault); Err(self.lang.stream_failed[0].clone()) }
+        }
+    }
+
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -4269,6 +4316,9 @@ impl<'a> Engine<'a> {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
             let mut error = false;
+            let mut file = Value::Null;
+            let mut flush = false;
+            let route = self.lang.print_redirect.clone();
             for (key, value) in named {
                 if Lang::spells(&self.lang.print_sep, &key) || Lang::spells(&self.lang.print_end, &key) {
                     let sep = Lang::spells(&self.lang.print_sep, &key);
@@ -4279,40 +4329,35 @@ impl<'a> Engine<'a> {
                     };
                     if sep { between = text; } else { ending = text; }
                 } else if Lang::spells(&self.lang.print_file, &key) {
+                    if !route.is_empty() { file = value; continue; }
                     error = match value {
                         Value::Null | Value::Stream(false) => false,
                         Value::Stream(true) => true,
                         _ => return Err(self.lang.print_file_unready[0].clone()),
                     };
-                } else if !Lang::spells(&self.lang.print_flush, &key) {
+                } else if Lang::spells(&self.lang.print_flush, &key) {
+                    flush = value.is_true();
+                } else {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
+            }
+            if route.len() == 3 && matches!(file, Value::Null) {
+                let module = self.stream_module(&route[0])?;
+                file = self.stream_member(module, &route[1], false)?;
+                if matches!(file, Value::Null) { return Ok(Value::Null); }
             }
             let mut pieces = Vec::new();
             for value in &args { pieces.push(self.object_text(value, false)?); }
             let text = pieces.join(&between) + &ending;
-            if !error && !self.routing_output {
-                if let [owner, member, writer] = self.lang.print_redirect.as_slice() {
-                    let writer = writer.clone();
-                    let target = self.modules.get(owner).and_then(|module| match module {
-                        Value::Object(o) => o.fields.borrow().iter().find(|(n, _)| n == member).map(|(_, v)| match v {
-                            Value::Bond(cell) => cell.borrow().clone(), value => value.clone(),
-                        }),
-                        _ => None,
-                    });
-                    if let Some(Value::Object(stream)) = target {
-                        if let Some(method) = stream.class.method(&writer).cloned() {
-                            self.routing_output = true;
-                            let outcome = self.invoke(&method, vec![Value::Object(stream), Value::text(&text)]);
-                            self.routing_output = false;
-                            match outcome {
-                                Ok(()) => { self.drop_top()?; return Ok(Value::Null); }
-                                Err(Fault::Note(told)) => return Err(told),
-                                Err(fault) => { self.carried = Some(fault); return Err("the output method stopped the run".into()); }
-                            }
-                        }
-                    }
+            if route.len() == 3 {
+                let writer = self.stream_member(file.clone(), &route[2], false)?;
+                self.stream_call(writer, vec![Value::text(&text)])?;
+                if flush {
+                    let name = self.lang.print_flush[0].clone();
+                    let method = self.stream_member(file, &name, true)?;
+                    if !matches!(method, Value::Null) { self.stream_call(method, Vec::new())?; }
                 }
+                return Ok(Value::Null);
             }
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
@@ -4382,6 +4427,47 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::ReadInput => {
+                let route = self.lang.input_reader.clone();
+                let module = self.stream_module(&route[0])?;
+                let reader = self.stream_member(module, &route[1], false)?;
+                self.stream_call(reader, args.clone())?
+            }
+            Builtin::StreamWrite => {
+                use std::io::Write;
+                if args.len() != 2 { return Err(self.lang.stream_amiss[0].clone()); }
+                let Value::Text(text) = &args[0] else { return Err(self.lang.stream_amiss[0].clone()); };
+                let written = if args[1].is_true() {
+                    let mut output = std::io::stderr().lock();
+                    output.write_all(text.as_bytes()).and_then(|_| output.flush())
+                } else {
+                    self.utter(text);
+                    std::io::stdout().flush()
+                };
+                written.map_err(|_| self.lang.stream_failed[0].clone())?;
+                Value::Small(text.chars().count() as i64)
+            }
+            Builtin::StreamRead => {
+                use std::io::Read;
+                if args.len() != 2 { return Err(self.lang.stream_amiss[0].clone()); }
+                let Value::Small(limit) = args[0] else { return Err(self.lang.stream_amiss[0].clone()); };
+                let mut input = std::io::stdin().lock();
+                let mut text = String::new();
+                let mut count = 0;
+                while limit < 0 || count < limit {
+                    let mut first = [0u8];
+                    let got = input.read(&mut first).map_err(|_| self.lang.stream_failed[0].clone())?;
+                    if got == 0 { break; }
+                    let width = match first[0] { 0..=127 => 1, 194..=223 => 2, 224..=239 => 3, 240..=244 => 4, _ => return Err(self.lang.stream_failed[0].clone()) };
+                    let mut bytes = vec![0; width];
+                    bytes[0] = first[0];
+                    input.read_exact(&mut bytes[1..]).map_err(|_| self.lang.stream_failed[0].clone())?;
+                    text.push_str(std::str::from_utf8(&bytes).map_err(|_| self.lang.stream_failed[0].clone())?);
+                    count += 1;
+                    if args[1].is_true() && first[0] == b'\n' { break; }
+                }
+                Value::text(&text)
+            }
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -5001,7 +5087,7 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                if let Some(values) = self.object_answer(&args[0], 4, vec![])? { values }
+                if let Some(values) = self.object_answer(&args[0], 4, vec![])? { self.stream_gather(values)? }
                 else { Value::array(self.comprehension_items(&args[0])?) }
             }
             Builtin::Any => {

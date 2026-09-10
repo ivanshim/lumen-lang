@@ -238,12 +238,15 @@ only. The extension labels so far, all from PHP:
   printer's keyword arguments. The first two give the text between values
   and after them; nothing keeps the usual space or line end. The file
   chooses where the text goes, nothing choosing ordinary output. Flush is
-  read and put by. Positional arguments, including those spread from a
+  read and put by unless redirection is spelled; then a true value asks
+  the stream for the method of that name, if it has one. Positional arguments, including those spread from a
   walk, remain the values to print.
 - `ext.builtin.print.file.error` and `.output`: lists naming the error and
   ordinary streams (`sys.stderr` and `sys.stdout`). Each is a value which
   may be held under another name and handed to the printer. These dotted
-  words are read whole, as dotted builtin names are.
+  words are read whole, as dotted builtin names are, unless redirection
+  is spelled; then they are ordinary module members, as is the dotted
+  emit word, and assignment may replace them.
   `ext.builtin.print.file.unready` gives the complaint for any other file
   value; calling a file object's writer is still wanting.
 - `ext.builtin.print.sep.amiss` and `.end.amiss`: plain words for a joining
@@ -510,9 +513,23 @@ only. The extension labels so far, all from PHP:
   Where spelled, a plain class of that name is bound before the program
   starts, and context managers receive its object for such a fault.
 - `ext.builtin.print.redirect`: three names, for the module, its output
-  stream and the stream's writing method. Print asks that method to
-  write its completed text. A print within the writer reaches the host
-  so the ordinary stream need not call itself without end.
+  stream and the stream's writing method. Print keeps that stream before
+  turning its arguments into text, then asks its writer for the joined
+  text and ending. A file argument other than nothing supplies the
+  stream instead. Nothing in the module's output place makes print do
+  nothing. A writer's or flusher's fault passes back to the caller.
+- `ext.builtin.input` and `.reader`: a builtin and two names naming the
+  module and routine which read a line from the current input stream.
+  The library gives the prompt to print, takes off the trailing newline,
+  and raises the end-of-input fault when the reader returns empty text.
+- `ext.builtin.stream.write` and `.read`: builtins for the original host
+  streams. The writer takes text and a truth value choosing error output,
+  returning the number of characters written. The reader takes a character
+  limit (negative for no limit) and a truth value choosing one line.
+  The originals remain reachable when module members are replaced.
+  `ext.builtin.stream.amiss` and `.failed` give the plain complaints for
+  ill-shaped arguments and host stream failures, respectively. These host
+  helpers carry text as UTF-8; other encodings belong to a later stage.
 - `ext.builtin.clock.parts`: a switch allowing the clock to take one
   truth value and return fractional seconds. True asks for a steady
   clock with an arbitrary fixed origin; false asks for wall time. With
@@ -843,7 +860,9 @@ only. The extension labels so far, all from PHP:
   thing to hand out the items' own cells, which it has none of. The
   classes themselves are declared in the language's own library, not
   here: the kernel is told only which class stands for each and what the
-  methods are called.
+  methods are called. Python uses the class and the more and current
+  methods for its in-memory text stream; each asking reads one line,
+  so leaving the walk early leaves the unread lines in the stream.
 - `ext.op.walk.live`: a switch; a walk that hands out the items' own
   cells for writing (`foreach ($a as &$v)`) keeps its place by the item
   it handed out and not by counting. Such a walk goes over the array as
@@ -2158,6 +2177,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
+| `ext.builtin.input.reader` | - | - | `sys` `_input` | - | - | - | - | - | - | - |
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
@@ -2201,6 +2222,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
+| `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
@@ -2334,18 +2359,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
 | `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.tuple.unready` | - | - | `NotImplementedError: tuples are not supported` | - | - | - | - | - | - | - |
-| `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
+| `ext.op.walk.class` | - | - | `StringIO` | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |
 | `ext.op.walk.giver.unwalkable` | - | - | - | - | `Objects returned by` `must be traversable or implement interface Iterator` | - | - | - | - | - |
 | `ext.op.walk.key` | - | - | - | - | `key` | - | - | - | - | - |
 | `ext.op.walk.key.no_cell` | - | - | - | - | `Key element cannot be a reference` | - | - | - | - | - |
 | `ext.op.walk.live` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.op.walk.more` | - | - | - | - | `valid` | - | - | - | - | - |
+| `ext.op.walk.more` | - | - | `_line_more` | - | `valid` | - | - | - | - | - |
 | `ext.op.walk.no_cell` | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - | - | - | - |
 | `ext.op.walk.onward` | - | - | - | - | `next` | - | - | - | - | - |
 | `ext.op.walk.rewind` | - | - | - | - | `rewind` | - | - | - | - | - |
-| `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
+| `ext.op.walk.this` | - | - | `_line_value` | - | `current` | - | - | - | - | - |
 | `ext.stmt.annotation` | - | - | `:` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.amiss` | - | - | `invalid syntax` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |

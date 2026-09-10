@@ -106,7 +106,6 @@ enum Next {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
-    in_output_method: bool,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -257,7 +256,6 @@ impl<'a> Machine<'a> {
         Machine {
             library_sources: HashMap::new(),
             imported: HashMap::new(),
-            in_output_method: false,
             table,
             outermost,
             args_cell: find("system.args"),
@@ -2534,9 +2532,9 @@ impl<'a> Machine<'a> {
                     let mut values = self.value_list(args, frame)?;
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
                         let (mut positions, keywords) = self.open_arguments(values)?;
-                        if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
-                            return Ok(answer);
-                        }
+                        let fitted = self.builtin_names(*op, name, &mut positions, keywords);
+                        if let Some(escape) = self.got_away.take() { return Err(escape); }
+                        if let Some(answer) = fitted? { return Ok(answer); }
                         values = positions;
                     }
                     // What a call was handed is read back as it stands
@@ -2895,6 +2893,19 @@ impl<'a> Machine<'a> {
 
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
+    fn stream_apply(&mut self, function: Value, values: Vec<Value>) -> Result<Value, String> {
+        let expression = Form::Apply(Callee::Code(Box::new(Form::Const(function))), values.into_iter().map(Form::Const).collect());
+        let scope = self.outermost.clone();
+        match self.value_of(&expression, &scope) {
+            Ok(answer) => Ok(answer),
+            Err(Escape::Error(message)) => Err(message),
+            Err(escape) => {
+                self.got_away = Some(escape);
+                Err(self.argument_fault("ext.builtin.stream.failed", None))
+            }
+        }
+    }
+
     fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
@@ -2905,6 +2916,9 @@ impl<'a> Machine<'a> {
             let mut join = String::from(" ");
             let mut tail = String::from("\n");
             let mut channel = 1;
+            let mut destination = Value::Nil;
+            let mut drain = false;
+            let route = table.strings("ext.builtin.print.redirect");
             for (key, value) in keywords {
                 let joining = table.spells("ext.builtin.print.sep", &key);
                 if joining || table.spells("ext.builtin.print.end", &key) {
@@ -2917,14 +2931,22 @@ impl<'a> Machine<'a> {
                         }
                     }
                 } else if table.spells("ext.builtin.print.file", &key) {
+                    if route.len() == 3 { destination = value; continue; }
                     match value {
                         Value::Channel(port) => channel = port,
                         Value::Nil => channel = 1,
                         _ => return Err(self.argument_fault("ext.builtin.print.file.unready", None).into()),
                     }
-                } else if !table.spells("ext.builtin.print.flush", &key) {
+                } else if table.spells("ext.builtin.print.flush", &key) {
+                    drain = self.stands_true(&value);
+                } else {
                     return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)).into());
                 }
+            }
+            if route.len() == 3 && matches!(destination, Value::Nil) {
+                let owner = self.load_namespace(&route[0])?;
+                destination = self.attribute(&owner, &route[1]).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(&route[1])))?;
+                if matches!(destination, Value::Nil) { return Ok(Some(Value::Nil)); }
             }
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
@@ -2932,20 +2954,15 @@ impl<'a> Machine<'a> {
                 written.push_str(&self.protocol_text(item, false)?);
             }
             written.push_str(&tail);
-            let route = table.strings("ext.builtin.print.redirect");
-            if channel == 1 && !self.in_output_method && route.len() == 3 {
-                let target = self.imported.get(&route[0]).and_then(|module| self.attribute(module, &route[1]));
-                if let Some(Value::Thing(thing)) = target {
-                    let routine = thing.of.program(&route[2]).cloned();
-                    if let Some(routine) = routine {
-                        self.in_output_method = true;
-                        let outer = self.outermost.clone();
-                        let done = self.invoke(routine, outer, vec![Value::Thing(thing), Value::text(&written)]);
-                        self.in_output_method = false;
-                        done?;
-                        return Ok(Some(Value::Nil));
+            if route.len() == 3 {
+                let writer = self.attribute(&destination, &route[2]).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(&route[2])))?;
+                self.stream_apply(writer, vec![Value::text(&written)])?;
+                if drain {
+                    if let Some(method) = table.single("ext.builtin.print.flush").and_then(|word| self.attribute(&destination, word)) {
+                        self.stream_apply(method, Vec::new())?;
                     }
                 }
+                return Ok(Some(Value::Nil));
             }
             match channel {
                 2 => eprint!("{}", written),
@@ -3602,13 +3619,73 @@ impl<'a> Machine<'a> {
             return Ok(Value::text(&self.protocol_text(&v[0], false)?));
         }
         if matches!(op, Prim::Listed | Prim::Iterated) && v.len() == 1 {
-            if let Some(answer) = self.protocol_value(&v[0], 4, &[])? { return Ok(answer); }
+            if let Some(answer) = self.protocol_value(&v[0], 4, &[])? {
+                if self.walks_itself(&answer).is_none() { return Ok(answer); }
+                let mut collected = Vec::new();
+                let more = self.table.single("ext.op.walk.more").unwrap_or_default();
+                let current = self.table.single("ext.op.walk.this").unwrap_or_default();
+                loop {
+                    let method = self.attribute(&answer, more).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(more)))?;
+                    if !self.stream_apply(method, vec![])?.is_true() { break; }
+                    let method = self.attribute(&answer, current).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(current)))?;
+                    collected.push(self.stream_apply(method, vec![])?);
+                    if let Some(method) = self.table.single("ext.op.walk.onward").and_then(|key| self.attribute(&answer, key)) {
+                        self.stream_apply(method, vec![])?;
+                    }
+                }
+                return Ok(Value::Vector(Rc::new(collected)));
+            }
         }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::ReadInput => {
+                let words = self.table.strings("ext.builtin.input.reader");
+                let namespace = self.load_namespace(&words[0])?;
+                let function = self.attribute(&namespace, &words[1]).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(&words[1])))?;
+                self.stream_apply(function, v.to_vec())?
+            }
+            Prim::StreamWrite => {
+                use std::io::Write;
+                let bad = || self.argument_fault("ext.builtin.stream.amiss", None);
+                if v.len() != 2 { return Err(bad()); }
+                let Value::Text(content) = &v[0] else { return Err(bad()); };
+                if v[1].is_true() {
+                    let mut err = std::io::stderr();
+                    err.write_all(content.as_bytes()).and_then(|_| err.flush()).map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                } else {
+                    self.utter(content);
+                    std::io::stdout().flush().map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                }
+                Value::Small(content.chars().count() as i64)
+            }
+            Prim::StreamRead => {
+                use std::io::Read;
+                if v.len() != 2 { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); }
+                let Value::Small(maximum) = v[0] else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
+                let mut source = std::io::stdin().lock();
+                let mut remaining = maximum;
+                let mut gathered = Vec::new();
+                while remaining != 0 {
+                    let mut unit = [0u8; 4];
+                    match source.read(&mut unit[..1]) {
+                        Ok(0) => break,
+                        Ok(_) => (),
+                        Err(_) => return Err(self.argument_fault("ext.builtin.stream.failed", None)),
+                    }
+                    let extent = if unit[0] < 128 { 1 } else if (194..224).contains(&unit[0]) { 2 }
+                        else if (224..240).contains(&unit[0]) { 3 } else if (240..245).contains(&unit[0]) { 4 }
+                        else { return Err(self.argument_fault("ext.builtin.stream.failed", None)); };
+                    source.read_exact(&mut unit[1..extent]).map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                    gathered.extend_from_slice(&unit[..extent]);
+                    if remaining > 0 { remaining -= 1; }
+                    if v[1].is_true() && unit[0] == 10 { break; }
+                }
+                let text = String::from_utf8(gathered).map_err(|_| self.argument_fault("ext.builtin.stream.failed", None))?;
+                Value::text(&text)
+            }
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

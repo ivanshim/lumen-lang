@@ -80,22 +80,42 @@ def setrecursionlimit(limit):
 
 class _Output:
     def write(self, text):
-        print(text, end='')
-        return len(text)
+        return __stream_write(text, False)
 
     def flush(self):
         pass
 
 class _Error:
     def write(self, text):
-        print(text, end='', file=sys.stderr)
-        return len(text)
+        return __stream_write(text, True)
 
     def flush(self):
         pass
 
+class _Input:
+    def read(self, size=-1):
+        return __stream_read(size, False)
+
+    def readline(self, size=-1):
+        return __stream_read(size, True)
+
 stdout = _Output()
 stderr = _Error()
+stdin = _Input()
+__stdout__ = stdout
+__stderr__ = stderr
+__stdin__ = stdin
+
+def _input(prompt=''):
+    print(prompt, end='', flush=True)
+    line = stdin.readline()
+    if not isinstance(line, str):
+        raise 'TypeError: readline must return a string'
+    if line == '':
+        raise 'EOFError: EOF when reading a line'
+    if line[-1:] == '\n':
+        return line[:-1]
+    return line
 
 # Stub: the direct host spelling still raises a complaint. Numeric
 # process exit status and catchable SystemExit await exception support.
