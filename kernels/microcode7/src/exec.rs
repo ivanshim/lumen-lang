@@ -7293,24 +7293,16 @@ impl Machine<'_> {
                 let exponent = u32::try_from(places.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let value = as_number(&input[0]);
                 let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;
-                if self.table.lone("system.real.render") == Some("shortest") {
-                    let keep_whole = fraction.places.is_none();
-                    if keep_whole && places >= 0 { return Ok(value); }
+                if self.table.lone("system.real.render") == Some("shortest") && fraction.places.is_some() {
                     let factor = BigInt::from(10).pow(places.unsigned_abs().min(100000) as u32);
                     let negative = fraction.above.is_negative();
                     let mut numerator = fraction.above.abs();
                     let mut denominator = fraction.beneath;
                     if places < 0 { denominator *= &factor; } else { numerator *= &factor; }
                     let mut rounded = &numerator / &denominator;
-                    let halfway: BigInt = (&numerator % &denominator) * 2;
-                    match halfway.cmp(&denominator) {
-                        std::cmp::Ordering::Greater => rounded += 1,
-                        std::cmp::Ordering::Equal if (&rounded % 2u8) == BigInt::from(1) => rounded += 1,
-                        _ => {}
-                    }
+                    if (&numerator % &denominator) * 2 >= denominator { rounded += 1; }
                     if negative { rounded = -rounded; }
                     if input.len() < 2 || matches!(input[1], Value::Nil) { return Ok(Value::from_big(rounded)); }
-                    if keep_whole { return Ok(Value::from_big(rounded * factor)); }
                     let worth = if places < 0 { crate::data::nearest_binary(&(rounded * factor), &BigInt::from(1)) }
                         else { crate::data::nearest_binary(&rounded, &factor) };
                     return Ok(crate::data::worth_of_binary(if negative && worth == 0.0 { -0.0 } else { worth }, math::DEFAULT_PLACES));

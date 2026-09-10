@@ -12,11 +12,10 @@ rendering:
 - `scratch/file-str/5.out`: the binary value of `1.e+49` is not the exact
   integer `10 ** 49`, so the first comparison is false.
 - `scratch/builtins-core/6.out`: round the binary value of `2.675` to `2.67`,
-  retain the sign and real kind of rounded zero, round halfway cases to even,
-  and preserve integer results when rounding integers to negative places.
-
-`6.py` also checks even rounding with both signs, integer and real results,
-and positive and negative decimal places.
+  retain the sign and real kind of rounded zero, and render the existing real
+  results `125` and `135` as `125.0` and `135.0`. This records the observed
+  output; the inherited halfway and negative-place rounding rules remain
+  distinct from Python's rounding rules and are outside this rendering piece.
 
 The earlier parameters fixture correction is already present:
 `scratch/params/15.err` became `scratch/params/15.out` because
