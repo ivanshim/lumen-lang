@@ -64,6 +64,44 @@ impl Value {
         }
     }
 
+    /// Identity follows the cell; replacing its worth does not replace it.
+    pub fn identity_stamp(&self) -> Option<(String, u64)> {
+        use std::rc::Rc;
+        let address: u64;
+        match self {
+            Self::Shared(cell) => return cell.borrow().identity_stamp(),
+            Self::Mutable(cell, _) => address = Rc::as_ptr(cell) as usize as u64,
+            Self::Small(n) => address = *n as u64,
+            Self::Flag(b) => address = if *b { 1 } else { 0 },
+            Self::Nil | Self::Ellipsis => address = 0,
+            Self::Declined(name) => return Some((name.to_string(), 0)),
+            Self::KindOf(kind) => address = *kind as u64,
+            Self::Intrinsic(word) => return Some((format!("builtin:{}", word), 0)),
+            Self::Vector(p) | Self::Tuple(p) | Self::Row(p) | Self::Set(p) | Self::Span(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Dict(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Text(chars) => address = chars.as_ptr() as usize as u64,
+            Self::Huge(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Frac(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Blueprint(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Thing(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Iterator(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Generator(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Progression(p) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Routine(p) | Self::Bound(p, _) => address = Rc::as_ptr(p) as usize as u64,
+            Self::Adorned(p) => address = Rc::as_ptr(p) as usize as u64,
+            _ => return None,
+        }
+        let category = match self { Self::Ellipsis => String::from("ellipsis"), _ => self.kind_word() };
+        Some((category, address))
+    }
+
+    pub fn shares_identity(&self, rhs: &Value) -> bool {
+        match (self.identity_stamp(), rhs.identity_stamp()) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
+    }
+
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
             Self::Text(chars) if chars.is_empty() => 0,

@@ -179,6 +179,7 @@ pub enum Value {
     Flag(bool),
     Null,
     Ellipsis,
+    Unimplemented(Rc<str>),
     Array(Rc<Vec<Value>>),
     Tuple(Rc<Vec<Value>>),
     Generator(Rc<RefCell<Generator>>),
@@ -359,7 +360,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
+            Value::Unimplemented(_) | Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -385,6 +386,7 @@ impl Value {
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
             Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Unimplemented(word) => Err(word.to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -609,6 +611,7 @@ impl Value {
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
+            Value::Unimplemented(word) => word.to_string(),
             Value::Ellipsis => "Ellipsis".to_string(),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),

@@ -2363,6 +2363,8 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
+                        Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into()),
+                        Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.object", &word) => None,
                         _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
                     },
                 };
@@ -3946,24 +3948,28 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
-        match one { Value::Shared(cell) => return self.equal_contents(&cell.borrow(), other), _ => {} }
-        match other { Value::Shared(cell) => return self.equal_contents(one, &cell.borrow()), _ => {} }
-        if let (Value::Dict(entries), Value::Dict(against)) = (one, other) {
-            if entries.len() != against.len() { return false; }
-            for (key, value) in entries.iter() {
-                let found = against.iter().find(|entry| self.equal_contents(key, &entry.0));
-                match found {
-                    Some(entry) if self.equal_contents(value, &entry.1) => (),
-                    _ => return false,
+        let a = one.settled();
+        let b = other.settled();
+        let held_equal = |x: &Value, y: &Value| x.shares_identity(y) || self.equal_contents(x, y);
+        match (&a, &b) {
+            (Value::Flag(truth), rhs) => return self.equal_contents(&Value::Small(if *truth { 1 } else { 0 }), rhs),
+            (lhs, Value::Flag(truth)) => return self.equal_contents(lhs, &Value::Small(if *truth { 1 } else { 0 })),
+            (Value::Dict(entries), Value::Dict(against)) => {
+                if entries.len() != against.len() { return false; }
+                for (key, value) in entries.iter() {
+                    let found = against.iter().find(|entry| held_equal(key, &entry.0));
+                    match found { Some(entry) if held_equal(value, &entry.1) => (), _ => return false }
                 }
+                return true;
             }
-            return true;
+            (Value::Vector(values), Value::Vector(against)) | (Value::Tuple(values), Value::Tuple(against)) => {
+                return values.len() == against.len() && (0..values.len()).all(|i| held_equal(&values[i], &against[i]));
+            }
+            (Value::Set(values), Value::Set(against)) => return values.len() == against.len()
+                && values.iter().all(|x| against.iter().any(|y| held_equal(x, y))),
+            _ => (),
         }
-        if let (Value::Vector(values), Value::Vector(against)) = (one, other) {
-            return values.len() == against.len() && (0..values.len())
-                .all(|i| self.equal_contents(&values[i], &against[i]));
-        }
-        one.equals(other)
+        a.equals(&b)
     }
 
     fn dictionary(&mut self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
@@ -4014,6 +4020,12 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.table.has_any("ext.op.identical.negated") {
+            if matches!(op, Prim::Selfsame | Prim::Unlike) {
+                return Ok(Value::Flag(v[0].shares_identity(&v[1]) == (op == Prim::Selfsame)));
+            }
+            if op == Prim::IdentityOf { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
+        }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -4051,6 +4063,42 @@ impl<'a> Machine<'a> {
             return self.prim(op, name, &settled);
         }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
+        if self.table.has_any("ext.op.eq.method") {
+            if matches!(op, Prim::Eq | Prim::Ne) {
+                if matches!(v[0], Value::Thing(_)) || matches!(v[1], Value::Thing(_)) { return self.compare_things(&v[0], &v[1], op == Prim::Ne); }
+                return Ok(Value::Flag(self.equal_values(&v[0], &v[1], false)? ^ (op == Prim::Ne)));
+            }
+            if op == Prim::At {
+                if let Value::Dict(entries) = &v[0] {
+                    self.hashed_value(&v[1])?;
+                    for (key, item) in entries.iter() { if self.equal_values(key, &v[1], true)? { return Ok(item.clone()); } }
+                    return Err(format!("{}{}", self.method_fault("key"), v[1].quoted()));
+                }
+            }
+            if matches!(op, Prim::Contains | Prim::Absent) {
+                let entries = match &v[1] {
+                    Value::Vector(items) | Value::Tuple(items) | Value::Set(items) => Some(items.as_ref().clone()),
+                    Value::Dict(pairs) => { self.hashed_value(&v[0])?; Some(pairs.iter().map(|(k, _)| k.clone()).collect()) }
+                    _ => None,
+                };
+                if let Some(entries) = entries {
+                    let mut present = false;
+                    for item in entries { if self.equal_values(&item, &v[0], true)? { present = true; break; } }
+                    return Ok(Value::Flag(present ^ (op == Prim::Absent)));
+                }
+            }
+        }
+        if self.table.has_any("ext.op.eq.method") && matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
+            && v.iter().any(|item| matches!(item, Value::Flag(_))) {
+            let counted: Vec<Value> = v.iter().map(|item| match item { Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }), other => other.clone() }).collect();
+            return self.prim_values(op, name, &counted);
+        }
+        if self.table.has_any("ext.op.order.unsupported") && matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
+            && crate::math::below(&v[0], &v[1]).is_none() && !matches!((&v[0], &v[1]), (Value::Text(_), Value::Text(_))) {
+            let words = self.table.strings("ext.op.order.unsupported");
+            let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
+            return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], v[0].kind_word(), words[2], v[1].kind_word(), words[3]));
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -5260,19 +5308,6 @@ impl<'a> Machine<'a> {
                 let Value::Text(pattern) = &v[0] else { unreachable!() };
                 Value::text(&self.text_remainder(pattern, &v[1])?)
             }
-            Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
-                let identical = match (&v[0], &v[1]) {
-                    (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
-                    (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
-                    (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
-                    (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-                    (Value::Flag(a), Value::Flag(b)) => a == b,
-                    (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
-                    _ if !v[0].selfsame(&v[1]) => false,
-                    _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
-                };
-                Value::Flag(if op == Prim::Unlike { !identical } else { identical })
-            }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
@@ -5537,7 +5572,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
                 else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
+            Prim::PlainObject | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -6893,9 +6928,159 @@ fn suspension_within(form: &Form) -> bool {
 // Each primitive is given the values already worked out by the caller.
 // Only the few names belonging to that primitive may fill its places.
 impl Machine<'_> {
+    fn protocol(&self, item: &Value, label: &str) -> Option<Value> {
+        let word = self.table.single(label)?;
+        let Value::Thing(thing) = item else { return None; };
+        let mut current = Some(thing.of.clone());
+        while let Some(class) = current {
+            let shared = class.shared.borrow();
+            if let Some((_, member)) = shared.iter().find(|(n, _)| n == word) {
+                return Some(match member {
+                    Value::Routine(p) => Value::Method(p.clone(), thing.clone()),
+                    other => other.clone(),
+                });
+            }
+            for (name, body) in &class.methods {
+                if name == word { return Some(Value::Method(body.clone(), thing.clone())); }
+            }
+            current = class.under.clone();
+        }
+        None
+    }
+
+    fn truth_answer(&mut self, item: &Value) -> Result<bool, String> {
+        let item = item.settled();
+        let truth = self.protocol(&item, "ext.builtin.bool.method");
+        let count = if truth.is_none() { self.protocol(&item, "ext.builtin.len.method") } else { None };
+        if let Some(method) = truth {
+            let result = self.core_run(&method, Vec::new())?;
+            if let Value::Flag(answer) = result { return Ok(answer); }
+            return Err(format!("{}{}", self.table.single("ext.builtin.bool.result").unwrap_or_default(), result.kind_word()));
+        }
+        match count {
+            Some(method) => {
+                let length = self.core_run(&method, Vec::new())?;
+                if !matches!(length, Value::Flag(_) | Value::Small(_) | Value::Huge(_)) {
+                    return Err(self.core_complaint("core.integer", &length.kind_word()));
+                }
+                let n = length.as_big()?;
+                if n < BigInt::from(0) { return Err(self.table.single("ext.builtin.len.negative").unwrap_or_default().to_owned()); }
+                Ok(n > BigInt::from(0))
+            }
+            None => Ok(self.stands_true(&item)),
+        }
+    }
+
+    fn hashed_value(&mut self, input: &Value) -> Result<i64, String> {
+        let value = input.settled();
+        match &value {
+            Value::Thing(thing) => {
+                let hash = self.table.single("ext.builtin.hash.method").unwrap_or_default();
+                let eq = self.table.single("ext.op.eq.method").unwrap_or_default();
+                let mut current = Some(thing.of.clone());
+                while let Some(class) = current {
+                    let shared = class.shared.borrow();
+                    if class.methods.iter().any(|m| m.0 == hash) || shared.iter().any(|m| m.0 == hash) { break; }
+                    if class.methods.iter().any(|m| m.0 == eq) || shared.iter().any(|m| m.0 == eq) {
+                        return Err(self.core_complaint("core.unhashable", &thing.of.name));
+                    }
+                    current = class.under.clone();
+                }
+                match self.protocol(&value, "ext.builtin.hash.method") {
+                    Some(Value::Nil) => Err(self.core_complaint("core.unhashable", &thing.of.name)),
+                    Some(method) => {
+                        let result = self.core_run(&method, Vec::new())?;
+                        if matches!(result, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                            Ok(result.hash_number().expect("whole hash"))
+                        } else { Err(self.table.single("ext.builtin.hash.result").unwrap_or_default().to_owned()) }
+                    }
+                    None => Ok((Rc::as_ptr(thing) as usize / 16) as i64),
+                }
+            }
+            Value::Tuple(parts) => {
+                let mut result = 2_870_177_450_012_600_261u64;
+                for part in parts.iter() {
+                    let hash = self.hashed_value(part)? as u64;
+                    result = result.wrapping_add(hash.wrapping_mul(14_029_467_366_897_019_727));
+                    result = result.rotate_left(31).wrapping_mul(11_400_714_785_074_694_791);
+                }
+                result = result.wrapping_add(parts.len() as u64 ^ (2_870_177_450_012_600_261 ^ 3_527_539));
+                Ok(if result == u64::MAX { 1_546_275_796 } else { result as i64 })
+            }
+            _ => {
+                if let Some(answer) = value.hash_number() { return Ok(answer); }
+                if matches!(value, Value::Blueprint(_) | Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Generator(_) | Value::Ellipsis | Value::Declined(_)) {
+                    return Ok(value.identity_stamp().map_or(0, |(_, address)| (address / 16) as i64));
+                }
+                Err(self.core_complaint("core.unhashable", &value.kind_word()))
+            }
+        }
+    }
+
+    fn compare_things(&mut self, left: &Value, right: &Value, reverse: bool) -> Result<Value, String> {
+        let right_first = match (left, right) {
+            (Value::Thing(a), Value::Thing(b)) => !Rc::ptr_eq(&a.of, &b.of) && b.of.goes_by(&a.of.name, false),
+            _ => false,
+        };
+        let operands = if right_first { [(right, left), (left, right)] } else { [(left, right), (right, left)] };
+        for (receiver, argument) in operands {
+            let unequal = if reverse { self.protocol(receiver, "ext.op.ne.method") } else { None };
+            let explicit_ne = unequal.is_some();
+            let method = unequal.or_else(|| self.protocol(receiver, "ext.op.eq.method"));
+            if let Some(method) = method {
+                let result = self.core_run(&method, vec![argument.clone()])?;
+                if matches!(result, Value::Declined(_)) { continue; }
+                return if reverse && !explicit_ne { Ok(Value::Flag(!self.truth_answer(&result)?)) } else { Ok(result) };
+            }
+        }
+        Ok(Value::Flag(left.shares_identity(right) ^ reverse))
+    }
+
+    fn equal_values(&mut self, left: &Value, right: &Value, member: bool) -> Result<bool, String> {
+        if member && left.shares_identity(right) { return Ok(true); }
+        let a = left.settled();
+        let b = right.settled();
+        if matches!(a, Value::Thing(_)) || matches!(b, Value::Thing(_)) {
+            let reply = self.compare_things(&a, &b, false)?;
+            return self.truth_answer(&reply);
+        }
+        match (&a, &b) {
+            (Value::Tuple(x), Value::Tuple(y)) | (Value::Vector(x), Value::Vector(y)) => {
+                if x.len() == y.len() {
+                    for index in 0..x.len() { if !self.equal_values(&x[index], &y[index], true)? { return Ok(false); } }
+                    return Ok(true);
+                }
+                Ok(false)
+            }
+            (Value::Dict(x), Value::Dict(y)) => {
+                if x.len() != y.len() { return Ok(false); }
+                for (key, item) in x.iter() {
+                    let mut matched = None;
+                    for (other_key, other_item) in y.iter() {
+                        if self.equal_values(key, other_key, true)? { matched = Some(other_item); break; }
+                    }
+                    if let Some(other) = matched { if self.equal_values(item, other, true)? { continue; } }
+                    return Ok(false);
+                }
+                Ok(true)
+            }
+            (Value::Set(x), Value::Set(y)) => {
+                if x.len() != y.len() { return Ok(false); }
+                for item in x.iter() {
+                    let mut matches = false;
+                    for candidate in y.iter() { if self.equal_values(item, candidate, true)? { matches = true; break; } }
+                    if !matches { return Ok(false); }
+                }
+                Ok(true)
+            }
+            (Value::Declined(_), Value::Declined(_)) => Ok(true),
+            _ => Ok(self.equal_contents(&a, &b)),
+        }
+    }
+
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
+        matches!(op, PlainObject | Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
     fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -6984,6 +7169,11 @@ impl Machine<'_> {
 
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
+            Value::Method(body, receiver) => {
+                let mut args = vec![Value::Thing(receiver.clone())];
+                args.extend(values);
+                self.core_run(&Value::Bound(body.clone(), self.outermost.clone()), args)
+            }
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
             Value::Intrinsic(word) => {
                 let op = *self.table.prims.get(word.as_ref()).ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word()))?;
@@ -7025,6 +7215,7 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        let identity = if op == Prim::IdentityOf { input.first().and_then(Value::identity_stamp) } else { None };
         for item in &mut input { *item = item.settled(); }
         if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};
@@ -7079,33 +7270,24 @@ impl Machine<'_> {
         match op {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
             Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted())) }
-            Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
+            PlainObject => {
+                require(0, 0)?;
+                let blueprint = Rc::new(Blueprint { name: name.to_owned(), under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+                self.make_instance(blueprint, Vec::new()).map_err(|fault| self.suspension_fault(fault))
+            }
+            Truthful => {
+                require(0, 1)?;
+                let answer = if let Some(value) = input.first() { self.truth_answer(value)? } else { false };
+                Ok(Value::Flag(answer))
+            }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
-                input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &input[0].kind_word()))
+                self.hashed_value(&input[0]).map(Value::Small)
             }
             IdentityOf => {
                 require(1, 1)?;
-                let address: u64 = match &input[0] {
-                    Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
-                    Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
-                    Value::Vector(p) | Value::Set(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Intrinsic(word) => {
-                        let mut words: Vec<_> = self.table.prims.keys().collect(); words.sort();
-                        words.iter().position(|w| w.as_str() == word.as_ref()).unwrap_or(0) as u64 + 16
-                    }
-                    Value::Text(chars) => chars.as_ptr() as usize as u64,
-                    Value::Dict(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Iterator(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Bound(p, _) | Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
-                    _ => return Err(self.core_complaint("core.unready", name)),
-                };
-                let stamp = (input[0].kind_word(), address);
+                let stamp = identity.ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let found = self.identities.iter().position(|old| *old == stamp).unwrap_or_else(|| { self.identities.push(stamp); self.identities.len()-1 });
                 Ok(Value::Small(found as i64 + 1))
             }

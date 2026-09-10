@@ -349,6 +349,15 @@
   "ext.builtin.bool": [
     "bool"
   ],
+  "ext.builtin.bool.base": [
+    "TypeError: type 'bool' is not an acceptable base type"
+  ],
+  "ext.builtin.bool.method": [
+    "__bool__"
+  ],
+  "ext.builtin.bool.result": [
+    "TypeError: __bool__ should return bool, returned "
+  ],
   "ext.builtin.callable": [
     "callable"
   ],
@@ -477,6 +486,12 @@
   "ext.builtin.hash": [
     "hash"
   ],
+  "ext.builtin.hash.method": [
+    "__hash__"
+  ],
+  "ext.builtin.hash.result": [
+    "TypeError: __hash__ method should return an integer"
+  ],
   "ext.builtin.hex": [
     "hex"
   ],
@@ -491,6 +506,12 @@
   ],
   "ext.builtin.key": [
     "key"
+  ],
+  "ext.builtin.len.method": [
+    "__len__"
+  ],
+  "ext.builtin.len.negative": [
+    "ValueError: __len__() should return >= 0"
   ],
   "ext.builtin.list": [
     "list"
@@ -719,6 +740,9 @@
   ],
   "ext.builtin.next": [
     "next"
+  ],
+  "ext.builtin.object": [
+    "object"
   ],
   "ext.builtin.oct": [
     "oct"
@@ -1014,10 +1038,14 @@
     "NotImplementedError: this string value is not supported"
   ],
   "ext.literal.ellipsis": [
-    "..."
+    "...",
+    "Ellipsis"
   ],
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
+  ],
+  "ext.literal.unimplemented": [
+    "NotImplemented"
   ],
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
@@ -1086,6 +1114,9 @@
   ],
   "ext.op.contains": [],
   "ext.op.eq.maps.unordered": true,
+  "ext.op.eq.method": [
+    "__eq__"
+  ],
   "ext.op.identical": [
     "is"
   ],
@@ -1173,6 +1204,15 @@
     "."
   ],
   "ext.op.member.pipes": true,
+  "ext.op.ne.method": [
+    "__ne__"
+  ],
+  "ext.op.order.unsupported": [
+    "TypeError: '",
+    "' not supported between instances of '",
+    "' and '",
+    "'"
+  ],
   "ext.op.pipe.attribute": true,
   "ext.op.plus": [
     "+"

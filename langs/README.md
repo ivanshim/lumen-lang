@@ -1465,6 +1465,24 @@ only. The extension labels so far, all from PHP:
   A modulus keeps whole powers bounded, and a negative exponent asks for
   the modular inverse. `ext.builtin.hex`, `.oct` and `.bin` write whole
   numbers with the proper base marks.
+- `ext.literal.unimplemented` names the single value by which a comparison
+  declines its operands. Its first word is also how the value is written.
+  `ext.literal.ellipsis` may give the named spelling beside the sign.
+- `ext.builtin.object` makes a fresh thing with no fields. Its truth is
+  true, and its equality and hash follow its identity.
+- `ext.op.eq.method` and `ext.op.ne.method` name the methods by which a
+  thing answers equality and its opposite. A declined answer asks the
+  other operand; two declined answers leave the question to identity.
+- `ext.builtin.hash.method` names a thing's hash method. Equality declared
+  without it leaves the thing unhashable, as does a method set to nothing.
+  `ext.builtin.hash.result` refuses an answer which is not a whole number.
+- `ext.builtin.bool.method` asks a thing for truth, falling back to
+  `ext.builtin.len.method` when absent. `ext.builtin.bool.result` precedes
+  the kind of an answer which is not truth. `ext.builtin.len.negative`
+  refuses a length below nought. `ext.builtin.bool.base` refuses a class
+  standing upon the truth kind.
+- `ext.op.order.unsupported` holds four pieces around an ordering sign
+  and its two operand kinds, where no ordering is given between them.
 - `ext.builtin.id` names a value's identity in this run. Unboxed integers
   have identities of their worth; held objects have identities of their
   handles. `ext.builtin.hash` hashes integers, text and tuples. Text hashes
@@ -3000,6 +3018,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
+| `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
+| `ext.builtin.bool.method` | - | - | `__bool__` | - | - | - | - | - | - | - |
+| `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
@@ -3055,6 +3076,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
+| `ext.builtin.hash.method` | - | - | `__hash__` | - | - | - | - | - | - | - |
+| `ext.builtin.hash.result` | - | - | `TypeError: __hash__ method should return an integer` | - | - | - | - | - | - | - |
 | `ext.builtin.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.id` | - | - | `id` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
@@ -3065,6 +3088,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
 | `ext.builtin.key` | - | - | `key` | - | - | - | - | - | - | - |
+| `ext.builtin.len.method` | - | - | `__len__` | - | - | - | - | - | - | - |
+| `ext.builtin.len.negative` | - | - | `ValueError: __len__() should return >= 0` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
@@ -3143,6 +3168,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
+| `ext.builtin.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.oct` | - | - | `oct` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
@@ -3274,8 +3300,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.value.unready` | - | - | `NotImplementedError: this string value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
+| `ext.literal.ellipsis` | - | - | `...` `Ellipsis` | - | - | - | - | - | - | - |
 | `ext.literal.ellipsis.unready` | - | - | `NotImplementedError: ellipsis values are not supported` | - | - | - | - | - | - | - |
+| `ext.literal.unimplemented` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
@@ -3308,6 +3335,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
 | `ext.op.eq.maps.unordered` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.eq.method` | - | - | `__eq__` | - | - | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
 | `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
@@ -3351,7 +3379,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
+| `ext.op.ne.method` | - | - | `__ne__` | - | - | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
+| `ext.op.order.unsupported` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.pipe.attribute` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |

@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    PlainObject,
     /// A compound write may ask a real to retain its point.
     Pointed,
     Adorn(char),

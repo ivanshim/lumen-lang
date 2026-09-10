@@ -2154,7 +2154,8 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let (av, bv) = (av.clone(), bv.clone());
+                            let told = self.worked_pair(op, &av, &bv)?;
                             self.truth(&told)
                         }
                     };
@@ -2186,7 +2187,7 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => { let (av, bv) = (av.clone(), bv.clone()); self.worked_pair(op, &av, &bv)? },
                     };
                     self.data.push(r);
                 }
@@ -2838,6 +2839,8 @@ impl<'a> Engine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Class(c)) => Some(c),
+                        Some(Value::Native(Builtin::Bool, _)) if !self.identity_word("ext.builtin.bool.base").is_empty() => return Err(self.identity_word("ext.builtin.bool.base").to_string().into()),
+                        Some(Value::Native(Builtin::Object, _)) => None,
                         Some(v) => return Err(format!("Class {} cannot stand on {}", plan.name, v.plain()).into()),
                         None => return Err("Stack underflow".to_string().into()),
                     },
@@ -3533,7 +3536,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.worked_pair(dyadic, &a, &b)?
             }
         };
         self.data.push(self.keep_collection(result));
@@ -3661,20 +3664,25 @@ impl<'a> Engine<'a> {
     }
 
     fn mapping_equality(&self, left: &Value, right: &Value) -> bool {
-        if let Value::Bond(cell) = left { return self.mapping_equality(&cell.borrow(), right); }
-        if let Value::Bond(cell) = right { return self.mapping_equality(left, &cell.borrow()); }
-        match (left, right) {
+        let (left, right) = (left.contents(), right.contents());
+        let member = |a: &Value, b: &Value| a.same_identity(b) || self.mapping_equality(a, b);
+        match (&left, &right) {
+            (Value::Flag(a), b) => self.mapping_equality(&Value::Small(i64::from(*a)), b),
+            (a, Value::Flag(b)) => self.mapping_equality(a, &Value::Small(i64::from(*b))),
             (Value::Map(a), Value::Map(b)) => a.len() == b.len() && a.iter().all(|(key, value)| {
-                b.iter().find(|(other, _)| self.mapping_equality(key, other))
-                    .map_or(false, |(_, other)| self.mapping_equality(value, other))
+                b.iter().find(|(other, _)| member(key, other)).map_or(false, |(_, other)| member(value, other))
             }),
-            (Value::Array(a), Value::Array(b)) => a.len() == b.len()
-                && a.iter().zip(b.iter()).all(|(x, y)| self.mapping_equality(x, y)),
-            _ => left.equals(right),
+            (Value::Array(a), Value::Array(b)) | (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|(x, y)| member(x, y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| member(x, y))),
+            _ => left.equals(&right),
         }
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if !self.lang.identity_not.is_empty() && matches!(op, Action::Same | Action::Unsame) {
+            return Ok(Value::Flag(a.same_identity(b) != matches!(op, Action::Unsame)));
+        }
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
@@ -3685,6 +3693,12 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = b {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
+        }
+        if !self.identity_word("ext.op.eq.method").is_empty() && matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            if matches!(a, Value::Flag(_)) || matches!(b, Value::Flag(_)) {
+                let count = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), other => other.clone() };
+                return self.dyadic(op, &count(a), &count(b));
+            }
         }
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
@@ -3705,6 +3719,12 @@ impl<'a> Engine<'a> {
                     Value::Flag(bits != BigInt::from(0))
                 } else { Value::of_big(bits) });
             }
+        }
+        if !self.identity_word("ext.op.order.unsupported").is_empty() && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && crate::arith::order_values(a, b).is_none() && !matches!((a, b), (Value::Text(_), Value::Text(_))) {
+            let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
+            let words = &self.lang.identity_words["ext.op.order.unsupported"];
+            return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], a.core_kind(), words[2], b.core_kind(), words[3]));
         }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
@@ -3802,19 +3822,6 @@ impl<'a> Engine<'a> {
             Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
                 let Value::Text(template) = a else { unreachable!() };
                 Value::text(&self.rem_text(template, b)?)
-            }
-            Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
-                let same = match (a, b) {
-                    (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
-                    (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
-                    (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
-                    (Value::Flag(x), Value::Flag(y)) => x == y,
-                    (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
-                    (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
-                    _ if !a.identical(b) => false,
-                    _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
-                };
-                Value::Flag(same != matches!(op, Action::Unsame))
             }
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
@@ -5380,7 +5387,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::Object | Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -6395,8 +6402,186 @@ fn collection_contents(value: &Value) -> Value {
 // Collection calls share the opening of arguments, but keep their own
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
+    fn identity_word(&self, label: &str) -> &str {
+        self.lang.identity_words.get(label).and_then(|w| w.first()).map(String::as_str).unwrap_or("")
+    }
+
+    /// Special methods belong to the class, not to an instance's fields.
+    fn special_member(&self, value: &Value, label: &str) -> Option<Value> {
+        let Value::Object(object) = value else { return None; };
+        let name = self.identity_word(label);
+        if name.is_empty() { return None; }
+        let mut class = Some(object.class.clone());
+        while let Some(here) = class {
+            if let Some((_, held)) = here.shared.borrow().iter().find(|(n, _)| n == name) {
+                return Some(match held {
+                    Value::Routine(p) => Value::Method(object.clone(), p.clone()),
+                    other => other.clone(),
+                });
+            }
+            if let Some((_, p)) = here.methods.iter().find(|(n, _)| n == name) {
+                return Some(Value::Method(object.clone(), p.clone()));
+            }
+            class = here.base.clone();
+        }
+        None
+    }
+
+    fn asked_truth(&mut self, value: &Value) -> Res<bool> {
+        let value = value.contents();
+        if let Some(method) = self.special_member(&value, "ext.builtin.bool.method") {
+            let answer = self.core_apply(&method, Vec::new())?;
+            return match answer {
+                Value::Flag(b) => Ok(b),
+                other => Err(format!("{}{}", self.identity_word("ext.builtin.bool.result"), other.core_kind())),
+            };
+        }
+        if let Some(method) = self.special_member(&value, "ext.builtin.len.method") {
+            let answer = self.core_apply(&method, Vec::new())?;
+            if !matches!(answer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                return Err(self.core_fault("core.integer", &answer.core_kind()));
+            }
+            let length = answer.as_big()?;
+            if length < BigInt::from(0) { return Err(self.identity_word("ext.builtin.len.negative").to_string()); }
+            return Ok(length != BigInt::from(0));
+        }
+        Ok(self.truth(&value))
+    }
+
+    fn value_hash(&mut self, value: &Value) -> Res<i64> {
+        let value = value.contents();
+        if let Value::Object(object) = &value {
+            let hash_name = self.identity_word("ext.builtin.hash.method");
+            let eq_name = self.identity_word("ext.op.eq.method");
+            let mut class = Some(object.class.clone());
+            while let Some(here) = class {
+                let owns_hash = here.methods.iter().any(|(n, _)| n == hash_name)
+                    || here.shared.borrow().iter().any(|(n, _)| n == hash_name);
+                if owns_hash { break; }
+                if here.methods.iter().any(|(n, _)| n == eq_name) || here.shared.borrow().iter().any(|(n, _)| n == eq_name) {
+                    return Err(self.core_fault("core.unhashable", &object.class.name));
+                }
+                class = here.base.clone();
+            }
+            if let Some(method) = self.special_member(&value, "ext.builtin.hash.method") {
+                if matches!(method, Value::Null) { return Err(self.core_fault("core.unhashable", &object.class.name)); }
+                let answer = self.core_apply(&method, Vec::new())?;
+                return if matches!(answer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    Ok(answer.core_hash().expect("a whole number hashes"))
+                } else { Err(self.identity_word("ext.builtin.hash.result").to_string()) };
+            }
+            return Ok((Rc::as_ptr(object) as usize >> 4) as i64);
+        }
+        if let Value::Tuple(items) = &value {
+            let mut h = 2870177450012600261u64;
+            for item in items.iter() {
+                h = h.wrapping_add((self.value_hash(item)? as u64).wrapping_mul(14029467366897019727));
+                h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+            }
+            h = h.wrapping_add(items.len() as u64 ^ (2870177450012600261 ^ 3527539));
+            return Ok(if h == u64::MAX { 1546275796 } else { h as i64 });
+        }
+        if let Some(h) = value.core_hash() { return Ok(h); }
+        if matches!(value, Value::Class(_) | Value::Native(..) | Value::Routine(_) | Value::Generator(_) | Value::Ellipsis | Value::Unimplemented(_)) {
+            return Ok(value.identity_mark().map_or(0, |(_, mark)| (mark >> 4) as i64));
+        }
+        Err(self.core_fault("core.unhashable", &value.core_kind()))
+    }
+
+    fn object_comparison(&mut self, a: &Value, b: &Value, unequal: bool) -> Res<Value> {
+        let mut sides = vec![(a, b), (b, a)];
+        if let (Value::Object(left), Value::Object(right)) = (a, b) {
+            if !Rc::ptr_eq(&left.class, &right.class) && right.class.descends_from(&left.class.name) { sides.reverse(); }
+        }
+        for (first, second) in sides {
+            if unequal {
+                if let Some(method) = self.special_member(first, "ext.op.ne.method") {
+                    let answer = self.core_apply(&method, vec![second.clone()])?;
+                    if !matches!(answer, Value::Unimplemented(_)) { return Ok(answer); }
+                    continue;
+                }
+            }
+            if let Some(method) = self.special_member(first, "ext.op.eq.method") {
+                let answer = self.core_apply(&method, vec![second.clone()])?;
+                if !matches!(answer, Value::Unimplemented(_)) {
+                    return if unequal { Ok(Value::Flag(!self.asked_truth(&answer)?)) } else { Ok(answer) };
+                }
+            }
+        }
+        Ok(Value::Flag(a.same_identity(b) != unequal))
+    }
+
+    fn values_equal(&mut self, a: &Value, b: &Value, inside: bool) -> Res<bool> {
+        if inside && a.same_identity(b) { return Ok(true); }
+        let (a, b) = (a.contents(), b.contents());
+        if matches!(a, Value::Object(_)) || matches!(b, Value::Object(_)) {
+            let answer = self.object_comparison(&a, &b, false)?;
+            return self.asked_truth(&answer);
+        }
+        match (&a, &b) {
+            (Value::Array(x), Value::Array(y)) | (Value::Tuple(x), Value::Tuple(y)) => {
+                if x.len() != y.len() { return Ok(false); }
+                for (p, q) in x.iter().zip(y.iter()) { if !self.values_equal(p, q, true)? { return Ok(false); } }
+                Ok(true)
+            }
+            (Value::Map(x), Value::Map(y)) => {
+                if x.len() != y.len() { return Ok(false); }
+                for (k, v) in x.iter() {
+                    let mut found = false;
+                    for (l, w) in y.iter() {
+                        if self.values_equal(k, l, true)? { found = self.values_equal(v, w, true)?; break; }
+                    }
+                    if !found { return Ok(false); }
+                }
+                Ok(true)
+            }
+            (Value::Set(x), Value::Set(y)) => {
+                if x.len() != y.len() { return Ok(false); }
+                for p in x.iter() {
+                    let mut found = false;
+                    for q in y.iter() { if self.values_equal(p, q, true)? { found = true; break; } }
+                    if !found { return Ok(false); }
+                }
+                Ok(true)
+            }
+            (Value::Unimplemented(_), Value::Unimplemented(_)) => Ok(true),
+            _ => Ok(self.mapping_equality(&a, &b)),
+        }
+    }
+
+    fn worked_pair(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.identity_word("ext.op.eq.method").is_empty() { return self.dyadic(op, a, b); }
+        let (x, y) = (a.contents(), b.contents());
+        if matches!(op, Action::Eq | Action::Ne) {
+            if matches!(x, Value::Object(_)) || matches!(y, Value::Object(_)) {
+                return self.object_comparison(&x, &y, matches!(op, Action::Ne));
+            }
+            return Ok(Value::Flag(self.values_equal(a, b, false)? != matches!(op, Action::Ne)));
+        }
+        if matches!(op, Action::At) {
+            if let Value::Map(entries) = &x {
+                self.value_hash(&y)?;
+                for (key, value) in entries.iter() { if self.values_equal(key, &y, true)? { return Ok(value.clone()); } }
+                return Err(format!("{}{}", self.lang.method_errors["key"], y.core_repr()));
+            }
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            let members = match &y {
+                Value::Array(v) | Value::Tuple(v) | Value::Set(v) => Some(v.as_ref().clone()),
+                Value::Map(v) => { self.value_hash(&x)?; Some(v.iter().map(|(k, _)| k.clone()).collect()) }
+                _ => None,
+            };
+            if let Some(members) = members {
+                let mut found = false;
+                for item in members { if self.values_equal(&item, &x, true)? { found = true; break; } }
+                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+            }
+        }
+        self.dyadic(op, a, b)
+    }
+
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::Object | Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -6476,6 +6661,10 @@ impl Engine<'_> {
 
     fn core_apply(&mut self, work: &Value, mut args: Vec<Value>) -> Res<Value> {
         match work {
+            Value::Method(object, routine) => {
+                args.insert(0, Value::Object(object.clone()));
+                self.core_apply(&Value::Routine(routine.clone()), args)
+            }
             Value::Native(b, word) => self.builtin(*b, word, &mut args),
             Value::ValueMethod(method) => self.value_method(&method.0, &method.1, args, Vec::new()),
             Value::Routine(p) => {
@@ -6518,6 +6707,7 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
+        let identity = if b == Builtin::Identity { args.first().and_then(Value::identity_mark) } else { None };
         for value in &mut args { *value = value.contents(); }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
@@ -6558,29 +6748,20 @@ impl Engine<'_> {
         let integer = |v: &Value| match v { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big(), _ => Err(self.core_fault("core.integer", &v.core_kind())) };
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
-            Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
+            Builtin::Object => {
+                arity(0, 0)?;
+                self.made += 1;
+                let class = Rc::new(Class { name: name.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+                Value::Object(Rc::new(Instance { class, fields: RefCell::new(Vec::new()), mark: self.made }))
+            }
+            Builtin::Bool => { arity(0, 1)?; Value::Flag(match args.first() { Some(v) => self.asked_truth(v)?, None => false }) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
-            Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
+            Builtin::Hash => { arity(1, 1)?; Value::Small(self.value_hash(&args[0])?) }
             Builtin::Identity => {
                 arity(1, 1)?;
-                let id = match &args[0] {
-                    Value::Array(a) | Value::Tuple(a) | Value::Set(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Map(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Text(a) => a.as_ptr() as usize as u64,
-                    Value::Object(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Class(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Native(b, _) => *b as u64 + 16,
-                    Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Real(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
-                    Value::Flag(v) => if *v { 2 } else { 1 },
-                    Value::Null => 0,
-                    _ => return Err(self.core_fault("core.unready", name)),
-                };
-                let filed = format!("{}:{}", args[0].core_kind(), id);
+                let (kind, id) = identity.ok_or_else(|| self.core_fault("core.unready", name))?;
+                let filed = format!("{}:{}", kind, id);
                 let fresh = self.core_ids.len() + 1;
                 Value::Small(*self.core_ids.entry(filed).or_insert(fresh) as i64)
             }

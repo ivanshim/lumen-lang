@@ -67,6 +67,43 @@ impl Value {
         }
     }
 
+    /// Held values keep their place even when their contents are changed.
+    pub fn identity_mark(&self) -> Option<(String, u64)> {
+        use std::rc::Rc;
+        let place = match self {
+            Value::Bond(c) | Value::Binding(c) => return c.borrow().identity_mark(),
+            Value::Collection(c, _) => Rc::as_ptr(c) as usize as u64,
+            Value::Array(p) | Value::Tuple(p) | Value::Set(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Map(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Text(p) => p.as_ptr() as usize as u64,
+            Value::Object(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Class(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Cursor(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Real(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Generator(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Counted(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Slice(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Descriptor(p) => Rc::as_ptr(p) as usize as u64,
+            Value::ValueMethod(p) | Value::View(p) => Rc::as_ptr(p) as usize as u64,
+            Value::Native(b, _) => *b as u64,
+            Value::Small(n) => *n as u64,
+            Value::Flag(b) => u64::from(*b),
+            Value::Null | Value::Ellipsis => 0,
+            Value::Unimplemented(word) => return Some((word.to_string(), 0)),
+            Value::SortOf(sort) => *sort as u64,
+            _ => return None,
+        };
+        let kind = if matches!(self, Value::Ellipsis) { "ellipsis".into() } else { self.core_kind() };
+        Some((kind, place))
+    }
+
+    pub fn same_identity(&self, other: &Value) -> bool {
+        self.identity_mark().map_or(false, |mark| other.identity_mark() == Some(mark))
+    }
+
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
