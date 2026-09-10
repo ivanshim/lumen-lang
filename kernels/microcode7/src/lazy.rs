@@ -61,6 +61,7 @@ impl<'a> Machine<'a> {
                 arguments.insert(0, Value::Thing(receiver));
                 self.invoke(program, self.outermost.clone(), arguments)
             }
+            Value::Blueprint(class) => self.make_instance(class, arguments),
             Value::Native(operation, spelling) => self.prim(operation, &spelling, &arguments).map_err(Escape::Error),
             other => self.walk_message(&other, "ext.op.iterator.call", arguments)?
                 .ok_or_else(|| Escape::Error(self.walk_word("ext.op.iterator.unready"))),
@@ -156,7 +157,12 @@ impl<'a> Machine<'a> {
                 match self.take_walk(&input)? {
                     None => break None,
                     Some(item) => {
-                        let test = if matches!(predicate, Value::Nil) { item.clone() } else { self.walk_call(&predicate, vec![item.clone()])? };
+                        let test = if matches!(predicate, Value::Nil) { item.clone() } else {
+                            match self.walk_call(&predicate, vec![item.clone()]) {
+                                Err(end) if self.end_of_walk(&end, false) => break None,
+                                other => other?,
+                            }
+                        };
                         if self.stands_true(&test) { break Some(item); }
                     }
                 }
@@ -337,6 +343,8 @@ impl<'a> Machine<'a> {
                     Value::Vector(v) | Value::List(v) | Value::Tuple(v) => BigInt::from(v.len()),
                     Value::Text(t) => BigInt::from(t.chars().count()),
                     Value::Progression(r) => r.count(),
+                    Value::Dict(entries) => BigInt::from(entries.len()),
+                    Value::Window(window) => BigInt::from(crate::data::window_members(&window.0, window.1).len()),
                     object => self.walk_message(&object, "ext.op.iterator.length", vec![])?.ok_or_else(|| self.walk_word("ext.op.iterator.unready"))?.as_big()?,
                 };
                 Ok(self.suspend(title, PendingWalk::Places(values[0].clone(), size - 1, true)))

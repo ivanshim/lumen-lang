@@ -32,7 +32,7 @@ impl<'a> Engine<'a> {
     }
 
     fn cursor_make(&self, way: u8, name: String, sources: Vec<Value>, function: Value, mut sentinel: Value, at: BigInt) -> Value {
-        if way == 0 {
+        if way == 0 || way == 6 {
             match sources.first().map(collection_contents) {
                 Some(Value::Map(m)) => sentinel = Value::Small(m.len() as i64),
                 Some(Value::View(v)) => sentinel = Value::Small(v.members().len() as i64),
@@ -293,6 +293,8 @@ impl<'a> Engine<'a> {
                 Value::Array(a) | Value::Listed(a) | Value::Row(a) => BigInt::from(a.len()),
                 Value::Text(s) => BigInt::from(s.chars().count()),
                 Value::Counted(r) => r.length(),
+                Value::Map(entries) => BigInt::from(entries.len()),
+                Value::View(view) => BigInt::from(view.members().len()),
                 Value::Object(_) => self.cursor_method(&source, "ext.op.iterator.length", Vec::new())?.ok_or_else(|| self.cursor_word("ext.op.iterator.unready"))?.as_big()?,
                 _ => return Err(self.cursor_word("ext.op.iterator.unready").into()),
             } - 1;
