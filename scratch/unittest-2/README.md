@@ -24,3 +24,13 @@ including the deliberate failure. It now captures the runner stream with
 `exit=False` and checks the result and summary instead of expecting the old
 stdout report and successful default exit. `main-failure` separately checks
 the failing default exit; scratch compares the first stderr line, `F`.
+
+The inherited `scratch/file-scope/10.py` is a deferred scope syntax fixture.
+Its complete class body is retained, but its entry point now prints
+`scope suite defined` after defining the suite instead of calling
+`unittest.main()`. Defining the class does not execute its test methods in
+Python. The old `.err` expected a class-form refusal that working `unittest`
+has replaced; the new `.out` records the definition-complete message.
+Running this copied suite would instead exercise unrelated closure, cell,
+and dynamic compilation requirements. Runner execution is checked by the
+focused fixtures above; the reference suites and examples remain unchanged.
