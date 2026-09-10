@@ -3685,6 +3685,7 @@ impl<'a> Compiler<'a> {
     /// A method: a program whose first parameter is the object it is for,
     /// under the name the definition gives (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+        if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;

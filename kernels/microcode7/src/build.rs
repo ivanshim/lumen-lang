@@ -2596,6 +2596,7 @@ impl<'a> Builder<'a> {
     /// A method: a program whose first parameter is the thing it is for,
     /// under the name the definition gives it (`$this`).
     fn method(&mut self, name: &str) -> Res<Rc<Routine>> {
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;

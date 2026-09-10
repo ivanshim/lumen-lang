@@ -2802,11 +2802,6 @@ impl<'a> Machine<'a> {
                     }
                     Err(Escape::Done)
                 }
-                Prim::Dictionary => {
-                    let supplied = self.value_list(args, frame)?;
-                    let (positional, keywords) = self.open_arguments(supplied)?;
-                    Ok(self.core_primitive(Prim::Dictionary, name, positional, keywords)?)
-                }
                 op => {
                     let mut values = self.value_list(args, frame)?;
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
@@ -7031,6 +7026,7 @@ impl Machine<'_> {
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         for item in &mut input { *item = item.settled(); }
+        if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};
         use num_integer::Integer;
         use Prim::*;

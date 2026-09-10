@@ -3690,7 +3690,7 @@ impl<'a> Engine<'a> {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
         }
-        if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) && !(matches!(op, Action::BitEither) && self.lang.or_maps && matches!((a, b), (Value::Map(_), Value::Map(_)))) {
+        if !self.lang.whole_bits && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) && !(matches!(op, Action::BitEither) && self.lang.or_maps && matches!((a, b), (Value::Map(_), Value::Map(_)))) {
             if let Some(words) = &self.lang.bit_operands {
                 if ![a, b].iter().all(|v| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
                     return Err(words.clone());
@@ -6519,6 +6519,7 @@ impl Engine<'_> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
         for value in &mut args { *value = value.contents(); }
+        if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
         let mut reverse = false;
         let mut default = None;
