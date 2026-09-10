@@ -384,6 +384,7 @@ impl Value {
             }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
+            (Value::Span(left), Value::Span(right)) => left.len() == right.len() && left.iter().enumerate().all(|(i, v)| v.equals(&right[i])),
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Tuple(a), Value::Tuple(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -614,7 +615,7 @@ impl Value {
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
-            Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::quoted).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
     }

@@ -1514,31 +1514,19 @@ impl<'a> Compiler<'a> {
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
-                let mut parts = 0;
-                let mut sliced = false;
-                loop {
-                    if self.on_any(&self.lang.block_intros) {
-                        self.take(); sliced = true;
-                    } else if self.at_symbol(&pair.close) { break; }
-                    else if self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) {
-                        self.take(); sliced = true;
-                    } else {
-                        if self.on_any(&self.lang.pipe_words) && self.look_ahead(1).lexeme == self.look().lexeme && self.look_ahead(2).lexeme == self.look().lexeme {
-                            self.take(); self.take(); self.take();
-                            self.constant(Value::Null);
-                            sliced = true;
-                        } else { self.expr(0)?; }
-                        parts += 1;
+                let separator = self.lang.calling.as_ref().and_then(|c| c.between.clone());
+                self.slice_part(&pair.close, separator.as_deref())?;
+                if separator.as_ref().map_or(false, |word| self.at_symbol(word)) {
+                    let mut size = 1;
+                    while separator.as_ref().map_or(false, |word| self.at_symbol(word)) {
+                        self.take();
                         if self.at_symbol(&pair.close) { break; }
-                        if !self.on_any(&self.lang.block_intros) && !self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                        self.slice_part(&pair.close, separator.as_deref())?;
+                        size += 1;
                     }
+                    self.act(Action::MakeTuple, size);
                 }
                 self.want_sign(&pair.close, "after the index")?;
-                if sliced || parts != 1 {
-                    self.awkward_place = true;
-                    self.piece().instrs.truncate(at);
-                    self.constant(Value::Small(0));
-                }
                 keyed.push(at);
                 self.act(Action::At, 2);
             } else { break; }
@@ -6736,7 +6724,7 @@ impl<'a> Compiler<'a> {
         let ellipsis = self.lang.slice_ellipsis.clone();
         if ellipsis.iter().any(|word| self.at_symbol(word)) {
             self.take();
-            self.act(Action::SliceUnavailable, 0);
+            self.constant(Value::Ellipsis);
             return Ok(());
         }
         if marks.iter().any(|m| self.at_symbol(m)) {
@@ -6761,6 +6749,9 @@ impl<'a> Compiler<'a> {
             }
         } else {
             self.constant(Value::Null);
+        }
+        if self.on_any(&marks) {
+            return Err(self.lang.slice_words["ext.op.index.slice.amiss"].clone());
         }
         self.act(Action::Slice, 3);
         Ok(())
@@ -6958,7 +6949,7 @@ impl<'a> Compiler<'a> {
                     self.slice_part(&index.close, separator.as_deref())?;
                     many += 1;
                 }
-                self.act(Action::SliceUnavailable, many);
+                self.act(Action::MakeTuple, many);
             }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);

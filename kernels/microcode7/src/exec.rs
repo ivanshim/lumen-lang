@@ -2171,8 +2171,22 @@ impl<'a> Machine<'a> {
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
+                let nested = match &*cell.borrow() { Value::Mutable(inner, _) => Some(inner.clone()), _ => None };
+                let cell = nested.unwrap_or(cell);
+                let subject = cell.borrow().clone();
+                if self.keyed_method(&subject, "ext.op.index.delete", &[at.clone()])?.is_some() { return Ok(Value::Nil); }
+                let at = match at { Value::Span(bounds) => Value::Span(Rc::new(self.counted_bounds(&bounds)?)), key => key };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Vector(items) if matches!(at, Value::Span(_)) => {
+                        let Value::Span(bounds) = &at else { unreachable!() };
+                        let (_, omitted, _) = self.span_selection(bounds, items.len())?;
+                        let mut retained = Vec::new();
+                        for (i, item) in items.iter().enumerate() {
+                            if !omitted.contains(&i) { retained.push(item.clone()); }
+                        }
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
@@ -2712,8 +2726,15 @@ impl<'a> Machine<'a> {
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    let subject = collection_read(&f.cells.borrow()[i]);
+                    if let Some(index) = &key {
+                        if self.keyed_method(&subject, "ext.op.index.set", &[index.clone(), value.clone()])?.is_some() { return Ok(Value::Nil); }
+                    }
                     if let Some(Value::Span(bounds)) = &key {
-                        let value = collection_read(&value);
+                        let counted = self.counted_bounds(bounds)?;
+                        let bounds = &counted;
+                        let gathered = self.core_collect(&value).map_err(|_| self.span_complaint("assign"))?;
+                        let value = Value::Vector(Rc::new(gathered));
                         let old = f.cells.borrow()[i].clone();
                         match old {
                             Value::Shared(cell) => {
@@ -3000,6 +3021,9 @@ impl<'a> Machine<'a> {
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        if let Value::Span(bounds) = value {
+            return ["start", "stop", "step"].iter().position(|part| self.table.spells(&format!("ext.builtin.slice.{part}"), name)).map(|i| bounds[i].clone());
+        }
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
@@ -3181,6 +3205,15 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Span(bounds) = receiver {
+            if keywords.is_empty() && name == "indices" && arguments.len() == 1 {
+                let normalized = self.normalized_span(bounds, &arguments[0])?;
+                return Ok(Value::Tuple(Rc::new(normalized.into_iter().map(Value::from_big).collect())));
+            }
+            if keywords.is_empty() && name == "slice_hash" && arguments.is_empty() {
+                return receiver.hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", "slice").into());
+            }
+        }
         let mut found = Vec::new();
         for (word, _) in &keywords {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
@@ -4121,6 +4154,15 @@ impl<'a> Machine<'a> {
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
+            Prim::SliceValue => {
+                if v.is_empty() || v.len() > 3 { return Err(self.table.single("ext.builtin.slice.arity").unwrap_or_default().to_owned()); }
+                let mut bounds = vec![Value::Nil; 3];
+                match v.len() {
+                    1 => bounds[1] = v[0].clone(),
+                    count => bounds[..count].clone_from_slice(v),
+                }
+                Value::Span(Rc::new(bounds))
+            }
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
             // spelling no number: a language may walk such text along
@@ -4360,7 +4402,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag(matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(matches!(v[0], Value::Span(_)) && self.attribute(&v[0], &word).is_some() || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -5276,7 +5318,7 @@ impl<'a> Machine<'a> {
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
-            Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
+            Prim::At => self.keyed_value(&v[0], &v[1])?,
             Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
             Prim::Toward => self.element(&v[0], &v[1], Reading::Toward)?,
             // A glance has nothing to say about what is not there.
@@ -5882,6 +5924,79 @@ impl<'a> Machine<'a> {
             Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
             held => held,
         });
+    }
+
+    fn keyed_method(&mut self, subject: &Value, purpose: &str, values: &[Value]) -> Result<Option<Value>, String> {
+        let Some(word) = self.table.single(purpose) else { return Ok(None); };
+        let Value::Thing(thing) = subject else { return Ok(None); };
+        let Some(program) = thing.of.program(word).cloned() else { return Ok(None); };
+        let mut passed = vec![subject.clone()];
+        passed.extend_from_slice(values);
+        match self.invoke(program, self.outermost.clone(), passed) {
+            Ok(answer) => Ok(Some(answer)),
+            Err(escape) => {
+                self.got_away = Some(escape);
+                Err(self.span_complaint("unsupported"))
+            }
+        }
+    }
+
+    fn bound_integer(&mut self, bound: &Value) -> Result<BigInt, String> {
+        let value = match self.keyed_method(bound, "ext.op.index.integer", &[])? {
+            Some(answer) => answer,
+            None => bound.clone(),
+        };
+        if matches!(value, Value::Flag(_) | Value::Huge(_) | Value::Small(_)) { value.as_big() }
+        else { Err(self.span_complaint("bounds")) }
+    }
+
+    fn counted_bounds(&mut self, bounds: &[Value]) -> Result<Vec<Value>, String> {
+        let mut result = bounds.to_vec();
+        for position in [2_usize, 0, 1] {
+            if matches!(bounds[position], Value::Nil) { continue; }
+            result[position] = Value::from_big(self.bound_integer(&bounds[position])?);
+        }
+        Ok(result)
+    }
+
+    fn normalized_span(&mut self, bounds: &[Value], size: &Value) -> Result<Vec<BigInt>, String> {
+        let extent = self.bound_integer(size)?;
+        let zero = BigInt::from(0);
+        if extent < zero { return Err(self.table.single("ext.builtin.slice.length").unwrap_or_default().to_owned()); }
+        let stride = match bounds[2] { Value::Nil => BigInt::from(1), _ => self.bound_integer(&bounds[2])? };
+        if stride == zero { return Err(self.span_complaint("zero")); }
+        let backward = stride < zero;
+        let limits = if backward { (BigInt::from(-1), &extent - 1) } else { (zero.clone(), extent.clone()) };
+        let mut result = Vec::with_capacity(3);
+        for (position, bound) in bounds[..2].iter().enumerate() {
+            let end = if matches!(bound, Value::Nil) {
+                if (position == 0) == backward { limits.1.clone() } else { limits.0.clone() }
+            } else {
+                let n = self.bound_integer(bound)?;
+                let from_front = if n < zero { n + &extent } else { n };
+                from_front.min(limits.1.clone()).max(limits.0.clone())
+            };
+            result.push(end);
+        }
+        result.push(stride);
+        Ok(result)
+    }
+
+    fn keyed_value(&mut self, subject: &Value, key: &Value) -> Result<Value, String> {
+        if let Some(answer) = self.keyed_method(subject, "ext.op.index.get", &[key.clone()])? { return Ok(answer); }
+        let Value::Span(bounds) = key else { return self.element(subject, key, Reading::Plain); };
+        if let Value::Progression(walk) = subject {
+            let clipped = self.normalized_span(bounds, &Value::from_big(walk.count()))?;
+            let next = crate::data::Progression {
+                first: &walk.first + &walk.stride * &clipped[0],
+                limit: &walk.first + &walk.stride * &clipped[1],
+                stride: &clipped[2] * &walk.stride,
+                word: walk.word.to_owned(),
+            };
+            return Ok(Value::Progression(Rc::new(next)));
+        }
+        let converted = Value::Span(Rc::new(self.counted_bounds(bounds)?));
+        self.element(subject, &converted, Reading::Plain)
     }
 
     fn span_complaint(&self, part: &str) -> String {

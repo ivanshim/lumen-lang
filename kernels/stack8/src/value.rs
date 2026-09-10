@@ -409,6 +409,7 @@ impl Value {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
+            (Value::Slice(a), Value::Slice(b)) => a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -635,7 +636,7 @@ impl Value {
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
-            Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].plain(), parts[1].plain(), parts[2].plain()),
+            Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(), parts[1].core_repr(), parts[2].core_repr()),
         }
     }
 

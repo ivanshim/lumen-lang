@@ -14,7 +14,7 @@ impl Value {
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Set(_) => "set", Self::Dict(_) => "dict",
             Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
-            Self::Nil => "NoneType", Self::Progression(_) => "range", Self::Iterator(_) => "iterator",
+            Self::Span(_) => "slice", Self::Nil => "NoneType", Self::Progression(_) => "range", Self::Iterator(_) => "iterator",
             Self::Blueprint(_) | Self::KindOf(_) => "type", Self::Intrinsic(_) => "builtin_function_or_method",
             Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
         };
@@ -83,6 +83,7 @@ impl Value {
                     else { ((parts.above.abs() % &prime) * bottom.modpow(&(&prime-2),&prime) % &prime).to_i64()? };
                 if parts.above.is_negative() { -positive } else { positive }
             }
+            Self::Span(bounds) => return Self::Tuple(bounds.clone()).hash_number(),
             Self::Tuple(parts) => {
                 let mut accum: u64 = 2_870_177_450_012_600_261;
                 for part in parts.iter() {

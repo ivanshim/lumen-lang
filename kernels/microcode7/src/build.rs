@@ -1838,26 +1838,17 @@ impl<'a> Builder<'a> {
                 place = self.called_on_value(place)?;
             } else if self.on_any("op.index.open") {
                 self.advance();
-                let mut indices = Vec::new();
-                let mut special = false;
-                while !self.on_any("op.index.close") && !self.exhausted() {
-                    if self.on_any("block.intro") || self.on_any("syntax.call.separator") {
-                        special = true;
-                        self.advance();
-                    } else {
-                        if self.on_any("op.pipe") && self.glance(1).lexeme == self.look().lexeme && self.glance(2).lexeme == self.look().lexeme {
-                            self.advance(); self.advance(); self.advance();
-                            indices.push(constant(Value::Nil));
-                            special = true;
-                        } else { indices.push(self.expr(0)?); }
-                        if !self.on_any("block.intro") && !self.on_any("syntax.call.separator") { break; }
-                    }
+                let closing = self.table.single("op.index.close").unwrap();
+                let comma = self.table.single("syntax.call.separator");
+                let mut entries = vec![self.bracket_part(closing, comma)?];
+                let grouped = comma.map_or(false, |mark| self.sign(mark));
+                while comma.map_or(false, |mark| self.sign(mark)) {
+                    self.advance();
+                    if self.sign(closing) { break; }
+                    entries.push(self.bracket_part(closing, comma)?);
                 }
-                self.need_sign(self.table.single("op.index.close").unwrap(), "after the index")?;
-                let key = if special || indices.len() != 1 {
-                    self.unsupported_place = true;
-                    constant(Value::Small(0))
-                } else { indices.pop().unwrap() };
+                self.need_sign(closing, "after the index")?;
+                let key = if grouped { prim_call(Prim::MakeTuple, entries) } else { entries.remove(0) };
                 place = prim_call(Prim::At, vec![place, key]);
             } else { return Ok(place); }
         }
@@ -6329,7 +6320,7 @@ impl<'a> Builder<'a> {
         }
         if self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
             self.advance();
-            return Ok(prim_call(Prim::SliceRefused, Vec::new()));
+            return Ok(constant(Value::Ellipsis));
         }
         let separators = self.table.strings("ext.op.index.slice").to_vec();
         let mut parts = Vec::new();
@@ -6341,6 +6332,9 @@ impl<'a> Builder<'a> {
             if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) { break; }
             spanning = true;
             self.advance();
+        }
+        if separators.iter().any(|word| self.sign(word)) {
+            return Err(self.table.single("ext.op.index.slice.amiss").unwrap_or_default().to_owned());
         }
         Ok(if spanning {
             parts.resize_with(3, || constant(Value::Nil));
@@ -6374,7 +6368,7 @@ impl<'a> Builder<'a> {
                     keys.push(self.bracket_part(close, separator)?);
                 }
             }
-            let key = if several { prim_call(Prim::SliceRefused, keys) } else { keys.pop().expect("one key") };
+            let key = if several { prim_call(Prim::MakeTuple, keys) } else { keys.pop().expect("one key") };
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
             // What a look comes to may itself be called.

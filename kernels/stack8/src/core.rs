@@ -18,6 +18,7 @@ impl Value {
             Value::Tuple(_) => "tuple",
             Value::Set(_) => "set",
             Value::Map(_) => "dict",
+            Value::Slice(_) => "slice",
             Value::Counted(_) => "range",
             Value::Cursor(_) => "iterator",
             Value::Native(..) => "builtin_function_or_method",
@@ -94,6 +95,7 @@ impl Value {
                 if r.p.is_negative() { h = -h; }
                 Some(finish(h))
             }
+            Value::Slice(parts) => Value::Tuple(std::rc::Rc::new(parts.to_vec())).core_hash(),
             Value::Tuple(items) => {
                 let mut h = 2870177450012600261u64;
                 for item in items.iter() {

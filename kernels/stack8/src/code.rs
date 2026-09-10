@@ -594,6 +594,7 @@ pub enum Builtin {
     Append,
     Fetch,
     Replace,
+    MakeSlice,
     Span,
 }
 

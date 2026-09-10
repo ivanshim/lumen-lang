@@ -1,0 +1,5 @@
+print(slice(None, None, -1).indices(0))
+print(slice(-100, 100, 2).indices(10))
+print(slice(100, -100, -2).indices(10))
+print(slice(None, None, 2**100).indices(2**100))
+print(range(10)[::-1])

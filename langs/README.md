@@ -1761,6 +1761,18 @@ only. The extension labels so far, all from PHP:
   is not there yet, so `$x[0][1] = 'deep'` builds what it needs and
   says nothing about what was not there. It is the writing counterpart
   of `ext.op.index.absent`, which says how a place not there reads.
+- `ext.builtin.slice` makes a span kept as a value, with one, two or
+  three bounds. Its `.start`, `.stop` and `.step` labels name the bounds
+  as handed over; `.arity` and `.length` give the complaints for a wrong
+  count of arguments and a length below nought. `ext.builtin.method.indices`
+  brings those bounds within a given length without making the row.
+  `ext.builtin.method.slice_hash` names the span's hash method. Spans may
+  be hashed where their bounds may be hashed, as in Python 3.12 and later.
+- `ext.op.index.get`, `.set` and `.delete` name the methods which receive
+  a key when a user object is read, written or shortened. Several keys
+  form a tuple; a span keeps its bounds untouched. `ext.op.index.integer`
+  names the method which counts a bound when a builtin row needs it.
+  `ext.op.index.slice.amiss` refuses more than three bounds in brackets.
 - `ext.op.index.slice`: the signs between the bounds of a span inside
   index brackets. A first bound belongs to the span and a last bound
   does not; either may be left out, and a third part gives the step.
@@ -3104,6 +3116,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
+| `ext.builtin.method.indices` | - | - | `indices` | - | - | - | - | - | - | - |
 | `ext.builtin.method.insert` | - | - | `insert` | - | - | - | - | - | - | - |
 | `ext.builtin.method.is_integer` | - | - | `is_integer` | - | - | - | - | - | - | - |
 | `ext.builtin.method.isalnum` | - | - | `isalnum` | - | - | - | - | - | - | - |
@@ -3127,6 +3140,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.rsplit` | - | - | `rsplit` | - | - | - | - | - | - | - |
 | `ext.builtin.method.rstrip` | - | - | `rstrip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
+| `ext.builtin.method.slice_hash` | - | - | `__hash__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
@@ -3189,6 +3203,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set` | - | - | `set` | - | - | - | - | - | - | - |
 | `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.slice` | - | - | `slice` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.arity` | - | - | `TypeError: slice expected 1 to 3 arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.length` | - | - | `ValueError: length should not be negative` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.start` | - | - | `start` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.step` | - | - | `step` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
@@ -3324,18 +3344,23 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.append` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.index.delete` | - | - | `__delitem__` | - | - | - | - | - | - | - |
+| `ext.op.index.get` | - | - | `__getitem__` | - | - | - | - | - | - | - |
+| `ext.op.index.integer` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.op.index.makes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.nothing` | - | - | - | - | `Using null as an array offset is deprecated, use an empty string instead` | - | - | - | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.scalar` | - | - | - | - | `Cannot use a scalar value as an array` | - | - | - | - | - |
+| `ext.op.index.set` | - | - | `__setitem__` | - | - | - | - | - | - | - |
 | `ext.op.index.slice` | - | - | `:` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.assign` | - | - | `can only assign an iterable` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.bounds` | - | - | `slice indices must be integers or None or have an __index__ method` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.amiss` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.assign` | - | - | `TypeError: can only assign an iterable` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.bounds` | - | - | `TypeError: slice indices must be integers or None or have an __index__ method` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.detached` | - | - | `assignment through a slice is not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.length` | - | - | `attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.length` | - | - | `ValueError: attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.unsupported` | - | - | `this slice operation is not supported` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.zero` | - | - | `slice step cannot be zero` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.zero` | - | - | `ValueError: slice step cannot be zero` | - | - | - | - | - | - | - |
 | `ext.op.index.spread.unsupported` | - | - | `NotImplementedError: starred subscripts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |

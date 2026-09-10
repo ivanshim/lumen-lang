@@ -2186,6 +2186,10 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
+                        None if matches!(op, Action::At) => {
+                            let (target, key) = (av.clone(), bv.clone());
+                            self.read_index(&target, &key)?
+                        }
                         None => self.dyadic(op, av, bv)?,
                     };
                     self.data.push(r);
@@ -2420,8 +2424,22 @@ impl<'a> Engine<'a> {
                 };
                 let nested = match &*cell.borrow() { Value::Collection(held, _) => Some(held.clone()), _ => None };
                 let cell = nested.unwrap_or(cell);
+                let held = cell.borrow().clone();
+                if self.index_method(&held, "ext.op.index.delete", vec![at.clone()])?.is_some() {
+                    self.data.push(Value::Null);
+                    return Ok(());
+                }
+                let at = if let Value::Slice(parts) = at { Value::Slice(Rc::new(self.slice_counted(&parts)?)) } else { at };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    Value::Array(items) if matches!(at, Value::Slice(_)) => {
+                        let Value::Slice(parts) = &at else { unreachable!() };
+                        let (_, _, _, mut places) = self.slice_places(parts, items.len())?;
+                        places.sort_unstable();
+                        let mut left = items.as_ref().clone();
+                        for i in places.into_iter().rev() { left.remove(i); }
+                        Value::array(left)
+                    }
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
                         let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
                         let i = if raw < 0 { items.len() as i64 + raw } else { raw };
@@ -2902,9 +2920,13 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(matches!(held, Value::Slice(_)) && ["start", "stop", "step"].iter().any(|part| self.slice_word(&format!("ext.builtin.slice.{part}")) == name.as_ref()) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Slice(parts) => {
+                    let i = ["start", "stop", "step"].iter().position(|part| self.slice_word(&format!("ext.builtin.slice.{part}")) == name.as_ref());
+                    match i { Some(i) => parts[i].clone(), None => return Err(self.lang.method_errors["attribute"].clone().into()) }
+                }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
@@ -3529,6 +3551,11 @@ impl<'a> Engine<'a> {
                     Some(fled) => return Err(fled),
                     None => result?,
                 }
+            }
+            Action::At => {
+                let key = self.drop_top()?;
+                let target = self.drop_top()?;
+                self.read_index(&target, &key)?
             }
             dyadic => {
                 let b = self.drop_top()?;
@@ -4372,6 +4399,77 @@ impl<'a> Engine<'a> {
     /// Bring the bounds within the row before walking it. A missing
     /// last bound on a backward walk lies before the first place;
     /// an expressly written minus one lies at the last place instead.
+    fn slice_word(&self, label: &str) -> String {
+        self.lang.slice_words.get(label).cloned().unwrap_or_default()
+    }
+
+    fn index_method(&mut self, target: &Value, label: &str, mut given: Vec<Value>) -> Res<Option<Value>> {
+        let word = self.slice_word(label);
+        if word.is_empty() { return Ok(None); }
+        if let Value::Object(object) = target {
+            if let Some(body) = object.class.method(&word).cloned() {
+                given.insert(0, target.clone());
+                if let Err(fault) = self.invoke(&body, given) {
+                    self.carried = Some(fault);
+                    return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
+                }
+                return self.drop_top().map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    fn slice_integer(&mut self, value: &Value) -> Res<BigInt> {
+        let held = self.index_method(value, "ext.op.index.integer", Vec::new())?.unwrap_or_else(|| value.clone());
+        match held {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => held.as_big(),
+            _ => Err(self.lang.slice_bounds.clone().unwrap_or_default()),
+        }
+    }
+
+    fn slice_counted(&mut self, parts: &[Value; 3]) -> Res<[Value; 3]> {
+        let mut counted = parts.clone();
+        for i in [2, 0, 1] {
+            if !matches!(parts[i], Value::Null) { counted[i] = Value::of_big(self.slice_integer(&parts[i])?); }
+        }
+        Ok(counted)
+    }
+
+    fn slice_indices(&mut self, parts: &[Value; 3], length: &Value) -> Res<[BigInt; 3]> {
+        let size = self.slice_integer(length)?;
+        if size < BigInt::from(0) { return Err(self.slice_word("ext.builtin.slice.length")); }
+        let step = if matches!(parts[2], Value::Null) { BigInt::from(1) } else { self.slice_integer(&parts[2])? };
+        if step == BigInt::from(0) { return Err(self.lang.slice_zero.clone().unwrap_or_default()); }
+        let reverse = step < BigInt::from(0);
+        let low = BigInt::from(if reverse { -1 } else { 0 });
+        let high = &size - i32::from(reverse);
+        let mut ends = [if reverse { high.clone() } else { low.clone() }, if reverse { low.clone() } else { high.clone() }];
+        for i in 0..2 {
+            if !matches!(parts[i], Value::Null) {
+                let mut n = self.slice_integer(&parts[i])?;
+                if n < BigInt::from(0) { n += &size; }
+                ends[i] = n.max(low.clone()).min(high.clone());
+            }
+        }
+        Ok([ends[0].clone(), ends[1].clone(), step])
+    }
+
+    fn read_index(&mut self, target: &Value, key: &Value) -> Res<Value> {
+        if let Some(value) = self.index_method(target, "ext.op.index.get", vec![key.clone()])? { return Ok(value); }
+        if let Value::Slice(parts) = key {
+            if let Value::Counted(row) = target {
+                let [start, stop, step] = self.slice_indices(parts, &Value::of_big(row.length()))?;
+                return Ok(Value::Counted(Rc::new(crate::value::Counted {
+                    start: &row.start + start * &row.step, stop: &row.start + stop * &row.step,
+                    step: &row.step * step, name: row.name.clone(),
+                })));
+            }
+            let counted = self.slice_counted(parts)?;
+            return self.element(target, &Value::Slice(Rc::new(counted)), Reading::Plain);
+        }
+        self.element(target, key, Reading::Plain)
+    }
+
     fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
         let count = |v: &Value| -> Res<Option<i128>> {
             Ok(match v {
@@ -4689,6 +4787,15 @@ impl<'a> Engine<'a> {
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
+        }
+        if let Value::Slice(parts) = receiver {
+            if operation == "indices" && args.len() == 1 {
+                let bounds = self.slice_indices(parts, &args[0])?;
+                return Ok(Value::Tuple(Rc::new(bounds.into_iter().map(Value::of_big).collect())));
+            }
+            if operation == "slice_hash" && args.is_empty() {
+                return receiver.core_hash().map(Value::Small).ok_or_else(|| self.core_fault("core.unhashable", "slice"));
+            }
         }
         let mut used = std::collections::HashSet::new();
         if named.iter().any(|(key,_)| !used.insert(key)) { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -5570,9 +5677,16 @@ impl<'a> Engine<'a> {
                 let (p, q) = arith::parts(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
                 Value::of_big(if builtin == Builtin::Numer { p } else { q })
             }
+            Builtin::MakeSlice => {
+                if !(1..=3).contains(&args.len()) { return Err(self.slice_word("ext.builtin.slice.arity")); }
+                let mut parts = [Value::Null, Value::Null, Value::Null];
+                if args.len() == 1 { parts[1] = args[0].clone(); }
+                else { for (i, v) in args.iter().enumerate() { parts[i] = v.clone(); } }
+                Value::Slice(Rc::new(parts))
+            }
             Builtin::Fetch => {
                 arity(2)?;
-                self.element(&args[0], &args[1], Reading::Plain)?
+                self.read_index(&args[0], &args[1])?
             }
             Builtin::Append => {
                 arity(2)?;
@@ -5605,8 +5719,11 @@ impl<'a> Engine<'a> {
                 if matches!(target, Value::Tuple(_) | Value::Set(_)) { return Err(self.core_fault("core.immutable", &target.core_kind())); }
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if self.index_method(&target, "ext.op.index.set", vec![at.clone(), v.clone()])?.is_some() { return Ok(target); }
                 if let Value::Slice(parts) = &at {
-                    return self.write_slice(target, parts, v);
+                    let parts = self.slice_counted(parts)?;
+                    let given = self.core_members(&v).map_err(|_| self.lang.slice_assign.clone().unwrap_or_default())?;
+                    return self.write_slice(target, &parts, Value::array(given));
                 }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
