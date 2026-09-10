@@ -4316,6 +4316,8 @@ impl<'a> Engine<'a> {
 
     /// Fit opened arguments to the places the builtin names.
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        let stream_name = self.lang.print_redirect.get(2).cloned();
+        let name = if builtin == Builtin::StreamWrite { stream_name.as_deref().unwrap_or(name) } else { name };
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
         for (key, value) in items {

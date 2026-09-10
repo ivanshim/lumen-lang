@@ -509,6 +509,9 @@ only. The extension labels so far, all from PHP:
   annotated field names, and the class name. At this stage their type expressions are read
   and put aside; the map keeps an empty value for each name. Defaults
   remain ordinary shared members.
+- `ext.builtin.text.strip`: a text method taking away characters from
+  either end, whitespace when no set is given and the given characters
+  otherwise. Nothing in place of a set means whitespace as well.
 - `ext.builtin.repr`: a builtin returning a quoted account of a value,
   using its representation method when it has one. Text and collections
   use the same quoting as the text remainder's representation conversion.

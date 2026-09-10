@@ -2997,7 +2997,10 @@ impl<'a> Machine<'a> {
                 Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
                     return Err(self.argument_fault("ext.builtin.to_string.unready", None).into());
                 }
-                _ => return Err(self.builtin_keyword_fault(name).into()),
+                _ => {
+                    let written = if op == Prim::StreamWrite { self.table.strings("ext.builtin.print.redirect")[2].as_str() } else { name };
+                    return Err(self.builtin_keyword_fault(written).into());
+                }
             };
             match positional.len().cmp(&index) {
                 std::cmp::Ordering::Equal => positional.push(value),
