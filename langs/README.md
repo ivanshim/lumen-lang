@@ -1038,8 +1038,9 @@ only. The extension labels so far, all from PHP:
   message and raises it; `ext.stmt.assert.kind` names the kind so raised.
 - `ext.stmt.catch.group`: a sign before the classes of a clause taking
   parts of an exception group. The clause is read whole, but reaching the
-  attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
-  cannot yet part such groups.
+  attempt stops with `ext.stmt.catch.group.unsupported` where group members
+  have no spelling. Where furnished, each clause takes its matching leaves
+  and what remains is raised after the clauses have run.
 - `ext.lexical.escape.deferred`: escape letters whose meaning is not
   yet provided in long or prefixed text. The string is read whole, but
   using it says `ext.lexical.escape.unavailable`; such escapes are never
@@ -2037,7 +2038,7 @@ only. The extension labels so far, all from PHP:
   in this order: the root, ordinary faults, arithmetic, division, overflow,
   lookup, index, key, type, value, name, local name, attribute, runtime,
   unimplemented, exhausted walk, assertion, exit, interruption, import,
-  operating system, recursion and Unicode. Ordinary faults stand upon the
+  operating system, recursion, Unicode, base groups and ordinary groups. Ordinary faults stand upon the
   root, arithmetic children upon arithmetic, lookup children upon lookup,
   local names upon name, unimplemented and recursion upon runtime, and
   Unicode upon value. Exit and interruption stand directly upon the root;
@@ -2050,6 +2051,30 @@ only. The extension labels so far, all from PHP:
   made with no arguments. A cause is worked out and kept where these
   classes are furnished. Argument tuples can be shown, counted and indexed;
   ordinary tuple expressions still heed their own label.
+- `ext.builtin.exceptions.note` and `.notes`: the method adding a text note
+  and the list holding notes, absent until the first is added. The words
+  under `.note.invalid` reject a note of another kind; `.notes.invalid`
+  rejects a notes member that has ceased to be a list.
+- `ext.builtin.exceptions.traceback` and `.traceback.with`: the traceback
+  member and the method returning the same exception when given nothing.
+  Tracebacks stand as nothing in this account; a fuller one cannot yet be
+  attached. `ext.builtin.exceptions.suppress` names the flag set by an
+  explicit cause, including a cause given as nothing.
+- `ext.builtin.exceptions.name` and `.object`: the members for an absent
+  name and the object upon which a member was sought. `.os` holds four
+  names in order: error number, error words, first file and second file.
+- `ext.builtin.exceptions.group.members` and `.group.message`: the tuple
+  of children and the message held by an exception group. `.group.derive`
+  makes another group from a row of children; `.group.subgroup` takes the
+  children beneath a class, and `.group.split` returns both halves. Nested
+  groups retain their shape. A callable condition requires means not yet
+  furnished and says `.unready`. `.group.invalid` gives the complaint for
+  unsuitable constructor arguments.
+- `ext.builtin.exceptions.info` and `.current`: builtins giving the class,
+  value and absent traceback as a tuple, or the caught value alone. Outside
+  a clause their places hold nothing.
+- `ext.stmt.throw.invalid`: the complaint for raising a value that is
+  neither an exception nor an exception class.
 - `ext.builtin.exceptions.unready`: words said when an exception operation
   asks for means the kernel does not yet possess.
 - `ext.builtin.class.name`: the member naming a class itself. Where the
@@ -2760,9 +2785,27 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `BaseExceptionGroup` `ExceptionGroup` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.current` | - | - | `sys.exception` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.derive` | - | - | `derive` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.invalid` | - | - | `TypeError: exception group requires a string and a non-empty sequence of exceptions` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.members` | - | - | `exceptions` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.message` | - | - | `message` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.subgroup` | - | - | `subgroup` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.info` | - | - | `sys.exc_info` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.name` | - | - | `name` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.note` | - | - | `add_note` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.note.invalid` | - | - | `TypeError: note must be a str` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.notes` | - | - | `__notes__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.notes.invalid` | - | - | `TypeError: Cannot add note: __notes__ is not a list` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.object` | - | - | `obj` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os` | - | - | `errno` `strerror` `filename` `filename2` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `__traceback__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
@@ -3097,6 +3140,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw` | - | - | `raise` | - | `throw` | - | - | - | - | - |
 | `ext.stmt.throw.empty` | - | - | `No active exception to reraise` | - | - | - | - | - | - | - |
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.throw.invalid` | - | - | `TypeError: exceptions must derive from BaseException` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.type_alias` | - | - | `type` | - | - | - | - | - | - | - |

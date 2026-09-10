@@ -363,13 +363,72 @@
     "ImportError",
     "OSError",
     "RecursionError",
-    "UnicodeError"
+    "UnicodeError",
+    "BaseExceptionGroup",
+    "ExceptionGroup"
   ],
   "ext.builtin.exceptions.args": [
     "args"
   ],
   "ext.builtin.exceptions.cause": [
     "__cause__"
+  ],
+  "ext.builtin.exceptions.current": [
+    "sys.exception"
+  ],
+  "ext.builtin.exceptions.group.derive": [
+    "derive"
+  ],
+  "ext.builtin.exceptions.group.invalid": [
+    "TypeError: exception group requires a string and a non-empty sequence of exceptions"
+  ],
+  "ext.builtin.exceptions.group.members": [
+    "exceptions"
+  ],
+  "ext.builtin.exceptions.group.message": [
+    "message"
+  ],
+  "ext.builtin.exceptions.group.split": [
+    "split"
+  ],
+  "ext.builtin.exceptions.group.subgroup": [
+    "subgroup"
+  ],
+  "ext.builtin.exceptions.info": [
+    "sys.exc_info"
+  ],
+  "ext.builtin.exceptions.name": [
+    "name"
+  ],
+  "ext.builtin.exceptions.note": [
+    "add_note"
+  ],
+  "ext.builtin.exceptions.note.invalid": [
+    "TypeError: note must be a str"
+  ],
+  "ext.builtin.exceptions.notes": [
+    "__notes__"
+  ],
+  "ext.builtin.exceptions.notes.invalid": [
+    "TypeError: Cannot add note: __notes__ is not a list"
+  ],
+  "ext.builtin.exceptions.object": [
+    "obj"
+  ],
+  "ext.builtin.exceptions.os": [
+    "errno",
+    "strerror",
+    "filename",
+    "filename2"
+  ],
+  "ext.builtin.exceptions.suppress": [
+    "__suppress_context__"
+  ],
+  "ext.builtin.exceptions.traceback": [
+    "__traceback__"
+  ],
+  "ext.builtin.exceptions.traceback.with": [
+    "with_traceback"
   ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
@@ -987,6 +1046,9 @@
   ],
   "ext.stmt.throw.from": [
     "from"
+  ],
+  "ext.stmt.throw.invalid": [
+    "TypeError: exceptions must derive from BaseException"
   ],
   "ext.stmt.try": [
     "try"

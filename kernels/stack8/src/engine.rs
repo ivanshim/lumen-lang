@@ -213,11 +213,13 @@ type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(0), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
             if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
+            if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
+            if at >= 23 { fields.push(("\0group".into(), Value::Flag(at == 24))); }
             if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
             classes.push(Rc::new(Class {
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
@@ -230,6 +232,16 @@ impl<'a> Engine<'a> {
 
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
         let mut fields = class.all_fields();
+        for name in &self.lang.builtin_exceptions_traceback { fields.push((name.clone(), Value::Null)); }
+        for name in &self.lang.builtin_exceptions_suppress { fields.push((name.clone(), Value::Flag(false))); }
+        for name in self.lang.builtin_exceptions_name.iter().chain(self.lang.builtin_exceptions_object.iter()) {
+            fields.push((name.clone(), Value::Null));
+        }
+        if self.lang.exceptions.get(20).map_or(false, |name| class.named(name, false)) {
+            for (at, name) in self.lang.builtin_exceptions_os.iter().enumerate() {
+                fields.push((name.clone(), if args.len() >= 2 { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
+            }
+        }
         let args = Value::Tuple(Rc::new(args));
         fields.push(("\0arguments".into(), args.clone()));
         if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
@@ -262,9 +274,97 @@ impl<'a> Engine<'a> {
                 self.perform(&Action::Make, 1)?;
                 return self.drop_top().map_err(Fault::from);
             }
-            return Err(self.lang.catch_invalid.clone().unwrap_or_default().into());
+            return Err(self.lang.stmt_throw_invalid.first().cloned().unwrap_or_default().into());
+        }
+        if !self.lang.stmt_throw_invalid.is_empty() && !matches!(&value, Value::Object(o) if self.exception_class(&o.class)) {
+            return Err(self.lang.stmt_throw_invalid[0].clone().into());
         }
         Ok(value)
+    }
+
+
+    fn make_group(&mut self, class: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        let bad = || self.lang.builtin_exceptions_group_invalid.first().cloned().unwrap_or_default();
+        if args.len() != 2 || !matches!(args[0], Value::Text(_)) { return Err(bad().into()); }
+        let members = match &args[1] {
+            Value::Array(row) | Value::Tuple(row) if !row.is_empty() => row.clone(),
+            _ => return Err(bad().into()),
+        };
+        let ordinary = self.lang.exceptions.get(1).and_then(|n| self.native_exceptions.get(n));
+        let all_ordinary = members.iter().all(|v| matches!((v, ordinary), (Value::Object(o), Some(Value::Class(c))) if Self::exception_beneath(&o.class, c)));
+        let strict = class.all_fields().iter().any(|(n, v)| n == "\0group" && matches!(v, Value::Flag(true)));
+        if members.iter().any(|v| !matches!(v, Value::Object(o) if self.exception_class(&o.class))) || strict && !all_ordinary { return Err(bad().into()); }
+        let class = if all_ordinary && !strict {
+            self.lang.exceptions.get(24).and_then(|n| self.native_exceptions.get(n)).and_then(|v| match v { Value::Class(c) => Some(c.clone()), _ => None }).unwrap_or(class)
+        } else { class };
+        let result = self.exception_instance(class, args.clone(), Value::Null);
+        if let Value::Object(o) = &result {
+            let mut fields = o.fields.borrow_mut();
+            fields.push(("\0members".into(), Value::Tuple(members.clone())));
+            fields.push(("\0group-message".into(), args[0].clone()));
+            for name in &self.lang.builtin_exceptions_group_members { fields.push((name.clone(), Value::Tuple(members.clone()))); }
+            for name in &self.lang.builtin_exceptions_group_message { fields.push((name.clone(), args[0].clone())); }
+        }
+        Ok(result)
+    }
+
+    fn group_parts(value: &Value) -> Option<(Rc<Class>, Value, Vec<Value>)> {
+        let Value::Object(o) = value else { return None };
+        let fields = o.fields.borrow();
+        let (_, Value::Tuple(row)) = fields.iter().find(|(n, _)| n == "\0members")? else { return None };
+        let message = fields.iter().find(|(n, _)| n == "\0group-message")?.1.clone();
+        Some((o.class.clone(), message, row.to_vec()))
+    }
+
+    fn part_group(&mut self, value: Value, kinds: &[Rc<Class>]) -> Flow<(Option<Value>, Option<Value>)> {
+        if matches!(&value, Value::Object(o) if kinds.iter().any(|c| Self::exception_beneath(&o.class, c))) { return Ok((Some(value), None)); }
+        let Some((class, message, row)) = Self::group_parts(&value) else { return Ok((None, Some(value))) };
+        let mut yes = Vec::new();
+        let mut no = Vec::new();
+        for child in row {
+            let (a, b) = self.part_group(child, kinds)?;
+            yes.extend(a); no.extend(b);
+        }
+        let yes = if yes.is_empty() { None } else { Some(self.make_group(class.clone(), vec![message.clone(), Value::array(yes)])?) };
+        let no = if no.is_empty() { None } else { Some(self.make_group(class, vec![message, Value::array(no)])?) };
+        Ok((yes, no))
+    }
+
+    fn exception_member(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Option<Flow<Value>> {
+        if self.lang.builtin_exceptions_note.iter().any(|n| n == name) {
+            return Some((|| {
+                if args.len() != 1 || !matches!(args[0], Value::Text(_)) { return Err(self.lang.builtin_exceptions_note_invalid.first().cloned().unwrap_or_default().into()); }
+                let key = self.lang.builtin_exceptions_notes.first().cloned().unwrap_or_default();
+                let mut fields = object.fields.borrow_mut();
+                match fields.iter_mut().find(|(n, _)| *n == key) {
+                    Some((_, Value::Array(row))) => Rc::make_mut(row).push(args[0].clone()),
+                    Some((_, Value::Blank)) => { fields.retain(|(n, _)| *n != key); fields.push((key, Value::array(args.to_vec()))); }
+                    Some(_) => return Err(self.lang.builtin_exceptions_notes_invalid.first().cloned().unwrap_or_default().into()),
+                    None => fields.push((key, Value::array(args.to_vec()))),
+                }
+                Ok(Value::Null)
+            })());
+        }
+        if self.lang.builtin_exceptions_traceback_with.iter().any(|n| n == name) {
+            return Some(if matches!(args, [Value::Null]) { Ok(Value::Object(object)) } else { Err(self.lang.exception_unready.clone().unwrap_or_default().into()) });
+        }
+        let derive = self.lang.builtin_exceptions_group_derive.iter().any(|n| n == name);
+        let split = self.lang.builtin_exceptions_group_split.iter().any(|n| n == name);
+        if derive || split || self.lang.builtin_exceptions_group_subgroup.iter().any(|n| n == name) {
+            return Some((|| {
+                let value = Value::Object(object);
+                let (class, message, _) = Self::group_parts(&value).ok_or_else(|| self.lang.exception_unready.clone().unwrap_or_default())?;
+                if args.len() != 1 { return Err(self.lang.builtin_exceptions_group_invalid.first().cloned().unwrap_or_default().into()); }
+                if derive { return self.make_group(class, vec![message, args[0].clone()]); }
+                let kinds = match &args[0] {
+                    Value::Class(c) if self.exception_class(c) => vec![c.clone()],
+                    _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+                };
+                let (yes, no) = self.part_group(value, &kinds)?;
+                Ok(if split { Value::Tuple(Rc::new(vec![yes.unwrap_or(Value::Null), no.unwrap_or(Value::Null)])) } else { yes.unwrap_or(Value::Null) })
+            })());
+        }
+        None
     }
 
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
@@ -817,6 +917,22 @@ impl<'a> Engine<'a> {
     /// it was raised, and how the run stood when it was. Nothing is
     /// written where a language has no word for it.
     pub fn ended_uncaught(&self, fault: &Fault) {
+        if let Fault::Thrown(Value::Object(o)) = fault {
+            if o.class.all_fields().iter().any(|(n, _)| n == "\0exit") {
+                let held = o.fields.borrow();
+                let args = held.iter().find(|(n, _)| n == "\0arguments").map(|(_, v)| v);
+                let code = match args {
+                    Some(Value::Tuple(row)) if row.len() == 1 => row[0].clone(),
+                    Some(Value::Tuple(row)) if row.is_empty() => Value::Null,
+                    Some(v) => v.clone(), _ => Value::Null,
+                };
+                let status = match code {
+                    Value::Null => 0, Value::Small(n) => n as i32, Value::Flag(b) => i32::from(b),
+                    v => { eprintln!("{}", v.display(&self.wording())); 1 },
+                };
+                std::process::exit(status);
+            }
+        }
         let Some((_, word)) = self.lang.complaint_words.iter().find(|(k, _)| *k == Complaint::Fatal) else { return };
         let sp = self.wording();
         let raised = match fault {
@@ -987,6 +1103,14 @@ impl<'a> Engine<'a> {
             let message = self.exception_words(told, &named);
             let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
             let value = self.exception_instance(class, args, Value::Null);
+            if self.lang.fault_name.as_deref() == Some(named.as_str()) {
+                let name = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
+                if let Value::Object(o) = &value {
+                    for key in &self.lang.builtin_exceptions_name {
+                        if let Some((_, v)) = o.fields.borrow_mut().iter_mut().find(|(n, _)| n == key) { *v = Value::text(name); }
+                    }
+                }
+            }
             if self.lang.catch_invalid.as_deref() == Some(told) {
                 if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
             }
@@ -1785,8 +1909,49 @@ impl<'a> Engine<'a> {
 
     /// Each arm runs in the same frame. A leap beyond its span is an
     /// outward return or loop step, and the last part runs before it goes.
+
+    fn group_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, raised: Value) -> Flow<Passage> {
+        let mut remainder = Some(if Self::group_parts(&raised).is_some() { raised } else {
+            let class = self.lang.exceptions.get(23).and_then(|n| self.native_exceptions.get(n)).cloned();
+            let Some(Value::Class(class)) = class else { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()) };
+            self.make_group(class, vec![Value::text(""), Value::array(vec![raised])])?
+        });
+        let mut newly = Vec::new();
+        for arm in &plan.clauses {
+            let Some(left) = remainder.take() else { break };
+            let mut kinds = Vec::new();
+            for span in &arm.kinds {
+                self.run_span(program, frame, instrs, *span)?;
+                match self.drop_top()? {
+                    Value::Class(c) if self.exception_class(&c) => kinds.push(c),
+                    _ => return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()),
+                }
+            }
+            let (matched, rest) = self.part_group(left, &kinds)?;
+            remainder = rest;
+            let Some(matched) = matched else { continue };
+            if let Some(current) = self.caught.last_mut() { *current = matched.clone(); }
+            if let Some(cell) = &arm.held { self.store_cell(cell, frame, matched)?; }
+            let outcome = self.run_span(program, frame, instrs, arm.body);
+            if let Some(cell) = &arm.held { self.put_cell(cell, frame, Value::Blank); }
+            match outcome {
+                Err(Fault::Thrown(v)) => newly.push(v),
+                Err(Fault::Note(words)) => match self.as_fault(&words) { Some(v) => newly.push(v), None => return Err(Fault::Note(words)) },
+                Ok(Passage::Along(at)) if at == arm.body.1 => {},
+                _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+            }
+        }
+        newly.extend(remainder);
+        if newly.is_empty() { return Ok(Passage::Along(plan.after)); }
+        if newly.len() == 1 { return Err(Fault::Thrown(newly.pop().unwrap())); }
+        let class = self.lang.exceptions.get(23).and_then(|n| self.native_exceptions.get(n)).cloned();
+        let Some(Value::Class(class)) = class else { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()) };
+        let value = self.make_group(class, vec![Value::text(""), Value::array(newly)])?;
+        Err(Fault::Thrown(value))
+    }
+
     fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
-        if plan.clauses.iter().any(|arm| arm.grouped) {
+        if self.lang.builtin_exceptions_group_members.is_empty() && plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
         let depth = self.data.len();
@@ -1809,6 +1974,7 @@ impl<'a> Engine<'a> {
                 self.data.truncate(depth);
                 self.caught.push(raised.clone());
                 let handled = (|| {
+                    if plan.clauses.iter().any(|arm| arm.grouped) { return self.group_attempt(program, frame, instrs, plan, raised); }
                     for arm in &plan.clauses {
                         let mut takes = arm.bare;
                         for span in &arm.kinds {
@@ -2723,7 +2889,9 @@ impl<'a> Engine<'a> {
                 };
                 if self.exception_class(&class) {
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
-                    let object = self.exception_instance(class, args, Value::Null);
+                    let object = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
+                        self.make_group(class, args)?
+                    } else { self.exception_instance(class, args, Value::Null) };
                     self.data.push(object);
                     return Ok(());
                 }
@@ -2970,6 +3138,15 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                if let Value::Object(o) = &subject {
+                    if self.exception_class(&o.class) {
+                        if let Some(answer) = self.exception_member(o.clone(), name, &args) {
+                            let value = answer?;
+                            self.data.push(value);
+                            return Ok(());
+                        }
+                    }
+                }
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -3115,6 +3292,11 @@ impl<'a> Engine<'a> {
                 let class = match self.lang.assert_kind.as_ref().and_then(|n| self.native_exceptions.get(n)) {
                     Some(Value::Class(native)) => native.clone(), _ => class,
                 };
+                if self.exception_class(&class) {
+                    let args = if matches!(&message, Value::Text(w) if w.is_empty()) { Vec::new() } else { vec![message] };
+                    let value = self.exception_instance(class, args, Value::Null);
+                    return Err(Fault::Thrown(value));
+                }
                 self.made += 1;
                 let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
                     Vec::new()
@@ -3131,9 +3313,13 @@ impl<'a> Engine<'a> {
                 let value = self.drop_top()?;
                 let value = if self.lang.exceptions.is_empty() { value } else { self.prepare_raised(value)? };
                 if let (Value::Object(object), Some(cause)) = (&value, cause) {
-                    let cause = self.prepare_raised(cause)?;
+                    let cause = if matches!(cause, Value::Null) { cause } else { self.prepare_raised(cause)? };
                     if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class)) {
                         return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
+                    }
+                    for name in &self.lang.builtin_exceptions_suppress {
+                        let mut fields = object.fields.borrow_mut();
+                        if let Some((_, v)) = fields.iter_mut().find(|(n, _)| n == name) { *v = Value::Flag(true); }
                     }
                     if let Some(name) = &self.lang.exception_cause {
                         let mut fields = object.fields.borrow_mut();
@@ -5202,6 +5388,14 @@ impl<'a> Engine<'a> {
                 Value::Object(Rc::new(Instance { class, mark: self.made, fields: RefCell::new(vec![
                     ("\0walk-source".into(), args[0].clone()), ("\0walk-place".into(), Value::Small(0)),
                 ]) }))
+            }
+            Builtin::ExceptionCurrent | Builtin::ExceptionInfo => {
+                arity(0)?;
+                let value = self.caught.last().cloned().unwrap_or(Value::Null);
+                if matches!(builtin, Builtin::ExceptionCurrent) { value } else {
+                    let class = match &value { Value::Object(o) => Value::Class(o.class.clone()), _ => Value::Null };
+                    Value::Tuple(Rc::new(vec![class, value, Value::Null]))
+                }
             }
             Builtin::Next => {
                 if args.len() != 1 && args.len() != 2 { return Err(self.lang.exception_unready.clone().unwrap_or_default()); }

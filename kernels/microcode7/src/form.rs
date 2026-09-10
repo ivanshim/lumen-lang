@@ -41,6 +41,8 @@ pub enum Prim {
     Repr,
     Iterate,
     NextOne,
+    FaultInfo,
+    FaultCurrent,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.

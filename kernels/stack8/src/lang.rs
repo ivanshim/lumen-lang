@@ -357,6 +357,25 @@ pub struct Lang {
     /// The class a fault of the kernel's own is raised as, where a
     /// language names one, so that a program may take it like any other.
     pub exceptions: Vec<String>,
+    pub builtin_exceptions_note: Vec<String>,
+    pub builtin_exceptions_notes: Vec<String>,
+    pub builtin_exceptions_note_invalid: Vec<String>,
+    pub builtin_exceptions_notes_invalid: Vec<String>,
+    pub builtin_exceptions_traceback: Vec<String>,
+    pub builtin_exceptions_traceback_with: Vec<String>,
+    pub builtin_exceptions_suppress: Vec<String>,
+    pub builtin_exceptions_name: Vec<String>,
+    pub builtin_exceptions_object: Vec<String>,
+    pub builtin_exceptions_os: Vec<String>,
+    pub builtin_exceptions_group_members: Vec<String>,
+    pub builtin_exceptions_group_message: Vec<String>,
+    pub builtin_exceptions_group_subgroup: Vec<String>,
+    pub builtin_exceptions_group_split: Vec<String>,
+    pub builtin_exceptions_group_derive: Vec<String>,
+    pub builtin_exceptions_group_invalid: Vec<String>,
+    pub builtin_exceptions_info: Vec<String>,
+    pub builtin_exceptions_current: Vec<String>,
+    pub stmt_throw_invalid: Vec<String>,
     pub exception_args: Option<String>,
     pub exception_cause: Option<String>,
     pub class_name: Option<String>,
@@ -907,7 +926,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions.current | w ext.builtin.exceptions.group.derive | w ext.builtin.exceptions.group.invalid | w ext.builtin.exceptions.group.members | w ext.builtin.exceptions.group.message | w ext.builtin.exceptions.group.split | w ext.builtin.exceptions.group.subgroup | w ext.builtin.exceptions.info | w ext.builtin.exceptions.name | w ext.builtin.exceptions.note | w ext.builtin.exceptions.note.invalid | w ext.builtin.exceptions.notes | w ext.builtin.exceptions.notes.invalid | w ext.builtin.exceptions.object | w ext.builtin.exceptions.os | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.builtin.exceptions.traceback.with | w ext.stmt.throw.invalid | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1369,7 +1388,7 @@ impl Lang {
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
-            ("builtin.precision", Builtin::Places), ("ext.builtin.iter", Builtin::Iter), ("ext.builtin.next", Builtin::Next), ("ext.builtin.repr", Builtin::Repr), ("builtin.to_string", Builtin::ToText),
+            ("builtin.precision", Builtin::Places), ("ext.builtin.iter", Builtin::Iter), ("ext.builtin.next", Builtin::Next), ("ext.builtin.exceptions.info", Builtin::ExceptionInfo), ("ext.builtin.exceptions.current", Builtin::ExceptionCurrent), ("ext.builtin.repr", Builtin::Repr), ("builtin.to_string", Builtin::ToText),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
@@ -1671,6 +1690,25 @@ impl Lang {
             class_binding: r.head("ext.system.source.class")?,
             method_binding: r.head("ext.system.source.method")?,
             exceptions: r.strings("ext.builtin.exceptions")?,
+            builtin_exceptions_note: r.strings("ext.builtin.exceptions.note")?,
+            builtin_exceptions_notes: r.strings("ext.builtin.exceptions.notes")?,
+            builtin_exceptions_note_invalid: r.strings("ext.builtin.exceptions.note.invalid")?,
+            builtin_exceptions_notes_invalid: r.strings("ext.builtin.exceptions.notes.invalid")?,
+            builtin_exceptions_traceback: r.strings("ext.builtin.exceptions.traceback")?,
+            builtin_exceptions_traceback_with: r.strings("ext.builtin.exceptions.traceback.with")?,
+            builtin_exceptions_suppress: r.strings("ext.builtin.exceptions.suppress")?,
+            builtin_exceptions_name: r.strings("ext.builtin.exceptions.name")?,
+            builtin_exceptions_object: r.strings("ext.builtin.exceptions.object")?,
+            builtin_exceptions_os: r.strings("ext.builtin.exceptions.os")?,
+            builtin_exceptions_group_members: r.strings("ext.builtin.exceptions.group.members")?,
+            builtin_exceptions_group_message: r.strings("ext.builtin.exceptions.group.message")?,
+            builtin_exceptions_group_subgroup: r.strings("ext.builtin.exceptions.group.subgroup")?,
+            builtin_exceptions_group_split: r.strings("ext.builtin.exceptions.group.split")?,
+            builtin_exceptions_group_derive: r.strings("ext.builtin.exceptions.group.derive")?,
+            builtin_exceptions_group_invalid: r.strings("ext.builtin.exceptions.group.invalid")?,
+            builtin_exceptions_info: r.strings("ext.builtin.exceptions.info")?,
+            builtin_exceptions_current: r.strings("ext.builtin.exceptions.current")?,
+            stmt_throw_invalid: r.strings("ext.stmt.throw.invalid")?,
             exception_args: r.head("ext.builtin.exceptions.args")?,
             exception_cause: r.head("ext.builtin.exceptions.cause")?,
             class_name: r.head("ext.builtin.class.name")?,

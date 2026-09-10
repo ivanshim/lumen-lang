@@ -422,6 +422,8 @@ pub enum Builtin {
     Repr,
     Iter,
     Next,
+    ExceptionInfo,
+    ExceptionCurrent,
     Sum,
     List,
     Any,
