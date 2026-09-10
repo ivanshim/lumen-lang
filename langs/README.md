@@ -47,6 +47,15 @@ only names what its language spells; the floor is the same for all.
 | Control | branch, loop, call, return, break, continue | `until` is `while not`; `for v in a..b` is a counted loop, the range being loop syntax rather than a value; `elif`, `else if` and the pipe are spellings |
 | Effects and the boundary | `emit`, `error`, `extern`, `kind`, the system bindings | `to_string`, `to_int` and `to_real` are the one-name conversions other languages have; Lumen derives them in its library |
 
+`ext.op.tuple` names the separator that makes a parenthesized sequence a
+tuple in the full kernels. Empty parentheses and a trailing separator are
+accepted, as are spread members. Tuples currently use the array value, as
+sets do; this extends reading without supplying tuple-specific identity,
+immutability or rendering. A parenthesized expression without a separator
+keeps its value. At a statement boundary the same separator also admits
+assignment to a flat sequence of bare names; the source is evaluated once
+and unpacked only after its length has been checked.
+
 ## Format rules
 
 1. A file is one flat JSON object. Every file carries the same labels in the
@@ -1766,6 +1775,31 @@ only. The extension labels so far, all from PHP:
   former meaning, and defaults are worked out when the call begins.
 - `ext.stmt.function.defaults.amiss`: retained as a diagnostic label;
   arrays and maps in defaults now share their contents between calls.
+- `ext.op.contains`: membership in map keys, sequence values or text. The
+  unary negation spelling before this operator negates membership as a
+  two-word comparison (`not in`). It also works in comprehension filters.
+- `ext.op.eq.maps.unordered`: map equality compares keys and values without
+  requiring the same insertion order, including maps nested in arrays or
+  other maps. Arrays themselves remain ordered, and map iteration keeps
+  insertion order.
+- `ext.op.bit.or.maps`: admit two map operands to the bit-or spelling,
+  merging their pairs with right-hand values winning. Keys keep their first
+  insertion order. Integer operands retain bit-or behavior. Compound writes
+  store the merged value; shared mutable map identity is not implemented.
+- `ext.builtin.map`: a map constructor accepting zero or one positional
+  source, either a map or an iterable of pairs, followed by keyword pairs.
+  Later values replace earlier values while preserving key order. The
+  `.arguments.amiss` and `.pair.amiss` labels supply errors for too many
+  sources and an item with the wrong number of values. Object mapping and
+  iterator protocols are not provided by this constructor yet.
+- `ext.builtin.print.separator` and `ext.builtin.print.end`: keyword names
+  selecting the text between printed values and after the last value. A
+  null option keeps the usual space or newline. `ext.builtin.print.option.type`
+  supplies the error for an option that is neither text nor null. Keyword
+  expansion from maps uses the same checks as direct keyword arguments.
+- `ext.stmt.function.defaults.amiss`: the words said when such a default
+  is mutable. The kernels' arrays and maps are values, so they cannot yet
+  share a mutable default between calls as Python requires.
 - `ext.syntax.call.spread`: a sign before a call argument handing out its
   items as positional arguments. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
@@ -2606,6 +2640,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.map` | - | - | `dict` | - | - | - | - | - | - | - |
+| `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
+| `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
@@ -2620,9 +2657,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.file.output` | - | - | `sys.stdout` | - | - | - | - | - | - | - |
 | `ext.builtin.print.file.unready` | - | - | `NotImplementedError: print file objects are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.print.flush` | - | - | `flush` | - | - | - | - | - | - | - |
+| `ext.builtin.print.option.type` | - | - | `TypeError: print option must be a string or None` | - | - | - | - | - | - | - |
 | `ext.builtin.print.real_point` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
+| `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
@@ -2729,6 +2768,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
+| `ext.op.bit.or.maps` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2744,8 +2784,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.comprehension.in` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.target.unavailable` | - | - | `NotImplementedError: indexed comprehension targets are not supported` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.unpack.amiss` | - | - | `ValueError: comprehension target has the wrong number of values` | - | - | - | - | - | - | - |
+| `ext.op.contains` | - | - | - | - | - | - | - | - | - | - |
 | `ext.op.decrement` | - | - | - | - | `--` | - | - | - | - | - |
 | `ext.op.decrement.text` | - | - | - | - | `Decrement on non-numeric string has no effect and is deprecated` | - | - | - | - | - |
+| `ext.op.eq.maps.unordered` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.hush` | - | - | - | - | `@` | - | - | - | - | - |
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
 | `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |

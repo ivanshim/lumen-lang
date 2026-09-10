@@ -1,5 +1,5 @@
 {
-  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels read imports and bind their names to null for now. str, int and float are the conversions. Comprehensions and generator expressions gather eagerly; sets stand as arrays in this stage.",
+  "$comment": "Python: indentation blocks introduced by a colon, word-form logic operators, true division yielding a real, floor division, method calls on builtins (arr.append(x)) as the pipe spelled with a dot, and indexing into strings. sys.stdout.write is emit, the string-only writer, and sys.exit the error; the `import sys` line that makes them Python is the prologue the reference kernels drop; the full kernels read imports and bind their names to null for now. str, int and float are the conversions. Comprehensions and generator expressions gather eagerly; sets and tuples stand as arrays in this stage.",
   "format_version": 1,
   "language": "python",
   "extensions": [
@@ -340,6 +340,15 @@
   "ext.builtin.list": [
     "list"
   ],
+  "ext.builtin.map": [
+    "dict"
+  ],
+  "ext.builtin.map.arguments.amiss": [
+    "TypeError: dict expects at most one positional argument"
+  ],
+  "ext.builtin.map.pair.amiss": [
+    "ValueError: dictionary update sequence element must have length 2"
+  ],
   "ext.builtin.print.end": [
     "end"
   ],
@@ -361,12 +370,18 @@
   "ext.builtin.print.flush": [
     "flush"
   ],
+  "ext.builtin.print.option.type": [
+    "TypeError: print option must be a string or None"
+  ],
   "ext.builtin.print.real_point": true,
   "ext.builtin.print.sep": [
     "sep"
   ],
   "ext.builtin.print.sep.amiss": [
     "TypeError: sep must be None or a string"
+  ],
+  "ext.builtin.print.separator": [
+    "sep"
   ],
   "ext.builtin.range.index": [
     "IndexError: range object index out of range"
@@ -599,6 +614,7 @@
   "ext.op.bit.or": [
     "|"
   ],
+  "ext.op.bit.or.maps": true,
   "ext.op.bit.right": [
     ">>"
   ],
@@ -631,6 +647,8 @@
   "ext.op.comprehension.unpack.amiss": [
     "ValueError: comprehension target has the wrong number of values"
   ],
+  "ext.op.contains": [],
+  "ext.op.eq.maps.unordered": true,
   "ext.op.identical": [
     "is"
   ],
