@@ -798,14 +798,22 @@ impl Blueprint {
     pub fn program(&self, name: &str) -> Option<&Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p),
-            None => self.under.as_ref().and_then(|u| u.program(name)),
+            None => {
+                let inherited = self.under.as_ref().and_then(|u| u.program(name));
+                if inherited.is_some() || self.native_parent().is_none() { inherited }
+                else { self.answers.iter().find_map(|kind| kind.program(name)) }
+            },
         }
     }
 
     pub fn constant(&self, name: &str) -> Option<&Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
             Some((_, v)) => Some(v),
-            None => self.under.as_ref().and_then(|u| u.constant(name)),
+            None => {
+                let found = self.under.as_ref().and_then(|u| u.constant(name));
+                if found.is_none() && self.native_parent().is_some() { self.answers.iter().find_map(|kind| kind.constant(name)) }
+                else { found }
+            },
         }
     }
 
@@ -814,7 +822,10 @@ impl Blueprint {
         if self.shared.borrow().iter().any(|(n, _)| n == name) {
             return Some(self);
         }
-        self.under.as_ref().and_then(|u| u.keeper(name))
+        let older = self.under.as_ref().and_then(|u| u.keeper(name));
+        if older.is_some() { return older; }
+        if self.native_parent().is_none() { return None; }
+        self.answers.iter().find_map(|kind| kind.keeper(name))
     }
 
     pub fn built_on(&self, name: &str) -> bool {

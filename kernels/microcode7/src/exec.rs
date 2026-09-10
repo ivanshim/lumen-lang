@@ -3262,7 +3262,7 @@ impl<'a> Machine<'a> {
         if class.program(name).is_none() && class.native_parent().is_some() {
             if self.table.single("ext.stmt.class.dictionary") == Some(name) && self.table.single("ext.stmt.class.slots").map_or(true, |slots| class.permitted_slots(slots, name).is_none()) {
                 if let Value::Thing(thing) = value {
-                    return Some(Value::Dict(Rc::new(thing.holds.borrow().iter().filter(|entry| !entry.0.starts_with('\0')).map(|(key, worth)| (Value::text(key), worth.clone())).collect())));
+                    return Some(Value::Dict(Rc::new(thing.holds.borrow().iter().filter(|entry| !entry.0.starts_with('\0')).map(|(key, worth)| (Value::text(key), worth.clone())).collect())).keep(true));
                 }
             }
             if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, name)) {
@@ -3298,6 +3298,13 @@ impl<'a> Machine<'a> {
                     if let Some(init) = self.table.single("ext.stmt.class.constructor").and_then(|word| kind.program(word)).cloned() {
                         let mut arguments = vec![made.clone()]; arguments.extend(row);
                         self.invoke(init, self.outermost.clone(), arguments)?;
+                    } else if let Some(Value::Intrinsic(word)) = kind.native_parent() {
+                        if matches!(self.table.prims.get(word.as_ref()), Some(Prim::Listed | Prim::Dictionary | Prim::Uniques)) {
+                            let (positions, names) = self.open_arguments(row)?;
+                            let mut arguments = vec![made.clone()];
+                            arguments.extend(positions);
+                            self.value_member(&Value::Intrinsic(word), "\0fill-worth", arguments, names)?;
+                        }
                     }
                 }
                 return Ok(made);
@@ -3478,6 +3485,7 @@ impl<'a> Machine<'a> {
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if name == "\0new-worth" {
+            if !keywords.is_empty() { return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string().into()); }
             if let Some(Value::Blueprint(kind)) = arguments.first() {
                 return self.make_native_thing(kind.clone(), arguments[1..].to_vec(), true);
             }
@@ -3488,6 +3496,7 @@ impl<'a> Machine<'a> {
             if name == "\0fill-worth" {
                 let Value::Thing(thing) = first else { return Err(self.method_fault("arguments").into()) };
                 let operation = *self.table.prims.get(word.as_ref()).expect("a native kind");
+                if !matches!(operation, Prim::Listed | Prim::Dictionary | Prim::Uniques) { return Ok(Value::Nil); }
                 let mut positions = arguments[1..].to_vec();
                 let worth = match self.builtin_names(operation, word, &mut positions, keywords)? {
                     Some(value) => value, None => self.prim(operation, word, &positions)?,
@@ -4409,7 +4418,7 @@ impl<'a> Machine<'a> {
         if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
             | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
             | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown
-            | Prim::At | Prim::Membership | Prim::Length | Prim::AsInt | Prim::AsReal | Prim::AsText | Prim::Listed)
+            | Prim::At | Prim::Membership | Prim::Contains | Prim::Absent | Prim::Length | Prim::AsInt | Prim::AsReal | Prim::AsText)
             && v.iter().any(|worth| worth.native_worth().is_some()) {
             let row = v.iter().map(Value::settled).collect::<Vec<_>>();
             return self.prim(op, name, &row);
@@ -5627,6 +5636,7 @@ impl<'a> Machine<'a> {
                         }
                     },
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
+                    (needle, Value::Tuple(hay) | Value::Set(hay)) if self.table.has_any("ext.stmt.class.builtin") => hay.iter().any(|item| contained_equal(needle, item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
@@ -5642,6 +5652,9 @@ impl<'a> Machine<'a> {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Blueprint(a), Value::Blueprint(b)) if self.table.has_any("ext.stmt.class.builtin") => Rc::ptr_eq(a, b),
+                    (Value::Intrinsic(a), Value::Intrinsic(b)) if self.table.has_any("ext.stmt.class.builtin") => a == b,
+                    (Value::Thing(_), _) | (_, Value::Thing(_)) if self.table.has_any("ext.stmt.class.builtin") => false,
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
                     (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
@@ -5918,7 +5931,7 @@ impl<'a> Machine<'a> {
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
-                    1 => {let result=Value::Vector(Rc::new(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)){result.keep(true)}else{result}},
+                    1 => {let result=Value::Vector(Rc::new(self.gathered_members(&v[0])?)); if v[0].native_worth().is_some() || matches!(v[0],Value::Window(..)|Value::Mutable(_,true)){result.keep(true)}else{result}},
                     _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
                 }
             }
@@ -6811,6 +6824,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
 }
 
 fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>, cells_are_places: bool) -> Result<bool, String> {
+    if let Some(mut worth) = held.native_worth() { return written_into(&mut worth, key, value, no_places, builds, letter, cells_are_places); }
     if let Value::Mutable(cell, _) = held { return written_into(&mut cell.borrow_mut(), key, value, no_places, builds, letter, cells_are_places); }
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
@@ -7395,6 +7409,9 @@ impl Machine<'_> {
     }
 
     fn core_belongs(&self, item: &Value, expected: &Value) -> Result<bool, String> {
+        if let Value::Blueprint(kind) = expected {
+            if self.table.strings("ext.stmt.class.builtin").contains(&kind.name) && !self.table.prims.contains_key(&kind.name) { return Ok(true); }
+        }
         match expected {
             Value::Tuple(kinds) => {
                 for kind in kinds.iter() { if self.core_belongs(item, kind)? { return Ok(true); } }
@@ -7714,6 +7731,11 @@ impl Machine<'_> {
                     if op == GetMember && input.len() == 3 { return Ok(input[2].clone()); }
                     return Err(self.core_complaint(if op == MembersOf { "core.vars" } else { "core.unready" }, if op == MembersOf { "" } else { name }));
                 };
+                if thing.of.native_parent().is_some() && matches!(op, HasAttribute | GetMember) {
+                    let found = self.attribute(&input[0], &input[1].bare());
+                    if op == HasAttribute { return Ok(Value::Flag(found.is_some())); }
+                    if let Some(worth) = found { return Ok(worth); }
+                }
                 let mut members = thing.holds.borrow_mut();
                 if op == MembersOf { return Err(self.core_complaint("core.unready", name)); }
                 let Value::Text(word) = &input[1] else { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); };
@@ -7721,6 +7743,7 @@ impl Machine<'_> {
                 if op == GetMember && position.is_none() && thing.of.program(word).is_some() { return Err(self.core_complaint("core.unready", name)); }
                 if op == HasAttribute { return Ok(Value::Flag(position.is_some() || thing.of.program(word).is_some())); }
                 if op == SetMember {
+                    self.slot_accepts(&thing.of, word)?;
                     if input.len() != 3 { return Err(self.core_complaint("core.arity", name)); }
                     match position { Some(p) => members[p].1 = input[2].clone(), None => members.push((word.to_string(), input[2].clone())) }
                     return Ok(Value::Nil);

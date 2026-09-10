@@ -832,7 +832,9 @@ impl Class {
     pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p),
-            None => self.base.as_ref().and_then(|b| b.method(name)),
+            None => self.base.as_ref().and_then(|b| b.method(name)).or_else(|| {
+                if self.builtin_base().is_some() { self.answers.iter().find_map(|base| base.method(name)) } else { None }
+            }),
         }
     }
 
@@ -840,7 +842,9 @@ impl Class {
     pub fn constant(&self, name: &str) -> Option<&Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
             Some((_, v)) => Some(v),
-            None => self.base.as_ref().and_then(|b| b.constant(name)),
+            None => self.base.as_ref().and_then(|b| b.constant(name)).or_else(|| {
+                if self.builtin_base().is_some() { self.answers.iter().find_map(|base| base.constant(name)) } else { None }
+            }),
         }
     }
 
@@ -849,7 +853,9 @@ impl Class {
         if self.shared.borrow().iter().any(|(n, _)| n == name) {
             return Some(self);
         }
-        self.base.as_ref().and_then(|b| b.holder(name))
+        self.base.as_ref().and_then(|b| b.holder(name)).or_else(|| {
+            if self.builtin_base().is_some() { self.answers.iter().find_map(|base| base.holder(name)) } else { None }
+        })
     }
 
     /// Whether this class is that one, stands on it, or answers to it.

@@ -3122,7 +3122,7 @@ impl<'a> Engine<'a> {
                             Value::ValueMethod(Rc::new((Value::Object(o), self.lang.value_methods[name.as_ref()].clone())))
                         }
                         None if o.class.builtin_base().is_some() && self.lang.subclass_dictionary.first().map_or(false, |n| n == name.as_ref()) && self.lang.subclass_slots.first().map_or(true, |word| o.class.slots(word, name).is_none()) => {
-                            Value::Map(Rc::new(o.fields.borrow().iter().filter(|(n, _)| !n.starts_with('\0')).map(|(n, v)| (Value::text(n), v.clone())).collect()))
+                            Value::Map(Rc::new(o.fields.borrow().iter().filter(|(n, _)| !n.starts_with('\0')).map(|(n, v)| (Value::text(n), v.clone())).collect())).held(true)
                         }
                         None if self.reads_for(&o).is_some() => {
                             let method = self.reads_for(&o).expect("the method");
@@ -3218,8 +3218,8 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => {
                         self.slot_write(&o.class, name)?;
                         if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
-                            let row = match &value {
-                                Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
+                            let row = match value.contents() {
+                                Value::Tuple(row) | Value::Array(row) => Value::Tuple(row),
                                 _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
                             };
                             let mut fields = o.fields.borrow_mut();
@@ -4047,6 +4047,9 @@ impl<'a> Engine<'a> {
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    (Value::Class(x), Value::Class(y)) if !self.lang.subclass_builtin.is_empty() => Rc::ptr_eq(x, y),
+                    (Value::Native(x, _), Value::Native(y, _)) if !self.lang.subclass_builtin.is_empty() => x == y,
+                    (Value::Object(_), _) | (_, Value::Object(_)) if !self.lang.subclass_builtin.is_empty() => false,
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };
@@ -4948,12 +4951,14 @@ impl<'a> Engine<'a> {
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if operation == "\0allocate" {
+            if !named.is_empty() { return Err(self.lang.class_unready[0].clone()); }
             let Some(Value::Class(class)) = args.first() else { return Err(self.lang.class_unready[0].clone()); };
             return self.builtin_instance(class.clone(), args[1..].to_vec(), true).map_err(|f| f.told(&self.wording()));
         }
         if let Value::Native(builtin, word) = receiver {
             let Some(first) = args.first() else { return Err(self.lang.class_unready[0].clone()); };
             if operation == "\0initialize" {
+                if !matches!(builtin, Builtin::List | Builtin::Dict | Builtin::Set) { return Ok(Value::Null); }
                 let Value::Object(object) = first else { return Err(self.lang.class_unready[0].clone()); };
                 let items = args[1..].iter().cloned().map(|v| (None, v)).chain(named.into_iter().map(|(k,v)| (Some(k),v))).collect();
                 let worth = self.builtin_call(*builtin, word, items)?.held(true);
@@ -5673,7 +5678,7 @@ impl<'a> Engine<'a> {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
                 let result = Value::array(self.comprehension_items(&args[0])?);
-                if matches!(args[0], Value::View(_) | Value::Collection(_, true)) { result.held(true) } else { result }
+                if args[0].builtin_value().is_some() || matches!(args[0], Value::View(_) | Value::Collection(_, true)) { result.held(true) } else { result }
             }
             Builtin::Any => {
                 arity(1)?;
@@ -6818,6 +6823,14 @@ impl Engine<'_> {
                     if let Some(init) = self.lang.constructor.as_ref().and_then(|n| class.method(n)).cloned() {
                         let mut given = vec![made.clone()]; given.extend(raw);
                         self.invoke(&init, given)?; self.drop_top()?;
+                    } else if let Value::Native(b, word) = &native {
+                        if matches!(b, Builtin::List | Builtin::Dict | Builtin::Set) {
+                            let items = self.call_items(raw)?;
+                            let worth = self.builtin_call(*b, word, items)?.held(true);
+                            if let Value::Object(object) = &made {
+                                if let Some((_, kept)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0builtin-value") { *kept = worth; }
+                            }
+                        }
                     }
                 }
                 return Ok(made);
@@ -6849,6 +6862,7 @@ impl Engine<'_> {
             return Ok(false);
         }
         if let Value::Class(class) = kind {
+            if self.lang.subclass_builtin.contains(&class.name) && !self.lang.builtins.contains_key(&class.name) { return Ok(true); }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         if let Some(worth) = value.builtin_value() { return self.core_isinstance(&worth.contents(), kind); }
@@ -7127,12 +7141,25 @@ impl Engine<'_> {
                     return Err(self.core_fault(if b == Builtin::Vars { "core.vars" } else { "core.unready" }, if b == Builtin::Vars { "" } else { name }));
                 };
                 if b == Builtin::Vars { return Err(self.core_fault("core.unready", name)); }
+                if o.class.builtin_base().is_some() && matches!(b, Builtin::HasAttr | Builtin::GetAttr) {
+                    let attr = args[1].plain();
+                    let dictionary = self.lang.subclass_dictionary.first().map_or(false, |word| word == &attr)
+                        && self.lang.subclass_slots.first().map_or(true, |word| o.class.slots(word, &attr).is_none());
+                    let found = o.fields.borrow().iter().any(|(word, _)| word == &attr) || o.class.holder(&attr).is_some()
+                        || o.class.method(&attr).is_some() || self.lang.value_methods.contains_key(&attr) || dictionary;
+                    if b == Builtin::HasAttr { return Ok(Value::Flag(found)); }
+                    if found {
+                        self.data.push(Value::Object(o.clone()));
+                        self.perform(&Action::Grab(Rc::from(attr)), 1).map_err(|fault| fault.told(&self.wording()))?;
+                        return self.drop_top();
+                    }
+                }
                 let Value::Text(attr) = &args[1] else { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); };
                 let mut fields = o.fields.borrow_mut();
                 let at = fields.iter().position(|(k,_)| k == attr.as_ref());
                 if b == Builtin::GetAttr && at.is_none() && o.class.method(attr).is_some() { return Err(self.core_fault("core.unready", name)); }
                 match b {
-                    Builtin::SetAttr => { if args.len() != 3 { return Err(self.core_fault("core.arity", name)); } if let Some(at) = at { fields[at].1 = args[2].clone(); } else { fields.push((attr.to_string(),args[2].clone())); } Value::Null }
+                    Builtin::SetAttr => { self.slot_write(&o.class, attr)?; if args.len() != 3 { return Err(self.core_fault("core.arity", name)); } if let Some(at) = at { fields[at].1 = args[2].clone(); } else { fields.push((attr.to_string(),args[2].clone())); } Value::Null }
                     Builtin::HasAttr => Value::Flag(at.is_some() || o.class.method(attr).is_some()),
                     _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else { fields[at].1.clone() } }
                         else if b == Builtin::GetAttr && args.len() == 3 { args[2].clone() }
