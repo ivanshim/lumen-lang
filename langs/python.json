@@ -864,6 +864,7 @@
   "ext.builtin.output.held": [
     "__output_held"
   ],
+  "ext.builtin.output.error": true,
   "ext.builtin.output.hold": [
     "__output_hold"
   ],

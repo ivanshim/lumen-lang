@@ -190,10 +190,13 @@ class TestCase:
         return result
 
 class _Skip:
+    __unittest_skip__ = True
+
     def __init__(self, reason):
         self.reason = reason
+        self.__unittest_skip_why__ = reason
 
-    def call(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs):
         raise SkipTest(self.reason)
 
     def decorate(self, function):
@@ -201,7 +204,7 @@ class _Skip:
             setattr(function, '__unittest_skip__', True)
             setattr(function, '__unittest_skip_why__', self.reason)
             return function
-        return self.call
+        return self
 
 def skip(reason):
     return _Skip(reason).decorate

@@ -213,6 +213,10 @@ pub struct Machine<'a> {
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
     holding: RefCell<Vec<String>>,
+    /// The error channel's own keeping, innermost last: text sent that
+    /// way while it is kept is gathered here and never mixed with what
+    /// the ordinary keeping gathers, so each answers for itself alone.
+    error_buffers: RefCell<Vec<String>>,
     /// The routines to run once the program's last statement is done,
     /// each with what it is to be handed, in the order they were named.
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
@@ -399,6 +403,7 @@ impl<'a> Machine<'a> {
             silenced: 0,
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
+            error_buffers: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
@@ -3733,7 +3738,12 @@ impl<'a> Machine<'a> {
             }
             written.push_str(&tail);
             match channel {
-                2 => eprint!("{}", written),
+                // On the error channel: into its keeping if one is
+                // open, otherwise straight out.
+                2 => match self.error_buffers.borrow_mut().last_mut() {
+                    None => eprint!("{}", written),
+                    Some(buffer) => buffer.push_str(&written),
+                },
                 _ => self.utter(&written),
             }
             return Ok(Some(Value::Nil));
@@ -5168,6 +5178,20 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        // Given the error channel as its first worth, a keeping word
+        // works the error channel's own keeping, where the table lets it.
+        if self.table.flag("ext.builtin.output.error") && matches!(v.first(), Some(Value::Channel(2))) {
+            let kept = match op {
+                Prim::KeepOut => { self.error_buffers.borrow_mut().push(String::new()); Some(Value::Flag(true)) }
+                Prim::LooseOut => Some(Value::Flag(self.error_buffers.borrow_mut().pop().is_some())),
+                Prim::KeptOut => Some(match self.error_buffers.borrow().last() {
+                    None => Value::Flag(false),
+                    Some(text) => Value::text(text),
+                }),
+                _ => None,
+            };
+            if let Some(value) = kept { return Ok(value); }
+        }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?

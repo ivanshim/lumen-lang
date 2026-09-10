@@ -2295,6 +2295,9 @@ only. The extension labels so far, all from PHP:
   apart by how they are written, as they were before. A class keeps the
   spelling it was declared with, which is what is answered when a
   program asks a thing what class it is of.
+- `ext.builtin.output.error`: a switch; the output keeping builtins may
+  take the error stream as their first argument, keeping its text apart
+  from ordinary output. With no argument their former meaning remains.
 - `ext.builtin.output.hold`, `.held`, `.drop` and `.depth`: keeping
   what the run writes out instead of letting it go. The first begins a
   keeping, the second answers with what has been kept since that
@@ -3588,6 +3591,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
+| `ext.builtin.output.error` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
