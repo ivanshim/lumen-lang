@@ -40,6 +40,20 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub zip_words: Vec<String>,
+    pub sorted_words: Vec<String>,
+    pub max_words: Vec<String>,
+    pub reversed_words: Vec<String>,
+    pub order_key_words: Vec<String>,
+    pub order_reverse_words: Vec<String>,
+    pub order_unready_words: Vec<String>,
+    pub reversed_unready_words: Vec<String>,
+    pub reversed_iterator_words: Vec<String>,
+
+    pub tuple_value: bool,
+    pub map_items: Vec<String>,
+    pub map_items_view: Vec<String>,
+    pub map_popitem_empty: Vec<String>,
     pub map_keys: Vec<String>,
     pub map_values: Vec<String>,
     pub map_keys_view: Vec<String>,
@@ -854,6 +868,8 @@ w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
+w ext.builtin.zip | w ext.builtin.sorted | w ext.builtin.max | w ext.builtin.reversed | w ext.builtin.order.key | w ext.builtin.order.reverse | w ext.builtin.order.unready | w ext.builtin.reversed.unready | w ext.builtin.reversed.iterator
+b ext.op.tuple.value | w ext.builtin.map.items | w ext.builtin.map.items.view | w ext.builtin.map.popitem.empty
 w ext.builtin.map.keys | w ext.builtin.map.values | w ext.builtin.map.keys.view | w ext.builtin.map.values.view
 w ext.builtin.map.new | w ext.builtin.map.fromkeys | w ext.builtin.map.get | w ext.builtin.map.setdefault | w ext.builtin.map.pop | w ext.builtin.map.popitem | w ext.builtin.map.update | w ext.builtin.map.clear | w ext.builtin.map.copy | w ext.builtin.map.pairs.amiss
 b ext.syntax.map.value_keys | w ext.syntax.map.resized | w ext.syntax.map.missing | w ext.syntax.map.unhashable | w ext.syntax.map.key.unready | w ext.syntax.map.ordering
@@ -1359,6 +1375,9 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.zip", Builtin::Zip), ("ext.builtin.sorted", Builtin::Sorted),
+            ("ext.builtin.max", Builtin::Greatest), ("ext.builtin.reversed", Builtin::Backwards),
+            ("ext.builtin.map.items", Builtin::Dictionary(11)),
             ("ext.builtin.map.keys", Builtin::Dictionary(9)),
             ("ext.builtin.map.values", Builtin::Dictionary(10)),
             ("ext.builtin.map.new", Builtin::Dictionary(0)),
@@ -1925,6 +1944,19 @@ impl Lang {
             map_values: r.strings("ext.builtin.map.values")?,
             map_keys_view: r.strings("ext.builtin.map.keys.view")?,
             map_values_view: r.strings("ext.builtin.map.values.view")?,
+            tuple_value: r.flag("ext.op.tuple.value")?,
+            map_items: r.strings("ext.builtin.map.items")?,
+            map_items_view: r.strings("ext.builtin.map.items.view")?,
+            map_popitem_empty: r.strings("ext.builtin.map.popitem.empty")?,
+            zip_words: r.strings("ext.builtin.zip")?,
+            sorted_words: r.strings("ext.builtin.sorted")?,
+            max_words: r.strings("ext.builtin.max")?,
+            reversed_words: r.strings("ext.builtin.reversed")?,
+            order_key_words: r.strings("ext.builtin.order.key")?,
+            order_reverse_words: r.strings("ext.builtin.order.reverse")?,
+            order_unready_words: r.strings("ext.builtin.order.unready")?,
+            reversed_unready_words: r.strings("ext.builtin.reversed.unready")?,
+            reversed_iterator_words: r.strings("ext.builtin.reversed.iterator")?,
             map_value_keys: r.flag("ext.syntax.map.value_keys")?,
             map_missing: r.strings("ext.syntax.map.missing")?,
             map_unhashable: r.strings("ext.syntax.map.unhashable")?,

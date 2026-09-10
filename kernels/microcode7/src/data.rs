@@ -134,11 +134,13 @@ pub enum Value {
     Nil,
     Ellipsis,
     Vector(Rc<Vec<Value>>),
+    Record(Rc<Vec<Value>>),
+    MapBound(Rc<Value>, u8),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
     Dict(Rc<Vec<(Value, Value)>>),
-    Projection(Rc<Value>, bool, Rc<str>),
+    Projection(Rc<Value>, u8, Rc<str>),
     /// A key written together with its value (`k => v`), until a
     /// literal takes it in.
     Couple(Rc<(Value, Value)>),
@@ -203,14 +205,15 @@ impl Value {
         self
     }
 
-    pub fn projected(&self, want_keys: bool) -> Vec<Value> {
+    pub fn projected(&self, want_keys: u8) -> Vec<Value> {
         let entries = match self {
             Value::Shared(cell) => return cell.borrow().projected(want_keys),
             Value::Dict(pairs) => pairs,
             _ => return Vec::new(),
         };
         let mut result = Vec::with_capacity(entries.len());
-        for pair in entries.iter() { result.push(if want_keys { pair.0.clone() } else { pair.1.clone() }); }
+        for pair in entries.iter() { result.push(match want_keys { 0 => pair.1.clone(), 1 | 3 => pair.0.clone(), _ => Value::Record(Rc::new(vec![pair.0.clone(), pair.1.clone()])) }); }
+        if want_keys == 3 { result.reverse(); }
         result
     }
 
@@ -235,13 +238,14 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Projection(..) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::MapBound(..) | Value::Record(_) | Value::Projection(..) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
+            Value::Record(items) => !items.is_empty(),
             Value::Projection(source, keys, _) => !source.projected(*keys).is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
@@ -269,10 +273,10 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Projection(..) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Record(_) | Value::Projection(..) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::MapBound(..) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
@@ -312,6 +316,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
+            (Value::Record(a), Value::Record(b)) => a.len() == b.len() && a.iter().enumerate().all(|(i, x)| x.equals(&b[i])),
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -500,6 +505,8 @@ impl Value {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
                 format!("{}({}, {}{})", p.word, p.first, p.limit, tail)
             }
+            Value::MapBound(..) => String::from("<bound map method>"),
+            Value::Record(items) => "(".to_string() + &items.iter().map(Value::bare).collect::<Vec<_>>().join(", ") + if items.len() == 1 { ",)" } else { ")" },
             Value::Projection(_, _, title) => format!("<{title}>"),
             Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),

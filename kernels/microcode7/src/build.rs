@@ -1199,7 +1199,7 @@ impl<'a> Builder<'a> {
             whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(whole)
+        Ok(if self.table.flag("ext.op.tuple.value") { prim_call(Prim::TupleMade, vec![whole]) } else { whole })
     }
 
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
@@ -1214,7 +1214,7 @@ impl<'a> Builder<'a> {
             value = prim_call(Prim::TupleJoined, vec![value, segment]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(value)
+        Ok(if self.table.flag("ext.op.tuple.value") { prim_call(Prim::TupleMade, vec![value]) } else { value })
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
@@ -5298,7 +5298,10 @@ impl<'a> Builder<'a> {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
-                                else if self.on_any("syntax.group.close") { prim_call(Prim::MakeArray, Vec::new()) }
+                                else if self.on_any("syntax.group.close") {
+                                    let empty = prim_call(Prim::MakeArray, Vec::new());
+                                    if table.flag("ext.op.tuple.value") { prim_call(Prim::TupleMade, vec![empty]) } else { empty }
+                                }
                                 else { self.comma_value()? };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression

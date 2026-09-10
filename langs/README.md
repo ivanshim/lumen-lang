@@ -891,6 +891,18 @@ only. The extension labels so far, all from PHP:
   remains a map. Line ends within these braces are space. This stage
   does not provide a distinct set value. These arrays and maps keep
   the kernel's accustomed printed form: `[1, hello]` and `[a => 1]`.
+- `ext.builtin.zip`: gathers tuples from its walks, ending when the
+  shortest ends. `ext.builtin.sorted` gathers an ordered array;
+  `ext.builtin.max` chooses the greatest member. `ext.builtin.order.key`
+  names a routine applied once to each member before comparing, and
+  `.reverse` names the sorting switch that puts greatest first.
+  `.unready` gives plain words for an ordering the kernel cannot make.
+  `ext.builtin.reversed` walks a dictionary's keys backwards, retaining
+  its map and guarding its length during a loop. `.iterator` names this
+  walk; `.unready` says that a different kind has no reverse walk yet.
+- `ext.op.tuple.value`: a switch; comma expressions hold immutable
+  tuples, distinct from arrays, and an empty group holds an empty tuple.
+  Tuples can name map keys when each of their items can name a key.
 - `ext.builtin.print.collections`: a switch; printed arrays and maps
   show the representation of each item, quoting text even within nested
   containers. Arrays use square brackets and maps use braces and a
@@ -903,14 +915,14 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.map.get`, `.setdefault` and `.pop` look up a key with
   an optional default; the second puts an absent key there, and the
   third takes a present one away. `ext.builtin.map.popitem` takes the
-  last pair away; where pairs have no tuple value yet it stops with
-  `ext.op.tuple.unready` before altering the map.
+  last pair away as a tuple. `ext.builtin.map.popitem.empty` says that
+  there is no last pair to take.
   `ext.builtin.map.update` takes a map or pairs and then named values;
   `.clear` empties the receiver, and `.copy` makes a fresh shallow copy.
   `ext.builtin.map.pairs.amiss` gives plain words for a source whose
   items are not pairs. The receiver stands before the other arguments.
-  `ext.builtin.map.keys` and `.values` yield live views of the map's
-  keys and values. Their `.view` labels name the views when shown.
+  `ext.builtin.map.keys`, `.values` and `.items` yield live views of
+  the map's keys, values and pairs. Their `.view` labels name the views when shown.
   A view keeps its map, so a later write is seen by its length,
   membership, gathering and walks; a walk guards the map's length.
 - `ext.syntax.map.value_keys`: a switch; maps compare their keys by value,
@@ -2252,18 +2264,25 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.copy` | - | - | `copy` | - | - | - | - | - | - | - |
 | `ext.builtin.map.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.map.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.map.items` | - | - | `items` | - | - | - | - | - | - | - |
+| `ext.builtin.map.items.view` | - | - | `dict_items` | - | - | - | - | - | - | - |
 | `ext.builtin.map.keys` | - | - | `keys` | - | - | - | - | - | - | - |
 | `ext.builtin.map.keys.view` | - | - | `dict_keys` | - | - | - | - | - | - | - |
 | `ext.builtin.map.new` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pairs.amiss` | - | - | `ValueError: dictionary update requires pairs` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pop` | - | - | `pop` | - | - | - | - | - | - | - |
 | `ext.builtin.map.popitem` | - | - | `popitem` | - | - | - | - | - | - | - |
+| `ext.builtin.map.popitem.empty` | - | - | `KeyError: 'popitem(): dictionary is empty'` | - | - | - | - | - | - | - |
 | `ext.builtin.map.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
 | `ext.builtin.map.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.map.values` | - | - | `values` | - | - | - | - | - | - | - |
 | `ext.builtin.map.values.view` | - | - | `dict_values` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
+| `ext.builtin.order.key` | - | - | `key` | - | - | - | - | - | - | - |
+| `ext.builtin.order.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
+| `ext.builtin.order.unready` | - | - | `NotImplementedError: ordering these values is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
@@ -2288,6 +2307,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed` | - | - | `reversed` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed.iterator` | - | - | `dict_reversekeyiterator` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed.unready` | - | - | `NotImplementedError: reversal of this iterable is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -2296,6 +2318,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
@@ -2315,6 +2338,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.builtin.zip` | - | - | `zip` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |
@@ -2446,6 +2470,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
 | `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.tuple.unready` | - | - | `NotImplementedError: tuples are not supported` | - | - | - | - | - | - | - |
+| `ext.op.tuple.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
 | `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |

@@ -1006,6 +1006,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        if self.lang.tuple_value { self.act(Action::MakeTuple, 1); }
         Ok(())
     }
 
@@ -4089,6 +4090,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        if self.lang.tuple_value { self.act(Action::MakeTuple, 1); }
         Ok(())
     }
 
@@ -5660,7 +5662,10 @@ impl<'a> Compiler<'a> {
                                 tuple = true;
                                 self.take();
                             }
-                            if tuple { self.act(Action::MakeArray, count); }
+                            if tuple {
+                                self.act(Action::MakeArray, count);
+                                if lang.tuple_value { self.act(Action::MakeTuple, 1); }
+                            }
                             self.want_sign(&group.close, "to close a group")?;
                         } else {
                         if let Some(clause) = self.comprehension_ahead() {
@@ -5668,6 +5673,7 @@ impl<'a> Compiler<'a> {
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
                                 self.act(Action::MakeArray, 0);
+                                if lang.tuple_value { self.act(Action::MakeTuple, 1); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;

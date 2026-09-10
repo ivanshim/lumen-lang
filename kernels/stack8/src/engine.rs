@@ -992,7 +992,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_) | Value::MapView(_)) {
+        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_) | Value::MapView(_) | Value::Tuple(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -1402,7 +1402,7 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
-                        Value::Array(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
+                        Value::Array(a) | Value::Tuple(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
                         Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
@@ -2331,6 +2331,14 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::MapMethod(bound) => {
+                        let mut given = vec![bound.0.clone()];
+                        given.extend(self.drop_many(argc - 1)?);
+                        let opened = self.call_items(given)?;
+                        let answer = self.builtin_call(Builtin::Dictionary(bound.1), name, opened)?;
+                        self.data.push(answer);
+                        Ok(())
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -2411,6 +2419,10 @@ impl<'a> Engine<'a> {
                     }
                 };
             }
+            Action::MakeTuple => match collection_contents(&self.drop_top()?) {
+                Value::Array(items) => Value::Tuple(items),
+                other => return Err(self.lang.tuple_unready.first().cloned().unwrap_or_else(|| other.plain()).into()),
+            },
             Action::TupleJoin => {
                 let portions = self.drop_many(2)?;
                 let mut together = Vec::new();
@@ -2424,7 +2436,7 @@ impl<'a> Engine<'a> {
                 let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
                     Value::Counted(_) => self.comprehension_items(&source)?,
-                    Value::Array(items) => items.as_ref().clone(),
+                    Value::Array(items) | Value::Tuple(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
                     _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
@@ -2521,7 +2533,7 @@ impl<'a> Engine<'a> {
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
-                    Value::Array(items) => match items.get(at) {
+                    Value::Array(items) | Value::Tuple(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
                         Some(_) => Value::Small(at as i64),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
@@ -2652,9 +2664,13 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(self.map_method(&held, name).is_some() || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                receiver if self.map_method(&receiver, name).is_some() => {
+                    let code = self.map_method(&receiver, name).expect("a map method");
+                    Value::MapMethod(Rc::new((receiver, code)))
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -3127,7 +3143,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
-                            Value::Array(items) => items.len(),
+                            Value::Array(items) | Value::Tuple(items) => items.len(),
                             Value::MapView(view) => view.0.map_projection(view.1).len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -3160,7 +3176,7 @@ impl<'a> Engine<'a> {
             }
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
-                Value::Array(items) => Value::Small(items.len() as i64),
+                Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                 Value::MapView(view) => Value::Small(view.0.map_projection(view.1).len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
@@ -3274,6 +3290,10 @@ impl<'a> Engine<'a> {
                 out.push(quote);
                 out
             }
+            Value::Tuple(items) => {
+                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                format!("({}{})", parts.join(", "), if parts.len() == 1 { "," } else { "" })
+            }
             Value::MapView(view) => format!("{}({})", view.2, self.rem_repr(&Value::array(view.0.map_projection(view.1)))?),
             Value::Array(items) => {
                 let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
@@ -3300,7 +3320,7 @@ impl<'a> Engine<'a> {
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
         let values: Vec<&Value> = match arguments {
-            Value::Array(items) => items.iter().collect(),
+            Value::Array(items) | Value::Tuple(items) => items.iter().collect(),
             one => vec![one],
         };
         let mut used = 0;
@@ -3347,6 +3367,55 @@ impl<'a> Engine<'a> {
         }
         if used != values.len() { return Err(wrong()); }
         Ok(out)
+    }
+
+    fn map_method(&self, receiver: &Value, name: &str) -> Option<u8> {
+        if !matches!(collection_contents(receiver), Value::Map(_)) { return None; }
+        match self.lang.builtins.get(name) { Some(Builtin::Dictionary(code @ 1..=11)) => Some(*code), _ => None }
+    }
+
+    fn order_key(&mut self, callable: &Value, item: &Value) -> Res<Value> {
+        match callable {
+            Value::Null => Ok(item.clone()),
+            Value::MapMethod(bound) => self.dictionary(bound.1, "", &[bound.0.clone(), item.clone()], &[]),
+            Value::Routine(program) => match self.invoke(program, vec![item.clone()]) {
+                Ok(()) => self.drop_top(),
+                Err(fault) => { self.carried = Some(fault); Err(self.lang.order_unready_words[0].clone()) }
+            },
+            _ => Err(self.lang.order_unready_words[0].clone()),
+        }
+    }
+
+    fn ordered(&mut self, greatest: bool, args: &[Value], named: &[(String, Value)]) -> Res<Value> {
+        let mut key = Value::Null;
+        let mut reverse = false;
+        for (name, value) in named {
+            if Lang::spells(&self.lang.order_key_words, name) { key = value.clone(); }
+            else if !greatest && Lang::spells(&self.lang.order_reverse_words, name) { reverse = self.truth(value); }
+            else { return Err(Self::named_fault(&self.lang.call_unknown, name)); }
+        }
+        if args.is_empty() || !greatest && args.len() != 1 { return Err(self.lang.call_amiss[0].clone()); }
+        let values = if args.len() == 1 { self.comprehension_items(&args[0])? } else { args.to_vec() };
+        let mut ranked: Vec<(Value, Value)> = Vec::new();
+        for value in values {
+            let score = self.order_key(&key, &value)?;
+            if greatest {
+                if ranked.is_empty() || self.truth(&self.dyadic(&Action::Lt, &ranked[0].0, &score)?) {
+                    ranked.clear(); ranked.push((score, value));
+                }
+            } else {
+                let mut at = ranked.len();
+                while at > 0 {
+                    let before = if reverse { self.dyadic(&Action::Lt, &ranked[at - 1].0, &score)? }
+                        else { self.dyadic(&Action::Lt, &score, &ranked[at - 1].0)? };
+                    if !self.truth(&before) { break; }
+                    at -= 1;
+                }
+                ranked.insert(at, (score, value));
+            }
+        }
+        if greatest { ranked.pop().map(|(_, value)| value).ok_or_else(|| self.lang.order_unready_words[0].clone()) }
+        else { Ok(self.keep_collection(Value::array(ranked.into_iter().map(|(_, value)| value).collect()))) }
     }
 
     fn map_extend(&self, into: &mut Vec<(Value, Value)>, source: &Value) -> Res<()> {
@@ -3411,7 +3480,12 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            5 => return Err(self.lang.tuple_unready.first().cloned().unwrap_or_default()),
+            5 => {
+                if args.len() != 1 { return Err(bad()); }
+                let (key, value) = pairs.pop().ok_or_else(|| self.lang.map_popitem_empty.first().cloned().unwrap_or_default())?;
+                changed = true;
+                Value::Tuple(Rc::new(vec![key, value]))
+            }
             6 => {
                 if args.len() > 2 { return Err(bad()); }
                 if let Some(source) = args.get(1) { self.map_extend(&mut pairs, source)?; }
@@ -3428,10 +3502,10 @@ impl<'a> Engine<'a> {
                 if args.len() != 1 { return Err(bad()); }
                 self.keep_collection(Value::Map(Rc::new(pairs.clone())))
             }
-            9 | 10 => {
+            9 | 10 | 11 => {
                 if args.len() != 1 { return Err(bad()); }
-                let words = if operation == 9 { &self.lang.map_keys_view } else { &self.lang.map_values_view };
-                Value::MapView(Rc::new((receiver.clone(), operation == 9, words.first().cloned().unwrap_or_default())))
+                let words = match operation { 9 => &self.lang.map_keys_view, 10 => &self.lang.map_values_view, _ => &self.lang.map_items_view };
+                Value::MapView(Rc::new((receiver.clone(), match operation { 9 => 1, 10 => 0, _ => 2 }, words.first().cloned().unwrap_or_default())))
             }
             _ => unreachable!(),
         };
@@ -3448,6 +3522,7 @@ impl<'a> Engine<'a> {
             Value::Bond(cell) => self.map_key(&cell.borrow()),
             Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_)
                 | Value::Flag(_) | Value::Text(_) | Value::Null => Ok(()),
+            Value::Tuple(items) => { for item in items.iter() { self.map_key(item)?; } Ok(()) }
             Value::Array(_) => Err(Self::named_fault(&self.lang.map_unhashable, "list")),
             Value::Map(_) => Err(Self::named_fault(&self.lang.map_unhashable, "dict")),
             _ => Err(self.lang.map_key_unready.first().cloned().unwrap_or_default()),
@@ -3463,7 +3538,7 @@ impl<'a> Engine<'a> {
             (Value::Real(_) | Value::Huge(_) | Value::Frac(_), Value::Flag(y)) => a.equals(&Value::Small(i64::from(*y))),
             (Value::Map(x), Value::Map(y)) => x.len() == y.len() && x.iter().all(|(k, v)|
                 y.iter().any(|(j, w)| self.map_equal(k, j) && self.map_equal(v, w))),
-            (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| self.map_equal(v, w)),
+            (Value::Tuple(x), Value::Tuple(y)) | (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| self.map_equal(v, w)),
             _ => a.equals(&b),
         }
     }
@@ -3589,10 +3664,10 @@ impl<'a> Engine<'a> {
             Action::Contains | Action::Lacks => {
                 let found = match b {
                     Value::MapView(view) => {
-                        if view.1 { self.map_key(a)?; }
+                        if view.1 == 1 { self.map_key(a)?; }
                         view.0.map_projection(view.1).iter().any(|v| self.map_equal(a, v))
                     }
-                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
+                    Value::Array(items) | Value::Tuple(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => {
                         self.map_key(a)?;
                         items.iter().any(|(key, _)| if self.lang.map_value_keys { self.map_equal(a, key) } else { a.equals(key) })
@@ -4303,7 +4378,7 @@ impl<'a> Engine<'a> {
             Err(told) => return absent(told, at),
         };
         match target {
-            Value::Array(items) => match items.get(i) {
+            Value::Array(items) | Value::Tuple(items) => match items.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => absent(format!("Array index {} out of bounds (length: {})", i, items.len()), at),
             },
@@ -4344,7 +4419,7 @@ impl<'a> Engine<'a> {
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
             Value::MapView(view) => Ok(view.0.map_projection(view.1)),
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Array(items) | Value::Tuple(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
@@ -4367,7 +4442,7 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            if self.lang.print_collections && matches!(collection_contents(v), Value::Array(_) | Value::Map(_) | Value::MapView(_)) {
+            if self.lang.print_collections && matches!(collection_contents(v), Value::Array(_) | Value::Map(_) | Value::MapView(_) | Value::Tuple(_)) {
                 return self.rem_repr(v).unwrap_or_else(|_| v.display(&sp));
             }
             let mut said = v.display(&sp);
@@ -4414,6 +4489,7 @@ impl<'a> Engine<'a> {
             } else { args.push(value); }
         }
         if let Builtin::Dictionary(operation) = builtin { return self.dictionary(operation, name, &args, &named); }
+        if matches!(builtin, Builtin::Sorted | Builtin::Greatest) { return self.ordered(builtin == Builtin::Greatest, &args, &named); }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4504,6 +4580,12 @@ impl<'a> Engine<'a> {
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if let Builtin::Dictionary(operation) = builtin { return self.dictionary(operation, name, args, &[]); }
+        if builtin == Builtin::Backwards {
+            if args.len() == 1 && matches!(collection_contents(&args[0]), Value::Map(_)) {
+                return Ok(Value::MapView(Rc::new((args[0].clone(), 3, self.lang.reversed_iterator_words[0].clone()))));
+            }
+            return Err(self.lang.reversed_unready_words[0].clone());
+        }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
@@ -4539,6 +4621,13 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Sorted | Builtin::Greatest => return self.ordered(builtin == Builtin::Greatest, args, &[]),
+            Builtin::Backwards => return Err(self.lang.reversed_unready_words[0].clone()),
+            Builtin::Zip => {
+                let walks = args.iter().map(|v| self.comprehension_items(v)).collect::<Res<Vec<_>>>()?;
+                let length = walks.iter().map(Vec::len).min().unwrap_or(0);
+                Value::array((0..length).map(|i| Value::Tuple(Rc::new(walks.iter().map(|row| row[i].clone()).collect()))).collect())
+            }
             Builtin::Dictionary(operation) => return self.dictionary(operation, name, args, &[]),
             Builtin::Echo => {
                 arity(1)?;
@@ -5136,7 +5225,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                     Value::MapView(view) => Value::Small(view.0.map_projection(view.1).len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),

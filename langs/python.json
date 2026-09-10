@@ -352,6 +352,12 @@
   "ext.builtin.map.get": [
     "get"
   ],
+  "ext.builtin.map.items": [
+    "items"
+  ],
+  "ext.builtin.map.items.view": [
+    "dict_items"
+  ],
   "ext.builtin.map.keys": [
     "keys"
   ],
@@ -370,6 +376,9 @@
   "ext.builtin.map.popitem": [
     "popitem"
   ],
+  "ext.builtin.map.popitem.empty": [
+    "KeyError: 'popitem(): dictionary is empty'"
+  ],
   "ext.builtin.map.setdefault": [
     "setdefault"
   ],
@@ -381,6 +390,18 @@
   ],
   "ext.builtin.map.values.view": [
     "dict_values"
+  ],
+  "ext.builtin.max": [
+    "max"
+  ],
+  "ext.builtin.order.key": [
+    "key"
+  ],
+  "ext.builtin.order.reverse": [
+    "reverse"
+  ],
+  "ext.builtin.order.unready": [
+    "NotImplementedError: ordering these values is not supported"
   ],
   "ext.builtin.print.collections": true,
   "ext.builtin.print.end": [
@@ -428,6 +449,18 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.reversed": [
+    "reversed"
+  ],
+  "ext.builtin.reversed.iterator": [
+    "dict_reversekeyiterator"
+  ],
+  "ext.builtin.reversed.unready": [
+    "NotImplementedError: reversal of this iterable is not supported"
+  ],
+  "ext.builtin.sorted": [
+    "sorted"
+  ],
   "ext.builtin.sum": [
     "sum"
   ],
@@ -461,6 +494,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.zip": [
+    "zip"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -731,6 +767,7 @@
   "ext.op.tuple.unready": [
     "NotImplementedError: tuples are not supported"
   ],
+  "ext.op.tuple.value": true,
   "ext.stmt.annotation": [
     ":"
   ],

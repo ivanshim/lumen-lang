@@ -137,7 +137,7 @@ impl Pattern {
             }
             Self::Sequence(parts, star) => {
                 if let Value::Bond(cell) = subject { return self.fit(&cell.borrow(), bound, tuple); }
-                let Value::Array(items) = subject else { return Ok(false); };
+                let (Value::Array(items) | Value::Tuple(items)) = subject else { return Ok(false); };
                 let fixed = parts.len() - usize::from(star.is_some());
                 if items.len() < fixed || (star.is_none() && items.len() != fixed) { return Ok(false); }
                 let extra = items.len() - fixed;
@@ -232,6 +232,7 @@ pub enum Action {
     Unpack(usize, Option<usize>),
     /// Join the gathered portions of a tuple.
     TupleJoin,
+    MakeTuple,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is refused as a write to one is.
@@ -419,6 +420,10 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Zip,
+    Sorted,
+    Greatest,
+    Backwards,
     Dictionary(u8),
     Sum,
     List,

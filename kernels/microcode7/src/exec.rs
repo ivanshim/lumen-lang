@@ -487,7 +487,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
-                            Value::Vector(items) => items.len(),
+                            Value::Vector(items) | Value::Record(items) => items.len(),
                             Value::Projection(source, keys, _) => source.projected(*keys).len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
@@ -540,7 +540,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_) | Value::Projection(..)) {
+        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_) | Value::Projection(..) | Value::Record(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -1000,6 +1000,64 @@ impl<'a> Machine<'a> {
         number_spelled_in(v).map(|n| self.at_width(n))
     }
 
+    fn map_member(&self, value: &Value, word: &str) -> Option<u8> {
+        if matches!(collection_read(value), Value::Dict(_)) {
+            if let Some(Prim::MapCall(code)) = self.table.prims.get(word) {
+                if *code > 0 && *code < 12 { return Some(*code); }
+            }
+        }
+        None
+    }
+
+    fn ranked_value(&mut self, function: &Value, item: Value) -> Result<Value, String> {
+        let result = match function {
+            Value::Nil => return Ok(item),
+            Value::MapBound(receiver, code) => return self.map_call(*code, "", &[receiver.as_ref().clone(), item], &[]),
+            Value::Bound(body, env) => self.invoke(body.clone(), env.clone(), vec![item]),
+            Value::Routine(body) => self.invoke(body.clone(), self.outermost.clone(), vec![item]),
+            _ => return Err(self.argument_fault("ext.builtin.order.unready", None)),
+        };
+        match result {
+            Ok(value) => Ok(value),
+            Err(away) => { self.got_away = Some(away); Err(self.argument_fault("ext.builtin.order.unready", None)) }
+        }
+    }
+
+    fn ordering(&mut self, largest: bool, arguments: &[Value], keywords: &[(String, Value)]) -> Result<Value, String> {
+        let mut function = Value::Nil;
+        let mut backwards = false;
+        for (word, value) in keywords {
+            if self.table.spells("ext.builtin.order.key", word) { function = value.clone(); }
+            else if !largest && self.table.spells("ext.builtin.order.reverse", word) { backwards = self.stands_true(value); }
+            else { return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(word))); }
+        }
+        if arguments.is_empty() || (!largest && arguments.len() > 1) { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+        let items = if arguments.len() > 1 { arguments.to_vec() } else { self.gathered_members(&arguments[0])? };
+        let mut held: Vec<(Value, Value)> = Vec::new();
+        for item in items {
+            let key = self.ranked_value(&function, item.clone())?;
+            let mut slot = held.len();
+            if largest {
+                if let Some(previous) = held.first() {
+                    let greater = self.prim(Prim::Lt, "", &[previous.0.clone(), key.clone()])?;
+                    if !self.stands_true(&greater) { continue; }
+                }
+                held.clear(); slot = 0;
+            } else {
+                while slot > 0 {
+                    let adjacent = held[slot - 1].0.clone();
+                    let operands = if backwards { [adjacent, key.clone()] } else { [key.clone(), adjacent] };
+                    let earlier = self.prim(Prim::Lt, "", &operands)?;
+                    if !self.stands_true(&earlier) { break; }
+                    slot -= 1;
+                }
+            }
+            held.insert(slot, (key, item));
+        }
+        if !largest { return Ok(self.collection_cell(Value::Vector(Rc::new(held.into_iter().map(|entry| entry.1).collect())))); }
+        held.into_iter().next().map(|entry| entry.1).ok_or_else(|| self.argument_fault("ext.builtin.order.unready", None))
+    }
+
     fn filled_map(&self, entries: &mut Vec<(Value, Value)>, source: &Value) -> Result<(), String> {
         let source = collection_read(source);
         if let Value::Dict(held) = source {
@@ -1061,7 +1119,12 @@ impl<'a> Machine<'a> {
             };
         } else {
             answer = match code {
-                5 => return Err(self.argument_fault("ext.op.tuple.unready", None)),
+                5 => {
+                    if given.len() != 1 { return Err(bad()); }
+                    let last = entries.pop().ok_or_else(|| self.argument_fault("ext.builtin.map.popitem.empty", None))?;
+                    write_back = true;
+                    Value::Record(Rc::new(vec![last.0, last.1]))
+                }
                 6 => {
                     if given.len() > 2 { return Err(bad()); }
                     if let Some(source) = given.get(1) { self.filled_map(&mut entries, source)?; }
@@ -1069,10 +1132,10 @@ impl<'a> Machine<'a> {
                     write_back = true;
                     Value::Nil
                 }
-                9 | 10 => {
+                9..=11 => {
                     if given.len() != 1 { return Err(bad()); }
-                    let label = if code == 9 { "ext.builtin.map.keys.view" } else { "ext.builtin.map.values.view" };
-                    Value::Projection(Rc::new(receiver.clone()), code == 9, Rc::from(self.table.single(label).unwrap_or_default()))
+                    let label = match code { 9 => "ext.builtin.map.keys.view", 10 => "ext.builtin.map.values.view", _ => "ext.builtin.map.items.view" };
+                    Value::Projection(Rc::new(receiver.clone()), match code { 10 => 0, 9 => 1, _ => 2 }, Rc::from(self.table.single(label).unwrap_or_default()))
                 }
                 7 | 8 => {
                     if given.len() != 1 { return Err(bad()); }
@@ -1093,6 +1156,10 @@ impl<'a> Machine<'a> {
         if self.table.flag("ext.syntax.map.value_keys") {
             let value = collection_read(item);
             let kind = match value {
+                Value::Record(parts) => {
+                    for part in parts.iter() { self.admits_key(part)?; }
+                    None
+                }
                 Value::Vector(_) => Some("list"),
                 Value::Dict(_) => Some("dict"),
                 Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Nil | Value::Flag(_) => None,
@@ -1111,7 +1178,7 @@ impl<'a> Machine<'a> {
             return a.iter().all(|entry| b.iter().find(|candidate| Self::equal_contents(&entry.0, &candidate.0))
                 .map_or(false, |candidate| Self::equal_contents(&entry.1, &candidate.1)));
         }
-        if let (Value::Vector(a), Value::Vector(b)) = (&one, &other) {
+        if let (Value::Vector(a), Value::Vector(b)) | (Value::Record(a), Value::Record(b)) = (&one, &other) {
             return a.len() == b.len() && (0..a.len()).all(|i| Self::equal_contents(&a[i], &b[i]));
         }
         let number = |v: &Value| match v { Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }), _ => v.clone() };
@@ -1136,6 +1203,12 @@ impl<'a> Machine<'a> {
             return self.quoted_remainder(&held.borrow());
         }
         match item {
+            Value::Record(items) => {
+                let mut rendered = Vec::new();
+                for part in items.iter() { rendered.push(self.quoted_remainder(part)?); }
+                let tail = if items.len() == 1 { ",)" } else { ")" };
+                return Ok("(".to_string() + &rendered.join(", ") + tail);
+            }
             Value::Projection(source, keys, title) => {
                 let row = Value::Vector(Rc::new(source.projected(*keys)));
                 return Ok(format!("{title}({})", self.quoted_remainder(&row)?));
@@ -1180,7 +1253,7 @@ impl<'a> Machine<'a> {
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
-        let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
+        let supplied = match rhs { Value::Vector(list) | Value::Record(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
         let mut arguments = supplied.iter();
         let letters: Vec<char> = pattern.chars().collect();
         let mut at = 0;
@@ -2312,6 +2385,12 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::MapBound(receiver, code) = &stands {
+                    let mut values = vec![receiver.as_ref().clone()];
+                    values.extend(self.value_list(args, frame)?);
+                    let (positions, names) = self.open_arguments(values)?;
+                    return Ok(self.map_call(*code, "", &positions, &names)?);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2956,13 +3035,14 @@ impl<'a> Machine<'a> {
 
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
-    fn builtin_names(&self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
+    fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
         }
         if let Prim::MapCall(code) = op { return Ok(Some(self.map_call(code, name, positional, &keywords)?)); }
+        if matches!(op, Prim::Largest | Prim::Ordered) { return Ok(Some(self.ordering(op == Prim::Largest, positional, &keywords)?)); }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let mut join = String::from(" ");
             let mut tail = String::from("\n");
@@ -3106,7 +3186,7 @@ impl<'a> Machine<'a> {
                                 place += 1;
                             }
                         }
-                        Value::Vector(values) => positions.extend(values.iter().cloned()),
+                        Value::Vector(values) | Value::Record(values) => positions.extend(values.iter().cloned()),
                         Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
                         Value::Text(text) => {
                             for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
@@ -3643,6 +3723,32 @@ impl<'a> Machine<'a> {
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if let Prim::MapCall(code) = op { return self.map_call(code, name, v, &[]); }
+        if op == Prim::Of && v.len() == 2 {
+            if let Some(code) = self.map_member(&v[0], &v[1].bare()) { return Ok(Value::MapBound(Rc::new(v[0].clone()), code)); }
+        }
+        if op == Prim::Backward {
+            if v.len() == 1 && matches!(collection_read(&v[0]), Value::Dict(_)) {
+                let title = self.table.single("ext.builtin.reversed.iterator").unwrap_or_default();
+                return Ok(Value::Projection(Rc::new(v[0].clone()), 3, Rc::from(title)));
+            }
+            return Err(self.argument_fault("ext.builtin.reversed.unready", None));
+        }
+        if op == Prim::Pointed && self.table.flag("ext.syntax.map.value_keys") && matches!(collection_read(&v[0]), Value::Dict(_)) {
+            return Ok(v[0].clone());
+        }
+        if op == Prim::Erase && self.table.flag("ext.syntax.map.value_keys") {
+            if let Value::Shared(cell) = &v[0] {
+                if let Value::Dict(entries) = collection_read(&v[0]) {
+                    let key = collection_read(&v[1]);
+                    self.admits_key(&key)?;
+                    let position = entries.iter().position(|entry| Self::equal_contents(&entry.0, &key)).ok_or_else(|| self.key_absent(&key))?;
+                    let mut retained = entries.to_vec();
+                    retained.remove(position);
+                    cell.replace(Value::Dict(Rc::new(retained)));
+                    return Ok(v[0].clone());
+                }
+            }
+        }
         if op == Prim::MapJoined {
             if let Value::Shared(cell) = &v[0] {
                 let contents = collection_read(&v[0]);
@@ -3770,6 +3876,10 @@ impl<'a> Machine<'a> {
                 };
                 return self.prim(plain, name, v);
             }
+            Prim::TupleMade => {
+                let Value::Vector(items) = &v[0] else { return Err(self.argument_fault("ext.op.tuple.unready", None)); };
+                Value::Record(items.clone())
+            }
             Prim::TupleJoined => match (&v[0], &v[1]) {
                 (Value::Vector(left), Value::Vector(right)) => {
                     let joined = left.iter().chain(right.iter()).cloned().collect();
@@ -3782,7 +3892,7 @@ impl<'a> Machine<'a> {
                     Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
-                    Value::Vector(v) => v.to_vec(),
+                    Value::Vector(v) | Value::Record(v) => v.to_vec(),
                     _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
                 };
                 let minimum = if star.is_some() { wanted - 1 } else { wanted };
@@ -3868,7 +3978,7 @@ impl<'a> Machine<'a> {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
                     }
-                    Value::Vector(items) => match items.get(at) {
+                    Value::Vector(items) | Value::Record(items) => match items.get(at) {
                         Some(_) if wants_key => Value::Small(at as i64),
                         Some(x) => x.clone(),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
@@ -3898,7 +4008,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
-                    Value::Vector(items) => Value::Small(items.len() as i64),
+                    Value::Vector(items) | Value::Record(items) => Value::Small(items.len() as i64),
                     Value::Projection(source, keys, _) => Value::Small(source.projected(*keys).len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
@@ -3976,7 +4086,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag(own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(self.map_member(&v[0], &word).is_some() || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -4818,7 +4928,7 @@ impl<'a> Machine<'a> {
                 let present = match (&v[0], &v[1]) {
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
                     (key, Value::Projection(source, keys, _)) => {
-                        if *keys { self.admits_key(key)?; }
+                        if *keys == 1 { self.admits_key(key)?; }
                         source.projected(*keys).iter().any(|value| Self::equal_contents(key, value))
                     }
                     (key, Value::Dict(entries)) => {
@@ -5096,6 +5206,18 @@ impl<'a> Machine<'a> {
                     self.utter(&format!("{}\n", with_kind(x, 0, self.table.count("ext.system.real.bits").is_some(), self.wording())));
                 }
                 Value::Nil
+            }
+            Prim::Ordered | Prim::Largest => return self.ordering(op == Prim::Largest, v, &[]),
+            Prim::Backward => return Err(self.argument_fault("ext.builtin.reversed.unready", None)),
+            Prim::Zipped => {
+                let mut rows = Vec::new();
+                for source in v { rows.push(self.gathered_members(source)?); }
+                let extent = rows.iter().map(Vec::len).min().unwrap_or(0);
+                let mut zipped = Vec::with_capacity(extent);
+                for at in 0..extent {
+                    zipped.push(Value::Record(Rc::new(rows.iter().map(|row| row[at].clone()).collect())));
+                }
+                Value::Vector(Rc::new(zipped))
             }
             Prim::MapJoined => return self.prim(Prim::BitsEither, name, v),
             Prim::MapCall(code) => return self.map_call(code, name, v, &[]),
@@ -5560,7 +5682,7 @@ impl<'a> Machine<'a> {
             Err(told) => return missing(told, at),
         };
         match target {
-            Value::Vector(l) => match l.get(i) {
+            Value::Vector(l) | Value::Record(l) => match l.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => missing(format!("Array index {} out of bounds (length: {})", i, l.len()), at),
             },
@@ -5589,7 +5711,7 @@ impl<'a> Machine<'a> {
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
-            Value::Vector(values) => values.to_vec(),
+            Value::Vector(values) | Value::Record(values) => values.to_vec(),
             Value::Projection(source, keys, _) => source.projected(*keys),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
@@ -5611,7 +5733,7 @@ impl<'a> Machine<'a> {
         let w = self.wording();
         let argument = |x: &Value| {
             if self.table.flag("ext.builtin.print.collections") {
-                if matches!(collection_read(x), Value::Dict(_) | Value::Vector(_) | Value::Projection(..)) {
+                if matches!(collection_read(x), Value::Dict(_) | Value::Vector(_) | Value::Projection(..) | Value::Record(_)) {
                     return self.quoted_remainder(x).unwrap_or_else(|_| x.render(w));
                 }
             }
@@ -6317,7 +6439,7 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
             if let Value::Shared(cell) = value {
                 return fit_case(test, &cell.borrow(), tuple);
             }
-            let Value::Vector(values) = value else { return Ok(None); };
+            let values = match value { Value::Vector(row) | Value::Record(row) => row, _ => return Ok(None) };
             let minimum = if spread.is_some() { members.len() - 1 } else { members.len() };
             if values.len() < minimum { return Ok(None); }
             if spread.is_none() && minimum != values.len() { return Ok(None); }

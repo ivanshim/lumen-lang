@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    Largest, Backward, Ordered, Zipped,
     MapCall(u8),
     /// A compound write may ask a real to retain its point.
     Pointed,
@@ -362,6 +363,7 @@ pub enum Prim {
     Partition(usize, Option<usize>),
     /// Gather consecutive portions of one comma expression.
     TupleJoined,
+    TupleMade,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is turned down as a write to one is.

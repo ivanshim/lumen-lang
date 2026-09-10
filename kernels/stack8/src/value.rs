@@ -131,11 +131,13 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    Tuple(Rc<Vec<Value>>),
+    MapMethod(Rc<(Value, u8)>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
     Map(Rc<Vec<(Value, Value)>>),
-    MapView(Rc<(Value, bool, String)>),
+    MapView(Rc<(Value, u8, String)>),
     /// A cell two or more names share: a write through any of them is a
     /// write all of them see. Where calls bind by name, it also holds
     /// a collection whose items may change whilst its names stay apart.
@@ -201,10 +203,14 @@ impl Value {
         Value::Text(Rc::from(s))
     }
 
-    pub fn map_projection(&self, keys: bool) -> Vec<Value> {
+    pub fn map_projection(&self, keys: u8) -> Vec<Value> {
         match self {
             Value::Bond(cell) => cell.borrow().map_projection(keys),
-            Value::Map(entries) => entries.iter().map(|(k, v)| if keys { k.clone() } else { v.clone() }).collect(),
+            Value::Map(entries) => {
+                let mut items: Vec<Value> = entries.iter().map(|(k, v)| match keys { 1 | 3 => k.clone(), 0 => v.clone(), _ => Value::Tuple(Rc::new(vec![k.clone(), v.clone()])) }).collect();
+                if keys == 3 { items.reverse(); }
+                items
+            }
             _ => Vec::new(),
         }
     }
@@ -267,6 +273,8 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
+            Value::MapMethod(_) => true,
+            Value::Tuple(items) => !items.is_empty(),
             Value::MapView(view) => !view.0.map_projection(view.1).is_empty(),
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
@@ -289,10 +297,10 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::MapView(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::MapView(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::MapMethod(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
@@ -320,6 +328,7 @@ impl Value {
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -497,6 +506,8 @@ impl Value {
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
+            Value::MapMethod(_) => "<bound map method>".to_string(),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::MapView(view) => format!("<{}>", view.2),
             Value::Ellipsis => "Ellipsis".to_string(),
             Value::Small(n) => n.to_string(),
