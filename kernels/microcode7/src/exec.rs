@@ -2861,6 +2861,15 @@ impl<'a> Machine<'a> {
                     let subject = values.remove(0);
                     let holder = self.class_it_spells(values.remove(0));
                     let called = values.remove(0).bare();
+                    if let Value::Intrinsic(_) = &holder {
+                        if self.table.single("ext.stmt.class.allocate") == Some(called.as_str()) {
+                            return self.value_member(&holder, "\0new-worth", values, Vec::new());
+                        }
+                        values.insert(0, subject);
+                        let operation = if self.table.single("ext.stmt.class.constructor") == Some(called.as_str()) { "\0fill-worth".into() }
+                            else { self.native_member_name(&called).unwrap_or(called) };
+                        return self.value_member(&holder, &operation, values, Vec::new());
+                    }
                     let Value::Blueprint(class) = holder else {
                         let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
                         return Err(said.into());
@@ -3176,9 +3185,19 @@ impl<'a> Machine<'a> {
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
+    fn native_member_name(&self, word: &str) -> Option<String> {
+        for (label, meaning) in [("ext.stmt.class.allocate", "\0new-worth"), ("ext.stmt.class.constructor", "\0fill-worth"),
+            ("ext.stmt.class.equal", "\0same-worth"), ("ext.stmt.class.add", "\0join-worth"),
+            ("ext.stmt.class.item", "\0place-worth"), ("ext.stmt.class.string", "\0text-worth")] {
+            if self.table.spells(label, word) { return Some(meaning.to_string()); }
+        }
+        crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, word))
+            .map(|(label, _)| label.trim_start_matches("ext.builtin.method.").to_string())
+    }
+
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
-        if matches!(value, Value::Intrinsic(_)) && self.table.single("ext.stmt.class.allocate") == Some(name) {
-            return Some(Value::Member(Rc::new(value.clone()), "\0new-worth".into()));
+        if matches!(value, Value::Intrinsic(_)) && self.table.has_any("ext.stmt.class.builtin") {
+            if let Some(operation) = self.native_member_name(name) { return Some(Value::Member(Rc::new(value.clone()), operation)); }
         }
         if self.table.single("ext.builtin.class.name") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
@@ -3255,13 +3274,23 @@ impl<'a> Machine<'a> {
         if !allocate {
             if let Some(body) = self.table.single("ext.stmt.class.allocate").and_then(|word| kind.program(word)).cloned() {
                 let mut given = vec![Value::Blueprint(kind.clone())];
-                given.extend(row);
-                return self.invoke(body, self.outermost.clone(), given);
+                given.extend(row.clone());
+                let made = self.invoke(body, self.outermost.clone(), given)?;
+                if matches!(&made, Value::Thing(thing) if thing.of.goes_by(&kind.name, false)) {
+                    if let Some(init) = self.table.single("ext.stmt.class.constructor").and_then(|word| kind.program(word)).cloned() {
+                        let mut arguments = vec![made.clone()]; arguments.extend(row);
+                        self.invoke(init, self.outermost.clone(), arguments)?;
+                    }
+                }
+                return Ok(made);
             }
         }
         let Some(Value::Intrinsic(word)) = kind.native_parent() else { unreachable!() };
         let operation = *self.table.prims.get(word.as_ref()).expect("the native maker");
-        let (mut positions, named) = self.open_arguments(row.clone())?;
+        let mutable = matches!(operation, Prim::Listed | Prim::Dictionary | Prim::Uniques);
+        let has_init = self.table.single("ext.stmt.class.constructor").and_then(|word| kind.program(word)).is_some();
+        let initial = if mutable && (allocate || has_init) { Vec::new() } else { row.clone() };
+        let (mut positions, named) = self.open_arguments(initial)?;
         let worth = match self.builtin_names(operation, &word, &mut positions, named)? {
             Some(value) => value,
             None => self.prim(operation, &word, &positions)?,
@@ -3436,7 +3465,27 @@ impl<'a> Machine<'a> {
             }
             return Err(self.method_fault("arguments").into());
         }
+        if let Value::Intrinsic(word) = receiver {
+            let Some(first) = arguments.first() else { return Err(self.method_fault("arguments").into()) };
+            if name == "\0fill-worth" {
+                let Value::Thing(thing) = first else { return Err(self.method_fault("arguments").into()) };
+                let operation = *self.table.prims.get(word.as_ref()).expect("a native kind");
+                let mut positions = arguments[1..].to_vec();
+                let worth = match self.builtin_names(operation, word, &mut positions, keywords)? {
+                    Some(value) => value, None => self.prim(operation, word, &positions)?,
+                }.keep(true);
+                if let Some(entry) = thing.holds.borrow_mut().iter_mut().find(|entry| entry.0 == "\0native-worth") { entry.1 = worth; }
+                return Ok(Value::Nil);
+            }
+            return self.value_member(&first.settled(), name, arguments[1..].to_vec(), keywords);
+        }
         if let Some(worth) = receiver.native_worth() { return self.value_member(&worth, name, arguments, keywords); }
+        let base = receiver.settled();
+        if name == "\0text-worth" { return Ok(Value::text(&base.render(self.wording()))); }
+        if let Some(right) = arguments.first() {
+            let operation = match name { "\0same-worth" => Some(Prim::Eq), "\0join-worth" => Some(Prim::Plus), "\0place-worth" => Some(Prim::At), _ => None };
+            if let Some(operation) = operation { return self.prim(operation, "", &[base, right.clone()]).map_err(Escape::from); }
+        }
         let mut found = Vec::new();
         for (word, _) in &keywords {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
@@ -4648,7 +4697,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag((matches!(&v[0], Value::Intrinsic(_)) && self.table.single("ext.stmt.class.allocate") == Some(word.as_str())) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag((matches!(&v[0], Value::Intrinsic(_)) && self.table.has_any("ext.stmt.class.builtin") && self.native_member_name(&word).is_some()) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -6387,6 +6436,7 @@ impl<'a> Machine<'a> {
     }
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
+        if let Some(worth) = source.native_worth() { return self.gathered_members(&worth); }
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Generator(state) => {
@@ -7398,7 +7448,10 @@ impl Machine<'_> {
         let cursor = |values: Vec<Value>| Self::cursor_value(IteratorKind::Stored(values.into_iter().collect()));
         match op {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
-            Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted())) }
+            Quoted => { require(1, 1)?; Ok(Value::text(&match &input[0] {
+                Value::Thing(thing) if self.is_fault_kind(&thing.of) => input[0].representation(self.wording()),
+                _ => input[0].quoted(),
+            })) }
             Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {

@@ -2291,7 +2291,8 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let (left, right) = (av.clone(), bv.clone());
+                            let told = match self.subclass_dyad(op, &left, &right)? { Some(value) => value, None => self.dyadic(op, &left, &right)? };
                             self.truth(&told)
                         }
                     };
@@ -2323,7 +2324,10 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => {
+                            let (left, right) = (av.clone(), bv.clone());
+                            match self.subclass_dyad(op, &left, &right)? { Some(value) => value, None => self.dyadic(op, &left, &right)? }
+                        }
                     };
                     self.data.push(r);
                 }
@@ -3054,11 +3058,11 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag((matches!(&held, Value::Native(..)) && self.lang.subclass_allocate.first().map_or(false, |n| n == name.as_ref())) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag((matches!(&held, Value::Native(..)) && !self.lang.subclass_builtin.is_empty() && self.native_member(name).is_some()) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
-                Value::Native(b, word) if self.lang.subclass_allocate.first().map_or(false, |n| n == name.as_ref()) => {
-                    Value::ValueMethod(Rc::new((Value::Native(b, word), "\0allocate".into())))
+                Value::Native(b, word) if !self.lang.subclass_builtin.is_empty() && self.native_member(name).is_some() => {
+                    Value::ValueMethod(Rc::new((Value::Native(b, word), self.native_member(name).expect("a native member"))))
                 }
 
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
@@ -3388,6 +3392,20 @@ impl<'a> Engine<'a> {
                 let mut args = self.drop_many(argc)?;
                 let this = args.remove(0);
                 let stands = self.class_it_spells(args.remove(0));
+                if let Value::Native(_, _) = &stands {
+                    let mut given = args;
+                    if self.lang.subclass_allocate.first().map_or(false, |n| n == name.as_ref()) {
+                        let made = self.value_method(&stands, "\0allocate", given, Vec::new())?;
+                        self.data.push(made);
+                    } else {
+                        given.insert(0, this);
+                        let operation = if self.lang.constructor.as_deref() == Some(name.as_ref()) { "\0initialize".to_string() }
+                            else { self.native_member(name).unwrap_or_else(|| name.to_string()) };
+                        let answer = self.value_method(&stands, &operation, given, Vec::new())?;
+                        self.data.push(answer);
+                    }
+                    return Ok(());
+                }
                 let Value::Class(class) = stands else {
                     let told = self.no_such_class(&stands).unwrap_or_else(|| format!("Cannot call '{}' on a value that is not a class", name));
                     return Err(told.into());
@@ -3728,17 +3746,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                let label = match dyadic { Action::At => &self.lang.subclass_item, Action::Add => &self.lang.subclass_add, Action::Eq => &self.lang.subclass_equal, _ => &self.lang.subclass_layout };
-                let mut method = if let Value::Object(o) = &a { label.first().and_then(|n| o.class.method(n)).cloned() } else { None };
-                if method.is_none() && matches!(dyadic, Action::At) {
-                    if let (Value::Object(o), Value::Map(pairs)) = (&a, a.contents()) {
-                        if !pairs.iter().any(|(k, _)| k.equals(&b)) { method = self.lang.subclass_missing.first().and_then(|n| o.class.method(n)).cloned(); }
-                    }
-                }
-                if let Some(method) = method {
-                    self.invoke(&method, vec![a, b])?;
-                    self.drop_top()?
-                } else { self.dyadic(dyadic, &a, &b)? }
+                match self.subclass_dyad(dyadic, &a, &b)? { Some(value) => value, None => self.dyadic(dyadic, &a, &b)? }
             }
         };
         self.data.push(self.keep_collection(result));
@@ -3877,6 +3885,22 @@ impl<'a> Engine<'a> {
                 && a.iter().zip(b.iter()).all(|(x, y)| self.mapping_equality(x, y)),
             _ => left.equals(right),
         }
+    }
+
+    fn subclass_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Flow<Option<Value>> {
+        let Value::Object(object) = a else { return Ok(None) };
+        if object.class.builtin_base().is_none() { return Ok(None); }
+        let label = match op { Action::At => &self.lang.subclass_item, Action::Add => &self.lang.subclass_add, Action::Eq | Action::Ne => &self.lang.subclass_equal, _ => return Ok(None) };
+        let mut method = label.first().and_then(|n| object.class.method(n)).cloned();
+        if method.is_none() && matches!(op, Action::At) {
+            if let Value::Map(pairs) = a.contents() {
+                if !pairs.iter().any(|(key, _)| key.equals(b)) { method = self.lang.subclass_missing.first().and_then(|n| object.class.method(n)).cloned(); }
+            }
+        }
+        let Some(method) = method else { return Ok(None) };
+        self.invoke(&method, vec![a.clone(), b.clone()])?;
+        let value = self.drop_top()?;
+        Ok(Some(if matches!(op, Action::Ne) { Value::Flag(!self.truth(&value)) } else { value }))
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
@@ -4779,6 +4803,7 @@ impl<'a> Engine<'a> {
 
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+        if let Some(worth) = value.builtin_value() { return self.comprehension_items(&worth); }
         match value {
             Value::Generator(held) => {
                 let mut items = Vec::new();
@@ -4920,7 +4945,23 @@ impl<'a> Engine<'a> {
             let Some(Value::Class(class)) = args.first() else { return Err(self.lang.class_unready[0].clone()); };
             return self.builtin_instance(class.clone(), args[1..].to_vec(), true).map_err(|f| f.told(&self.wording()));
         }
+        if let Value::Native(builtin, word) = receiver {
+            let Some(first) = args.first() else { return Err(self.lang.class_unready[0].clone()); };
+            if operation == "\0initialize" {
+                let Value::Object(object) = first else { return Err(self.lang.class_unready[0].clone()); };
+                let items = args[1..].iter().cloned().map(|v| (None, v)).chain(named.into_iter().map(|(k,v)| (Some(k),v))).collect();
+                let worth = self.builtin_call(*builtin, word, items)?.held(true);
+                if let Some((_, place)) = object.fields.borrow_mut().iter_mut().find(|(key, _)| key == "\0builtin-value") { *place = worth; }
+                return Ok(Value::Null);
+            }
+            return self.value_method(&first.contents(), operation, args[1..].to_vec(), named);
+        }
         if let Some(worth) = receiver.builtin_value() { return self.value_method(&worth, operation, args, named); }
+        if operation == "\0string" { return Ok(Value::text(&receiver.contents().display(&self.wording()))); }
+        if let Some(right) = args.first() {
+            let op = match operation { "\0equal" => Some(Action::Eq), "\0item" => Some(Action::At), "\0add" => Some(Action::Add), _ => None };
+            if let Some(op) = op { return self.dyadic(&op, &receiver.contents(), right); }
+        }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
@@ -6724,6 +6765,14 @@ impl Engine<'_> {
         }
     }
 
+    fn native_member(&self, name: &str) -> Option<String> {
+        let pairs = [(&self.lang.subclass_allocate, "\0allocate"), (&self.lang.subclass_equal, "\0equal"),
+            (&self.lang.subclass_item, "\0item"), (&self.lang.subclass_add, "\0add"), (&self.lang.subclass_string, "\0string")];
+        if self.lang.constructor.as_deref() == Some(name) { return Some("\0initialize".into()); }
+        pairs.iter().find(|(words, _)| Lang::spells(words, name)).map(|(_, op)| op.to_string())
+            .or_else(|| self.lang.value_methods.get(name).cloned())
+    }
+
     fn subclass_base(&self, value: Value) -> Option<Rc<Class>> {
         if let Value::Class(class) = &value { return Some(class.clone()); }
         let Value::Native(_, word) = &value else { return None };
@@ -6742,11 +6791,19 @@ impl Engine<'_> {
                 given.extend(raw.clone());
                 self.invoke(&method, given)?;
                 let made = self.drop_top()?;
+                if matches!(&made, Value::Object(o) if o.class.named(&class.name, false)) {
+                    if let Some(init) = self.lang.constructor.as_ref().and_then(|n| class.method(n)).cloned() {
+                        let mut given = vec![made.clone()]; given.extend(raw);
+                        self.invoke(&init, given)?; self.drop_top()?;
+                    }
+                }
                 return Ok(made);
             }
         }
         let Value::Native(b, word) = native else { unreachable!() };
-        let items = self.call_items(raw.clone())?;
+        let mutable = matches!(b, Builtin::List | Builtin::Dict | Builtin::Set);
+        let initial = if mutable && (allocating || self.lang.constructor.as_ref().and_then(|n| class.method(n)).is_some()) { Vec::new() } else { raw.clone() };
+        let items = self.call_items(initial)?;
         let worth = self.builtin_call(b, &word, items)?.held(true);
         self.made += 1;
         let mut fields = class.all_fields();
@@ -6835,7 +6892,7 @@ impl Engine<'_> {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
-            Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
+            Builtin::Repr => { arity(1, 1)?; Value::text(&if matches!(&args[0], Value::Object(o) if self.exception_class(&o.class)) { args[0].repr(&self.wording()) } else { args[0].core_repr() }) }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
             Builtin::Identity => {
                 arity(1, 1)?;
