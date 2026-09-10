@@ -1006,6 +1006,8 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        self.act(Action::MakeArray, 0);
+        self.act(Action::TupleJoin, 2);
         Ok(())
     }
 
@@ -3835,6 +3837,8 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        self.act(Action::MakeArray, 0);
+        self.act(Action::TupleJoin, 2);
         Ok(())
     }
 
@@ -5402,6 +5406,8 @@ impl<'a> Compiler<'a> {
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
                                 self.act(Action::MakeArray, 0);
+                                self.act(Action::MakeArray, 0);
+                                self.act(Action::TupleJoin, 2);
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;

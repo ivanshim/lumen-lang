@@ -1669,6 +1669,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.copy`: a builtin copying a value; its second argument says
   whether to copy the things held within it too. Deep copies remember
   objects already copied, so cycles and shared members keep their shape.
+  The tuple reader marks its arrays; a shallow copy retains such a tuple,
+  and a deep copy retains it when none of its members had to change.
 - `ext.builtin.copy.hooks`: the shallow and deep copying methods, in
   that order. A deep method receives the map of objects already copied.
 - `ext.builtin.pickle.pack` and `ext.builtin.pickle.unpack`: builtins
@@ -1680,7 +1682,8 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.pickle.hooks`: the methods fetching state, restoring state,
   and reducing an object, in that order.
 - `ext.builtin.pickle.amiss`: the complaints for an unsupported value,
-  a broken stored value, and an unpicklable routine, in that order.
+  a broken stored value, an unpicklable routine, and an anonymous routine,
+  in that order.
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
@@ -2220,7 +2223,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
-| `ext.builtin.pickle.amiss` | - | - | `PicklingError: unsupported value` `UnpicklingError: invalid in-memory pickle` `PicklingError: cannot pickle a function or generator` | - | - | - | - | - | - | - |
+| `ext.builtin.pickle.amiss` | - | - | `PicklingError: unsupported value` `UnpicklingError: invalid in-memory pickle` `PicklingError: cannot pickle a function or generator` `PicklingError: Can't pickle <lambda>: attribute lookup <lambda> on __main__ failed` | - | - | - | - | - | - | - |
 | `ext.builtin.pickle.hooks` | - | - | `__getstate__` `__setstate__` `__reduce__` | - | - | - | - | - | - | - |
 | `ext.builtin.pickle.pack` | - | - | `__pickle_pack` | - | - | - | - | - | - | - |
 | `ext.builtin.pickle.unpack` | - | - | `__pickle_unpack` | - | - | - | - | - | - | - |
@@ -2534,7 +2537,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
-| `ext.system.fault.bases` | - | - | `BaseException` `-` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` `KeyError` `Exception` | - | - | - | - | - | - | - |
+| `ext.system.fault.bases` | - | - | `BaseException` `-` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` `KeyError` `Exception` `PickleError` `Exception` `PicklingError` `PickleError` `UnpicklingError` `PickleError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | `ZeroDivisionError` | - | `DivisionByZeroError` | - | - | - | - | - |
