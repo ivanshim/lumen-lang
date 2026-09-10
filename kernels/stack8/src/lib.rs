@@ -129,6 +129,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
             (key.starts_with("ext.system.bytes.") && !["repr", "type", "encodings", "order", "strict"].iter().any(|part| key.ends_with(&format!(".{}", part)))
              || key == "ext.lexical.string.bytes.ascii" || key == "ext.lexical.string.bytes.mixed")
             && words.first().map_or(false, |word| !word.is_empty() && e.starts_with(word))) { return e; }
+        if !lang.chr_range.is_empty() && e == lang.chr_range { return e; }
         let words = &lang.call_builtin_amiss;
         if crate::formatting::names_fault(lang, &e) { e }
         else if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
