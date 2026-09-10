@@ -14,7 +14,7 @@ impl Value {
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Set(_) => "set", Self::Dict(_) => "dict",
             Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
-            Self::Span(_) => "slice", Self::Nil => "NoneType", Self::Progression(_) => "range", Self::Iterator(_) => "iterator",
+            Self::Ellipsis => "ellipsis", Self::Span(_) => "slice", Self::Nil => "NoneType", Self::Progression(_) => "range", Self::Iterator(_) => "iterator",
             Self::Blueprint(_) | Self::KindOf(_) => "type", Self::Intrinsic(_) => "builtin_function_or_method",
             Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
         };
@@ -73,6 +73,7 @@ impl Value {
                 state.finish() as i64
             }
             Self::Nil => 0x9e3779b9,
+            Self::Ellipsis => 2_654_435_770,
             Self::Frac(parts) if parts.places.is_some() => {
                 if parts.beneath == BigInt::from(0) {
                     return Some(if parts.above == BigInt::from(0) { (std::rc::Rc::as_ptr(parts) as usize / 16) as i64 } else if parts.above.is_negative() { -314159 } else { 314159 });

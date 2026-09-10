@@ -4,3 +4,4 @@
 (slice(1, 2, None),)
 slice(None, None, 0)
 slice(Ellipsis, Ellipsis, Ellipsis)
+True

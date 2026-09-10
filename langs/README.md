@@ -1780,6 +1780,8 @@ only. The extension labels so far, all from PHP:
   `ext.op.index.slice.amiss` refuses more than three bounds in brackets.
   `ext.op.index.slice.equal` names the equality method of a bound kept
   by a user class; each pair of bounds is asked in order.
+  `ext.system.fault.class.kind` and `.value` name the classes under
+  which bad bounds, unhashable bounds and bad lengths may be caught.
 - `ext.op.index.slice`: the signs between the bounds of a span inside
   index brackets. A first bound belongs to the span and a last bound
   does not; either may be left out, and a third part gives the step.
@@ -3583,7 +3585,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
-| `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
+| `ext.system.fault.class.kind` | - | - | `TypeError` | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |

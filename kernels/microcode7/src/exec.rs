@@ -284,13 +284,17 @@ impl<'a> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
         if table.has_any("ext.stmt.catch.as") {
-            if let Some(at) = find("ext.system.fault.class.value") {
+            let mut classes = vec!["ext.system.fault.class.value"];
+            if table.has_any("ext.builtin.slice") { classes.push("ext.system.fault.class.kind"); }
+            for label in classes {
+            if let Some(at) = find(label) {
                 let blueprint = Blueprint {
                     name: idents[at].clone(), under: None, answers: Vec::new(),
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(),
                 };
                 outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
+            }
             }
         }
         Machine {
@@ -1192,6 +1196,15 @@ impl<'a> Machine<'a> {
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
         let told_of = |label: &str| self.table.single(label) == Some(told);
+        if self.table.has_any("ext.builtin.slice") {
+            let begins = |key: &str| self.table.single(key).filter(|head| !head.is_empty()).map_or(false, |head| told.starts_with(head));
+            let bad_kind = ["ext.op.index.slice.bounds", "ext.op.index.slice.assign", "ext.builtin.slice.arity"].iter().any(|key| told_of(key))
+                || begins("ext.builtin.core.unhashable");
+            let bad_value = told_of("ext.op.index.slice.zero") || told_of("ext.builtin.slice.length") || begins("ext.op.index.slice.length");
+            if bad_kind || bad_value {
+                return self.table.single(if bad_kind { "ext.system.fault.class.kind" } else { "ext.system.fault.class.value" }).map(str::to_owned);
+            }
+        }
         let by_kind = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -6039,6 +6052,13 @@ impl<'a> Machine<'a> {
     }
 
     fn keyed_value(&mut self, subject: &Value, key: &Value) -> Result<Value, String> {
+        if matches!(subject, Value::Shared(_) | Value::Mutable(..) | Value::Window(..)) {
+            return self.keyed_value(&subject.settled(), key);
+        }
+        if let Value::Shared(cell) = key {
+            let held = cell.borrow().clone();
+            return self.keyed_value(subject, &held);
+        }
         if let Some(answer) = self.keyed_method(subject, "ext.op.index.get", &[key.clone()])? { return Ok(answer); }
         if matches!(subject, Value::Dict(_)) { return self.element(subject, key, Reading::Plain); }
         let Value::Span(bounds) = key else {

@@ -18,6 +18,7 @@ impl Value {
             Value::Tuple(_) => "tuple",
             Value::Set(_) => "set",
             Value::Map(_) => "dict",
+            Value::Ellipsis => "ellipsis",
             Value::Slice(_) => "slice",
             Value::Counted(_) => "range",
             Value::Cursor(_) => "iterator",
@@ -85,6 +86,7 @@ impl Value {
                 Some(finish(h.finish() as i64))
             }
             Value::Null => Some(0x9e3779b9),
+            Value::Ellipsis => Some(0x9e3779ba),
             Value::Real(r) => {
                 if r.q == BigInt::from(0) { return if r.p == BigInt::from(0) { Some((std::rc::Rc::as_ptr(r) as usize >> 4) as i64) } else { Some(if r.p.is_negative() { -314159 } else { 314159 }) }; }
                 let modulus = BigInt::from((1u64 << 61)-1);

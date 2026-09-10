@@ -215,11 +215,14 @@ impl<'a> Engine<'a> {
             lang.builtins.get(word).map_or(Value::Blank, |b| Value::Native(*b, Rc::from(word.as_str())))
         } else { Value::Blank }).collect();
         if !lang.catch_as.is_empty() {
-            if let (Some(slot), Some(name)) = (find(&lang.fault_value), &lang.fault_value) {
+            let slice_kind = if lang.slice_words.get("ext.builtin.slice").map_or(false, |word| !word.is_empty()) { lang.fault_kind.clone() } else { None };
+            for kind in [&lang.fault_value, &slice_kind] {
+            if let (Some(slot), Some(name)) = (find(kind), kind) {
                 world[slot] = Value::Class(Rc::new(Class {
                     name: name.clone(), base: None, answers: Vec::new(), fields: Vec::new(),
                     reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
                 }));
+            }
             }
         }
         Engine {
@@ -845,6 +848,17 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        if !self.slice_word("ext.builtin.slice").is_empty() {
+            if [&self.lang.slice_bounds, &self.lang.slice_assign].iter().any(|word| word.as_deref() == Some(told))
+                || told == self.slice_word("ext.builtin.slice.arity")
+                || self.lang.core_words.get("core.unhashable").and_then(|words| words.first()).filter(|word| !word.is_empty()).map_or(false, |word| told.starts_with(word)) {
+                return self.lang.fault_kind.clone();
+            }
+            if self.lang.slice_zero.as_deref() == Some(told) || told == self.slice_word("ext.builtin.slice.length")
+                || self.lang.slice_length.first().filter(|word| !word.is_empty()).map_or(false, |word| told.starts_with(word)) {
+                return self.lang.fault_value.clone();
+            }
+        }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.

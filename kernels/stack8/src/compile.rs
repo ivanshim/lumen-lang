@@ -6722,7 +6722,7 @@ impl<'a> Compiler<'a> {
         }
         let marks = self.lang.slice_marks.clone();
         let ellipsis = self.lang.slice_ellipsis.clone();
-        if ellipsis.iter().any(|word| self.at_symbol(word)) {
+        if self.lang.ellipsis_words.is_empty() && ellipsis.iter().any(|word| self.at_symbol(word)) {
             self.take();
             self.constant(Value::Ellipsis);
         } else if marks.iter().any(|m| self.at_symbol(m)) {

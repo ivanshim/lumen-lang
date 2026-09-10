@@ -6325,7 +6325,7 @@ impl<'a> Builder<'a> {
             let at_mark = separators.iter().any(|word| self.sign(word));
             let at_end = self.sign(close) || comma.map_or(false, |word| self.sign(word));
             parts.push(if at_mark || (spanning && at_end) { constant(Value::Nil) }
-                else if self.on_any("ext.op.index.slice.ellipsis") { self.advance(); constant(Value::Ellipsis) }
+                else if !self.table.has_any("ext.literal.ellipsis") && self.on_any("ext.op.index.slice.ellipsis") { self.advance(); constant(Value::Ellipsis) }
                 else { self.expr(0)? });
             if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) { break; }
             spanning = true;
