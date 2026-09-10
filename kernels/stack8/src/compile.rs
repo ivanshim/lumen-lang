@@ -85,7 +85,16 @@ struct Cycle {
 }
 
 /// The program being assembled.
+#[derive(Clone, Default)]
+struct BindingPlan {
+    names: Vec<String>,
+    globals: Vec<(String, String)>,
+    nonlocals: Vec<String>,
+}
+
 struct Piece {
+    nonlocals: Vec<String>,
+    enclosed: Vec<(usize, Cell)>,
     outermost: bool,
     ident: String,
     idents: Vec<String>,
@@ -112,6 +121,8 @@ struct Piece {
 }
 
 pub struct Compiler<'a> {
+    plans: HashMap<usize, BindingPlan>,
+    discovering: bool,
     lang: &'a Lang,
     tokens: &'a [Token],
     pos: usize,
@@ -123,6 +134,7 @@ pub struct Compiler<'a> {
     for_binding: Option<(String, usize)>,
     writing_place: bool,
     comprehension_names: Vec<(String, String)>,
+    generator_source: Option<(usize, usize, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -243,10 +255,30 @@ pub fn compile_within(
     within: Option<(String, Option<String>)>,
     read_in: bool,
 ) -> Res<Rc<Routine>> {
+    let mut plans = HashMap::new();
+    if lang.closes_over {
+        let mut survey = Registry::default();
+        compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true)?;
+    }
+    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false)
+}
+
+fn compile_pass(
+    tokens: &[Token],
+    lang: &Lang,
+    table: &mut Registry,
+    before: u32,
+    written_in: Option<Rc<str>>,
+    inside: Option<Vec<String>>,
+    within: Option<(String, Option<String>)>,
+    read_in: bool,
+    plans: &mut HashMap<usize, BindingPlan>,
+    discovering: bool,
+) -> Res<Rc<Routine>> {
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
-    let top = Piece {
+    let top = Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
@@ -273,7 +305,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -329,7 +361,7 @@ pub fn compile_within(
     let said = std::mem::take(&mut a.registry.said_while_reading);
     if !said.is_empty() {
         let mut head: Vec<Instr> = Vec::new();
-        let spare = Cell { ident: Rc::from(SPARE_CELLS[0]), near: Vec::new(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
+        let spare = Cell { free: false, ident: Rc::from(SPARE_CELLS[0]), near: Vec::new(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
         for (kind, words, row) in said {
             head.push(Instr::Line(row));
             head.push(Instr::Act(Action::Remark(kind, Rc::from(words.as_str())), 0));
@@ -341,8 +373,9 @@ pub fn compile_within(
         let shifted = relocated(rest, moved);
         a.piece().instrs.extend(shifted);
     }
+    plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -545,7 +578,22 @@ impl<'a> Compiler<'a> {
     fn global_cell(&mut self, name: &str) -> Option<Cell> {
         let unit = self.pieces.last().expect("a unit");
         let target = unit.globals.iter().rev().find(|(n, _)| n == name)?.1.clone();
-        Some(Cell { ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(&target), moving: false })
+        Some(Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(&target), moving: false })
+    }
+
+    fn enclosing_cell(&mut self, depth: usize, name: &str) -> Option<Cell> {
+        if depth == 0 || self.pieces[depth].globals.iter().any(|(n, _)| n == name) { return None; }
+        let far = self.registry.slot(name);
+        if let Some(at) = Self::unblocked(&self.pieces[depth], name) {
+            return Some(Cell { free: self.pieces[depth].enclosed.iter().any(|(s, _)| *s == at), ident: Rc::from(name), near: vec![at], far, moving: false });
+        }
+        let source = self.enclosing_cell(depth - 1, name)?;
+        let unit = &mut self.pieces[depth];
+        let at = unit.idents.len();
+        unit.idents.push(name.to_string());
+        unit.declared.push(false);
+        unit.enclosed.push((at, source));
+        Some(Cell { free: true, ident: Rc::from(name), near: vec![at], far, moving: false })
     }
 
     fn cell_to_read(&mut self, name: &str, moving: bool) -> Cell {
@@ -554,6 +602,9 @@ impl<'a> Compiler<'a> {
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
+        if self.lang.closes_over && !self.discovering {
+            if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return Cell { moving, ..cell }; }
+        }
         let global = self.registry.slot(name);
         let unit = self.pieces.last().expect("a unit");
         let mut locals = Vec::new();
@@ -561,7 +612,7 @@ impl<'a> Compiler<'a> {
             locals.extend(block.iter().rev().filter(|&&s| unit.idents[s] == name).copied());
         }
         locals.extend(Self::unblocked(unit, name));
-        Cell { ident: Rc::from(name), near: locals, far: global, moving }
+        Cell { free: false, ident: Rc::from(name), near: locals, far: global, moving }
     }
 
     /// Where a name is written: the innermost slot of that name in the
@@ -571,13 +622,32 @@ impl<'a> Compiler<'a> {
     fn cell_to_write(&mut self, name: &str) -> Cell {
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
+        // A named write in a comprehension belongs to the function
+        // around its walks; only the walk's hidden names belong here.
+        if self.lang.closes_over && self.piece().ident == "<comprehension>" && !name.starts_with('#') {
+            let owner = (0..self.pieces.len() - 1).rev().find(|&i| self.pieces[i].ident != "<comprehension>").unwrap_or(0);
+            let alias = self.pieces[owner].globals.iter().find(|(n, _)| n == name).map(|(_, to)| to.clone());
+            if self.pieces[owner].outermost || alias.is_some() {
+                self.piece().globals.push((name.to_string(), alias.unwrap_or_else(|| name.to_string())));
+            } else {
+                let parent = &mut self.pieces[owner];
+                if !parent.idents.iter().any(|n| n == name) && !parent.nonlocals.iter().any(|n| n == name) {
+                    parent.idents.push(name.to_string());
+                    parent.declared.push(false);
+                }
+                self.piece().nonlocals.push(name.to_string());
+            }
+        }
         if let Some(cell) = self.global_cell(name) {
             return cell;
+        }
+        if self.lang.closes_over && !self.discovering && self.piece().nonlocals.iter().any(|n| n == name) {
+            if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return cell; }
         }
         let global = self.registry.slot(name);
         let unit = self.pieces.last_mut().expect("a unit");
         if unit.outermost && unit.scopes.is_empty() {
-            return Cell { ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
+            return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
             Some(block) => block.iter().rev().find(|&&s| unit.idents[s] == name).copied(),
@@ -592,11 +662,11 @@ impl<'a> Compiler<'a> {
             }
             s
         });
-        Cell { ident: Rc::from(name), near: vec![slot], far: global, moving: false }
+        Cell { free: false, ident: Rc::from(name), near: vec![slot], far: global, moving: false }
     }
 
     fn refuse_uncarried(&mut self, name: &str) -> bool {
-        if !self.uncarried.iter().any(|n| n == name) || !self.cell_to_read(name, false).near.is_empty() {
+        if self.lang.closes_over || !self.uncarried.iter().any(|n| n == name) || !self.cell_to_read(name, false).near.is_empty() {
             return false;
         }
         if let Some(told) = self.lang.lambda_enclosing.clone() {
@@ -821,6 +891,7 @@ impl<'a> Compiler<'a> {
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
+        let source = self.pos;
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
@@ -834,7 +905,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        self.pieces.push(Piece {
+        self.pieces.push(Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
             outermost: false,
             ident: name.to_string(),
             idents: formals.clone(),
@@ -849,11 +920,30 @@ impl<'a> Compiler<'a> {
             line: 0,
             instrs: Vec::new(),
         });
+        if self.lang.closes_over && !self.discovering {
+            if let Some(plan) = self.plans.get(&source).cloned() {
+                if plan.nonlocals.iter().any(|name| formals.contains(name)) {
+                    return Err(self.lang.parameters_amiss.first().cloned().unwrap_or_default());
+                }
+                let unit = self.piece();
+                for name in plan.names {
+                    if !unit.idents.contains(&name) { unit.idents.push(name); unit.declared.push(false); }
+                }
+                unit.globals = plan.globals;
+                unit.nonlocals = plan.nonlocals;
+            }
+        }
+        let surrounding_names = self.comprehension_names.clone();
+        if self.lang.closes_over {
+            let own = self.piece().idents.clone();
+            self.comprehension_names.retain(|(name, _)| !own.contains(name));
+        }
         if returns_value {
             self.constant(Value::Null);
             self.write(RESULT_CELL);
         }
         body(self)?;
+        self.comprehension_names = surrounding_names;
         // A function whose value only ever comes from a return
         // drops the result slot: its prologue goes, and a fall off the
         // end leaves nothing, which the machine reads as null.
@@ -866,14 +956,31 @@ impl<'a> Compiler<'a> {
             self.patch_jump(at, end);
         }
         let unit = self.pieces.pop().expect("the unit");
+        if self.discovering {
+            let names = unit.idents.iter().filter(|n| !unit.nonlocals.contains(n) && !unit.globals.iter().any(|(g, _)| g == *n)).cloned().collect();
+            self.plans.insert(source, BindingPlan { names, globals: unit.globals.clone(), nonlocals: unit.nonlocals.clone() });
+        }
         let mut instrs = if returns_value && !used { relocated(unit.instrs.into_iter().skip(2).collect(), -2) } else { unit.instrs };
-        if unit.generator {
+        if unit.generator && self.lang.yield_suspends {
+            let enclosing = self.pieces.iter().filter(|piece| !piece.outermost).flat_map(|piece| piece.idents.iter()).collect::<Vec<_>>();
+            let uncaptured = instrs.iter().any(|word| match word {
+                Instr::Read(cell) => cell.near.is_empty() && enclosing.iter().any(|name| name.as_str() == cell.ident.as_ref())
+                    && !unit.idents.iter().any(|name| name.as_str() == cell.ident.as_ref())
+                    && !unit.globals.iter().any(|(name, _)| name.as_str() == cell.ident.as_ref()),
+                _ => false,
+            });
+            if uncaptured {
+                instrs = vec![Instr::Const(Value::text(self.lang.yield_unsupported.first().map_or("", String::as_str))),
+                    Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
+            }
+        }
+        if unit.generator && !self.lang.yield_suspends {
             instrs = vec![Instr::Const(Value::text(self.lang.yield_unrun.first().map_or("", String::as_str))),
                 Instr::Act(Action::Builtin(Builtin::Raise, Rc::from("")), 1)];
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -981,6 +1088,7 @@ impl<'a> Compiler<'a> {
         self.take();
         let named = self.want_name("as the class name")?;
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
+        if self.lang.closes_over { self.cell_to_write(&named); }
         if self.on_any(&self.lang.class_bases_open) {
             self.take();
             let from = self.mark();
@@ -1087,12 +1195,19 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             if Lang::spells(&lang.nonlocal_words, &w) {
+                let class_scope = self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len());
                 self.take();
                 loop {
-                    self.want_name("after the nonlocal keyword")?;
+                    let name = self.want_name("after the nonlocal keyword")?;
+                    if !class_scope { self.piece().nonlocals.push(name.clone()); }
+                    if !class_scope && lang.closes_over && !self.discovering && self.enclosing_cell(self.pieces.len() - 1, &name).is_none() {
+                        return Err(format!("{}{}{}", lang.nonlocal_amiss.first().map_or("", String::as_str), name, lang.nonlocal_amiss.get(1).map_or("", String::as_str)));
+                    }
                     if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
                     self.take();
                 }
+                if class_scope { self.class_cannot_run(); return Ok(()); }
+                if lang.closes_over { return Ok(()); }
                 self.constant(Value::text(lang.nonlocal_unrun.first().map_or("", String::as_str)));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 return Ok(());
@@ -1278,7 +1393,7 @@ impl<'a> Compiler<'a> {
             let closing = t.shape == Shape::Sign && (self.lang.grouping.as_ref().map_or(false, |p| t.lexeme == p.close)
                 || self.lang.array_brackets.as_ref().map_or(false, |p| t.lexeme == p.close));
             if depth == 0 {
-                if (enclosed && closing) || (!enclosed && Lang::spells(&self.lang.in_words, &t.lexeme)) { break; }
+                if (enclosed && closing) || (!enclosed && (Lang::spells(&self.lang.in_words, &t.lexeme) || Lang::spells(&self.lang.assign_words, &t.lexeme))) { break; }
                 if self.lang.calling.as_ref().and_then(|p| p.between.as_ref()).map_or(false, |s| t.lexeme == *s) {
                     comma = true;
                     seen = false;
@@ -1296,6 +1411,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn binding_size(&mut self, held: &str, count: usize, starred: bool) {
+        if !starred && self.lang.yield_suspends {
+            self.read(held);
+            self.act(Action::BindCount(count), 1);
+            self.write(held);
+            return;
+        }
         if !starred {
             self.read(held);
             self.act(Action::Builtin(Builtin::Length, Rc::from("")), 1);
@@ -1448,7 +1569,7 @@ impl<'a> Compiler<'a> {
 
     /// A store into the global of the name, from anywhere.
     fn write_global(&mut self, name: &str) {
-        let slot = Cell { ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
+        let slot = Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
         self.put(Instr::Write(slot));
     }
 
@@ -1486,7 +1607,7 @@ impl<'a> Compiler<'a> {
         };
         for decorator in held.into_iter().rev() {
             let bound = if lang.routines_outermost {
-                Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
+                Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
             } else {
                 self.cell_to_write(&name)
             };
@@ -1617,7 +1738,7 @@ impl<'a> Compiler<'a> {
             // not anything was ever written to it, so the global is made
             // to hold nothing where it held nothing at all: reading it
             // is then reading a name written to.
-            let cell = Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
+            let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
             self.put(Instr::Ready(cell));
             self.piece().globals.push((name.clone(), name));
             match &sep {
@@ -2522,7 +2643,7 @@ impl<'a> Compiler<'a> {
         for s in bound {
             let name = self.piece().idents[s].clone();
             let global = self.registry.slot(&name);
-            let slot = Cell { ident: Rc::from(name.as_str()), near: vec![s], far: global, moving: false };
+            let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: vec![s], far: global, moving: false };
             self.constant(Value::Blank);
             self.put(Instr::Write(slot));
         }
@@ -3872,12 +3993,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// An unbracketed parameter list and one expression make a value.
-    /// Defaults go with that value; names in the body do not.
+    /// Defaults go with that value; free names may go as shared cells.
     fn lambda_value(&mut self) -> Res<()> {
         let lang = self.lang;
         let mark = lang.block_intros.first().cloned().ok_or("Lambda needs a body mark")?;
         let separator = lang.calling.as_ref().and_then(|b| b.between.clone()).ok_or("Lambda needs a parameter separator")?;
         let mut formals = Vec::new();
+        let mut modes = Vec::new();
+        let mut divided = false;
         let mut defaults = Vec::new();
         let mut rest = None;
         let mut keywords = false;
@@ -3885,6 +4008,11 @@ impl<'a> Compiler<'a> {
         while !self.at_symbol(&mark) {
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Div | Action::DivReal)) {
+                if lang.closes_over {
+                    if divided || keywords || modes.is_empty() { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+                    divided = true;
+                    modes.fill(1);
+                }
                 self.take();
             } else {
                 let star = self.look().lexeme.clone();
@@ -3899,6 +4027,7 @@ impl<'a> Compiler<'a> {
                 let name = self.want_name("as a lambda parameter")?;
                 if formals.contains(&name) { return Err("Duplicate lambda parameter".to_string()); }
                 formals.push(name);
+                modes.push(if spread { 3 } else { 0 });
                 if self.on_assign() {
                     self.take();
                     let hidden = self.gensym("default");
@@ -3912,16 +4041,22 @@ impl<'a> Compiler<'a> {
         self.take();
         let least = rest.unwrap_or(formals.len()).saturating_sub(defaults.len());
         let given = formals.clone();
+        let binds = lang.closes_over && lang.bind_names && !unsupported;
+        if binds { self.parameter_rules = Some(modes); }
         let enclosing = if self.piece().outermost { Vec::new() } else { self.piece().idents.clone() };
         let mut unavailable = self.uncarried.clone();
         unavailable.extend(enclosing);
         let surrounding = std::mem::replace(&mut self.uncarried, unavailable);
         let mut program = self.routine(ANONYMOUS, formals, least, true, |a| {
-            for (_, named) in &defaults {
-                let cell = a.cell_to_write(named);
-                a.carrying.push(cell.near[0]);
+            for (at, named) in &defaults {
+                if binds { a.carrying.push(*at); }
+                else {
+                    let cell = a.cell_to_write(named);
+                    a.carrying.push(cell.near[0]);
+                }
             }
             for (at, hidden) in &defaults {
+                if binds { continue; }
                 a.put(Instr::Missing(*at));
                 let done = a.skip();
                 a.read(hidden);
@@ -3941,7 +4076,7 @@ impl<'a> Compiler<'a> {
             Ok(())
         })?;
         self.uncarried = surrounding;
-        Rc::get_mut(&mut program).expect("a fresh lambda").rest_at = rest;
+        Rc::get_mut(&mut program).expect("a fresh lambda").rest_at = if binds { None } else { rest };
         for (_, named) in &defaults { self.read(named); }
         self.constant(Value::Routine(program));
         if !defaults.is_empty() { self.act(Action::Close, defaults.len() + 1); }
@@ -4198,6 +4333,12 @@ impl<'a> Compiler<'a> {
         } else if self.on_assign() {
             self.assignment(from, None)?;
         } else if name {
+            if lang.closes_over {
+                if let Instr::Read(cell) = &self.piece().instrs[from] {
+                    let named = cell.ident.to_string();
+                    self.cell_to_write(&named);
+                }
+            }
             self.piece().instrs.truncate(from);
         } else {
             self.piece().instrs.pop();
@@ -4352,7 +4493,8 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
-        let writing_target = !self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty();
+        let writing_signs: Vec<String> = self.lang.assign_words.iter().cloned().chain(self.lang.compound.keys().cloned()).collect();
+        let writing_target = !self.outer_marks(self.pos, self.tokens.len(), &writing_signs).0.is_empty();
         let saved_place = std::mem::replace(&mut self.writing_place, writing_target);
         let expression = self.expr_at(0, false);
         self.writing_place = saved_place;
@@ -4380,6 +4522,18 @@ impl<'a> Compiler<'a> {
         }
         if self.on_any(&self.lang.tuple_marks) {
             self.scope_tail(from)?;
+            if self.on_assign() && self.lang.yield_suspends {
+                self.piece().instrs.truncate(from);
+                self.take();
+                self.scope_value()?;
+                let held = self.gensym("unpacked");
+                self.write(&held);
+                let after = self.pos;
+                self.pos = target_at;
+                self.bind_for_targets(&held)?;
+                self.pos = after;
+                return Ok(());
+            }
             if self.on_assign() { self.take(); self.scope_value()?; }
             self.piece().instrs.truncate(from);
             self.scope_fault(&self.lang.scope_unready.clone());
@@ -5313,6 +5467,10 @@ impl<'a> Compiler<'a> {
             self.read(&name);
             return Ok(());
         }
+        if let Some(operation) = self.lang.value_methods.get(&name).cloned() {
+            self.act(Action::BindValueMethod(Rc::from(operation)), 1);
+            return self.indexing(left);
+        }
         let native = self.lang.builtins.get(&name).copied();
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace))
             && !self.lang.scope_unready.is_empty()
@@ -5345,7 +5503,10 @@ impl<'a> Compiler<'a> {
                 argc += self.arguments(&call)?;
             }
         }
-        self.call(&name, argc)
+        if self.lang.yield_suspends && [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, &name)) {
+            self.act(Action::Send(Rc::from(name)), argc);
+            Ok(())
+        } else { self.call(&name, argc) }
     }
 
     /// `test ? a : b`, the test just assembled: one arm's value is left.
@@ -5431,7 +5592,13 @@ impl<'a> Compiler<'a> {
         let tok = self.look().clone();
         if self.yield_operand && lang.dyadic.get(&tok.lexeme).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.take();
-            return self.prefix();
+            let start = self.mark();
+            self.prefix()?;
+            if lang.yield_suspends {
+                self.piece().instrs.truncate(start);
+                self.scope_fault(&lang.yield_unsupported);
+            }
+            return Ok(());
         }
         if self.on_keyword(&lang.await_words) {
             self.take();
@@ -5447,18 +5614,28 @@ impl<'a> Compiler<'a> {
             let ended = |r: &Self| r.on_sep() || r.exhausted() || r.look().shape == Shape::Close
                 || r.lang.grouping.as_ref().map_or(false, |g| r.at_symbol(&g.close))
                 || r.lang.array_brackets.as_ref().map_or(false, |g| r.at_symbol(&g.close));
+            let mut count = 0;
+            let mut tuple = false;
             if delegated || !ended(self) {
                 loop {
                     self.expr(0)?;
+                    count += 1;
                     if delegated || !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
+                    tuple = true;
                     self.take();
                     if ended(self) { break; }
                 }
             }
             self.yield_operand = outer_operand;
-            self.piece().instrs.truncate(begin);
-            self.constant(Value::text(lang.yield_unrun.first().map_or("", String::as_str)));
-            self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            if lang.yield_suspends {
+                if tuple { self.act(Action::MakeTuple, count); }
+                else if count == 0 { self.constant(Value::Null); }
+                self.act(if delegated { Action::Delegate } else { Action::Suspend }, 1);
+            } else {
+                self.piece().instrs.truncate(begin);
+                self.constant(Value::text(lang.yield_unrun.first().map_or("", String::as_str)));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+            }
             return Ok(());
         }
         if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
@@ -5773,11 +5950,11 @@ impl<'a> Compiler<'a> {
                                 tuple = true;
                                 self.take();
                             }
-                            if tuple { self.act(Action::MakeArray, count); }
+                            if tuple { self.act(if lang.yield_suspends { Action::MakeTuple } else { Action::MakeArray }, count); }
                             self.want_sign(&group.close, "to close a group")?;
                         } else {
                         if let Some(clause) = self.comprehension_ahead() {
-                            self.comprehension(&group, clause, false)?;
+                            self.lazy_comprehension(&group, clause)?;
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
                                 self.act(Action::MakeArray, 0);
@@ -6612,6 +6789,20 @@ impl<'a> Compiler<'a> {
                 let finish = self.leap();
                 self.land(fallback);
                 self.pos = resume;
+                if let Some(operation) = lang.value_methods.get(&named) {
+                    self.read(&held);
+                    self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
+                    if let Some(brackets) = &call {
+                        let callable = self.gensym("value_member");
+                        self.write(&callable);
+                        self.take();
+                        let argc = self.arguments_of(&named, brackets)?;
+                        self.read(&callable);
+                        self.act(Action::Invoke(named.as_str().into()), argc + 1);
+                    }
+                    self.land(finish);
+                    continue;
+                }
                 let native = lang.builtins.get(&named).copied();
                 let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
                 if !changes { self.read(&held); }
@@ -6626,6 +6817,8 @@ impl<'a> Compiler<'a> {
                         self.read(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
+                } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
+                    self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;
@@ -6789,7 +6982,50 @@ impl<'a> Compiler<'a> {
         self.want_sign(&pair.close, "after a literal")
     }
 
+    fn lazy_comprehension(&mut self, pair: &Brackets, clause: usize) -> Res<()> {
+        if !self.lang.yield_suspends { return self.comprehension(pair, clause, false); }
+        let head = self.pos;
+        self.pos = clause;
+        while !self.on_any(&self.lang.comprehension_in) && !self.exhausted() { self.take(); }
+        self.take();
+        let source_at = self.pos;
+        self.expr(1)?;
+        let source_end = self.pos;
+        self.act(Action::WalkFrom, 1);
+        let seed = self.gensym("generator_source");
+        let name = self.gensym("generator");
+        let prior = self.generator_source.replace((source_at, source_end, seed.clone()));
+        let program = self.routine(&name, vec![seed], 1, true, |r| {
+            r.pos = clause;
+            let names = r.comprehension_names.len();
+            r.comprehension_clause(head, "", false)?;
+            r.comprehension_names.truncate(names);
+            r.want_sign(&pair.close, "after a generator expression")?;
+            r.piece().generator = true;
+            Ok(())
+        })?;
+        self.generator_source = prior;
+        self.constant(Value::Routine(program));
+        self.act(Action::Invoke(Rc::from(name)), 2);
+        Ok(())
+    }
+
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
+        if self.lang.closes_over {
+            let program = self.routine("<comprehension>", Vec::new(), 0, true, |a| {
+                a.comprehension_body(pair, clause, map)?;
+                a.piece().result_touched = true;
+                a.write(RESULT_CELL);
+                Ok(())
+            })?;
+            self.constant(Value::Routine(program));
+            self.act(Action::Invoke(Rc::from("<comprehension>")), 1);
+            return Ok(());
+        }
+        self.comprehension_body(pair, clause, map)
+    }
+
+    fn comprehension_body(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
         let head = self.pos;
         let bindings = self.comprehension_names.len();
         let result = self.gensym("comprehension");
@@ -6846,22 +7082,31 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::text(&said));
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("comprehension")), 1);
             }
-            self.expr(1)?;
-            self.act(Action::ComprehensionItems, 1);
+            if let Some((_, end, seed)) = self.generator_source.clone().filter(|(at, _, _)| *at == self.pos) {
+                self.read(&seed);
+                self.pos = end;
+            } else { self.expr(1)?; }
+            self.act(if self.lang.yield_suspends { Action::WalkFrom } else { Action::ComprehensionItems }, 1);
             let bag = self.gensym("comprehension_source");
             self.write(&bag);
             let at = self.gensym("comprehension_place");
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
-            self.read(&at);
-            self.read(&bag);
-            self.act(Action::Extent, 1);
-            self.act(Action::Lt, 2);
+            if self.lang.yield_suspends {
+                self.read(&bag);
+                self.read(&at);
+                self.act(Action::WalkMore, 2);
+            } else {
+                self.read(&at);
+                self.read(&bag);
+                self.act(Action::Extent, 1);
+                self.act(Action::Lt, 2);
+            }
             let done = self.skip();
             self.read(&bag);
             self.read(&at);
-            self.act(Action::At, 2);
+            self.act(if self.lang.yield_suspends { Action::WalkThis } else { Action::At }, 2);
             let item = self.gensym("comprehension_item");
             if unpack { self.act(Action::UnpackCount(names.len()), 1); }
             self.write(&item);
@@ -6892,10 +7137,13 @@ impl<'a> Compiler<'a> {
         } else {
             let tail = self.pos;
             self.pos = head;
-            self.read(result);
+            if !result.is_empty() { self.read(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.take(); }
+            let before_yield = self.yield_operand;
+            if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
+            self.yield_operand = before_yield;
             if map && !spread {
                 let mark = self.lang.pair_mark.clone().expect("map pair mark");
                 self.want_sign(&mark, "between a comprehension key and value")?;
@@ -6903,8 +7151,13 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Tie, 2);
             }
             if !self.on_any(&self.lang.comprehension_for) && !self.on_any(&self.lang.comprehension_async) { return Err("Expected a comprehension clause after its expression".to_string()); }
-            self.act(Action::GatherItem { map, spread }, 2);
-            self.write(result);
+            if result.is_empty() {
+                self.act(if spread { Action::Delegate } else { Action::Suspend }, 1);
+                self.put_away();
+            } else {
+                self.act(Action::GatherItem { map, spread }, 2);
+                self.write(result);
+            }
             self.pos = tail;
         }
         Ok(())
@@ -6984,7 +7237,7 @@ impl<'a> Compiler<'a> {
     /// argument is dropped. Returns how many.
     fn arguments(&mut self, pair: &Brackets) -> Res<usize> {
         if let Some(clause) = self.comprehension_ahead() {
-            self.comprehension(pair, clause, false)?;
+            self.lazy_comprehension(pair, clause)?;
             return Ok(1);
         }
         let mut count = 0;

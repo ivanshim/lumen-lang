@@ -25,7 +25,7 @@ pub struct Address {
 }
 
 /// What a call reaches: a kernel operation, or a program value.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Callee {
     Prim(Prim, Rc<str>),
     Code(Box<Form>),
@@ -39,8 +39,6 @@ pub enum Prim {
     /// A compound write may ask a real to retain its point.
     Pointed,
     Repr,
-    Iterate,
-    NextOne,
     FaultInfo,
     FaultCurrent,
     /// Whether a member, rather than the pipe, takes the name.
@@ -49,6 +47,15 @@ pub enum Prim {
     MatrixProduct,
     Membership,
     Dictionary,
+    Suspend,
+    Delegate,
+    Following,
+    Iterator,
+    Tupled,
+    MakeTuple,
+    ValueMethod,
+    BindValueMethod,
+    SortedValues,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.
@@ -377,6 +384,7 @@ pub enum Prim {
     ExtendLiteral(bool, bool),
     Iterated,
     CheckUnpack(usize),
+    BindingWidth(usize),
     // control
     Seq,
     Choose,
@@ -388,7 +396,7 @@ pub enum Prim {
 }
 
 /// The shape a case asks for; names are kept apart from their addresses.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CaseTest {
     Ignore,
     Keep(String),
@@ -430,7 +438,7 @@ impl CaseTest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Form {
     /// A case test which writes its names only upon success. A tuple
     /// may give up its members, but cannot yet be kept whole.
@@ -541,7 +549,7 @@ pub enum Form {
 
 /// One catch: the classes it takes, where it holds what it caught, and
 /// what it does with it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Clause {
     pub classes: Vec<String>,
     pub choices: Option<Vec<Form>>,
@@ -553,7 +561,7 @@ pub struct Clause {
 
 /// A class as the builder knows it. What it is built on, and the value
 /// of every member, are worked out when the declaration runs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Plan {
     pub name: String,
     /// How many classes of method names only follow the one this class
@@ -570,7 +578,7 @@ pub struct Plan {
 
 /// An operand of a dyad that is a binding or a
 /// constant is read directly, without a visit to a node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Input {
     Form(Box<Form>),
     Address(Address),
@@ -598,10 +606,11 @@ pub enum Traps {
     Resumes,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Routine {
     /// Method parameters whose fallback is evaluated in the body.
     pub local_defaults: Vec<usize>,
+    pub generator: bool,
     /// How many arguments must be given; the rest carry a value of their
     /// own, written by the body's first forms.
     pub least: usize,

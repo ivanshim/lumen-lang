@@ -9,6 +9,8 @@
 // values for arms, of a routine run at once, of `yield`, `leave` and
 // `resume`. This crate never imports the other kernels.
 
+mod members;
+
 pub mod math;
 pub mod indent;
 pub mod scan;

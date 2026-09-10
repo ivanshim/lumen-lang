@@ -58,6 +58,7 @@ impl Attempt {
 /// local, or the global when there is none.
 #[derive(Debug, Clone)]
 pub struct Cell {
+    pub free: bool,
     pub ident: Rc<str>,
     pub near: Vec<usize>,
     pub far: usize,
@@ -164,6 +165,9 @@ pub enum Action {
     Match(Rc<Pattern>, Vec<String>, bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
+    Suspend,
+    Delegate,
+    MakeTuple,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -188,6 +192,7 @@ pub enum Action {
     Join,
     /// A field rendered with its specification and conversion.
     StringRender,
+    BindValueMethod(Rc<str>),
     /// Text whose reading succeeded but whose value cannot be held.
     StringFault,
     At,
@@ -214,6 +219,7 @@ pub enum Action {
     /// The values walked by a comprehension, with maps handing out keys.
     ComprehensionItems,
     UnpackCount(usize),
+    BindCount(usize),
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.
     MakeMap,
@@ -424,6 +430,9 @@ pub enum Builtin {
     Next,
     ExceptionInfo,
     ExceptionCurrent,
+    Tuple,
+    ValueMethod,
+    Sorted,
     Sum,
     List,
     Any,
@@ -690,6 +699,7 @@ pub enum Instr {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub generator: bool,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.
@@ -730,6 +740,9 @@ pub struct Routine {
     /// slots. Empty for every routine written out under a name, which
     /// carries nothing.
     pub held: Vec<crate::value::Value>,
+    /// Cells fetched where this routine is made, kept apart from defaults.
+    pub enclosing: Vec<(usize, Cell)>,
+    pub enclosed: Vec<(usize, Value)>,
     pub instrs: Rc<Vec<Instr>>,
 }
 

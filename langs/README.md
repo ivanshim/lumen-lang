@@ -520,10 +520,21 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.binding.unrun` holds the words for a binding target the
   kernels cannot yet fill, including starred targets, or a value with
   the wrong number of items to take apart.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right. This reading provides
+  chains of plain names; taking apart compound targets belongs to the
+  fuller account of tuples and places.
 - `ext.stmt.nonlocal`: reads the names of bindings belonging to the
   nearest enclosing function. The full kernels do not yet carry those
   cells into inner functions; reaching this statement stops the run.
   `ext.stmt.nonlocal.unrun` holds the plain words said then.
+- `ext.stmt.nonlocal`: reads names belonging to enclosing functions.
+  With `ext.stmt.function.closes_over`, a write to such a name reaches
+  the nearest enclosing binding, whose cell lasts beyond its call.
+  `ext.stmt.nonlocal.amiss` holds two pieces about a name with no such
+  binding: the words before the name and those after it.
+  Without the switch, `ext.stmt.nonlocal.unrun` gives the refusal.
 - `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
   while loop runs when its test ends the loop, including an empty walk.
   A break leaves that block behind; a continue does not.
@@ -531,12 +542,31 @@ only. The extension labels so far, all from PHP:
   function, for loop or with block and dropped. The latter hands back
   the value of its operand. Neither schedules nor suspends a run in
   this stage; an await may stand outside a function too.
+- `ext.stmt.yield.suspends`: a switch; calling a routine containing a
+  yield keeps its words and bindings unrun. Each asking runs to the next
+  yield, and the next asking begins where that one left off. A delegated
+  walk hands out its items and gives its return value to the outer yield.
+  Parenthesized comprehensions likewise keep their work for each asking;
+  their first source is found at once. List comprehensions still gather.
+  `ext.stmt.yield.exhausted` gives the words when no item remains.
+  `ext.stmt.yield.send`, `ext.stmt.yield.close` and `ext.stmt.yield.throw`
+  name the methods for handing a value in, ending the walk, and raising
+  into it. `ext.stmt.yield.unstarted` refuses a value before the first
+  yield; `ext.stmt.yield.busy` refuses a second asking while one runs.
+  `ext.stmt.yield.unsupported` refuses a form whose pending work cannot
+  yet be kept; `ext.stmt.yield.throw.unavailable` refuses raising into
+  a suspended body. A watched body containing a yield cannot yet keep
+  its pending clauses, and stops before that body begins. Enclosing
+  function cells and starred yield values likewise remain owed.
+  `ext.builtin.next`, `ext.builtin.iter` and `ext.builtin.tuple` name the
+  calls that ask for one item (with an optional answer at the end), make
+  a walk, and gather its items into a tuple.
 - `ext.stmt.yield` and `ext.stmt.yield.from`: read a yield with no value,
   with values, or with a source to yield from, wherever an expression
-  may stand. Defining such a function is allowed, but calling it stops
-  before its body runs, even when the yield lies in an untaken arm.
-  `ext.stmt.yield.unrun` holds the plain words said, since the kernels
-  cannot yet keep a generator's suspended run.
+  may stand. Where the suspension switch is absent, defining such a
+  function is allowed, but calling it stops before its body runs, even
+  when the yield lies in an untaken arm. `ext.stmt.yield.unrun` holds
+  the plain words said in that case.
 - `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close` enclose
   the expressions naming a class's bases. With these marks the body is
   read as an ordinary suite in a scope of its own, including functions
@@ -545,8 +575,8 @@ only. The extension labels so far, all from PHP:
 - `ext.op.lambda` begins a short routine whose names precede the body
   mark, and whose body is one expression. The reader enters a fresh
   scope for that expression, including another short routine within it.
-  Keeping the enclosing cells is still owed, so reaching this form
-  raises `ext.system.scope.unready` before any part of it runs.
+  Where `ext.stmt.function.closes_over` is on, the routine keeps the
+  enclosing cells it reads, just as a routine written under a name does.
 - `ext.op.tuple` joins values within grouping marks, a returned value,
   an assigned value, or a statement's targets. A final mark still joins
   a tuple of one, and empty grouping marks hold a tuple of none. This
@@ -570,6 +600,10 @@ only. The extension labels so far, all from PHP:
   binding names, with nested brackets and starred names admitted.
   Gathered loop bindings presently stop in `ext.system.scope.unready`
   words; their execution awaits the fuller taking-apart account.
+  reading does not give arrays the name of tuples. General tuple
+  expressions still raise `ext.system.scope.unready`. Where suspension
+  is enabled, yielded tuples and tuples gathered by `ext.builtin.tuple`
+  are held as tuples, and binding targets may take their items apart.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -602,6 +636,8 @@ only. The extension labels so far, all from PHP:
   joined by and, or or exclusive-or give a boolean; mixed operands give
   a whole number. Other kinds are refused in `ext.system.fault.operands`
   words, and a negative shift in `ext.system.fault.shift` words.
+  keeps the whole expression. Without the suspension switch,
+  `ext.stmt.yield.unrun` stops the run at the handing-out.
 - `ext.stmt.with` reads a context expression and its suite;
   `ext.stmt.with.as` gives a name to what that context hands in. Further
   contexts may be separated as arguments are. A binding may name an
@@ -625,17 +661,29 @@ only. The extension labels so far, all from PHP:
   every name and the source are read, and reaching the store raises the
   complaint before any name is changed.
 - `ext.stmt.decorator`: marks before a function definition, each followed
+  A pipe's answer may be indexed before reading the next operator;
+  where such an answer is an assignment target, the whole right side
+  is read and this complaint is kept for the run. Thus a decorated
+  routine may write `func.__dict__['author'] = name` without stopping
+  the reader, though retaining that attribute's write is still owed.
+- `ext.stmt.decorator`: marks before a function or class definition, each followed
   by an expression on its own line. The expressions are worked out in
   the order written and kept until the function is bound to its name.
   Each kept value is then called with the function as its one argument,
   nearest to the definition first, and the answer is bound to that name
   in turn. Brackets may carry an expression across lines; only the line
   end after it is whole ends the decorator. Another decorator or a
-  function definition must follow. `ext.stmt.decorator.amiss` holds the
+  function or class definition must follow. `ext.stmt.decorator.amiss` holds the
   words said when the line does not end there or what follows is neither.
   Where `ext.stmt.class.unready` is given, a class may follow as well:
   its whole body is read, but reaching the class gives that complaint
   before any decorator can be applied to it.
+  Where `ext.stmt.class.bases.open` gives classes their own reading scope,
+  a decorated class is read through the end of its body by that same
+  reader. Its decorators are worked out first; reaching the class then
+  says `ext.stmt.class.unready`, since making the class is still owed.
+  Methods, named arguments, and carried arguments keep the ordinary
+  function and call readings; no part of a decorated body is passed over.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -647,6 +695,23 @@ only. The extension labels so far, all from PHP:
   by this and lasts from call to call as any other does. Without the
   switch a `static` read in this way makes a hidden global of its own,
   which nothing outside the reading can name.
+- `ext.stmt.function.closes_over`: a switch; a routine keeps the cells
+  of the enclosing functions whose names it reads. The cells outlive
+  their calls, and a later write is seen by every routine sharing one.
+  Each function's whole body is read first to find its own bindings:
+  assignment makes a local unless a declaration says otherwise. A bare
+  annotation declares a local too, though it fills no cell. Each running
+  of a comprehension has its own enclosing cells; its lambdas share the
+  walk's last binding, without changing an earlier running's cells.
+  A named assignment expression in a comprehension still belongs to
+  the function around it.
+  `ext.stmt.global` reaches the outermost binding even within an inner
+  routine; `ext.stmt.nonlocal` instead writes an enclosing cell.
+  `ext.stmt.function.local.unbound` and `ext.stmt.function.free.unbound`
+  each hold two pieces about a binding read before it holds a value,
+  before and after its name. The former speaks of this function's own
+  name, the latter of an enclosing function's. Languages leaving the
+  switch out keep their former rules for carrying names away.
 - `ext.stmt.function.own_names`: a switch; a variable a function does no
   more than read is kept among that function's own names all the same,
   rather than meaning the outermost binding of that name outright. The
@@ -843,6 +908,39 @@ only. The extension labels so far, all from PHP:
   The kernels have no imaginary values; reaching one stops the run with
   the words in `ext.lexical.number.imaginary.unrun`. A routine holding
   one may still be read and bound without reaching it.
+- `ext.lexical.number.point.bare`: a switch; a decimal point may lack
+  digits on either hand, though not on both (`.5`, `1.`, `1.e2`).
+  The numeric suites use these beside ordinary fractions; their reading
+  follows the lexical piece. `scratch/file-float/1.py` witnesses them.
+- The numeric files also need small readings of forms whose full account
+  belongs to the tuple and class pieces. Under `ext.op.tuple`, a loop
+  may name several targets or a comma-joined source, and a tuple target
+  may hold a starred name spelled by `ext.syntax.array.spread`. Their
+  present run says `ext.system.scope.unready`; witnesses are
+  `scratch/file-float/7.py`, `9.py`, `12.py` and the nested target in
+  `13.py`. The class bases named by
+  `ext.stmt.class.bases.open` may carry keyword arguments, and
+  `ext.stmt.decorator` may stand before a class. These still say
+  `ext.stmt.class.unready`; `8.py` and `11.py` witness them. A pipe's
+  result may be indexed under `ext.op.tuple`, using the ordinary index
+  reading and running; `10.py` reads the condition found in the float
+  suite. A chain of plain names before one source is read under the
+  same tuple scope and says `ext.system.scope.unready`; `16.py` bears
+  witness. Its full binding remains with the tuple piece. No new word
+  is needed for these readings.
+- `ext.lexical.number.imaginary`: suffix letters for an imaginary
+  decimal numeral (`1j`, `.5J`, `2.e-3j`). The coefficient is read whole,
+  including its point and exponent. The run cannot yet hold a complex
+  value; reaching this numeral says the plain words of
+  `ext.lexical.number.imaginary.unready`. An uncalled body may hold one
+  without complaint. `scratch/file-float/3.py` reads such bodies and
+  `scratch/file-float/4.py` reaches the complaint; `15.py` carries an
+  exponent beyond the ordinary float range. `14.py` witnesses the
+  complex suite's outward jumps inside an unreadied context: when its
+  body is set aside, the jumps recorded for that body are set aside too.
+- `ext.lexical.number.exponent`: the letters that open a decimal exponent
+  in a number (`1e9`, `2.5E-3`), always a real. Python spells both
+  letters; `scratch/file-float/2.py` witnesses both signs and points.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation. Python spells it too, including repeated signs
   and a sign standing before a power.
@@ -1203,8 +1301,9 @@ only. The extension labels so far, all from PHP:
   conditions hold. More than one walk or condition may follow. Names
   belong to the comprehension alone; a comma in its target takes an
   item apart into names, with optional grouping. Brackets gather a list,
-  braces with pairs gather a map, and parentheses gather eagerly into
-  an array, even where they stand as the sole argument of a call.
+  braces with pairs gather a map. Parentheses gather eagerly into an
+  array unless `ext.stmt.yield.suspends` is set, when they keep a lazy
+  walk, including when they stand as the sole argument of a call.
   A spread mark may lead the gathered expression too.
   `ext.op.comprehension.async` marks an asynchronous walk, read in full
   but refused when reached in the words of
@@ -1242,6 +1341,60 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
   `ext.builtin.range.zero_step` give their words for a member that
   cannot be added, a bound that is not whole, and a step of nought.
+- `ext.builtin.method.upper`, `.lower`, `.title` and `.capitalize`:
+  lists naming changes of case on text. Each method label names a
+  value's member after the pipe mark; no spelling leaves the pipe as
+  before. A method kept aside keeps its receiver, even after the old
+  binding is given another value. Mutable collections keep one holding
+  place through aliases. Method-made collections print quoted members;
+  older literals keep their accustomed printed form.
+- `ext.builtin.method.strip`, `.lstrip` and `.rstrip`: trim both ends,
+  the head, or the tail, by whitespace or the letters handed over.
+  `.split` and `.rsplit` split at a separator or at whitespace, with an
+  optional limit; `.join` puts the receiver between strings gathered
+  from one collection; `.replace` replaces occurrences, with a limit.
+- `ext.builtin.method.find`, `.rfind`, `.index` and `.count`: seek from
+  the head or tail, require a match, or count matches. Text bounds and
+  answers count characters. Arrays answer index and count too.
+  `.startswith` and `.endswith` test the ends within optional bounds.
+  `.isdigit`, `.isalpha`, `.isalnum`, `.isspace`, `.islower` and
+  `.isupper` test text; character properties needing a table stop.
+- `ext.builtin.method.center`, `.ljust`, `.rjust` and `.zfill`: pad to
+  a width, with an optional single fill character; zfill puts noughts
+  after a sign. `.format` fills unnamed, numbered, or named fields,
+  honours escaped braces and the common alignment, fixed decimal,
+  hexadecimal and comma-grouped whole-number formats. Further field
+  paths and specifications stop. `.encode` reads but cannot make bytes.
+- `ext.builtin.method.append`, `.extend`, `.insert`, `.pop` and
+  `.remove`: add one member, gather more, insert, take and return a
+  member, or remove the first equal member. `.sort` orders an array
+  stably, optionally by a key routine or in reverse; `.reverse` turns
+  its order about. `.copy` makes a shallow copy and `.clear` empties
+  an array or map. Cyclic collections cannot yet be made by methods.
+  `ext.builtin.sorted` gathers and orders a fresh array in the same way.
+  `ext.builtin.method.sort.key` and `.sort.reverse` name the two sorting
+  arguments; `.split.sep` and `.split.maxsplit` name the separator and
+  limit for either direction of splitting.
+- `ext.builtin.method.get`, `.setdefault` and `.update`: look up a map
+  key with an optional default, keep the default where a key is absent,
+  or merge pairs and named arguments. `.pop` takes a map key too.
+  `.keys`, `.values` and `.items` yield views which follow later changes
+  to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.method.bit_length`, `.is_integer`, `.hex` and
+  `.as_integer_ratio`: the width of a whole number's magnitude, whether
+  a number is whole, a real's hexadecimal spelling, and a number's
+  exact ratio. Real ratios and hexadecimal forms use binary doubles.
+  The existing `ext.builtin.to_real.text` also admits nonfinite text
+  values, so these methods can answer for infinities and NaNs.
+- `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
+  `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
+  lists holding the complaints for bad arguments, an absent method, an
+  empty separator, an absent substring, an empty pop, an out-of-bounds
+  pop, an absent member to remove or seek, and a bad fill character.
+  `.key` precedes the missing key. `.format`, `.missing` and `.mixed`
+  give the complaints for malformed fields, missing positional fields,
+  and mixing automatic with explicit numbering. `.unready`, `.bytes`,
+  `.spec` and `.unicode` say which work the values cannot yet carry out.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -1331,6 +1484,10 @@ only. The extension labels so far, all from PHP:
   `0o`), and a language may list more than one spelling of the letter so
   that `0B` and `0O` are read too. Python's byte masks use this
   eightfold writing: `0o377` has its lowest eight bits set.
+  that `0B` and `0O` are read too. Python spells both cases for each
+  base, including `0x` and `0X` for sixteens. Whole numbers keep every
+  digit beyond the machine's width, and a minus before one is the
+  ordinary negation.
 - `ext.lexical.number.octal_lead`: a switch; a nought before more digits
   means those digits are read in base eight, as in the languages that
   grew from C.
@@ -1344,6 +1501,16 @@ only. The extension labels so far, all from PHP:
   may stand just after a base prefix. Other separators must have digits
   on both sides. Python spells this with its binary, octal and hexadecimal
   prefixes and the separator `_`; whole literals keep every digit.
+  nothing when the number is read. Python spells the underscore; its
+  bare-point reading requires a digit on each hand of that separator.
+  `scratch/file-float/6.py` witnesses separated fractions and exponents.
+  nothing when the number is read. Python spells the underscore in
+  decimal numbers and in each of its three prefixed bases. Each mark
+  must part digits of its base; doubled and trailing marks are refused
+  with `ext.lexical.number.amiss` before the marks are taken away.
+- `ext.lexical.number.separator.after_prefix`: a switch allowing one
+  spelled digit separator just after a base prefix, before its first
+  digit; `0x_FF`, `0o_77`, and `0b_11` are such numbers.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -2239,9 +2406,10 @@ only. The extension labels so far, all from PHP:
   a power sign before a parameter and parameters after a bare
   multiplication sign are read as keyword parameters. Such parameters
   cannot yet be called: `ext.op.lambda.unsupported` gives the words said
-  on reaching that body. A name of the enclosing routine is not carried
-  away; `ext.op.lambda.enclosing` gives the complaint when such a body
-  is called. These are lists of plain words, one message apiece.
+  on reaching that body. With `ext.stmt.function.closes_over`, free
+  names read the enclosing cells as they stand at the time of the call.
+  Without it, `ext.op.lambda.enclosing` gives the complaint about such
+  a name. These complaints are lists of plain words, one apiece.
 - `ext.op.in`: membership of the left value among an array's items, a
   map's keys, or the substrings of text on the right. `ext.op.in.negated`
   is a word before the operator that turns the answer about (`not in`).
@@ -2349,6 +2517,8 @@ only. The extension labels so far, all from PHP:
   shift when it is reached. The sign and both operands are read as usual;
   the fixed-width operation is withheld until the language's whole-number
   shifting is provided. With no such words the operation is unchanged.
+  The numeric suites need the lexical piece's whole-number reading;
+  `scratch/file-float/5.py` witnesses its signs and wide shifts.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -2844,6 +3014,75 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
+| `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
+| `ext.builtin.method.bit_length` | - | - | `bit_length` | - | - | - | - | - | - | - |
+| `ext.builtin.method.capitalize` | - | - | `capitalize` | - | - | - | - | - | - | - |
+| `ext.builtin.method.center` | - | - | `center` | - | - | - | - | - | - | - |
+| `ext.builtin.method.clear` | - | - | `clear` | - | - | - | - | - | - | - |
+| `ext.builtin.method.copy` | - | - | `copy` | - | - | - | - | - | - | - |
+| `ext.builtin.method.count` | - | - | `count` | - | - | - | - | - | - | - |
+| `ext.builtin.method.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.method.endswith` | - | - | `endswith` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.arguments` | - | - | `TypeError: invalid method arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.attribute` | - | - | `AttributeError: value has no such method` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.bytes` | - | - | `NotImplementedError: bytes are not available` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.format` | - | - | `ValueError: invalid format string` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.index` | - | - | `IndexError: pop index out of range` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.key` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.list_index` | - | - | `ValueError: value is not in list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.missing` | - | - | `IndexError: Replacement index out of range for positional args tuple` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.mixed` | - | - | `ValueError: cannot switch from automatic field numbering to manual field specification` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.pop` | - | - | `IndexError: pop from empty list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.remove` | - | - | `ValueError: list.remove(x): x not in list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.spec` | - | - | `NotImplementedError: this format specification cannot be rendered` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.substring` | - | - | `ValueError: substring not found` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.unicode` | - | - | `NotImplementedError: this Unicode character needs a character property table` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.unready` | - | - | `NotImplementedError: this value method cannot run yet` | - | - | - | - | - | - | - |
+| `ext.builtin.method.extend` | - | - | `extend` | - | - | - | - | - | - | - |
+| `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
+| `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
+| `ext.builtin.method.insert` | - | - | `insert` | - | - | - | - | - | - | - |
+| `ext.builtin.method.is_integer` | - | - | `is_integer` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isalnum` | - | - | `isalnum` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isalpha` | - | - | `isalpha` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isdigit` | - | - | `isdigit` | - | - | - | - | - | - | - |
+| `ext.builtin.method.islower` | - | - | `islower` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isspace` | - | - | `isspace` | - | - | - | - | - | - | - |
+| `ext.builtin.method.isupper` | - | - | `isupper` | - | - | - | - | - | - | - |
+| `ext.builtin.method.items` | - | - | `items` | - | - | - | - | - | - | - |
+| `ext.builtin.method.join` | - | - | `join` | - | - | - | - | - | - | - |
+| `ext.builtin.method.keys` | - | - | `keys` | - | - | - | - | - | - | - |
+| `ext.builtin.method.ljust` | - | - | `ljust` | - | - | - | - | - | - | - |
+| `ext.builtin.method.lower` | - | - | `lower` | - | - | - | - | - | - | - |
+| `ext.builtin.method.lstrip` | - | - | `lstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.method.remove` | - | - | `remove` | - | - | - | - | - | - | - |
+| `ext.builtin.method.replace` | - | - | `replace` | - | - | - | - | - | - | - |
+| `ext.builtin.method.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rfind` | - | - | `rfind` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rjust` | - | - | `rjust` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rsplit` | - | - | `rsplit` | - | - | - | - | - | - | - |
+| `ext.builtin.method.rstrip` | - | - | `rstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort.key` | - | - | `key` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
+| `ext.builtin.method.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.method.split.maxsplit` | - | - | `maxsplit` | - | - | - | - | - | - | - |
+| `ext.builtin.method.split.sep` | - | - | `sep` | - | - | - | - | - | - | - |
+| `ext.builtin.method.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
+| `ext.builtin.method.strip` | - | - | `strip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.title` | - | - | `title` | - | - | - | - | - | - | - |
+| `ext.builtin.method.update` | - | - | `update` | - | - | - | - | - | - | - |
+| `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
+| `ext.builtin.method.values` | - | - | `values` | - | - | - | - | - | - | - |
+| `ext.builtin.method.zfill` | - | - | `zfill` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
@@ -2880,6 +3119,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
@@ -2894,6 +3134,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
@@ -3117,7 +3358,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
 | `ext.stmt.const` | - | - | - | - | `const` | - | - | - | - | - |
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
-| `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function definition` | - | - | - | - | - | - | - |
+| `ext.stmt.decorator.amiss` | - | - | `A decorator must stand on its own line before a function or class definition` | - | - | - | - | - | - | - |
 | `ext.stmt.default` | - | - | - | - | `default` | - | - | - | - | - |
 | `ext.stmt.del` | - | - | `del` | - | - | - | - | - | - | - |
 | `ext.stmt.del.unrun` | - | - | `This deletion cannot be run` | - | - | - | - | - | - | - |
@@ -3130,9 +3371,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.async.unavailable` | - | - | `NotImplementedError: asynchronous functions are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
+| `ext.stmt.function.closes_over` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.function.free.unbound` | - | - | `NameError: cannot access free variable '` `' where it is not associated with a value in enclosing scope` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.keyword_only` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.function.local.unbound` | - | - | `UnboundLocalError: cannot access local variable '` `' where it is not associated with a value` | - | - | - | - | - | - | - |
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
@@ -3153,6 +3397,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.match.unready` | - | - | `NotImplementedError: this pattern is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.match.wildcard` | - | - | `_` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.amiss` | - | - | `SyntaxError: no binding for nonlocal '` `' found` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.separator` | - | - | `;` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
@@ -3181,8 +3426,17 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unrun` | - | - | `NotImplementedError: context managers cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.busy` | - | - | `ValueError: generator already executing` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.close` | - | - | `close` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw` | - | - | `throw` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.unavailable` | - | - | `NotImplementedError: generator throw is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unstarted` | - | - | `TypeError: cannot send a non-None value to a just-started generator` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |
