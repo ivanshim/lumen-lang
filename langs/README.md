@@ -1557,6 +1557,13 @@ only. The extension labels so far, all from PHP:
   named arguments, later keys replacing earlier ones. A tuple keeps its
   parentheses when written, and `ext.builtin.repr` quotes text and nested
   collections with the language's words for nothing and truth.
+- `ext.op.compare.unsupported`: four pieces surrounding the comparison
+  sign and the two kind names when neither operand can answer. Where
+  spelled, text follows character order and like sequences compare at
+  their first unequal member, asking the members themselves.
+- `ext.builtin.method.sort.modified`: the complaint when a list changes
+  whilst its order is being found. The list appears empty meanwhile;
+  if a key fails, its former members are restored in their former order.
 - `ext.builtin.sorted`, `.min` and `.max`: order a walk, or choose its
   least or greatest member. The latter two also take several values.
   `ext.builtin.key`, `.reverse` and `.default` name their optional key
@@ -3357,6 +3364,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.key` | - | - | `key` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort.modified` | - | - | `ValueError: list modified during sort` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
 | `ext.builtin.method.split` | - | - | `split` | - | - | - | - | - | - | - |
 | `ext.builtin.method.split.maxsplit` | - | - | `maxsplit` | - | - | - | - | - | - | - |
@@ -3562,6 +3570,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
 | `ext.op.compare.chained` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.compare.unsupported` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.async` | - | - | `async` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.async.unavailable` | - | - | `NotImplementedError: asynchronous comprehensions are not supported` | - | - | - | - | - | - | - |
 | `ext.op.comprehension.for` | - | - | `for` | - | - | - | - | - | - | - |

@@ -2635,12 +2635,46 @@ impl<'a> Engine<'a> {
                 if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
             }
         }
+        if !self.lang.compare_unsupported.is_empty() && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            return self.sequence_order(op, a, b);
+        }
         self.dyadic(op, a, b)
+    }
+
+    fn sequence_order(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let decide = |order: std::cmp::Ordering| match op {
+            Action::Lt => order.is_lt(), Action::Gt => order.is_gt(),
+            Action::Le => !order.is_gt(), _ => !order.is_lt(),
+        };
+        match (a, b) {
+            (Value::Text(x), Value::Text(y)) => return Ok(Value::Flag(decide(x.cmp(y)))),
+            (Value::Array(x), Value::Array(y)) | (Value::Tuple(x), Value::Tuple(y)) => {
+                for (left, right) in x.iter().zip(y.iter()) {
+                    if Self::member_matches(left, right) { continue; }
+                    let same = self.special_dyad(&Action::Eq, left, right)?;
+                    if self.special_truth(&same)? { continue; }
+                    return self.special_dyad(op, left, right);
+                }
+                return Ok(Value::Flag(decide(x.len().cmp(&y.len()))));
+            }
+            (Value::Set(_), Value::Set(_)) => return self.dyadic(op, a, b),
+            _ => (),
+        }
+        let counted = |v: &Value| match v { Value::Flag(t) => Value::Small(i64::from(*t)), _ => v.clone() };
+        let (x, y) = (counted(a), counted(b));
+        if arith::order_values(&x, &y).is_some() {
+            return self.dyadic(op, &x, &y);
+        }
+        let kind = |v: &Value| match v { Value::Object(o) => o.class.name.clone(), _ => v.core_kind() };
+        let sign = match op { Action::Lt => "<", Action::Gt => ">", Action::Le => "<=", _ => ">=" };
+        let words = &self.lang.compare_unsupported;
+        Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], kind(a), words[2], kind(b), words[3]))
     }
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
         if self.lang.class_special.is_empty() { return Ok(None); }
         let first = args.first();
+        if op == Builtin::Sorted && !self.lang.compare_unsupported.is_empty() { return Ok(None); }
         if Self::core_builtin(op) && !args.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) { return Ok(None); }
         if op == Builtin::InstanceOf { return Ok(None); }
         let answer = match op {
@@ -5658,6 +5692,10 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if !self.lang.sort_modified.is_empty() && matches!(receiver, Value::Native(Builtin::ToText, _)) && operation == "lower" {
+            if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            return self.value_method(&args[0], operation, Vec::new(), Vec::new());
+        }
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None };
             if let Some(method) = method {
@@ -5681,9 +5719,19 @@ impl<'a> Engine<'a> {
         } else { named };
         if operation == "sort" {
             if !args.is_empty() || !matches!(receiver.contents(), Value::Array(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
-            let row = self.order_values(receiver, &named)?;
             let Value::Collection(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
-            *cell.borrow_mut() = Value::array(row);
+            if self.lang.sort_modified.is_empty() {
+                let row = self.order_values(receiver, &named)?;
+                *cell.borrow_mut() = Value::array(row);
+                return Ok(Value::Null);
+            }
+            let vacant = Rc::new(Vec::new());
+            let original = cell.replace(Value::Array(vacant.clone()));
+            let result = self.order_values(&original, &named);
+            let changed = !matches!(&*cell.borrow(), Value::Array(row) if Rc::ptr_eq(row, &vacant));
+            *cell.borrow_mut() = match &result { Ok(row) => Value::array(row.clone()), Err(_) => original };
+            result?;
+            if changed { return Err(self.lang.sort_modified[0].clone()); }
             return Ok(Value::Null);
         }
         crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone())
@@ -5697,31 +5745,24 @@ impl<'a> Engine<'a> {
             if !seen.insert(name) { return Err(self.lang.method_errors["arguments"].clone()); }
             match self.lang.method_keywords.get(name).map(String::as_str).unwrap_or("") { "reverse" => { if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.lang.method_errors["arguments"].clone()); } backwards = self.truth(value); }, "key" => key = value.clone(), _ => return Err(self.lang.method_errors["arguments"].clone()) }
         }
+        let values = self.core_members(source)?;
+        self.stable_order(values, &key, backwards)
+    }
+
+    fn stable_order(&mut self, values: Vec<Value>, key: &Value, reverse: bool) -> Res<Vec<Value>> {
         let mut decorated = Vec::new();
-        for item in crate::methods::members(source, &|key| self.lang.method_errors[key].clone())? {
-            let rank = match &key {
-                Value::Null => item.clone(),
-                Value::Native(b, word) => self.builtin(*b, word, &mut vec![item.clone()])?,
-                Value::Routine(routine) => {
-                    self.invoke(routine, vec![item.clone()]).map_err(|_| self.lang.method_errors["unready"].clone())?;
-                    self.drop_top()?
-                }
-                Value::ValueMethod(method) => self.value_method(&method.0, &method.1, vec![item.clone()], Vec::new())?,
-                Value::Text(word) => {
-                    let native = self.lang.builtins.get(word.as_ref()).copied().ok_or_else(|| self.lang.method_errors["arguments"].clone())?;
-                    self.builtin(native, word, &mut vec![item.clone()])?
-                }
-                _ => return Err(self.lang.method_errors["unready"].clone()),
-            };
-            decorated.push((rank, item));
+        for value in values {
+            let rank = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(key, vec![value.clone()])? };
+            decorated.push((rank, value));
         }
         for i in 1..decorated.len() {
             let mut j = i;
             while j > 0 {
-                let (left, right) = if backwards { (&decorated[j-1].0, &decorated[j].0) } else { (&decorated[j].0, &decorated[j-1].0) };
-                let lower = match (left.contents(), right.contents()) { (Value::Text(a), Value::Text(b)) => a < b, _ => self.truth(&self.dyadic(&Action::Lt, left, right).map_err(|_| self.lang.method_errors["unready"].clone())?) };
-                if !lower { break; }
-                decorated.swap(j, j-1); j -= 1;
+                let (left, right) = if reverse { (&decorated[j-1].0, &decorated[j].0) } else { (&decorated[j].0, &decorated[j-1].0) };
+                let lower = self.special_dyad(&Action::Lt, left, right)?;
+                if !self.special_truth(&lower)? { break; }
+                decorated.swap(j, j-1);
+                j -= 1;
             }
         }
         Ok(decorated.into_iter().map(|(_, value)| value).collect())
@@ -7472,6 +7513,7 @@ impl Engine<'_> {
     }
 
     fn core_members(&mut self, v: &Value) -> Res<Vec<Value>> {
+        if matches!(v, Value::Object(_) | Value::Walk(_)) { return self.special_items(v); }
         if matches!(v, Value::Cursor(_)) {
             let mut items = Vec::new();
             while let Some(value) = self.core_step(v)? { items.push(value); }
@@ -7670,25 +7712,22 @@ impl Engine<'_> {
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
                 let values = if args.len() == 1 { self.core_members(&args[0])? } else { args.clone() };
                 if values.is_empty() && b != Builtin::Sorted { return default.ok_or_else(|| self.core_fault("core.empty", name)); }
-                let mut ranked: Vec<(Value,Value)> = Vec::new();
-                for value in values {
-                    let k = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
-                    let mut at = ranked.len();
-                    while at > 0 {
-                        let less = match (&k, &ranked[at-1].0) {
-                            (Value::Text(a), Value::Text(z)) => a < z,
-                            (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Less,
-                        };
-                        let greater = match (&k, &ranked[at-1].0) {
-                            (Value::Text(a), Value::Text(z)) => a > z,
-                            (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Greater,
-                        };
-                        if if reverse || b == Builtin::Maximum { greater } else { less } { at -= 1; } else { break; }
+                if b == Builtin::Sorted {
+                    Value::array(self.stable_order(values, &key, reverse)?).held(true)
+                } else {
+                    let mut chosen: Option<(Value, Value)> = None;
+                    for value in values {
+                        let rank = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
+                        let take = if let Some((old, _)) = &chosen {
+                            let comparison = self.special_dyad(if b == Builtin::Maximum { &Action::Gt } else { &Action::Lt }, &rank, old)?;
+                            self.special_truth(&comparison)?
+                        } else { true };
+                        if take { chosen = Some((rank, value)); }
                     }
-                    ranked.insert(at, (k,value));
+                    chosen.unwrap().1
                 }
-                if b == Builtin::Sorted { Value::array(ranked.into_iter().map(|(_,v)| v).collect()).held(true) } else { ranked.remove(0).1 }
             }
+
             Builtin::Absolute => {
                 arity(1, 1)?;
                 let x = number(&args[0]);

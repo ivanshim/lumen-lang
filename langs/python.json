@@ -721,6 +721,9 @@
   "ext.builtin.method.sort.key": [
     "key"
   ],
+  "ext.builtin.method.sort.modified": [
+    "ValueError: list modified during sort"
+  ],
   "ext.builtin.method.sort.reverse": [
     "reverse"
   ],
@@ -1208,6 +1211,12 @@
     "^"
   ],
   "ext.op.compare.chained": true,
+  "ext.op.compare.unsupported": [
+    "TypeError: '",
+    "' not supported between instances of '",
+    "' and '",
+    "'"
+  ],
   "ext.op.comprehension.async": [
     "async"
   ],

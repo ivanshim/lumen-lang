@@ -3493,6 +3493,10 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if self.table.has_any("ext.builtin.method.sort.modified") && name == "lower" && matches!(receiver, Value::Intrinsic(word) if self.table.prims.get(word.as_ref()) == Some(&Prim::AsText)) {
+            if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            return self.value_member(&arguments[0], name, Vec::new(), Vec::new());
+        }
         if matches!(receiver.settled(), Value::Set(_)) {
             let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None };
             if let Some(code) = code {
@@ -3523,9 +3527,24 @@ impl<'a> Machine<'a> {
             return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says }.answer().map_err(Escape::from);
         }
         if !arguments.is_empty() || !matches!(receiver.settled(), Value::Vector(_)) { return Err(self.method_fault("arguments").into()); }
-        let ordered = self.ordered_members(receiver, &keywords)?;
-        if let Value::Mutable(place, _) = receiver { place.replace(Value::Vector(Rc::new(ordered))); Ok(Value::Nil) }
-        else { Err(self.method_fault("unready").into()) }
+        let Value::Mutable(place, _) = receiver else { return Err(self.method_fault("unready").into()); };
+        if self.table.strings("ext.builtin.method.sort.modified").is_empty() {
+            let ordered = self.ordered_members(receiver, &keywords)?;
+            place.replace(Value::Vector(Rc::new(ordered)));
+            return Ok(Value::Nil);
+        }
+        let empty = Rc::new(Vec::new());
+        let saved = place.replace(Value::Vector(empty.clone()));
+        let outcome = self.ordered_members(&saved, &keywords);
+        let untouched = matches!(&*place.borrow(), Value::Vector(items) if Rc::ptr_eq(items, &empty));
+        match outcome {
+            Err(away) => { place.replace(saved); Err(away) }
+            Ok(items) => {
+                place.replace(Value::Vector(Rc::new(items)));
+                if untouched { Ok(Value::Nil) }
+                else { Err(self.table.single("ext.builtin.method.sort.modified").unwrap_or_default().to_owned().into()) }
+            }
+        }
     }
 
     fn ordered_members(&mut self, receiver: &Value, keywords: &[(String, Value)]) -> Res<Vec<Value>> {
@@ -3542,34 +3561,28 @@ impl<'a> Machine<'a> {
             }
             else { return Err(self.method_fault("arguments").into()); }
         }
-        let items = crate::members::gather(receiver, &|kind| self.method_fault(kind))?;
-        let mut keys = Vec::new();
-        for value in items {
-            let compared = match &using {
-                Value::Nil => value.clone(),
-                Value::Intrinsic(word) => { let operation = *self.table.prims.get(word.as_ref()).ok_or_else(|| self.method_fault("arguments"))?; self.prim(operation, word, &[value.clone()])? }
-                Value::Bound(routine, environment) => self.invoke(routine.clone(), environment.clone(), vec![value.clone()])?,
-                Value::Member(subject, word) => self.value_member(subject, word, vec![value.clone()], Vec::new())?,
-                Value::Text(word) => {
-                    let operation = self.table.prims.get(word.as_ref()).copied().ok_or_else(|| self.method_fault("arguments"))?;
-                    self.prim(operation, word, &[value.clone()])?
-                }
-                _ => return Err(self.method_fault("unready").into()),
-            };
-            keys.push((compared, value));
+        let items = self.core_collect(receiver)?;
+        self.arrange(items, &using, reverse).map_err(Escape::from)
+    }
+
+    fn arrange(&mut self, input: Vec<Value>, using: &Value, reverse: bool) -> Result<Vec<Value>, String> {
+        let mut keys = Vec::with_capacity(input.len());
+        for item in input {
+            let compared = match using { Value::Nil => item.clone(), _ => self.core_run(using, vec![item.clone()])? };
+            keys.push((compared, item));
         }
-        let mut sorted: Vec<(Value, Value)> = Vec::new();
+        let mut result: Vec<(Value, Value)> = Vec::new();
         for pair in keys {
-            let mut at = sorted.len();
+            let mut at = result.len();
             while at != 0 {
-                let arguments = if reverse { [sorted[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), sorted[at-1].0.clone()] };
-                let lower = if let (Value::Text(a), Value::Text(b)) = (&arguments[0], &arguments[1]) { a < b } else { self.prim(Prim::Lt, "", &arguments).map_err(|_| self.method_fault("unready"))?.is_true() };
-                if !lower { break; }
+                let arguments = if reverse { [result[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), result[at-1].0.clone()] };
+                let answer = self.prim(Prim::Lt, "", &arguments)?;
+                if !self.object_truth(&answer)? { break; }
                 at -= 1;
             }
-            sorted.insert(at, pair);
+            result.insert(at, pair);
         }
-        Ok(sorted.into_iter().map(|entry| entry.1).collect())
+        Ok(result.into_iter().map(|entry| entry.1).collect())
     }
 
     fn builtin_keyword_fault(&self, written: &str) -> String {
@@ -4520,6 +4533,7 @@ impl<'a> Machine<'a> {
         if self.table.strings("ext.stmt.class.special").is_empty() { return Ok(None); }
         if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
+        if operation == Prim::Ordered && !self.table.strings("ext.op.compare.unsupported").is_empty() { return Ok(None); }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),
             Prim::Over | Prim::OverReal => Some((21, 29)), Prim::IntDiv => Some((22, 30)),
@@ -4549,6 +4563,9 @@ impl<'a> Machine<'a> {
                 }
             }
 
+        }
+        if matches!(operation, Prim::Lt | Prim::Gt | Prim::Le | Prim::Ge) && !self.table.strings("ext.op.compare.unsupported").is_empty() {
+            if let [one, two] = operands { return self.compare_members(operation, one, two).map(Some); }
         }
         let value = match (operation, operands) {
             (Prim::Of | Prim::HasMember, [Value::Backtrace(words), _]) => return Err(words.to_string()),
@@ -4691,6 +4708,51 @@ impl<'a> Machine<'a> {
             _ => return Ok(None),
         };
         Ok(Some(value))
+    }
+
+    fn compare_members(&mut self, operation: Prim, one: &Value, two: &Value) -> Result<Value, String> {
+        let a = one.settled();
+        let b = two.settled();
+        let numeric = |v: &Value| if let Value::Flag(flag) = v { Value::Small(*flag as i64) } else { v.clone() };
+        let x = numeric(&a);
+        let y = numeric(&b);
+        let order = match (&a, &b) {
+            (Value::Vector(left), Value::Vector(right)) | (Value::Tuple(left), Value::Tuple(right)) => {
+                for index in 0..left.len().min(right.len()) {
+                    if contained_equal(&left[index], &right[index]) { continue; }
+                    let alike = self.prim(Prim::Eq, "", &[left[index].clone(), right[index].clone()])?;
+                    if self.object_truth(&alike)? { continue; }
+                    return self.prim(operation, "", &[left[index].clone(), right[index].clone()]);
+                }
+                Some(left.len().cmp(&right.len()))
+            }
+            (Value::Text(left), Value::Text(right)) => Some(left.cmp(right)),
+            (Value::Set(left), Value::Set(right)) => {
+                let l = left.borrow(); let r = right.borrow();
+                return Ok(Value::Flag(match operation {
+                    Prim::Lt => l.keys.len() < r.keys.len() && l.keys.is_subset(&r.keys),
+                    Prim::Le => l.keys.is_subset(&r.keys),
+                    Prim::Gt => r.keys.len() < l.keys.len() && r.keys.is_subset(&l.keys),
+                    _ => r.keys.is_subset(&l.keys),
+                }));
+            }
+            _ => match (math::below(&x, &y), math::below(&y, &x)) {
+                (Some(true), _) => Some(std::cmp::Ordering::Less),
+                (_, Some(true)) => Some(std::cmp::Ordering::Greater),
+                (Some(false), Some(false)) => {
+                    if math::no_order(&x, &y) { return Ok(Value::Flag(false)); }
+                    Some(std::cmp::Ordering::Equal)
+                }
+                _ => None,
+            },
+        };
+        if let Some(order) = order {
+            return Ok(Value::Flag(match operation { Prim::Lt => order.is_lt(), Prim::Le => !order.is_gt(), Prim::Gt => order.is_gt(), _ => !order.is_lt() }));
+        }
+        let word = match operation { Prim::Le => "<=", Prim::Ge => ">=", Prim::Gt => ">", _ => "<" };
+        let names: Vec<String> = [&a, &b].into_iter().map(|v| match v { Value::Thing(t) => t.of.name.clone(), _ => v.kind_word() }).collect();
+        let pieces = self.table.strings("ext.op.compare.unsupported");
+        Err([pieces[0].as_str(), word, &pieces[1], &names[0], &pieces[2], &names[1], &pieces[3]].concat())
     }
 
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
@@ -8047,6 +8109,7 @@ impl Machine<'_> {
     }
 
     fn core_collect(&mut self, value: &Value) -> Result<Vec<Value>, String> {
+        if matches!(value, Value::Thing(_) | Value::Cursor(_)) { return self.object_members(value); }
         if let Value::Iterator(_) = value {
             let mut all = Vec::new();
             loop { match self.next_value(value)? { Some(item) => all.push(item), None => return Ok(all) } }
@@ -8268,27 +8331,23 @@ impl Machine<'_> {
                 if input.len() > 1 && fallback.is_some() { return Err(self.core_complaint("core.default.many", "")); }
                 let entries = if input.len() > 1 { input.clone() } else { self.core_collect(&input[0])? };
                 if entries.is_empty() && op != Ordered { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)); }
-                let mut decorated = Vec::new();
-                for value in entries {
-                    let criterion = match &ordering { None | Some(Value::Nil) => value.clone(), Some(work) => self.core_run(work, vec![value.clone()])? };
-                    decorated.push((criterion, value));
+                let key = ordering.unwrap_or(Value::Nil);
+                if op == Ordered {
+                    let row = self.arrange(entries, &key, descending)?;
+                    return Ok(Value::Vector(Rc::new(row)).keep(true));
                 }
-                let mut failure = None;
-                decorated.sort_by(|a, b| {
-                    let answer = match (&a.0, &b.0) {
-                        (Value::Text(x), Value::Text(y)) => x.cmp(y),
-                        (x, y) => match (math::below(&as_number(x), &as_number(y)), math::below(&as_number(y), &as_number(x))) {
-                            (Some(true), _) => std::cmp::Ordering::Less, (_, Some(true)) => std::cmp::Ordering::Greater,
-                            (Some(false), Some(false)) => std::cmp::Ordering::Equal,
-                            _ => { failure = Some(self.core_complaint("core.unready", name)); std::cmp::Ordering::Equal }
-                        },
-                    };
-                    if descending || op == Greatest { answer.reverse() } else { answer }
-                });
-                if let Some(complaint) = failure { return Err(complaint); }
-                if op == Ordered { Ok(Value::Vector(Rc::new(decorated.into_iter().map(|pair| pair.1).collect())).keep(true)) }
-                else { Ok(decorated.remove(0).1) }
+                let mut entries = entries.into_iter();
+                let mut winner = entries.next().unwrap();
+                let mut best = if matches!(key, Value::Nil) { winner.clone() } else { self.core_run(&key, vec![winner.clone()])? };
+                for candidate in entries {
+                    let rank = if matches!(key, Value::Nil) { candidate.clone() } else { self.core_run(&key, vec![candidate.clone()])? };
+                    let test = if op == Least { Prim::Lt } else { Prim::Gt };
+                    let answer = self.prim(test, "", &[rank.clone(), best.clone()])?;
+                    if self.object_truth(&answer)? { winner = candidate; best = rank; }
+                }
+                Ok(winner)
             }
+
             Magnitude => {
                 require(1, 1)?;
                 let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
