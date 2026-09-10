@@ -1373,6 +1373,26 @@ impl<'a> Compiler<'a> {
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
+                if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
+                    let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
+                    self.slice_part(&pair.close, comma.as_deref())?;
+                    let mut several = false;
+                    while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
+                        self.take();
+                        several = true;
+                        if self.at_symbol(&pair.close) { break; }
+                        self.slice_part(&pair.close, comma.as_deref())?;
+                    }
+                    self.want_sign(&pair.close, "after the index")?;
+                    if several {
+                        self.awkward_place = true;
+                        self.piece().instrs.truncate(at);
+                        self.constant(Value::Small(0));
+                    }
+                    keyed.push(at);
+                    self.act(Action::At, 2);
+                    continue;
+                }
                 let mut parts = 0;
                 let mut sliced = false;
                 loop {

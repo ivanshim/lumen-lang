@@ -1723,6 +1723,20 @@ impl<'a> Builder<'a> {
                 place = self.called_on_value(place)?;
             } else if self.on_any("op.index.open") {
                 self.advance();
+                if self.table.has_any("ext.stmt.class.special") && self.table.has_any("ext.op.index.slice") {
+                    let end = self.table.single("op.index.close").unwrap().to_owned();
+                    let separator = self.table.single("syntax.call.separator").map(str::to_owned);
+                    let key = self.bracket_part(&end, separator.as_deref())?;
+                    while separator.as_ref().map_or(false, |word| self.sign(word)) {
+                        self.unsupported_place = true;
+                        self.advance();
+                        if self.sign(&end) { break; }
+                        self.bracket_part(&end, separator.as_deref())?;
+                    }
+                    self.need_sign(&end, "after the index")?;
+                    place = prim_call(Prim::At, vec![place, key]);
+                    continue;
+                }
                 let mut indices = Vec::new();
                 let mut special = false;
                 while !self.on_any("op.index.close") && !self.exhausted() {
@@ -3881,7 +3895,15 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let expr = self.expr_at(0, false)?;
+        let mut expr = self.expr_at(0, false)?;
+        if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
+            if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.lexeme)) {
+                let assignment = self.pos;
+                self.pos = began;
+                expr = self.deletion_place()?;
+                self.pos = assignment;
+            }
+        }
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
             && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
         if self.table.flag("ext.stmt.assign.chain") && follows(self) {

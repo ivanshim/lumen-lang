@@ -2033,6 +2033,9 @@ impl<'a> Machine<'a> {
                 if let Some(address) = context {
                     let manager = self.fetch(address, frame)?;
                     if !matches!(&manager, Value::Thing(_)) { return body_result; }
+                    if matches!(&body_result, Err(Escape::Error(_))) || matches!(&body_result, Err(Escape::Thrown(value)) if !matches!(value, Value::Thing(_))) {
+                        return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned().into());
+                    }
                     let arguments = if let Err(Escape::Thrown(v)) = &body_result {
                         let kind = match v { Value::Thing(t) => Value::Blueprint(t.of.clone()), _ => Value::Nil };
                         vec![kind, v.clone(), Value::Backtrace(Rc::from(self.table.single("ext.stmt.class.special.unready").unwrap_or_default()))]

@@ -1664,6 +1664,9 @@ impl<'a> Engine<'a> {
             if !matches!(object, Value::Object(_)) {
                 return ending.map(|end| match end { Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after), other => other });
             }
+            if matches!(&ending, Err(Fault::Note(_))) || matches!(&ending, Err(Fault::Thrown(value)) if !matches!(value, Value::Object(_))) {
+                return Err(self.lang.special_unready.first().cloned().unwrap_or_default().into());
+            }
             let args = match &ending {
                 Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), Value::Trace(Rc::from(self.lang.special_unready.first().map_or("", String::as_str)))],
                 _ => vec![Value::Null, Value::Null, Value::Null],
