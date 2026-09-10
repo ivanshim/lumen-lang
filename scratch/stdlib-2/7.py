@@ -13,11 +13,12 @@ class Box:
     items: list = field(default_factory=empty_items)
 a = Box(2)
 b = Box(value=2)
-print(a == b, asdict(a))
+print(a == b, '%r' % (asdict(a),))
 a.items = [3]
 print(a == b, b.items)
 from typing import Optional, cast, TYPE_CHECKING
-print(Optional[1] is Optional, cast(None, 9), TYPE_CHECKING)
+value: Optional[int] = cast(Optional[int], 9)
+print(value, TYPE_CHECKING)
 from abc import ABC, abstractmethod
 @abstractmethod
 def answer():
