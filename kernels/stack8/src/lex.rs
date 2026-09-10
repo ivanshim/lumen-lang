@@ -93,6 +93,23 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
     let mut escaped = false;
     while let Some(c) = ahead.chars().next() {
         let w = c.len_utf8();
+        if quote.is_none() {
+            if let Some(mark) = lang.long_quotes.iter().find(|mark| ahead.starts_with(mark.as_str())) {
+                let mut reach = mark.len();
+                while reach < ahead.len() {
+                    let rest = &ahead[reach..];
+                    if rest.starts_with(mark.as_str()) { reach += mark.len(); break; }
+                    let ch = rest.chars().next().expect("text remains");
+                    reach += ch.len_utf8();
+                    if ch == '\\' {
+                        if let Some(next) = ahead[reach..].chars().next() { reach += next.len_utf8(); }
+                    }
+                }
+                kept.push_str(&ahead[..reach]);
+                ahead = &ahead[reach..];
+                continue;
+            }
+        }
         match quote {
             Some(opener) => {
                 kept.push(c);
@@ -126,6 +143,9 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                     kept.extend(body[..end].chars().filter(|c| *c == '\n'));
                     ahead = &body[end..];
                 } else if lang.line_comments.iter().any(|m| ahead.starts_with(m.as_str())) {
+                    if lang.line_continuations.iter().any(|mark| kept.ends_with(mark.as_str())) {
+                        kept.push(' ');
+                    }
                     ahead = ahead.find('\n').map_or("", |at| &ahead[at..]);
                 } else {
                     kept.push(c);
@@ -258,7 +278,8 @@ impl<'a> Cursor<'a> {
             j += 1;
         }
         let end = self.text[j..].iter().position(|c| *c == '\n').map_or(self.text.len(), |p| j + p);
-        if self.text[j..end].iter().all(|c| c.is_whitespace()) {
+        if self.text[j..end].iter().all(|c| c.is_whitespace())
+            || self.lang.line_comments.iter().any(|mark| at_word(&self.text, j, mark)) {
             while self.at < end {
                 self.step();
             }
@@ -346,6 +367,15 @@ impl<'a> Cursor<'a> {
     fn escape(&mut self, how: &Escapes, s: &mut String, shielded: &mut Vec<usize>) -> Result<(), String> {
         self.step();
         let next = self.step();
+        if how.numbered && self.lang.line_continuations.iter().any(|mark| mark == "\\") {
+            if next == '\n' {
+                return Ok(());
+            }
+            if next == '\r' && self.look(0) == Some('\n') {
+                self.step();
+                return Ok(());
+            }
+        }
         if how.woven && Some(next) == self.lang.sigil {
             // An escaped sigil is just the sigil.
             shielded.push(s.chars().count());
@@ -494,11 +524,7 @@ impl<'a> Cursor<'a> {
                 self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
             } else { text.push(self.step()); }
         }
-        if bytes {
-            self.push(Shape::StringFault, self.lang.string_unready.clone().unwrap_or_default(), 0, line, col);
-        } else {
-            self.string_text(&mut text, &mut fault, line, col);
-        }
+        self.string_text(&mut text, &mut fault, line, col);
         if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
         Ok(())
     }
@@ -650,7 +676,11 @@ impl<'a> Cursor<'a> {
 
     fn string(&mut self, quote: char) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        self.step();
+        let width = self.lang.long_quotes.iter().find(|mark| {
+            mark.chars().all(|ch| ch == quote)
+                && mark.chars().enumerate().all(|(i, ch)| self.look(i) == Some(ch))
+        }).map_or(1, |mark| mark.chars().count());
+        for _ in 0..width { self.step(); }
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
@@ -671,10 +701,11 @@ impl<'a> Cursor<'a> {
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
-            self.step();
-            if c == quote {
+            if c == quote && (0..width).all(|i| self.look(i) == Some(quote)) {
+                for _ in 0..width { self.step(); }
                 break;
             }
+            self.step();
             s.push(c);
         }
         if woven {
@@ -889,7 +920,9 @@ impl<'a> Cursor<'a> {
             let mut it = prefix.chars();
             let (Some(digit), Some(letter)) = (it.next(), it.next()) else { return false };
             s.len() == 1 && s.starts_with(digit) && self.look(0) == Some(letter)
-                && self.look(1).map_or(false, |c| c.is_digit(*base))
+                && (self.look(1).map_or(false, |c| c.is_digit(*base))
+                    || (lang.separator_after_prefix && self.look(1).map_or(false, |c| broken(&c))
+                        && self.look(2).map_or(false, |c| c.is_digit(*base))))
         });
         if let Some((prefix, base)) = in_base.cloned() {
             s.push(prefix.chars().nth(1).expect("a letter after the digit"));
@@ -912,7 +945,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.bare_number_point || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -927,7 +960,7 @@ impl<'a> Cursor<'a> {
                 for _ in 0..digits_at {
                     s.push(self.step());
                 }
-                while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+                while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
                     self.step();
                 }
@@ -950,7 +983,7 @@ impl<'a> Cursor<'a> {
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
-        for name in lang.builtins.keys() {
+        for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
             if name.len() <= s.len() || !name.starts_with(s.as_str()) {
                 continue;
             }
@@ -1036,6 +1069,23 @@ impl<'a> Cursor<'a> {
                 }
             }
             let c = self.text[self.at];
+            let joined = lang.line_continuations.iter().find_map(|mark| {
+                if !at_word(&self.text, self.at, mark) {
+                    return None;
+                }
+                let width = mark.chars().count();
+                match (self.look(width), self.look(width + 1)) {
+                    (Some('\n'), _) => Some(width + 1),
+                    (Some('\r'), Some('\n')) => Some(width + 2),
+                    _ => None,
+                }
+            });
+            if let Some(width) = joined {
+                for _ in 0..width {
+                    self.step();
+                }
+                continue;
+            }
             if c == '\n' {
                 let (line, col) = (self.row, self.column);
                 self.step();
@@ -1047,7 +1097,9 @@ impl<'a> Cursor<'a> {
                 self.heredoc()?;
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
-            } else if c.is_ascii_digit() {
+            } else if c.is_ascii_digit()
+                || (lang.bare_number_point && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit()))
+            {
                 self.number();
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;
