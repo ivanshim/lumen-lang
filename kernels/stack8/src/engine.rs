@@ -191,6 +191,7 @@ impl Fault {
         match self {
             Fault::Note(note) => note,
             Fault::Thrown(Value::Object(o)) => {
+                if let Some((_, Value::Text(original))) = o.fields.borrow().iter().find(|(n, _)| n == "\0uncaught-words") { return original.to_string(); }
                 if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
                     return if message.is_empty() { format!("\0{}:", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
                 }
@@ -942,6 +943,7 @@ impl<'a> Engine<'a> {
 
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
+        if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
         if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
         if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
         if self.lang.fault_index.as_deref() == Some(class) { return self.lang.index_words.clone().unwrap_or_else(|| told.into()); }
@@ -975,7 +977,11 @@ impl<'a> Engine<'a> {
         if self.exception_class(&class) {
             let message = self.exception_words(told, &named);
             let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
-            return Some(self.exception_instance(class, args, Value::Null));
+            let value = self.exception_instance(class, args, Value::Null);
+            if self.lang.catch_invalid.as_deref() == Some(told) {
+                if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
+            }
+            return Some(value);
         }
         self.hurled_at.set(self.line);
         self.made += 1;

@@ -1250,6 +1250,7 @@ impl<'a> Machine<'a> {
 
     fn fault_words(&self, raw: &str, kind: &str) -> String {
         let raw = raw.trim_start_matches('\0');
+        if self.table.single("ext.stmt.catch.invalid") == Some(raw) { return raw.into(); }
         let prefix = format!("{kind}: ");
         if let Some(words) = raw.strip_prefix(&prefix) { return words.to_string(); }
         for (class_key, words_key) in [("ext.system.fault.class.division", "ext.system.fault.division"),
@@ -1289,7 +1290,14 @@ impl<'a> Machine<'a> {
         if self.is_fault_kind(&of) {
             let words = self.fault_words(told, &named);
             let values = if words.is_empty() || words == format!("{named}:") { vec![] } else { vec![Value::text(&words)] };
-            return Some(self.make_fault(of, values, Value::Nil));
+            let raised = self.make_fault(of, values, Value::Nil);
+            match &raised {
+                Value::Thing(object) if self.table.single("ext.stmt.catch.invalid") == Some(told) => {
+                    object.holds.borrow_mut().push(("\0former-complaint".into(), Value::text(told)));
+                }
+                _ => {}
+            }
+            return Some(raised);
         }
         self.made += 1;
         let mut holds = of.every_field();
@@ -1575,6 +1583,8 @@ impl<'a> Machine<'a> {
             Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
+                let original = thing.holds.borrow().iter().find(|(key, _)| key == "\0former-complaint").map(|(_, value)| value.bare());
+                if let Some(original) = original { return Err(original); }
                 if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values")) {
                     return Err(if words.is_empty() { format!("\0{}:", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
                 }
