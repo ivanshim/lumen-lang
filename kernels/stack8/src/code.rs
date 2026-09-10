@@ -469,6 +469,7 @@ pub enum Builtin {
     MemberGet,
     ProgramNamespace,
     Bytes(u8),
+    Text(crate::strings::TextOp),
     Sum,
     List,
     Any,

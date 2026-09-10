@@ -7483,6 +7483,11 @@ impl<'a> Compiler<'a> {
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
         match self.lang.builtins.get(name).copied().filter(|b| !b.set_method()) {
+            Some(Builtin::Text(op)) if op != crate::strings::TextOp::Repr && !name.contains('.') => {
+                self.read_callee(name);
+                self.act(Action::Invoke(Rc::from(name)), argc + 1);
+                Ok(())
+            }
             Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }

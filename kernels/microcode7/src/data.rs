@@ -165,6 +165,8 @@ pub enum Value {
     /// The coefficient of an imaginary literal, with its unready words.
     Imaginary { coefficient: f64, unready: Rc<str> },
     Text(Rc<str>),
+    TextRow(Rc<Vec<String>>, bool),
+    TextCall { subject: Rc<str>, work: crate::text::Work, name: Rc<str> },
     Flag(bool),
     Nil,
     Ellipsis,
@@ -435,14 +437,14 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
+            Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
             Value::Member(..) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::TextCall { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
     }
@@ -463,6 +465,7 @@ impl Value {
             // Neither worth standing past the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
+            Value::TextRow(words, _) => !words.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
@@ -483,10 +486,10 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
+            Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::TextCall { .. } | Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
             Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
@@ -499,6 +502,13 @@ impl Value {
     pub fn equals(&self, other: &Value) -> bool {
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
+        match (self, other) {
+            (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
+            (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
+                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
+            }
+            _ => (),
+        }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
             // Nought beneath is no ratio to cross-multiply: what lies
             // past every number is equal to another only where both lie
@@ -749,6 +759,8 @@ impl Value {
             Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
             Value::Octets { cell, changeable, lead } => octets_shown(&cell.borrow(), lead, *changeable),
             Value::OctetKind { shown, .. } => shown.to_string(),
+            Value::TextCall { name, .. } => format!("<built-in method {}>", name),
+            Value::TextRow(words, closed) => crate::text::written_row(words, *closed),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };

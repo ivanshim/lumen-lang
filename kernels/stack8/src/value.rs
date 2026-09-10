@@ -186,6 +186,8 @@ pub enum Value {
     /// An imaginary literal and the words for working with it too soon.
     Imaginary(f64, Rc<str>),
     Text(Rc<str>),
+    Words(Rc<Vec<String>>, bool),
+    TextMethod(Rc<str>, crate::strings::TextOp, Rc<str>),
     Flag(bool),
     Null,
     Ellipsis,
@@ -459,7 +461,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
+            Value::Words(..) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
             Value::View(_) => Sort::Array,
             Value::Bond(shared) | Value::Binding(shared) => return shared.borrow().sort(),
@@ -508,9 +510,10 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Words(row, _) => !row.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::TextMethod(..) | Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -531,10 +534,10 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
-            Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::TextMethod(..) | Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
             Value::Bytes(..) | Value::ByteKind(..) | Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
@@ -568,6 +571,8 @@ impl Value {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
+            (Value::Words(a, x), Value::Words(b, y)) => x == y && a == b,
+            (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| matches!(v,Value::Text(t) if s.as_str()==t.as_ref())),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -771,6 +776,8 @@ impl Value {
             Value::Set(s) => s.borrow().show(Value::plain),
             Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
             Value::ByteKind(_, text) => text.to_string(),
+            Value::TextMethod(_, _, name) => format!("<built-in method {}>", name),
+            Value::Words(row, fixed) => crate::strings::row(row, *fixed),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },

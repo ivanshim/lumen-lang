@@ -1043,6 +1043,272 @@
   "ext.builtin.sum.non_number": [
     "TypeError: sum needs numbers"
   ],
+  "ext.builtin.text.capitalize": [
+    "capitalize",
+    "str.capitalize"
+  ],
+  "ext.builtin.text.casefold": [
+    "casefold",
+    "str.casefold"
+  ],
+  "ext.builtin.text.center": [
+    "center",
+    "str.center"
+  ],
+  "ext.builtin.text.complaint": [
+    "TypeError:",
+    "ValueError:",
+    "NotImplementedError:",
+    "KeyError:",
+    "OverflowError:",
+    "IndexError:"
+  ],
+  "ext.builtin.text.count": [
+    "count",
+    "str.count"
+  ],
+  "ext.builtin.text.encode": [
+    "encode",
+    "str.encode"
+  ],
+  "ext.builtin.text.endswith": [
+    "endswith",
+    "str.endswith"
+  ],
+  "ext.builtin.text.expandtabs": [
+    "expandtabs",
+    "str.expandtabs"
+  ],
+  "ext.builtin.text.fault.arguments": [
+    "TypeError: invalid string method arguments"
+  ],
+  "ext.builtin.text.fault.codepoint": [
+    "ValueError: character mapping must be in range(0x110000)"
+  ],
+  "ext.builtin.text.fault.encode": [
+    "NotImplementedError: str.encode requires bytes, which are not supported"
+  ],
+  "ext.builtin.text.fault.fill": [
+    "TypeError: The fill character must be exactly one character long"
+  ],
+  "ext.builtin.text.fault.format": [
+    "NotImplementedError: this mapping format is not supported"
+  ],
+  "ext.builtin.text.fault.format.brace": [
+    "ValueError: unmatched brace in format string"
+  ],
+  "ext.builtin.text.fault.format.positional": [
+    "ValueError: Format string contains positional fields"
+  ],
+  "ext.builtin.text.fault.index": [
+    "IndexError: string index out of range"
+  ],
+  "ext.builtin.text.fault.integer": [
+    "TypeError: integer argument expected"
+  ],
+  "ext.builtin.text.fault.join": [
+    "TypeError: sequence item must be str"
+  ],
+  "ext.builtin.text.fault.key": [
+    "KeyError: "
+  ],
+  "ext.builtin.text.fault.maketrans.key": [
+    "ValueError: string keys in translate table must be of length 1"
+  ],
+  "ext.builtin.text.fault.maketrans.length": [
+    "ValueError: the first two maketrans arguments must have equal length"
+  ],
+  "ext.builtin.text.fault.maketrans.type": [
+    "TypeError: keys in translate table must be strings or integers"
+  ],
+  "ext.builtin.text.fault.mapping": [
+    "TypeError: translation table must be a mapping"
+  ],
+  "ext.builtin.text.fault.missing": [
+    "ValueError: substring not found"
+  ],
+  "ext.builtin.text.fault.protocol": [
+    "NotImplementedError: string method object protocols are not supported"
+  ],
+  "ext.builtin.text.fault.receiver": [
+    "TypeError: string method requires a str object"
+  ],
+  "ext.builtin.text.fault.room": [
+    "OverflowError: repeated string is too long"
+  ],
+  "ext.builtin.text.fault.separator": [
+    "ValueError: empty separator"
+  ],
+  "ext.builtin.text.fault.string": [
+    "TypeError: argument must be str"
+  ],
+  "ext.builtin.text.fault.surrogate": [
+    "NotImplementedError: surrogate code points are not supported"
+  ],
+  "ext.builtin.text.fault.translation": [
+    "TypeError: character mapping must return integer, None or str"
+  ],
+  "ext.builtin.text.fault.walk": [
+    "TypeError: can only join an iterable"
+  ],
+  "ext.builtin.text.find": [
+    "find",
+    "str.find"
+  ],
+  "ext.builtin.text.format_map": [
+    "format_map",
+    "str.format_map"
+  ],
+  "ext.builtin.text.index": [
+    "index",
+    "str.index"
+  ],
+  "ext.builtin.text.isascii": [
+    "isascii",
+    "str.isascii"
+  ],
+  "ext.builtin.text.isdecimal": [
+    "isdecimal",
+    "str.isdecimal"
+  ],
+  "ext.builtin.text.isidentifier": [
+    "isidentifier",
+    "str.isidentifier"
+  ],
+  "ext.builtin.text.isnumeric": [
+    "isnumeric",
+    "str.isnumeric"
+  ],
+  "ext.builtin.text.isprintable": [
+    "isprintable",
+    "str.isprintable"
+  ],
+  "ext.builtin.text.istitle": [
+    "istitle",
+    "str.istitle"
+  ],
+  "ext.builtin.text.join": [
+    "join",
+    "str.join"
+  ],
+  "ext.builtin.text.keyword.encoding": [
+    "encoding"
+  ],
+  "ext.builtin.text.keyword.errors": [
+    "errors"
+  ],
+  "ext.builtin.text.keyword.keepends": [
+    "keepends"
+  ],
+  "ext.builtin.text.keyword.maxsplit": [
+    "maxsplit"
+  ],
+  "ext.builtin.text.keyword.sep": [
+    "sep"
+  ],
+  "ext.builtin.text.keyword.tabsize": [
+    "tabsize"
+  ],
+  "ext.builtin.text.length": [
+    "str.__len__",
+    "__len__"
+  ],
+  "ext.builtin.text.ljust": [
+    "ljust",
+    "str.ljust"
+  ],
+  "ext.builtin.text.lower": [
+    "lower",
+    "str.lower"
+  ],
+  "ext.builtin.text.lstrip": [
+    "lstrip",
+    "str.lstrip"
+  ],
+  "ext.builtin.text.maketrans": [
+    "maketrans",
+    "str.maketrans"
+  ],
+  "ext.builtin.text.partition": [
+    "partition",
+    "str.partition"
+  ],
+  "ext.builtin.text.removeprefix": [
+    "removeprefix",
+    "str.removeprefix"
+  ],
+  "ext.builtin.text.removesuffix": [
+    "removesuffix",
+    "str.removesuffix"
+  ],
+  "ext.builtin.text.repeat": true,
+  "ext.builtin.text.replace": [
+    "replace",
+    "str.replace"
+  ],
+  "ext.builtin.text.repr": [
+    "repr"
+  ],
+  "ext.builtin.text.rfind": [
+    "rfind",
+    "str.rfind"
+  ],
+  "ext.builtin.text.rindex": [
+    "rindex",
+    "str.rindex"
+  ],
+  "ext.builtin.text.rjust": [
+    "rjust",
+    "str.rjust"
+  ],
+  "ext.builtin.text.rpartition": [
+    "rpartition",
+    "str.rpartition"
+  ],
+  "ext.builtin.text.rsplit": [
+    "rsplit",
+    "str.rsplit"
+  ],
+  "ext.builtin.text.rstrip": [
+    "rstrip",
+    "str.rstrip"
+  ],
+  "ext.builtin.text.split": [
+    "split",
+    "str.split"
+  ],
+  "ext.builtin.text.splitlines": [
+    "splitlines",
+    "str.splitlines"
+  ],
+  "ext.builtin.text.startswith": [
+    "startswith",
+    "str.startswith"
+  ],
+  "ext.builtin.text.strip": [
+    "strip",
+    "str.strip"
+  ],
+  "ext.builtin.text.swapcase": [
+    "swapcase",
+    "str.swapcase"
+  ],
+  "ext.builtin.text.title": [
+    "title",
+    "str.title"
+  ],
+  "ext.builtin.text.translate": [
+    "translate",
+    "str.translate"
+  ],
+  "ext.builtin.text.upper": [
+    "upper",
+    "str.upper"
+  ],
+  "ext.builtin.text.zfill": [
+    "zfill",
+    "str.zfill"
+  ],
   "ext.builtin.to_int.base": [
     "base"
   ],
@@ -1400,6 +1666,7 @@
   "ext.op.index.spread.unsupported": [
     "NotImplementedError: starred subscripts are not supported"
   ],
+  "ext.op.index.text.negative": true,
   "ext.op.lambda": [
     "lambda"
   ],

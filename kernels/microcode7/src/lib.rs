@@ -1,3 +1,5 @@
+pub mod text;
+mod unicode;
 // Microcode kernel, fourth design: seven forms, the four of microcode4
 // and three the kernel lab measured worth a form of their own.
 //
@@ -68,6 +70,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
         for key in byte_complaints {
             if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
         }
+        if text::bears_kind(&table, &e) { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

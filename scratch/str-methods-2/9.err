@@ -1,0 +1,1 @@
+ValueError: character mapping must be in range(0x110000)

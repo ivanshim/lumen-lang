@@ -38,6 +38,7 @@ pub enum Callee {
 pub enum Prim {
     Octets(u8),
     OctetAssign(bool),
+    Textual(crate::text::Work),
     /// A compound write may ask a real to retain its point.
     Pointed,
     Adorn(char),

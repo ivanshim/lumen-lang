@@ -1,0 +1,5 @@
+print("ß".upper(), "ﬁ".casefold(), "µ".casefold(), "AΣ".capitalize(), "ﬁNNISH".title(), "AΣ".swapcase())
+print("AΣ".istitle(), "µ".isidentifier(), "á".isidentifier(), "𝔘𝔫𝔦𝔠𝔬𝔡𝔢".isidentifier())
+print("٣".isdecimal(), "²".isdecimal(), "²".isnumeric(), "四".isnumeric(), "".isascii(), "é".isascii())
+print(" ".isprintable(), "\u0378".isprintable(), "😀".isprintable(), repr("\x00"), repr("\u200b"), repr("\\"))
+print(str.__len__("hé😀"), "hé😀"[-1], "hé😀"[::-1], chr(128512), repr("é" * 0), repr("é" * -2))
