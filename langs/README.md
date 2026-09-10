@@ -2542,6 +2542,19 @@ only. The extension labels so far, all from PHP:
   shifting is provided. With no such words the operation is unchanged.
   The numeric suites need the lexical piece's whole-number reading;
   `scratch/file-float/5.py` witnesses its signs and wide shifts.
+- `ext.op.bit.operands`: words refusing operands other than whole numbers
+  and flags for bitwise and, or, and exclusive or. Where these words are
+  given, those operations keep all the bits of a whole number; two flags
+  yield a flag, and a flag beside a number stands for one or nought.
+  Object methods and set operations are still wanting and say these words.
+  The indented definition spells `ext.op.bit.and` as `&` and
+  `ext.op.bit.xor` as `^`, in their own tiers below the shifts.
+- `ext.op.matrix` and `ext.op.matrix.unready`: the sign for a matrix
+  product and the words said when that product is reached. Both operands
+  are read with the tier and associativity given by the definition, then
+  worked out before the complaint. Method dispatch for this product is
+  still owed. The sign may also stand before the assignment mark where
+  compound assignment is given; decorator lines keep their own reading.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -3270,6 +3283,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
 | `ext.op.bit.left.unready` | - | - | `NotImplementedError: left shifts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
+| `ext.op.bit.operands` | - | - | `NotImplementedError: bit operations require integers` | - | - | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
 | `ext.op.bit.or.maps` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |

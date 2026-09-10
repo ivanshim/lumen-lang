@@ -1039,6 +1039,9 @@
   "ext.op.bit.not": [
     "~"
   ],
+  "ext.op.bit.operands": [
+    "NotImplementedError: bit operations require integers"
+  ],
   "ext.op.bit.or": [
     "|"
   ],

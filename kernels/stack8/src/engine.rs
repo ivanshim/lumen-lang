@@ -3690,9 +3690,26 @@ impl<'a> Engine<'a> {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
         }
+        if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) && !(matches!(op, Action::BitEither) && self.lang.or_maps && matches!((a, b), (Value::Map(_), Value::Map(_)))) {
+            if let Some(words) = &self.lang.bit_operands {
+                if ![a, b].iter().all(|v| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
+                    return Err(words.clone());
+                }
+                let (x, y) = (a.as_big()?, b.as_big()?);
+                let bits = match op {
+                    Action::BitBoth => x & y,
+                    Action::BitEither => x | y,
+                    _ => x ^ y,
+                };
+                return Ok(if matches!((a, b), (Value::Flag(_), Value::Flag(_))) {
+                    Value::Flag(bits != BigInt::from(0))
+                } else { Value::of_big(bits) });
+            }
+        }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
+            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_else(|| "Matrix multiplication cannot run".into())),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
             Action::Or => Value::Flag(self.truth(a) || self.truth(b)),
             // The one no number answers to comes before nothing and

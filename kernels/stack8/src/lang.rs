@@ -393,6 +393,7 @@ pub struct Lang {
     pub bit_room: Option<String>,
     pub plus_non_number: Option<String>,
     pub left_shift_unready: Option<String>,
+    pub bit_operands: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -906,7 +907,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable | w ext.stmt.function.async | w ext.stmt.function.async.unavailable | w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers | w ext.op.bit.left.unready
+w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable | w ext.stmt.function.async | w ext.stmt.function.async.unavailable | w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers | w ext.op.bit.left.unready | w ext.op.matrix.unready | w ext.op.bit.operands
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
@@ -1771,6 +1772,7 @@ impl Lang {
             bit_room: r.head("ext.op.bit.whole.room")?,
             plus_non_number: r.head("ext.op.plus.non_number")?,
             left_shift_unready: r.head("ext.op.bit.left.unready")?,
+            bit_operands: r.head("ext.op.bit.operands")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,
@@ -2165,6 +2167,9 @@ impl Lang {
         }
         for mark in &self.long_quotes {
             place(mark);
+        }
+        for lex in &self.matrix_words {
+            place(lex);
         }
         for lex in &self.plus_words {
             place(lex);

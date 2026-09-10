@@ -5090,6 +5090,23 @@ impl<'a> Machine<'a> {
                 }
                 other => Value::Small(!self.bits_told(other)?),
             },
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+                if self.table.single("ext.op.bit.operands").is_some() && !(op == Prim::BitsEither && self.table.flag("ext.op.bit.or.maps") && matches!(v, [Value::Dict(_), Value::Dict(_)])) =>
+            {
+                let whole = |value: &Value| match value {
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big(),
+                    _ => Err(self.table.single("ext.op.bit.operands").unwrap().to_owned()),
+                };
+                let mut answer = whole(&v[0])?;
+                let rhs = whole(&v[1])?;
+                if op == Prim::BitsOne { answer ^= rhs; }
+                else if op == Prim::BitsBoth { answer &= rhs; }
+                else { answer |= rhs; }
+                match (&v[0], &v[1]) {
+                    (Value::Flag(_), Value::Flag(_)) => Value::Flag(answer != BigInt::from(0)),
+                    _ => Value::from_big(answer),
+                }
+            }
             // Two pieces of text meet letter by letter. The shorter one
             // says how far it goes, save where either bit will do, and
             // there the longer one carries on alone.
