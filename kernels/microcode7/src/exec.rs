@@ -818,7 +818,7 @@ impl<'a> Machine<'a> {
                 waiting.remove(0)
             };
             let (work, given) = next;
-            if let Value::Bound(p, env) = self.what_it_spells(work) {
+            if let Value::Bound(p, env, _) = self.what_it_spells(work) {
                 if let Err(over) = self.invoke(p, env, given) {
                     // What a program named to run afterward may itself
                     // be stopped, and that is told as the ending of the
@@ -930,7 +930,7 @@ impl<'a> Machine<'a> {
             };
             let (kind, about, row) = next;
             let hook = self.hearer.borrow().clone();
-            let Some(Value::Bound(p, env)) = hook.map(|v| self.what_it_spells(v)) else {
+            let Some(Value::Bound(p, env, _)) = hook.map(|v| self.what_it_spells(v)) else {
                 self.said_plainly(&kind, &about, row);
                 continue;
             };
@@ -1446,7 +1446,7 @@ impl<'a> Machine<'a> {
             },
             _ => return false,
         };
-        let Value::Bound(p, env) = self.what_it_spells(v) else { return false };
+        let Value::Bound(p, env, _) = self.what_it_spells(v) else { return false };
         let _ = self.invoke(p, env, vec![raised]);
         true
     }
@@ -1818,7 +1818,8 @@ impl<'a> Machine<'a> {
                     Value::Shared(p) => Rc::as_ptr(p) as usize,
                     Value::Thing(p) => Rc::as_ptr(p) as usize,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize,
-                    Value::Bound(p, _) | Value::Routine(p) => Rc::as_ptr(p) as usize,
+                    Value::Bound(_, _, Some(identity)) => Rc::as_ptr(identity) as usize,
+                    Value::Routine(p) => Rc::as_ptr(p) as usize,
                     Value::Text(s) => s.as_ptr() as usize,
                     _ => return Err(refused),
                 };
@@ -1979,7 +1980,7 @@ impl<'a> Machine<'a> {
         match node {
             Form::Const(Value::Routine(p)) => {
                 if let Some(world) = &self.named_world { self.made_under.insert(Rc::as_ptr(p) as usize, (p.clone(), world.clone())); }
-                Ok(Value::Bound(p.clone(), frame.clone()))
+                Ok(Value::Bound(p.clone(), frame.clone(), self.table.single("ext.builtin.id").map(|_| Rc::new(()))))
             }
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
@@ -2618,7 +2619,7 @@ impl<'a> Machine<'a> {
                     }
                     // The right side is read in place and evaluated only here.
                     let right = match self.value_of(&args[1], frame)? {
-                        Value::Bound(p, env) => self.invoke(p, env, Vec::new())?,
+                        Value::Bound(p, env, _) => self.invoke(p, env, Vec::new())?,
                         v => v,
                     };
                     Ok(Value::Flag(self.stands_true(&right)))
@@ -2648,7 +2649,7 @@ impl<'a> Machine<'a> {
                     }
                     // The second is read in place and run only here.
                     match self.value_of(&args[1], frame)? {
-                        Value::Bound(p, env) => Ok(self.invoke(p, env, Vec::new())?),
+                        Value::Bound(p, env, _) => Ok(self.invoke(p, env, Vec::new())?),
                         other => Ok(other),
                     }
                 }
@@ -2667,7 +2668,7 @@ impl<'a> Machine<'a> {
                     if values.is_empty() {
                         return Err("Nothing was given to take away".to_string().into());
                     }
-                    let Value::Bound(program, env) = values.remove(0) else {
+                    let Value::Bound(program, env, identity) = values.remove(0) else {
                         return Err("Only a routine can take names away with it".to_string().into());
                     };
                     let took = Env::make(program.idents.len(), Some(env));
@@ -2677,7 +2678,7 @@ impl<'a> Machine<'a> {
                             cells[*slot] = held;
                         }
                     }
-                    Ok(Value::Bound(program, took))
+                    Ok(Value::Bound(program, took, identity))
                 }
                 Prim::Spawn => {
                     let mut values = self.value_list(args, frame)?;
@@ -3005,7 +3006,7 @@ impl<'a> Machine<'a> {
 
     fn routine_of(&mut self, stands: Value, node: &Form) -> Res<(Rc<Routine>, Rc<Env>)> {
         match stands {
-            Value::Bound(p, env) => Ok((p, env)),
+            Value::Bound(p, env, _) => Ok((p, env)),
             Value::Unset => Err("Unknown function".to_string().into()),
             _ => match node {
                 Form::Read(slot) => Err(format!("'{}' is not a function", slot.ident).into()),
@@ -3042,7 +3043,7 @@ impl<'a> Machine<'a> {
         if let Some(keeper) = class.keeper(name) {
             return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| {
                 match (value, x) {
-                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _, _)) => Value::Method(body.clone(), object.clone()),
                     _ => x.clone(),
                 }
             });
@@ -3050,7 +3051,7 @@ impl<'a> Machine<'a> {
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         class.program(name).map(|body| match value {
             Value::Thing(o) => Value::Method(body.clone(), o.clone()),
-            _ => Value::Bound(body.clone(), self.outermost.clone()),
+            _ => Value::Bound(body.clone(), self.outermost.clone(), self.table.single("ext.builtin.id").map(|_| Rc::new(()))),
         })
     }
 
@@ -3559,7 +3560,7 @@ impl<'a> Machine<'a> {
 
     fn stands_for_the_run(&self, named: &str) -> bool {
         match self.hearer.borrow().as_ref() {
-            Some(Value::Bound(p, _)) => p.ident == named,
+            Some(Value::Bound(p, _, _)) => p.ident == named,
             Some(Value::Routine(p)) => p.ident == named,
             Some(v) => matches!(v, Value::Text(t) if t.as_ref() == named),
             None => false,

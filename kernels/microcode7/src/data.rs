@@ -151,8 +151,9 @@ pub enum Value {
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
     Method(Rc<Routine>, Rc<Thing>),
-    /// A program bound to the frame it was made in.
-    Bound(Rc<Routine>, Rc<Env>),
+    /// A program bound to the frame it was made in. Where identity is
+    /// asked for, the binding keeps its own mark beside the shared body.
+    Bound(Rc<Routine>, Rc<Env>, Option<Rc<()>>),
     KindOf(Kind),
     Unset,
 }
@@ -312,7 +313,7 @@ impl Value {
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
-            (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
+            (Value::Bound(a, _, _), Value::Bound(b, _, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
         }
@@ -526,7 +527,7 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
-            Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
@@ -558,7 +559,7 @@ impl Value {
                 out.push(')');
             }
             Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
-            Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
+            Value::Bound(p, _, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),
             Value::Blueprint(b) => out.push_str(&format!("b{}", b.name)),

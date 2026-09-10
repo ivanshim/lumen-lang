@@ -355,7 +355,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         return Err(told);
     }
     if let Some(entry) = table.single("system.entry") {
-        if let Some(Value::Bound(p, env)) = machine.lookup(entry) {
+        if let Some(Value::Bound(p, env, _)) = machine.lookup(entry) {
             let done = machine.invoke(p, env, Vec::new()).map_err(|e| match e {
                 exec::Escape::Error(m) => m,
                 _ => String::new(),
