@@ -843,6 +843,39 @@ only. The extension labels so far, all from PHP:
   The kernels have no imaginary values; reaching one stops the run with
   the words in `ext.lexical.number.imaginary.unrun`. A routine holding
   one may still be read and bound without reaching it.
+- `ext.lexical.number.point.bare`: a switch; a decimal point may lack
+  digits on either hand, though not on both (`.5`, `1.`, `1.e2`).
+  The numeric suites use these beside ordinary fractions; their reading
+  follows the lexical piece. `scratch/file-float/1.py` witnesses them.
+- The numeric files also need small readings of forms whose full account
+  belongs to the tuple and class pieces. Under `ext.op.tuple`, a loop
+  may name several targets or a comma-joined source, and a tuple target
+  may hold a starred name spelled by `ext.syntax.array.spread`. Their
+  present run says `ext.system.scope.unready`; witnesses are
+  `scratch/file-float/7.py`, `9.py`, `12.py` and the nested target in
+  `13.py`. The class bases named by
+  `ext.stmt.class.bases.open` may carry keyword arguments, and
+  `ext.stmt.decorator` may stand before a class. These still say
+  `ext.stmt.class.unready`; `8.py` and `11.py` witness them. A pipe's
+  result may be indexed under `ext.op.tuple`, using the ordinary index
+  reading and running; `10.py` reads the condition found in the float
+  suite. A chain of plain names before one source is read under the
+  same tuple scope and says `ext.system.scope.unready`; `16.py` bears
+  witness. Its full binding remains with the tuple piece. No new word
+  is needed for these readings.
+- `ext.lexical.number.imaginary`: suffix letters for an imaginary
+  decimal numeral (`1j`, `.5J`, `2.e-3j`). The coefficient is read whole,
+  including its point and exponent. The run cannot yet hold a complex
+  value; reaching this numeral says the plain words of
+  `ext.lexical.number.imaginary.unready`. An uncalled body may hold one
+  without complaint. `scratch/file-float/3.py` reads such bodies and
+  `scratch/file-float/4.py` reaches the complaint; `15.py` carries an
+  exponent beyond the ordinary float range. `14.py` witnesses the
+  complex suite's outward jumps inside an unreadied context: when its
+  body is set aside, the jumps recorded for that body are set aside too.
+- `ext.lexical.number.exponent`: the letters that open a decimal exponent
+  in a number (`1e9`, `2.5E-3`), always a real. Python spells both
+  letters; `scratch/file-float/2.py` witnesses both signs and points.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation. Python spells it too, including repeated signs
   and a sign standing before a power.
@@ -1339,6 +1372,9 @@ only. The extension labels so far, all from PHP:
   may stand just after a base prefix. Other separators must have digits
   on both sides. Python spells this with its binary, octal and hexadecimal
   prefixes and the separator `_`; whole literals keep every digit.
+  nothing when the number is read. Python spells the underscore; its
+  bare-point reading requires a digit on each hand of that separator.
+  `scratch/file-float/6.py` witnesses separated fractions and exponents.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -2264,6 +2300,8 @@ only. The extension labels so far, all from PHP:
   shift when it is reached. The sign and both operands are read as usual;
   the fixed-width operation is withheld until the language's whole-number
   shifting is provided. With no such words the operation is unchanged.
+  The numeric suites need the lexical piece's whole-number reading;
+  `scratch/file-float/5.py` witnesses its signs and wide shifts.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
