@@ -145,7 +145,7 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
     ancestor: Option<Rc<Blueprint>>,
-    routine_members: Vec<(Value, Vec<(String, Value)>)>,
+    routine_members: Vec<(Value, Rc<Thing>)>,
     table: &'a Table,
     fault_kinds: HashMap<String, Value>,
     pub outermost: Rc<Env>,
@@ -2226,6 +2226,9 @@ impl<'a> Machine<'a> {
             // both.
             Form::ShareField(of, called) => {
                 let thing = self.value_of(of, frame)?;
+                if self.has_class_order() && called.as_ref() == self.detail("namespace") && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..)) {
+                    return self.read_class_member(thing, called, false);
+                }
                 let Value::Thing(thing) = thing else {
                     if matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..)) && self.table.has_any("ext.system.scope.unready") {
                         return Err(self.table.single("ext.system.scope.unready").unwrap_or_default().to_string().into());
@@ -6278,7 +6281,7 @@ impl<'a> Machine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     let names: Vec<String> = match op {
-                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Adorned(_) | Value::Wrapped(..))).map(|(n,_)| n.clone())).collect(),
+                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Bound(..) | Value::Adorned(_) | Value::Wrapped(..))).map(|(n,_)| n.clone())).collect(),
                         _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
                     };
                     for called in names {

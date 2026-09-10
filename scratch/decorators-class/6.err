@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: this class form cannot run yet
+PythonError: AttributeError: 'C' object has no attribute 'x'

@@ -129,6 +129,17 @@ impl<'a> Machine<'a> {
             match entry {Value::Routine(code)=>Ok(Value::Method(code,t)),Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,Value::Thing(t)])),_=>Ok(entry)}
         }else{Ok(entry)}
     }
+    fn routine_storage(&mut self, code: &Value) -> usize {
+        match self.routine_members.iter().position(|(candidate, _)| candidate.equals(code)) {
+            Some(found) => found,
+            None => {
+                let of = self.common_ancestor(); self.made += 1;
+                let holder = Rc::new(Thing { of, turn: self.made, holds: RefCell::new(Vec::new()) });
+                self.routine_members.push((code.clone(), holder));
+                self.routine_members.len() - 1
+            }
+        }
+    }
     fn member_map(entries:&[(String,Value)])->Value {
         let pairs=entries.iter().map(|(key,value)|(Value::text(key),value.clone())).collect();
         Value::Dict(Rc::new(pairs))
@@ -153,7 +164,7 @@ impl<'a> Machine<'a> {
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.of,self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
             if key==self.detail("kind"){return Ok(Value::Blueprint(t.of.clone()));}
-            if key==self.detail("namespace"){return Ok(Self::member_map(&t.holds.borrow()));}
+            if key==self.detail("namespace"){return Ok(Value::Attributes(t.clone()));}
             let from_class=self.inherited_entry(&t.of,key);
             if matches!(&from_class,Some(Value::Wrapped(6,_))){return self.member_binding(from_class.unwrap(),Some(value.clone()),t.of.clone());}
             let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
@@ -166,14 +177,14 @@ impl<'a> Machine<'a> {
             return self.read_class_member(Value::Routine(code.clone()),key,true);
         }else if let Value::Routine(code)|Value::Bound(code,_)=&value {
             if let Some((_,members))=self.routine_members.iter().find(|(f,_)|f.equals(&value)){
-                if let Some((_,v))=members.iter().find(|(k,_)|k==key){return Ok(v.clone());}
+                if let Some((_,v))=members.holds.borrow().iter().find(|(k,_)|k==key){return Ok(v.clone());}
             }
             if key==self.detail("name"){return Ok(Value::text(&code.ident));}
             if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(Value::text(&qualified));}
             if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
             if key==self.detail("module"){return Ok(Value::text(self.detail("main")));}
             if key==self.detail("code"){return Ok(Self::wrap(7,vec![value.clone()]));}
-            if key==self.detail("namespace"){return Ok(self.routine_members.iter().find(|(f,_)|f.equals(&value)).map_or_else(||Self::member_map(&[]),|(_,m)|Self::member_map(m)));}
+            if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let mut defaults=Vec::new();
                 if let Value::Bound(_,env)=&value {for slot in &code.carried{if let Some(i)=code.formal_slots.iter().position(|at|at==slot){if code.taking.as_ref().map_or(true,|rules|matches!(rules[i],'b'|'p')){defaults.push(env.cells.borrow()[*slot].clone());}}}}
@@ -209,6 +220,18 @@ impl<'a> Machine<'a> {
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
         let success=match &subject {
             Value::Thing(t)=>{
+                if self.is_fault_kind(&t.of) && self.table.single("ext.builtin.exceptions.args") == Some(key) {
+                    if let Some(supplied) = replacement.as_ref() {
+                        let sequence = match supplied.settled() {
+                            Value::Arguments(items) | Value::Tuple(items) | Value::Vector(items) => Value::Arguments(items),
+                            _ => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
+                        };
+                        let mut storage = t.holds.borrow_mut();
+                        Self::change_entry(&mut storage, key, Some(sequence.clone()));
+                        Self::change_entry(&mut storage, "\0raised-values", Some(sequence));
+                        return Ok(Value::Nil);
+                    }
+                }
                 if !direct{
                     let hook=self.detail(if replacement.is_some(){"set"}else{"remove"});
                     if let Some(f)=self.inherited_entry(&t.of,hook){let mut args=vec![subject.clone(),Value::text(key)];args.extend(replacement);return self.apply_class_member(f,args);}
@@ -225,9 +248,15 @@ impl<'a> Machine<'a> {
                 Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
             },
             Value::Routine(_)|Value::Bound(..)=>{
+                if key == self.detail("namespace") {
+                    let at = self.routine_storage(&subject);
+                    if let Some(Value::Attributes(storage)) = &replacement {
+                        if Rc::ptr_eq(storage, &self.routine_members[at].1) { return Ok(Value::Nil); }
+                    }
+                }
                 if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("namespace"){return Err(self.class_unready());}
-                let index=self.routine_members.iter().position(|(f,_)|f.equals(&subject)).unwrap_or_else(||{self.routine_members.push((subject.clone(),vec![]));self.routine_members.len()-1});
-                Self::change_entry(&mut self.routine_members[index].1,key,replacement)
+                let index=self.routine_storage(&subject);
+                Self::change_entry(&mut self.routine_members[index].1.holds.borrow_mut(),key,replacement)
             }
             _=>false,
         };
@@ -297,7 +326,7 @@ impl<'a> Machine<'a> {
             let mut names=Vec::new();
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().map(|(k,_)|k.clone()));Some(&t.of)},Value::Blueprint(b)=>Some(b),_=>None};
             if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().map(|(k,_)|k.clone()));}}
-            else if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.iter().map(|(k,_)|k.clone()));}
+            else if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.holds.borrow().iter().map(|(k,_)|k.clone()));}
             names.sort_unstable();names.dedup();return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
         }
         if (9..=11).contains(&op)&&!values.is_empty(){return Ok(Self::wrap(op-5,values));}

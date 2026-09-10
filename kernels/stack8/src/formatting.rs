@@ -92,6 +92,7 @@ impl Writer<'_> {
                 }
                 Ok(out)
             }
+            Value::Bytes(..) => Ok(value.display(&self.words)),
             Value::Tuple(items) => {
                 let parts = items.iter().map(|v| self.representation(v, ascii)).collect::<Result<Vec<_>>>()?;
                 Ok(format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }))

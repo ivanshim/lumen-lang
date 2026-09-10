@@ -3464,7 +3464,7 @@ impl<'a> Compiler<'a> {
                 let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
                 self.skip_seps();
             }
-            if !decorators.is_empty() && !self.on_keyword(&lang.function_words) {unready=true;}
+            if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {unready=true;}
             if self.on_keyword(&lang.function_words) {
                 self.take();
                 let named = self.want_name("as the method name")?;
@@ -3487,6 +3487,7 @@ impl<'a> Compiler<'a> {
                 let named = self.look_ahead(1).lexeme.clone();
                 self.explicit_class()?;
                 self.read(&named);
+                for held in decorators.into_iter().rev() { self.read(&held); self.act(Action::Invoke(Rc::from("")), 2); }
                 let held = self.gensym("nested");
                 self.write(&held);
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());

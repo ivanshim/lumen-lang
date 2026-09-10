@@ -25,7 +25,7 @@ enum Passage {
 
 pub struct Engine<'a> {
     class_root: Option<Rc<Class>>,
-    function_members: Vec<(Value, Vec<(String, Value)>)>,
+    function_members: Vec<(Value, Rc<Instance>)>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,

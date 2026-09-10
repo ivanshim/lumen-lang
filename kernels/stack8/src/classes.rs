@@ -165,7 +165,7 @@ impl<'a> Engine<'a> {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
                 if name==self.class_word("kind") {return Ok(Value::Class(o.class.clone()));}
-                if name==self.class_word("namespace") {return Ok(Self::namespace(&o.fields.borrow()));}
+                if name==self.class_word("namespace") {return Ok(Value::Fields(o.clone()));}
                 let member=self.class_value(&o.class,name);
                 if let Some(Value::Adapter(w))=&member {if w.0==6 {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}}
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
@@ -179,7 +179,7 @@ impl<'a> Engine<'a> {
             }
             Value::Routine(f) => {
                 if let Some((_,members))=self.function_members.iter().find(|(v,_)| v.equals(&subject)) {
-                    if let Some((_,v))=members.iter().find(|(n,_)| n==name) {return Ok(v.clone());}
+                    if let Some((_,v))=members.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 }
                 if name==self.class_word("name") {return Ok(Value::text(&f.ident));}
                 if name==self.class_word("qualified") {return Ok(Value::text(&f.qualified));}
@@ -191,7 +191,7 @@ impl<'a> Engine<'a> {
                     return Ok(if values.is_empty(){Value::Null}else{Value::Tuple(Rc::new(values))});
                 }
                 if name==self.class_word("code") {return Ok(Self::adapter(7,vec![subject.clone()]));}
-                if name==self.class_word("namespace") {return Ok(self.function_members.iter().find(|(v,_)|v.equals(&subject)).map_or_else(||Self::namespace(&[]),|(_,v)|Self::namespace(v)));}
+                if name==self.class_word("namespace") { let at=self.function_storage(&subject); return Ok(Value::Fields(self.function_members[at].1.clone())); }
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
@@ -210,11 +210,30 @@ impl<'a> Engine<'a> {
         }
         Err(self.missing_member(&subject,name))
     }
+    fn function_storage(&mut self, function: &Value) -> usize {
+        if let Some(at) = self.function_members.iter().position(|(v, _)| v.equals(function)) { return at; }
+        let class = self.root_class();
+        self.made += 1;
+        let fields = Rc::new(Instance { class, fields: RefCell::new(Vec::new()), mark: self.made });
+        self.function_members.push((function.clone(), fields));
+        self.function_members.len() - 1
+    }
     fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {
+                if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name) {
+                    if let Some(v) = value.as_ref() {
+                        let items = match v.contents() {
+                            Value::Array(items) | Value::Tuple(items) => Value::Tuple(items),
+                            _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+                        };
+                        let mut fields = o.fields.borrow_mut();
+                        for key in [name, "\0arguments"] { let _ = Self::write_members(&mut fields, key, Some(items.clone())); }
+                        return Ok(Value::Null);
+                    }
+                }
                 if !plain {
                     let hook=if value.is_some(){"set"}else{"remove"};
                     if let Some(f)=self.class_value(&o.class,self.class_word(hook)) {
@@ -236,9 +255,13 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut c.shared.borrow_mut(),name,value).map_err(|_|absent)?;
             }
             Value::Routine(_) => {
+                if name == self.class_word("namespace") {
+                    let at = self.function_storage(&subject);
+                    if matches!(&value, Some(Value::Fields(fields)) if Rc::ptr_eq(fields, &self.function_members[at].1)) { return Ok(Value::Null); }
+                }
                 if ["defaults","code","namespace"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_refusal());}
-                let at=if let Some(i)=self.function_members.iter().position(|(v,_)|v.equals(&subject)){i}else{self.function_members.push((subject.clone(),vec![]));self.function_members.len()-1};
-                Self::write_members(&mut self.function_members[at].1,name,value).map_err(|_|absent)?;
+                let at=self.function_storage(&subject);
+                Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value).map_err(|_|absent)?;
             }
             _ => return Err(absent),
         }
@@ -305,7 +328,7 @@ impl<'a> Engine<'a> {
             8 if args.len()==1=>{
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
-                else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.iter().map(|(n,_)|n.clone()));}
+                else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
                 names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }
             9..=11 if !args.is_empty()=>Ok(Self::adapter(which-5,args)),

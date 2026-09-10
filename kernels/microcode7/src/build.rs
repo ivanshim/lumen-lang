@@ -2381,7 +2381,7 @@ impl<'a> Builder<'a> {
                 setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
                 self.skip_line_ends();
             }
-            if !wrappers.is_empty() && !self.key("stmt.function") {cannot=true;}
+            if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {cannot=true;}
             if self.key("stmt.function") {
                 self.advance();
                 let method_name = self.need_word("as the method name")?;
@@ -2407,7 +2407,9 @@ impl<'a> Builder<'a> {
                     let member = self.glance(1).lexeme.clone();
                     setup.push(self.class_with_receiver()?.0);
                     attributes.push(member.clone());
-                    Some(self.read(&member))
+                    let mut nested = self.read(&member);
+                    while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
+                    Some(nested)
                 } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
                     self.pos += 2;
                     attributes.push(member);
@@ -2729,6 +2731,7 @@ impl<'a> Builder<'a> {
                 if r.on_stmt_end() || r.look().shape == Shape::Open { r.body()? } else { r.stmt()? }
             } else { r.body()? };
             items.push(body);
+            if explicit && table.blocks == Blocks::Indented { items.push(constant(Value::Nil)); }
             Ok(sequence(items))
         });
         self.receiver = enclosing_receiver;
