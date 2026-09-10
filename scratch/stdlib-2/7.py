@@ -17,7 +17,7 @@ print(a == b, '%r' % (asdict(a),))
 a.items = [3]
 print(a == b, b.items)
 from typing import Optional, cast, TYPE_CHECKING
-value: Optional[int] = cast(Optional[int], 9)
+value: Optional[int] = cast('Optional[int]', 9)
 print(value, TYPE_CHECKING)
 from abc import ABC, abstractmethod
 @abstractmethod
