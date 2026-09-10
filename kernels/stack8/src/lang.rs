@@ -141,6 +141,7 @@ pub struct Lang {
 
     pub prologue: Option<String>,
     pub point: Option<char>,
+    pub bare_point: bool,
     pub base_mark: Option<char>,
     pub exponent_mark: Option<char>,
     pub hex_prefix: Option<String>,
@@ -377,6 +378,7 @@ pub struct Lang {
     pub shift_by_number: bool,
     pub bit_room: Option<String>,
     pub plus_non_number: Option<String>,
+    pub left_shift_unready: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -866,8 +868,7 @@ w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stm
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
-w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | b ext.lexical.number.point_edge | b ext.lexical.number.separator.strict | w ext.lexical.number.amiss.leading_zero | w ext.lexical.number.amiss.binary | w ext.lexical.number.amiss.binary.digit | w ext.lexical.number.amiss.octal | w ext.lexical.number.amiss.octal.digit | w ext.lexical.number.amiss.hex | w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments | b ext.stmt.loop.else | b ext.lexical.string.adjacent | w ext.lexical.string.prefix.bytes | w ext.lexical.string.bytes.unready | w ext.op.lambda | w ext.lexical.number.imaginary.unrun
-w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
+w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | b ext.lexical.number.point_edge | b ext.lexical.number.separator.strict | w ext.lexical.number.amiss.leading_zero | w ext.lexical.number.amiss.binary | w ext.lexical.number.amiss.binary.digit | w ext.lexical.number.amiss.octal | w ext.lexical.number.amiss.octal.digit | w ext.lexical.number.amiss.hex | w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments | b ext.stmt.loop.else | b ext.lexical.string.adjacent | w ext.lexical.string.prefix.bytes | w ext.lexical.string.bytes.unready | w ext.op.lambda | w ext.lexical.number.imaginary.unrun | w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels | b ext.lexical.number.point.bare
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
@@ -878,8 +879,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable | w ext.stmt.function.async | w ext.stmt.function.async.unavailable
-w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
+w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable | w ext.stmt.function.async | w ext.stmt.function.async.unavailable | w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers | w ext.op.bit.left.unready
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
@@ -1510,6 +1510,7 @@ impl Lang {
 
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
+            bare_point: r.flag("ext.lexical.number.point.bare")?,
             base_mark: r.letter("lexical.number.base_marker")?,
             exponent_mark: r.letter("lexical.number.exponent_marker")?,
             hex_prefix,
@@ -1656,6 +1657,7 @@ impl Lang {
             shift_by_number: r.flag("ext.op.bit.shift.numbers")?,
             bit_room: r.head("ext.op.bit.whole.room")?,
             plus_non_number: r.head("ext.op.plus.non_number")?,
+            left_shift_unready: r.head("ext.op.bit.left.unready")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,

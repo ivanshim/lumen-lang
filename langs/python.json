@@ -608,6 +608,9 @@
   "ext.op.bit.left": [
     "<<"
   ],
+  "ext.op.bit.left.unready": [
+    "NotImplementedError: left shifts are not supported"
+  ],
   "ext.op.bit.not": [
     "~"
   ],

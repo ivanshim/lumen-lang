@@ -365,6 +365,12 @@ only. The extension labels so far, all from PHP:
   and kinds of value use `ext.lexical.string.unready`, as byte text does.
 - `ext.lexical.string.unready`: the words for a string form whose
   syntax can be read but whose value cannot yet be given honestly.
+  Text conversions quote strings and make escapes visible; simple field
+  alignment and fixed decimal places are honoured. Other specifications
+  are evaluated and the value is rendered plainly at present.
+  A line holding only a `lexical.comment_line` remark is blank for
+  indentation, however far its mark stands in; a mark within a string
+  remains text.
 - `ext.lexical.string.adjacent`: whether string literals standing beside
   one another make one string, including within brackets over lines.
 - `ext.lexical.string.amiss`: what is said of a string or a formatted
@@ -557,6 +563,9 @@ only. The extension labels so far, all from PHP:
   its names and suite, including asynchronous comprehensions within it.
   `ext.stmt.function.async.unavailable` refuses the definition when
   reached; no ordinary callable is put in its stead.
+  Loop targets may likewise name several places, with further groups
+  within them. Their source and body are read whole; reaching such a
+  loop raises that same complaint before the source or body runs.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -582,6 +591,9 @@ only. The extension labels so far, all from PHP:
   reading is provided before its running. The complaint is part of the
   read program and is raised only when that form is reached, never while
   reading an uncalled function. It cannot make an unread body acceptable.
+  Several bare names set from one source may be read in this manner too:
+  every name and the source are read, and reaching the store raises the
+  complaint before any name is changed.
 - `ext.stmt.decorator`: marks before a function definition, each followed
   by an expression on its own line. The expressions are worked out in
   the order written and kept until the function is bound to its name.
@@ -765,6 +777,14 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.number.separator.after_prefix`: a switch; one separator
   may stand straight after a base prefix, before its first digit
   (`0x_ff`). The separators still count for nothing.
+- `ext.lexical.number.point.bare`: whether a decimal may have no figures
+  before or after its point, though one side must have them. Thus `.5`,
+  `3.` and `1.e49` are numbers; the exponent keeps its own spelling.
+- `ext.lexical.number.imaginary`: letters following a decimal coefficient
+  to name an imaginary number. The coefficient is read in full, including
+  its point and exponent. Such a literal can stand within an uncalled
+  routine. Upon reaching it, `ext.lexical.number.imaginary.unready` gives
+  the plain complaint, for the kernels do not yet hold complex numbers.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
 - `ext.lexical.number.imaginary`: letters following a decimal number
@@ -2203,6 +2223,10 @@ only. The extension labels so far, all from PHP:
   Both operands and the whole target are read. Reaching the operation
   raises `ext.op.matrix.unavailable`; matrix values and their methods
   are not yet provided.
+- `ext.op.bit.left.unready`: where given, the words that refuse a left
+  shift when it is reached. The sign and both operands are read as usual;
+  the fixed-width operation is withheld until the language's whole-number
+  shifting is provided. With no such words the operation is unchanged.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -2794,6 +2818,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
+| `ext.op.bit.left.unready` | - | - | `NotImplementedError: left shifts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.bit.not` | - | - | `~` | - | `~` | - | - | - | - | - |
 | `ext.op.bit.or` | - | - | `\|` | - | `\|` | - | - | - | - | - |
 | `ext.op.bit.or.maps` | - | - | `true` | - | - | - | - | - | - | - |
