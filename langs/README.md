@@ -344,6 +344,66 @@ only. The extension labels so far, all from PHP:
   may give its stop alone. The starting count is then nought. Its stop
   is found once, before the loop; two given bounds keep their meaning.
 
+- `ext.builtin.bytes` and `ext.builtin.bytearray`: makers of a row of
+  bytes, immutable and mutable respectively. No argument makes an empty
+  row; a whole number makes that many nought bytes; a walk of whole
+  numbers supplies the bytes. Text with an encoding is encoded. A mutable
+  row shares its places when bound under another name; copying and slicing
+  make a fresh row. Compound joining and repetition write through the
+  mutable row, so its other names see the change. Byte prefixes make the
+  immutable value, whose places hold whole numbers. Rows admit joining, repetition, ordering, membership
+  and equality; a byte row and text are never equal.
+- `ext.builtin.bytes.encode` and `.decode`: the methods taking text to
+  bytes and bytes to text. `ext.system.bytes.encodings` names the wide
+  encoding and its alias, then the seven-bit encoding and its alias.
+  `ext.system.bytes.strict` names strict conversion; other error policies
+  remain wanting.
+- `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
+  with two hexadecimal figures, and the maker reading those figures back.
+  White space may stand between pairs of figures.
+- `ext.builtin.bytes.upper` and `.lower`: methods changing the case of
+  letters in the seven-bit alphabet. All other bytes stand unchanged.
+- `ext.builtin.bytes.split` and `.join`: methods parting a row at a byte
+  separator, or at white space when none is given, and joining rows with
+  the receiver between them. A second split argument bounds the cuts.
+- `ext.builtin.bytes.startswith`, `.replace`, `.strip` and `.find`: methods
+  testing a beginning, replacing a byte sequence, trimming bytes from both
+  ends, and finding a sequence's first place. Replacement may be bounded
+  by a count. Other argument forms stop where reached.
+- `ext.builtin.bytes.from_int` and `.to_int`: an integer's method making
+  bytes and the integer maker's method reading bytes. `ext.system.bytes.order`
+  names the order with the greatest byte first, then that with the least
+  first. `ext.builtin.bytes.signed` names the keyword admitting signed
+  whole numbers, whose high bit then carries the sign.
+- `ext.builtin.isinstance`: a builtin asking whether a value is of a byte
+  kind. Other kind protocols remain wanting. `ext.builtin.hash` gives an
+  immutable byte row a content hash; mutable rows cannot be hashed. The
+  number is a kernel hash, not the reference's per-process salted number.
+- `ext.system.bytes.repr`: the text before the opening quote of an
+  immutable row, then that of a mutable row. The latter is closed with a
+  parenthesis. Printable bytes stand plainly, with quotes and backslashes
+  shielded; other bytes take escapes. `ext.system.bytes.type` gives the
+  words before and after a byte maker's name when its kind is printed.
+- `ext.lexical.string.bytes.ascii` and `.mixed`: complaints for a literal
+  character outside seven bits and for adjacent byte and ordinary literals.
+  Escaped bytes may hold all eight bits. These faults belong to reading,
+  even when the literal stands in a routine never called.
+- `ext.system.bytes.arguments`, `.range`, `.negative` and `.index`: plain
+  complaints for arguments of the wrong kind, a byte outside its bounds,
+  a negative count and an index beyond the row.
+- `ext.system.bytes.immutable` and `.unhashable`: plain complaints for
+  writing into immutable bytes and hashing mutable bytes.
+- `ext.system.bytes.separator`, `.overflow`, `.unsigned` and `.bad_order`:
+  plain complaints for an empty separator, an integer exceeding the given
+  width, a negative unsigned integer and an unknown byte order.
+- `ext.system.bytes.hex`: words before the position of an ill-written
+  hexadecimal figure. `ext.system.bytes.encode` and `.decode` head the
+  conversion complaints; the encoding, offending characters or bytes,
+  their positions and the cause follow in the run's account.
+- `ext.system.bytes.unready`: the plain complaint for a byte operation
+  read whole whose running cannot yet be honoured. Taking a builtin byte
+  method as a value, without calling it, is such a form at present.
+
 - `ext.lexical.string.long`: the quote marks that enclose text over
   lines. The whole mark ends the string; a shorter run and the other
   kind of quote stand for themselves.
@@ -351,9 +411,8 @@ only. The extension labels so far, all from PHP:
   letters before a quote that ask for raw text, byte text, plain text,
   or text with expressions between braces. A raw letter may stand on
   either side of a byte or format letter. Raw text keeps its backslashes,
-  even one shielding a quote. Byte text is held as ordinary text at
-  present; non-ASCII characters written directly in a byte literal are
-  rejected. Doubled braces in formatted text stand for single braces.
+  even one shielding a quote. Byte text keeps its distinct value; non-ASCII characters written
+  directly in a byte literal are rejected. Doubled braces in formatted text stand for single braces.
   Fields may carry conversions, specifications and a debug equals sign.
   Each field and each nested field in its specification is read as code.
   Text conversions quote strings and make escapes visible. Alignment,
@@ -364,13 +423,12 @@ only. The extension labels so far, all from PHP:
 - `ext.lexical.string.bytes.unavailable` and
   `ext.lexical.string.value.unready`: diagnostic words retained for
   implementations that cannot hold byte text or render a field. The
-  current kernels hold byte text as ordinary text and use the following
+  current kernels hold distinct byte values and use the following
   label when a field presentation is unsupported.
 - `ext.lexical.string.format.unavailable`: what is said when a field's
   value or specification asks for a rendering the run has no rule for.
   The field and its specification are read and worked out before this
   complaint; no part of the specification is quietly put by.
-  even one shielding a quote. Byte text is read whole but refused when reached. Doubled braces in formatted text stand for single braces;
   fields may carry conversions, format specifications and a debug equals
   sign. Each field and each field in its specification is read as code.
   Plain fields of whole numbers, text, flags and nothing are rendered,
@@ -3270,6 +3328,23 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
+| `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.join` | - | - | `join` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.startswith` | - | - | `startswith` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.strip` | - | - | `strip` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.to_int` | - | - | `int.from_bytes` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.upper` | - | - | `upper` | - | - | - | - | - | - | - |
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
@@ -3580,6 +3655,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.prologue.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.string.amiss` | - | - | `invalid string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.bytes.ascii` | - | - | `SyntaxError: bytes can only contain ASCII literal characters` | - | - | - | - | - | - | - |
+| `ext.lexical.string.bytes.mixed` | - | - | `SyntaxError: cannot mix bytes and nonbytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
@@ -3888,6 +3965,25 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | `__program_argv` | - | `$argv` | - | - | - | - | - |
+| `ext.system.bytes.arguments` | - | - | `TypeError: invalid bytes arguments` | - | - | - | - | - | - | - |
+| `ext.system.bytes.bad_order` | - | - | `ValueError: byteorder must be either 'little' or 'big'` | - | - | - | - | - | - | - |
+| `ext.system.bytes.decode` | - | - | `UnicodeDecodeError: ` | - | - | - | - | - | - | - |
+| `ext.system.bytes.encode` | - | - | `UnicodeEncodeError: ` | - | - | - | - | - | - | - |
+| `ext.system.bytes.encodings` | - | - | `utf-8` `utf8` `ascii` `us-ascii` | - | - | - | - | - | - | - |
+| `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
+| `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
+| `ext.system.bytes.index` | - | - | `IndexError: index out of range` | - | - | - | - | - | - | - |
+| `ext.system.bytes.negative` | - | - | `ValueError: negative count` | - | - | - | - | - | - | - |
+| `ext.system.bytes.order` | - | - | `big` `little` | - | - | - | - | - | - | - |
+| `ext.system.bytes.overflow` | - | - | `OverflowError: int too big to convert` | - | - | - | - | - | - | - |
+| `ext.system.bytes.range` | - | - | `ValueError: bytes must be in range(0, 256)` | - | - | - | - | - | - | - |
+| `ext.system.bytes.repr` | - | - | `b` `bytearray(b` | - | - | - | - | - | - | - |
+| `ext.system.bytes.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
+| `ext.system.bytes.strict` | - | - | `strict` | - | - | - | - | - | - | - |
+| `ext.system.bytes.type` | - | - | `<class '` `'>` | - | - | - | - | - | - | - |
+| `ext.system.bytes.unhashable` | - | - | `TypeError: unhashable type: 'bytearray'` | - | - | - | - | - | - | - |
+| `ext.system.bytes.unready` | - | - | `NotImplementedError: this bytes operation is not supported` | - | - | - | - | - | - | - |
+| `ext.system.bytes.unsigned` | - | - | `OverflowError: can't convert negative int to unsigned` | - | - | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |

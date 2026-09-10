@@ -64,6 +64,10 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
         if let [first, last] = table.strings("ext.stmt.import.missing") {
             if e.starts_with(first) && e.ends_with(last) { return e; }
         }
+        let byte_complaints = ["ext.system.bytes.arguments", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.system.bytes.hex", "ext.system.bytes.immutable", "ext.system.bytes.index", "ext.system.bytes.negative", "ext.system.bytes.overflow", "ext.system.bytes.range", "ext.system.bytes.separator", "ext.system.bytes.unhashable", "ext.system.bytes.unready", "ext.system.bytes.unsigned", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"];
+        for key in byte_complaints {
+            if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
+        }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

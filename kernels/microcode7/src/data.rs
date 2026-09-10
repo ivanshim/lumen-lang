@@ -155,6 +155,8 @@ pub enum Value {
     Refusal(Rc<str>),
     Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
     Arguments(Rc<Vec<Value>>),
+    Octets { cell: Rc<RefCell<Vec<u8>>>, changeable: bool, lead: Rc<str> },
+    OctetKind { changeable: bool, shown: Rc<str> },
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -439,7 +441,7 @@ impl Value {
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
@@ -453,6 +455,7 @@ impl Value {
             Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
             Value::Set(items) => !items.borrow().keys.is_empty(),
             Value::Arguments(row) => !row.is_empty(),
+            Value::Octets { cell, .. } => cell.borrow().len() > 0,
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -486,7 +489,7 @@ impl Value {
             Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -519,6 +522,8 @@ impl Value {
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
             (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
+            (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
+            (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -742,6 +747,8 @@ impl Value {
             Value::SetCursor { .. } => String::from("<set walk>"),
             Value::Set(items) => items.borrow().written(Value::bare),
             Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
+            Value::Octets { cell, changeable, lead } => octets_shown(&cell.borrow(), lead, *changeable),
+            Value::OctetKind { shown, .. } => shown.to_string(),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
@@ -1238,4 +1245,23 @@ fn ordinary_real(worth: f64, figures: usize) -> String {
             expanded.chars().take(dot + 1 + figures.saturating_sub(whole)).collect()
         }
     }
+}
+
+fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
+    let mark = match (content.contains(&39), content.contains(&34)) { (true, false) => 34, _ => 39 };
+    let mut pieces = Vec::new();
+    pieces.push(lead.to_owned());
+    pieces.push((mark as char).to_string());
+    for number in content.iter().copied() {
+        pieces.push(if number == mark || number == 92 {
+            format!("\\{}", number as char)
+        } else if let Some(letter) = match number { 9 => Some('t'), 10 => Some('n'), 13 => Some('r'), _ => None } {
+            format!("\\{}", letter)
+        } else if (32..127).contains(&number) {
+            (number as char).to_string()
+        } else { format!("\\x{number:02x}") });
+    }
+    pieces.push((mark as char).to_string());
+    if changing { pieces.push(")".to_owned()); }
+    pieces.concat()
 }
