@@ -337,8 +337,67 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.breakpoint": [
+    "breakpoint"
+  ],
+  "ext.builtin.compile": [
+    "compile"
+  ],
+  "ext.builtin.compile.kind": [
+    "code"
+  ],
+  "ext.builtin.compile.modes": [
+    "exec",
+    "eval",
+    "single"
+  ],
+  "ext.builtin.compile.parameters": [
+    "source",
+    "filename",
+    "mode",
+    "flags",
+    "dont_inherit",
+    "optimize",
+    "_feature_version"
+  ],
+  "ext.builtin.dir": [
+    "dir"
+  ],
+  "ext.builtin.eval": [
+    "eval"
+  ],
+  "ext.builtin.exec": [
+    "exec"
+  ],
+  "ext.builtin.globals": [
+    "globals"
+  ],
+  "ext.builtin.hash": [
+    "hash"
+  ],
+  "ext.builtin.help": [
+    "help"
+  ],
+  "ext.builtin.id": [
+    "id"
+  ],
+  "ext.builtin.import": [
+    "__import__"
+  ],
+  "ext.builtin.import.unready": [
+    "NotImplementedError: importing modules cannot run yet"
+  ],
+  "ext.builtin.input": [
+    "input"
+  ],
+  "ext.builtin.input.eof": [
+    "EOFError: EOF when reading a line"
+  ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.locals": [
+    "locals"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -385,6 +444,24 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.scope.unready": [
+    "NotImplementedError: this introspective operation cannot run yet"
+  ],
+  "ext.builtin.sorted": [
+    "sorted"
+  ],
+  "ext.builtin.source.parameters": [
+    "source",
+    "globals",
+    "locals",
+    "closure"
+  ],
+  "ext.builtin.source.syntax": [
+    "SyntaxError: invalid syntax"
+  ],
+  "ext.builtin.source.unready": [
+    "NotImplementedError: this source operation cannot run yet"
+  ],
   "ext.builtin.sum": [
     "sum"
   ],
@@ -418,6 +495,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.vars": [
+    "vars"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -1000,17 +1080,39 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.class.name": [
+    "__name__"
+  ],
+  "ext.system.fault.class.name": [
+    "NameError"
+  ],
+  "ext.system.fault.class.reading": [
+    "SyntaxError"
+  ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
   ],
   "ext.system.fault.shift": [
     "negative shift count"
   ],
+  "ext.system.module.builtins": [
+    "__builtins__"
+  ],
+  "ext.system.module.doc": [
+    "__doc__"
+  ],
   "ext.system.module.name": [
     "__name__"
   ],
+  "ext.system.name.absent": [
+    "NameError: name '",
+    "' is not defined"
+  ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
+  ],
+  "ext.system.source.file": [
+    "__file__"
   ],
   "ext.system.untrue.empty_array": true
 }

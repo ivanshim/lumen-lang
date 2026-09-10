@@ -460,6 +460,20 @@ pub enum Builtin {
     /// (ext.builtin.include). It is assembled against the same globals
     /// and run where it stands, and what it gives back is its answer.
     Eval,
+    GlobalNames,
+    LocalNames,
+    Vars,
+    Exec,
+    Compile,
+    Dir,
+    Identity,
+    Hash,
+    Input,
+    Breakpoint,
+    Help,
+    Import,
+    Sorted,
+
     Include,
     /// The same, but only where that file has not been read before in
     /// this run (ext.builtin.include.once); a file read already answers

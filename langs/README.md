@@ -1899,6 +1899,37 @@ only. The extension labels so far, all from PHP:
   there is no such mark in the writing, so one standing there says the
   piece spells a name and the member is named by what *that* binding
   holds.
+- `ext.builtin.globals` gives the outer names as one live dictionary.
+  `ext.builtin.locals` and `ext.builtin.vars`, given no arguments, give
+  the names where the call stands; within a routine this is a copy.
+  `ext.builtin.dir`, given no arguments, lists those names in order.
+- `ext.builtin.exec` reads and runs source in the dictionaries handed
+  to it. `ext.builtin.eval` may take those same dictionaries where
+  `ext.builtin.compile.modes` is spelled, and then reads an expression.
+  `ext.builtin.source.parameters` names source, outer names, inner names
+  and a closure, in that order; a closure cannot yet be handed in.
+  `ext.builtin.compile` checks the text before handing back a code value.
+  `ext.builtin.compile.parameters` names source, file, mode, flags,
+  inheritance, optimisation and feature version. Flags and inheritance
+  are read and ignored. `ext.builtin.compile.modes` names whole source,
+  an expression and a single statement; `ext.builtin.compile.kind` names
+  the code value. `ext.builtin.source.syntax` gives the plain complaint
+  for text that cannot be read. `ext.builtin.source.unready` gives the
+  complaint where a source operation cannot yet be honoured.
+- `ext.builtin.id` gives the identity of a value held by reference;
+  `ext.builtin.hash` hashes small whole numbers, truth and text.
+  `ext.builtin.sorted` orders text values, including dictionary keys.
+  `ext.builtin.scope.unready` refuses other introspective operations.
+- `ext.builtin.input` reads one line, leaving off its ending;
+  `ext.builtin.input.eof` gives the complaint when no line remains.
+  `ext.builtin.breakpoint` does nothing, and `ext.builtin.help` writes
+  nothing. `ext.builtin.import` names the module reader;
+  `ext.builtin.import.unready` refuses it whilst modules cannot run.
+- `ext.system.module.builtins` names the dictionary of builtin words,
+  and `ext.system.module.doc` names the module's documentation.
+  `ext.system.class.name` names the plain name on a class value.
+  `ext.system.fault.class.name` names the class of a missing binding;
+  `ext.system.name.absent` gives the words about that binding's name.
 - `ext.builtin.eval`: builtins taking a piece of the language written
   out as text, reading it as the run's own language and running it
   where the call stands. The text is read with whatever a program of
@@ -2581,31 +2612,47 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.breakpoint` | - | - | `breakpoint` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.compile` | - | - | `compile` | - | - | - | - | - | - | - |
+| `ext.builtin.compile.kind` | - | - | `code` | - | - | - | - | - | - | - |
+| `ext.builtin.compile.modes` | - | - | `exec` `eval` `single` | - | - | - | - | - | - | - |
+| `ext.builtin.compile.parameters` | - | - | `source` `filename` `mode` `flags` `dont_inherit` `optimize` `_feature_version` | - | - | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
+| `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
-| `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
+| `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
+| `ext.builtin.exec` | - | - | `exec` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.globals` | - | - | `globals` | - | - | - | - | - | - | - |
+| `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
+| `ext.builtin.help` | - | - | `help` | - | - | - | - | - | - | - |
+| `ext.builtin.id` | - | - | `id` | - | - | - | - | - | - | - |
+| `ext.builtin.import` | - | - | `__import__` | - | - | - | - | - | - | - |
+| `ext.builtin.import.unready` | - | - | `NotImplementedError: importing modules cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
+| `ext.builtin.input.eof` | - | - | `EOFError: EOF when reading a line` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
@@ -2638,7 +2685,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
+| `ext.builtin.scope.unready` | - | - | `NotImplementedError: this introspective operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
+| `ext.builtin.source.parameters` | - | - | `source` `globals` `locals` `closure` | - | - | - | - | - | - | - |
+| `ext.builtin.source.syntax` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
+| `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
@@ -2656,6 +2708,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
+| `ext.builtin.vars` | - | - | `vars` | - | - | - | - | - | - | - |
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
@@ -2947,6 +3000,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.class.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
 | `ext.system.complaint.markup.kind` | - | - | - | - | `<br />` `<b>` `</b>:  ` | - | - | - | - | - |
@@ -2964,7 +3018,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
-| `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
+| `ext.system.fault.class.name` | - | - | `NameError` | - | - | - | - | - | - | - |
+| `ext.system.fault.class.reading` | - | - | `SyntaxError` | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
@@ -2976,7 +3031,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.loose` | - | - | - | - | `mixed` `callable` `iterable` `object` `self` `static` `parent` `void` `never` `false` `true` | - | - | - | - | - |
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.module.builtins` | - | - | `__builtins__` | - | - | - | - | - | - | - |
+| `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.name.absent` | - | - | `NameError: name '` `' is not defined` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
 | `ext.system.reading.unclosed.mismatch` | - | - | - | - | `does not match '` `'` | - | - | - | - | - |
@@ -3005,7 +3063,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.scope.unready` | - | - | `NotImplementedError: this scope form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.system.source.class` | - | - | - | - | `__CLASS__` | - | - | - | - | - |
 | `ext.system.source.directory` | - | - | - | - | `__DIR__` | - | - | - | - | - |
-| `ext.system.source.file` | - | - | - | - | `__FILE__` | - | - | - | - | - |
+| `ext.system.source.file` | - | - | `__file__` | - | `__FILE__` | - | - | - | - | - |
 | `ext.system.source.line` | - | - | - | - | `__LINE__` | - | - | - | - | - |
 | `ext.system.source.method` | - | - | - | - | `__METHOD__` | - | - | - | - | - |
 | `ext.system.source.routine` | - | - | - | - | `__FUNCTION__` | - | - | - | - | - |

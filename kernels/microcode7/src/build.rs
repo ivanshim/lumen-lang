@@ -870,6 +870,9 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if self.table.single("ext.builtin.globals").is_some() && self.table.prims.contains_key(name) {
+            return constant(Value::text(name));
+        }
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
                 if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }

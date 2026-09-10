@@ -25,6 +25,9 @@ enum Passage {
 
 pub struct Engine<'a> {
     lang: &'a Lang,
+    namespace: Option<Rc<RefCell<Value>>>,
+    scope_values: Vec<(Value, Value)>,
+    scope_is_module: bool,
     world: Vec<Value>,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
@@ -212,6 +215,7 @@ impl<'a> Engine<'a> {
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
+            namespace: None, scope_values: Vec::new(), scope_is_module: true,
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
             caught: Vec::new(),
@@ -831,6 +835,10 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        if !self.lang.builtin_globals.is_empty() {
+            if told.starts_with("Undefined variable") || self.lang.system_name_absent.first().map_or(false, |w| told.starts_with(w)) { return self.lang.system_fault_class_name.first().cloned(); }
+            if self.lang.builtin_source_syntax.first().map_or(false, |w| told == w) { return self.lang.fault_reading.clone(); }
+        }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -1223,7 +1231,7 @@ impl<'a> Engine<'a> {
     fn put_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) {
         match slot.near.first() {
             Some(&s) => frame[s] = v,
-            None => self.world[slot.far] = v,
+            None => { self.namespace_write(&slot.ident, v.clone()); self.world[slot.far] = v; },
         }
     }
 
@@ -1668,7 +1676,10 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(s)) => match self.as_fault(&s) { Some(v) => Err(Fault::Thrown(v)), None => Err(Fault::Note(s)) },
+            result => result,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -1737,13 +1748,236 @@ impl<'a> Engine<'a> {
         ending
     }
 
+    fn scope_class(&self, name: &str) -> Rc<Class> {
+        Rc::new(Class {
+            name: name.to_string(), base: None, answers: Vec::new(), fields: Vec::new(),
+            reaches: Vec::new(), methods: Vec::new(), shared: RefCell::new(Vec::new()),
+            constants: self.lang.system_class_name.iter().map(|word| (word.clone(), Value::text(name))).collect(),
+        })
+    }
+
+    /// The outer names keep one dictionary for the whole run.
+    fn start_namespace(&mut self) {
+        if self.namespace.is_some() || self.lang.builtin_globals.is_empty() { return; }
+        let mut builtins = Vec::new();
+        for words in [&self.lang.builtin_globals, &self.lang.builtin_locals, &self.lang.builtin_vars,
+            &self.lang.builtin_exec, &self.lang.builtin_compile, &self.lang.builtin_dir,
+            &self.lang.builtin_id, &self.lang.builtin_hash, &self.lang.builtin_input,
+            &self.lang.builtin_breakpoint, &self.lang.builtin_help, &self.lang.builtin_import,
+            &self.lang.builtin_sorted] {
+            builtins.extend(words.iter().map(|name| (Value::text(name), Value::text(name))));
+        }
+        builtins.extend(self.lang.builtins.keys().map(|name| (Value::text(name), Value::text(name))));
+        let dictionary = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(builtins)))));
+        let mut initial: Vec<(String, Value)> = self.lang.system_module_builtins.iter().map(|name| (name.clone(), dictionary.clone())).collect();
+        initial.extend(self.lang.system_module_doc.iter().map(|name| (name.clone(), Value::Null)));
+        for name in self.lang.system_fault_class_name.iter().chain(self.lang.fault_reading.iter()) {
+            let class = Value::Class(self.scope_class(name));
+            initial.push((name.clone(), class.clone()));
+            initial.push((format!("{}{}", name, crate::code::OF_A_CLASS), class));
+        }
+        for (name, value) in initial {
+            let at = self.registry.slot(&name);
+            self.world.resize(self.registry.idents.len(), Value::Blank);
+            self.world[at] = value;
+        }
+        let names = self.registry.idents.iter().zip(&self.world)
+            .filter(|(name, value)| Self::public_name(name) && !matches!(value, Value::Blank | Value::Gap))
+            .map(|(name, value)| (Value::text(name), value.clone())).collect();
+        self.namespace = Some(Rc::new(RefCell::new(Value::Map(Rc::new(names)))));
+    }
+
+    fn public_name(name: &str) -> bool { !name.starts_with('#') && !name.contains('\0') }
+
+    fn namespace_cells(&mut self) {
+        let Some(shared) = &self.namespace else { return };
+        let Value::Map(pairs) = shared.borrow().clone() else { return };
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        for (name, place) in self.registry.idents.iter().zip(&mut self.world) {
+            if Self::public_name(name) {
+                *place = pairs.iter().find(|(key, _)| matches!(key, Value::Text(k) if k.as_ref() == name))
+                    .map_or(Value::Blank, |(_, value)| value.clone());
+            }
+        }
+    }
+
+    fn namespace_write(&self, name: &str, value: Value) {
+        if !Self::public_name(name) { return; }
+        if let Some(shared) = &self.namespace {
+            if let Value::Map(pairs) = &mut *shared.borrow_mut() {
+                let pairs = Rc::make_mut(pairs);
+                if matches!(value, Value::Blank | Value::Gap) { pairs.retain(|(k, _)| !k.equals(&Value::text(name))); }
+                else { self.replace_item(pairs, Value::text(name), value); }
+            }
+        }
+    }
+
+    fn scope_words(&self) -> Value {
+        if self.scope_is_module { return Value::Bond(self.namespace.as_ref().unwrap().clone()); }
+        Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(self.scope_values.clone())))))
+    }
+
+    fn introspective(builtin: Builtin) -> bool {
+        matches!(builtin, Builtin::GlobalNames | Builtin::LocalNames | Builtin::Vars | Builtin::Exec
+            | Builtin::Compile | Builtin::Dir | Builtin::Identity | Builtin::Hash | Builtin::Input
+            | Builtin::Breakpoint | Builtin::Help | Builtin::Import | Builtin::Sorted)
+    }
+
+    fn source_arguments(&self, builtin: Builtin, items: Vec<(Option<String>, Value)>) -> Res<Vec<Value>> {
+        let parameters = if builtin == Builtin::Compile { &self.lang.builtin_compile_parameters } else { &self.lang.builtin_source_parameters };
+        let mut values = Vec::new();
+        let mut keywords = Vec::new();
+        for (key, value) in items {
+            if let Some(key) = key { keywords.push((key, value)); } else { values.push(value); }
+        }
+        let mut assigned: std::collections::HashSet<usize> = (0..values.len()).collect();
+        for (key, value) in keywords {
+            let at = parameters.iter().position(|word| word == &key).ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?;
+            if !assigned.insert(at) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+            values.resize(values.len().max(at + 1), Value::Null);
+            values[at] = value;
+        }
+        Ok(values)
+    }
+
+    fn scope_builtin(&mut self, builtin: Builtin, args: &[Value]) -> Res<Value> {
+        let unready = || self.lang.builtin_scope_unready[0].clone();
+        match builtin {
+            Builtin::GlobalNames if args.is_empty() => Ok(Value::Bond(self.namespace.as_ref().unwrap().clone())),
+            Builtin::LocalNames | Builtin::Vars if args.is_empty() => Ok(self.scope_words()),
+            Builtin::Dir if args.is_empty() => {
+                let Value::Map(pairs) = collection_contents(&self.scope_words()) else { unreachable!() };
+                let mut names: Vec<String> = pairs.iter().map(|(key, _)| key.plain()).collect();
+                names.sort();
+                Ok(Value::Array(Rc::new(names.iter().map(|name| Value::text(name)).collect())))
+            }
+            Builtin::Sorted if args.len() == 1 => {
+                let mut values = self.comprehension_items(&args[0])?;
+                if !values.iter().all(|v| matches!(v, Value::Text(_))) { return Err(unready()); }
+                values.sort_by_key(Value::plain);
+                Ok(Value::Array(Rc::new(values)))
+            }
+            Builtin::Breakpoint | Builtin::Help => Ok(Value::Null),
+            Builtin::Import => Err(self.lang.builtin_import_unready[0].clone()),
+            Builtin::Input if args.len() <= 1 => {
+                if let Some(prompt) = args.first() { self.utter(&prompt.display(&self.wording())); }
+                use std::io::Write;
+                std::io::stdout().flush().map_err(|e| e.to_string())?;
+                let mut line = String::new();
+                if std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())? == 0 { return Err(self.lang.builtin_input_eof[0].clone()); }
+                if line.ends_with('\n') { line.pop(); if line.ends_with('\r') { line.pop(); } }
+                Ok(Value::text(&line))
+            }
+            Builtin::Identity if args.len() == 1 => {
+                let address = match &args[0] {
+                    Value::Bond(cell) => Rc::as_ptr(cell) as usize,
+                    Value::Object(object) => Rc::as_ptr(object) as usize,
+                    Value::Class(class) => Rc::as_ptr(class) as usize,
+                    Value::Routine(routine) => Rc::as_ptr(routine) as usize,
+                    Value::Text(text) => text.as_ptr() as usize,
+                    _ => return Err(unready()),
+                };
+                Ok(Value::of_big(BigInt::from(address)))
+            }
+            Builtin::Hash if args.len() == 1 => {
+                match collection_contents(&args[0]) {
+                    Value::Small(n) => Ok(Value::Small(if n == -1 { -2 } else { n })),
+                    Value::Flag(b) => Ok(Value::Small(i64::from(b))),
+                    Value::Text(text) => {
+                        let mut h = 0i64;
+                        for byte in text.bytes() { h = h.wrapping_mul(31).wrapping_add(i64::from(byte)); }
+                        Ok(Value::Small(if h == -1 { -2 } else { h }))
+                    }
+                    _ => Err(unready()),
+                }
+            }
+            Builtin::Exec | Builtin::Eval | Builtin::Compile => self.source_builtin(builtin, args),
+            _ => Err(unready()),
+        }
+    }
+
+    fn source_builtin(&mut self, builtin: Builtin, args: &[Value]) -> Res<Value> {
+        let unready = self.lang.builtin_source_unready[0].clone();
+        let syntax = self.lang.builtin_source_syntax[0].clone();
+        let Some(first) = args.first() else { return Err(self.lang.call_amiss[0].clone()) };
+        let (text, filename, mode) = match collection_contents(first) {
+            Value::Text(text) => {
+                let mode = if builtin == Builtin::Compile {
+                    let Some(Value::Text(mode)) = args.get(2) else { return Err(unready) };
+                    self.lang.builtin_compile_modes.iter().position(|word| word == mode.as_ref()).ok_or_else(|| unready.clone())?
+                } else { usize::from(builtin == Builtin::Eval) };
+                let filename = if builtin == Builtin::Compile { args.get(1).map(Value::plain).ok_or_else(|| unready.clone())? } else { self.source.to_string() };
+                (text.to_string(), filename, mode)
+            }
+            Value::Object(object) if builtin != Builtin::Compile && object.class.name == self.lang.builtin_compile_kind[0] => {
+                let fields = object.fields.borrow();
+                (fields[0].1.plain(), fields[1].1.plain(), as_index(&fields[2].1)?)
+            }
+            _ => return Err(unready),
+        };
+        if builtin != Builtin::Compile && args.len() > 3 { return Err(unready); }
+        if builtin == Builtin::Compile && args.get(5).map_or(false, |v| !matches!(v, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(unready); }
+        let source = if mode == 1 {
+            let group = self.lang.grouping.as_ref().ok_or_else(|| unready.clone())?;
+            format!("{} {}\n{}\n{}", self.lang.return_words[0], group.open, text.trim(), group.close)
+        } else { text.clone() };
+        let tokens = self.tokens_of_text(&source).map_err(|_| syntax.clone())?;
+        // Validation uses a fresh registry and leaves the running names alone.
+        let mut validation = crate::compile::Registry::default();
+        crate::compile::compile_from(&tokens, self.lang, &mut validation, 0, Some(Rc::from(filename.as_str())))
+            .map_err(|_| syntax.clone())?;
+        if builtin == Builtin::Compile {
+            self.made += 1;
+            return Ok(Value::Object(Rc::new(Instance {
+                class: self.scope_class(&self.lang.builtin_compile_kind[0]), mark: self.made,
+                fields: RefCell::new(vec![(self.lang.builtin_compile_parameters[0].clone(), Value::text(&text)),
+                    (self.lang.builtin_compile_parameters[1].clone(), Value::text(&filename)),
+                    (self.lang.builtin_compile_parameters[2].clone(), Value::Small(mode as i64))]),
+            })));
+        }
+        let explicit = args.get(1).filter(|v| !matches!(v, Value::Null));
+        let target_global = match explicit {
+            Some(Value::Bond(cell)) if matches!(*cell.borrow(), Value::Map(_)) => Some(cell.clone()),
+            Some(_) => return Err(unready),
+            None => None,
+        };
+        let local = args.get(2).filter(|v| !matches!(v, Value::Null)).cloned()
+            .or_else(|| if explicit.is_none() && !self.scope_is_module { Some(self.scope_words()) } else { None });
+        if let Some(value) = &local { if !matches!(collection_contents(value), Value::Map(_)) { return Err(unready); } }
+        let saved_namespace = self.namespace.clone();
+        if let Some(target) = target_global { self.namespace = Some(target); }
+        self.namespace_cells();
+        let depth = self.data.len();
+        let result = (|| {
+            if let Some(local) = &local {
+                let Value::Map(pairs) = collection_contents(local) else { unreachable!() };
+                let names: Vec<String> = pairs.iter().map(|(k, _)| k.plain()).collect();
+                let read = crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(Rc::from(filename.as_str())), Some(names), None, true).map_err(|_| syntax.clone())?;
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                let mut frame: Vec<Value> = pairs.iter().map(|(_, v)| v.clone()).collect();
+                frame.resize(read.idents.len(), Value::Blank);
+                let ran = self.run_instrs(&read, &mut frame);
+                if let Value::Bond(cell) = local {
+                    *cell.borrow_mut() = Value::Map(Rc::new(read.idents.iter().zip(frame).filter(|(n,v)| Self::public_name(n) && !matches!(v, Value::Blank | Value::Gap)).map(|(n,v)| (Value::text(n), v)).collect()));
+                }
+                match ran { Ok(()) => Ok(self.data.pop().unwrap_or(Value::Null)), Err(Fault::Note(s)) => Err(s), Err(other) => { self.carried = Some(other); Err(unready.clone()) } }
+            } else { self.run_source(&source, Some(filename)) }
+        })();
+        self.data.truncate(depth);
+        self.namespace = saved_namespace;
+        self.namespace_cells();
+        result.map(|v| if builtin == Builtin::Exec { Value::Null } else if mode == 0 { Value::Null } else { v })
+    }
+
     fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
         let mut pc = span.0;
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
+        self.start_namespace();
         while pc >= span.0 && pc < span.1 {
+            self.namespace_cells();
             // A complaint raised where the run could only read waits to
             // be handed over; here, before the next word, is where the
             // run can reach back into the program to hand it on.
@@ -1801,12 +2035,16 @@ impl<'a> Engine<'a> {
                     self.store_cell(slot, frame, v)?;
                 }
                 Instr::Act(op, argc) => {
+                    if self.namespace.is_some() {
+                        self.scope_is_module = program.body_of_all && program.idents.is_empty();
+                        self.scope_values = program.idents.iter().zip(frame.iter()).filter(|(n,v)| Self::public_name(n) && !matches!(v, Value::Blank | Value::Gap)).map(|(n,v)| (Value::text(n), v.clone())).collect();
+                    }
                     // Text read while the run goes is read where it
                     // stands: inside a routine it sees that routine's
                     // names, as the reference has it, and only the
                     // outermost body has none but the globals.
                     let done = match op {
-                        Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 => self.run_text_here(program, frame),
+                        Action::Builtin(Builtin::Eval, _) if self.lang.builtin_globals.is_empty() && !program.body_of_all && *argc == 1 => self.run_text_here(program, frame),
                         // What a call was given is read back as it
                         // stands now: a parameter written to since holds
                         // what was written, and one handed a cell reads
@@ -4221,6 +4459,10 @@ impl<'a> Engine<'a> {
     /// Builtins take the same opened arguments as a declared routine,
     /// but each names its own few places, where the definition spells them.
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        if !self.lang.builtin_globals.is_empty() && matches!(builtin, Builtin::Eval | Builtin::Exec | Builtin::Compile) {
+            let args = self.source_arguments(builtin, items)?;
+            return self.source_builtin(builtin, &args);
+        }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
         for (key, value) in items {
@@ -4320,6 +4562,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if Self::introspective(builtin) || (builtin == Builtin::Eval && !self.lang.builtin_globals.is_empty()) { return self.scope_builtin(builtin, args); }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
@@ -4355,6 +4598,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::GlobalNames | Builtin::LocalNames | Builtin::Vars | Builtin::Exec | Builtin::Compile | Builtin::Dir | Builtin::Identity | Builtin::Hash | Builtin::Input | Builtin::Breakpoint | Builtin::Help | Builtin::Import | Builtin::Sorted => return self.scope_builtin(builtin, args),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -5000,6 +5244,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
+                if !self.lang.builtin_globals.is_empty() { if let Value::Object(o) = &args[0] { return Ok(Value::Class(o.class.clone())); } }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {

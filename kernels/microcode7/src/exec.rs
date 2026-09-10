@@ -104,6 +104,9 @@ enum Next {
 }
 
 pub struct Machine<'a> {
+    named_world: Option<Rc<RefCell<Value>>>,
+    near_names: Vec<(Value, Value)>,
+    near_world: bool,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -245,6 +248,7 @@ impl<'a> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         Machine {
             table,
+            named_world: None, near_names: Vec::new(), near_world: true,
             outermost: Env::make(idents.len(), None),
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
@@ -1123,6 +1127,10 @@ impl<'a> Machine<'a> {
     /// its own faults are of which kind, being the one that words them.
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
+        if self.table.single("ext.builtin.globals").is_some() {
+            if told.starts_with("Undefined variable") || self.table.single("ext.system.name.absent").map_or(false, |s| told.starts_with(s)) { return self.table.single("ext.system.fault.class.name").map(str::to_owned); }
+            if self.table.single("ext.builtin.source.syntax") == Some(told) { return self.table.single("ext.system.fault.class.reading").map(str::to_owned); }
+        }
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
             // Words the definition itself gave for a place outside the
@@ -1533,7 +1541,10 @@ impl<'a> Machine<'a> {
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         if self.table.flag("ext.syntax.call.bind_names") {
-            ascend(frame, slot.up).cells.borrow_mut()[slot.at] = self.collection_cell(value);
+            let target = ascend(frame, slot.up);
+            let stored = self.collection_cell(value);
+            if Rc::ptr_eq(target, &self.outermost) { self.write_outer_name(&slot.ident, &stored); }
+            target.cells.borrow_mut()[slot.at] = stored;
             return Ok(());
         }
         // A cell becomes a name's own only by being tied to it. A plain
@@ -1603,7 +1614,267 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn small_class(&self, title: &str) -> Rc<Blueprint> {
+        let labels = self.table.strings("ext.system.class.name");
+        Rc::new(Blueprint {
+            shared: RefCell::new(Vec::new()), constants: labels.iter().map(|label| (label.clone(), Value::text(title))).collect(),
+            methods: Vec::new(), reaches: Vec::new(), fields: Vec::new(), answers: Vec::new(),
+            under: None, name: title.to_owned(),
+        })
+    }
+
+    fn visible_binding(word: &str) -> bool {
+        !word.contains('\0') && !word.starts_with('#')
+    }
+
+    /// Keep a dictionary beside the outer environment, with writes in either
+    /// place seen by the other before another form is worked out.
+    fn establish_names(&mut self) {
+        if self.named_world.is_some() || self.table.single("ext.builtin.globals").is_none() { return; }
+        let native = Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(
+            self.table.prims.keys().map(|s| (Value::text(s), Value::text(s))).collect(),
+        )))));
+        let mut seeds = Vec::new();
+        for word in self.table.strings("ext.system.module.doc") { seeds.push((word.clone(), Value::Nil)); }
+        for word in self.table.strings("ext.system.module.builtins") { seeds.push((word.clone(), native.clone())); }
+        for label in ["ext.system.fault.class.reading", "ext.system.fault.class.name"] {
+            for title in self.table.strings(label) {
+                let worth = Value::Blueprint(self.small_class(title));
+                seeds.push((format!("{}{}", title, crate::form::OF_A_CLASS), worth.clone()));
+                seeds.push((title.clone(), worth));
+            }
+        }
+        for (word, worth) in seeds {
+            let place = if let Some(index) = self.idents.iter().position(|s| s == &word) { index }
+                else { self.idents.push(word); self.idents.len() - 1 };
+            self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+            self.outermost.cells.borrow_mut()[place] = worth;
+        }
+        let held = self.outermost.cells.borrow();
+        let pairs = self.idents.iter().enumerate().filter_map(|(i, word)| {
+            (Self::visible_binding(word) && !matches!(held[i], Value::Unset)).then(|| (Value::text(word), held[i].clone()))
+        }).collect();
+        self.named_world = Some(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs)))));
+    }
+
+    fn refresh_outer(&self) {
+        if let Some(names) = &self.named_world {
+            if let Value::Dict(entries) = &*names.borrow() {
+                let mut held = self.outermost.cells.borrow_mut();
+                held.resize(self.idents.len(), Value::Unset);
+                for (index, word) in self.idents.iter().enumerate() {
+                    if !Self::visible_binding(word) { continue; }
+                    held[index] = entries.iter().find_map(|(key, value)| {
+                        matches!(key, Value::Text(s) if s.as_ref() == word).then(|| value.clone())
+                    }).unwrap_or(Value::Unset);
+                }
+            }
+        }
+    }
+
+    fn write_outer_name(&self, word: &str, worth: &Value) {
+        if Self::visible_binding(word) {
+            if let Some(book) = &self.named_world {
+                if let Value::Dict(entries) = &mut *book.borrow_mut() {
+                    let entries = Rc::make_mut(entries);
+                    let key = Value::text(word);
+                    if let Some(at) = entries.iter().position(|(k, _)| k.equals(&key)) {
+                        if matches!(worth, Value::Unset) { entries.remove(at); }
+                        else { entries[at].1 = worth.clone(); }
+                    } else if !matches!(worth, Value::Unset) { entries.push((key, worth.clone())); }
+                }
+            }
+        }
+    }
+
+    fn remember_scope(&mut self, frame: &Rc<Env>) {
+        self.near_world = Rc::ptr_eq(frame, &self.outermost);
+        self.near_names.clear();
+        if self.near_world { return; }
+        if let Some(routine) = self.frames_named.last() {
+            let slots = frame.cells.borrow();
+            for (at, name) in routine.idents.iter().enumerate() {
+                if Self::visible_binding(name) && !matches!(slots.get(at), None | Some(Value::Unset)) {
+                    self.near_names.push((Value::text(name), slots[at].clone()));
+                }
+            }
+        }
+    }
+
+    fn current_names(&self) -> Value {
+        if self.near_world { Value::Shared(self.named_world.as_ref().unwrap().clone()) }
+        else { Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(self.near_names.clone()))))) }
+    }
+
+    fn names_primitive(op: Prim) -> bool {
+        matches!(op, Prim::WorldNames | Prim::NearNames | Prim::NamesOf | Prim::RunText | Prim::PrepareText
+            | Prim::NamesListed | Prim::IdentityOf | Prim::HashOf | Prim::ReadLine | Prim::BreakHere
+            | Prim::HelpHere | Prim::ImportNamed | Prim::Ordered)
+    }
+
+    fn text_parameters(&self, op: Prim, raw: Vec<Value>) -> Res<Vec<Value>> {
+        let (mut ordinary, keywords) = self.open_arguments(raw)?;
+        let keys = self.table.strings(if op == Prim::PrepareText { "ext.builtin.compile.parameters" } else { "ext.builtin.source.parameters" });
+        let mut occupied: Vec<usize> = (0..ordinary.len()).collect();
+        for (key, item) in keywords {
+            let place = keys.iter().position(|s| s == &key).ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
+            if occupied.contains(&place) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
+            occupied.push(place);
+            if ordinary.len() <= place { ordinary.resize(place + 1, Value::Nil); }
+            ordinary[place] = item;
+        }
+        Ok(ordinary)
+    }
+
+    fn names_operation(&mut self, op: Prim, values: &[Value]) -> Result<Value, String> {
+        let refused = self.table.single("ext.builtin.scope.unready").unwrap_or_default().to_owned();
+        if matches!(op, Prim::Weigh | Prim::RunText | Prim::PrepareText) { return self.read_code_value(op, values); }
+        match (op, values) {
+            (Prim::WorldNames, []) => Ok(Value::Shared(self.named_world.as_ref().unwrap().clone())),
+            (Prim::NearNames | Prim::NamesOf, []) => Ok(self.current_names()),
+            (Prim::NamesListed, []) => {
+                let Value::Dict(entries) = collection_read(&self.current_names()) else { unreachable!() };
+                let mut keys: Vec<String> = entries.iter().map(|entry| entry.0.bare()).collect();
+                keys.sort_unstable();
+                Ok(Value::Vector(Rc::new(keys.into_iter().map(|k| Value::text(&k)).collect())))
+            }
+            (Prim::Ordered, [item]) => {
+                let mut items = match collection_read(item) {
+                    Value::Dict(entries) => entries.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+                    Value::Vector(items) => items.as_ref().clone(),
+                    Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
+                    _ => return Err(refused),
+                };
+                if items.iter().any(|v| !matches!(v, Value::Text(_))) { return Err(refused); }
+                items.sort_by_cached_key(Value::bare);
+                Ok(Value::Vector(Rc::new(items)))
+            }
+            (Prim::BreakHere | Prim::HelpHere, _) => Ok(Value::Nil),
+            (Prim::ImportNamed, _) => Err(self.table.single("ext.builtin.import.unready").unwrap_or_default().to_owned()),
+            (Prim::ReadLine, [] | [_]) => {
+                if let Some(prompt) = values.first() { self.utter(&prompt.render(self.wording())); }
+                use std::io::Write as _;
+                std::io::stdout().flush().map_err(|error| error.to_string())?;
+                let mut buffer = String::new();
+                let size = std::io::stdin().read_line(&mut buffer).map_err(|error| error.to_string())?;
+                if size == 0 { return Err(self.table.single("ext.builtin.input.eof").unwrap_or_default().to_string()); }
+                let line = buffer.strip_suffix('\n').unwrap_or(&buffer);
+                Ok(Value::text(line.strip_suffix('\r').unwrap_or(line)))
+            }
+            (Prim::IdentityOf, [item]) => {
+                let key = match item {
+                    Value::Shared(p) => Rc::as_ptr(p) as usize,
+                    Value::Thing(p) => Rc::as_ptr(p) as usize,
+                    Value::Blueprint(p) => Rc::as_ptr(p) as usize,
+                    Value::Bound(p, _) | Value::Routine(p) => Rc::as_ptr(p) as usize,
+                    Value::Text(s) => s.as_ptr() as usize,
+                    _ => return Err(refused),
+                };
+                Ok(Value::from_big(BigInt::from(key)))
+            }
+            (Prim::HashOf, [item]) => {
+                let number = match collection_read(item) {
+                    Value::Small(n) => n,
+                    Value::Flag(truth) => if truth { 1 } else { 0 },
+                    Value::Text(s) => s.bytes().fold(0i64, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as i64)),
+                    _ => return Err(refused),
+                };
+                Ok(Value::Small(if number == -1 { -2 } else { number }))
+            }
+            _ => Err(refused),
+        }
+    }
+
+    fn read_code_value(&mut self, operation: Prim, supplied: &[Value]) -> Result<Value, String> {
+        let table = self.table;
+        let cannot = table.single("ext.builtin.source.unready").unwrap_or_default().to_owned();
+        let bad_text = table.single("ext.builtin.source.syntax").unwrap_or_default().to_owned();
+        let preparing = operation == Prim::PrepareText;
+        let formals = table.strings("ext.builtin.compile.parameters");
+        let modes = table.strings("ext.builtin.compile.modes");
+        let code_kind = table.single("ext.builtin.compile.kind").unwrap_or_default();
+        let given = supplied.first().ok_or_else(|| self.argument_fault("ext.syntax.call.amiss", None))?;
+        let (body, file, manner) = match collection_read(given) {
+            Value::Text(s) => {
+                let how = if preparing {
+                    match supplied.get(2) {
+                        Some(Value::Text(m)) => modes.iter().position(|k| k == m.as_ref()).ok_or_else(|| cannot.clone())?,
+                        _ => return Err(cannot),
+                    }
+                } else if operation == Prim::Weigh { 1 } else { 0 };
+                let place = if preparing { supplied.get(1).ok_or_else(|| cannot.clone())?.bare() } else { self.written_in.to_string() };
+                (s.to_string(), place, how)
+            }
+            Value::Thing(code) if !preparing && code.of.name == code_kind => {
+                let saved = code.holds.borrow();
+                let how = match saved[2].1 { Value::Small(n) => n as usize, _ => return Err(cannot) };
+                (saved[0].1.bare(), saved[1].1.bare(), how)
+            }
+            _ => return Err(cannot),
+        };
+        if !preparing && supplied.len() > 3 { return Err(cannot); }
+        if preparing && supplied.get(5).map_or(false, |value| !matches!(value, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(cannot); }
+        let written = if manner == 1 {
+            let start = table.single("stmt.return").ok_or_else(|| cannot.clone())?;
+            let open = table.single("syntax.group.open").ok_or_else(|| cannot.clone())?;
+            let close = table.single("syntax.group.close").ok_or_else(|| cannot.clone())?;
+            format!("{start} {open}\n{}\n{close}", body.trim())
+        } else { body.clone() };
+        let scan = self.text_scanned(&written).map_err(|_| bad_text.clone())?;
+        crate::build::build_from_at(&scan, table, &[], HashMap::new(), true, 0).map_err(|_| bad_text.clone())?;
+        if preparing {
+            self.made += 1;
+            let contents = vec![(formals[0].clone(), Value::text(&body)), (formals[1].clone(), Value::text(&file)), (formals[2].clone(), Value::Small(manner as i64))];
+            return Ok(Value::Thing(Rc::new(Thing { turn: self.made, holds: RefCell::new(contents), of: self.small_class(code_kind) })));
+        }
+        let world = match supplied.get(1) {
+            None | Some(Value::Nil) => None,
+            Some(Value::Shared(book)) if matches!(*book.borrow(), Value::Dict(_)) => Some(book.clone()),
+            _ => return Err(cannot),
+        };
+        let local = supplied.get(2).filter(|v| !matches!(v, Value::Nil)).cloned().or_else(|| {
+            if world.is_none() && !self.near_world { Some(self.current_names()) } else { None }
+        });
+        if local.as_ref().map_or(false, |v| !matches!(collection_read(v), Value::Dict(_))) { return Err(cannot); }
+        let original = self.named_world.clone();
+        if let Some(world) = world { self.named_world = Some(world); }
+        self.refresh_outer();
+        let worked = (|| {
+            if let Some(ref local) = local {
+                let Value::Dict(entries) = collection_read(local) else { unreachable!() };
+                let named: Vec<String> = entries.iter().map(|entry| entry.0.bare()).collect();
+                let known = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
+                let read = crate::build::build_within_at(&scan, table, &self.idents, &named, known, 0, None).map_err(|_| bad_text.clone())?;
+                self.idents = read.globals;
+                self.refresh_outer();
+                let env = Env::make(read.program.idents.len(), Some(self.outermost.clone()));
+                for (at, (_, v)) in entries.iter().enumerate() { env.cells.borrow_mut()[at] = v.clone(); }
+                self.frames_named.push(read.program.clone());
+                let ran = self.value_of(&read.program.body, &env);
+                self.frames_named.pop();
+                if let Value::Shared(book) = local {
+                    let held = env.cells.borrow();
+                    let mut saved = Vec::new();
+                    for (at, key) in read.program.idents.iter().enumerate() {
+                        if Self::visible_binding(key) && !matches!(held[at], Value::Unset) { saved.push((Value::text(key), held[at].clone())); }
+                    }
+                    *book.borrow_mut() = Value::Dict(Rc::new(saved));
+                }
+                match ran {
+                    Ok(v) | Err(Escape::Yield(v)) => Ok(v),
+                    Err(Escape::Error(s)) => Err(s),
+                    Err(escape) => { self.got_away = Some(escape); Err(cannot.clone()) }
+                }
+            } else { self.run_source(&written, Some(file)) }
+        })();
+        self.named_world = original;
+        self.refresh_outer();
+        worked.map(|answer| if operation == Prim::RunText || manner == 0 { Value::Nil } else { answer })
+    }
+
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        self.establish_names();
+        self.refresh_outer();
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
         // reach back into the program to hand it on.
@@ -2215,6 +2486,15 @@ impl<'a> Machine<'a> {
                 // inside a routine it knows that routine's names, as the
                 // reference has it, and only the outermost body has none
                 // but the globals.
+                native if Self::names_primitive(*native) || (*native == Prim::Weigh && self.table.single("ext.builtin.globals").is_some()) => {
+                    let raw = self.value_list(args, frame)?;
+                    self.remember_scope(frame);
+                    let values = if matches!(native, Prim::Weigh | Prim::RunText | Prim::PrepareText) { self.text_parameters(*native, raw)? }
+                        else { let (values, keywords) = self.open_arguments(raw)?; if !keywords.is_empty() && !matches!(native, Prim::HelpHere | Prim::BreakHere) { return Err(self.argument_fault("ext.builtin.scope.unready", None).into()); } values };
+                    let result = self.names_operation(*native, &values);
+                    if let Some(escape) = self.got_away.take() { return Err(escape); }
+                    result.map(|v| self.collection_cell(v)).map_err(Escape::Error)
+                }
                 Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) => {
                     let v = self.value_list(args, frame)?;
                     if v.len() != 1 {
@@ -2608,6 +2888,7 @@ impl<'a> Machine<'a> {
         let name = word.to_string();
         Some((|| {
             let values = self.value_list(args, frame)?;
+            self.remember_scope(frame);
             let made = self.prim(op, &name, &values);
             if let Some(away) = self.got_away.take() {
                 return Err(away);
@@ -3493,6 +3774,7 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if Self::names_primitive(op) || (op == Prim::Weigh && self.table.single("ext.builtin.globals").is_some()) { return self.names_operation(op, v); }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -3977,6 +4259,7 @@ impl<'a> Machine<'a> {
             // Source read while the program runs, built against the
             // globals it already has and run where it stands. A file
             // that cannot be read answers false, as such a language says.
+            Prim::WorldNames | Prim::NearNames | Prim::NamesOf | Prim::RunText | Prim::PrepareText | Prim::NamesListed | Prim::IdentityOf | Prim::HashOf | Prim::ReadLine | Prim::BreakHere | Prim::HelpHere | Prim::ImportNamed | Prim::Ordered => return self.names_operation(op, v),
             Prim::Weigh | Prim::Bring | Prim::BringOnce => {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
@@ -5040,6 +5323,9 @@ impl<'a> Machine<'a> {
                 };
             }
             Prim::SortOf => {
+                if self.table.single("ext.builtin.globals").is_some() && v.len() == 1 {
+                    if let Value::Thing(object) = &v[0] { return Ok(Value::Blueprint(object.of.clone())); }
+                }
                 n(1)?;
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.

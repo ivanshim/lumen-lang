@@ -607,6 +607,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
+        if !self.lang.builtin_globals.is_empty() && self.lang.builtins.contains_key(name) {
+            self.constant(Value::text(name));
+            return;
+        }
         let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);

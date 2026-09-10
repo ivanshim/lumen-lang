@@ -113,6 +113,20 @@ pub enum Prim {
     /// already has and run where it stands, and what it answers with is
     /// what it gives back.
     Weigh,
+    WorldNames,
+    NearNames,
+    NamesOf,
+    RunText,
+    PrepareText,
+    NamesListed,
+    IdentityOf,
+    HashOf,
+    ReadLine,
+    BreakHere,
+    HelpHere,
+    ImportNamed,
+    Ordered,
+
     Bring,
     /// The same as the one above, but only where that file has not been
     /// read before in this run (ext.builtin.include.once); one read
