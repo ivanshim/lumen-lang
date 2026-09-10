@@ -279,6 +279,10 @@ only. The extension labels so far, all from PHP:
   are admitted. `ext.builtin.to_int.base.amiss`, `.text.amiss` and
   `.text.required` give plain complaints for a base outside its bounds,
   ill-written digits, and a base given with something other than text.
+- `ext.builtin.to_int.digits`: a count limiting figures read in bases
+  other than powers of two, and figures written by the text conversion.
+  Nought leaves the count unbounded. `.digits.amiss` holds the words
+  before and after that count when the limit is passed.
 - `ext.builtin.to_int.infinity` and `.nan`: the plain complaints when
   an unbounded real or a value outside the numbers is asked to be whole.
   `ext.builtin.to_int.text.amiss` may hold two pieces, before the base
@@ -1487,6 +1491,11 @@ only. The extension labels so far, all from PHP:
   or merge pairs and named arguments. `.pop` takes a map key too.
   `.keys`, `.values` and `.items` yield views which follow later changes
   to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.method.conjugate` and `.__index__` give back the
+  unchanged number and the whole index. `.real` and `.imag` are value
+  attributes giving the number and nought of its kind. `.numerator` and
+  `.denominator` give a whole number and one. `.__truediv__` names the
+  numeric division method; it uses the same arithmetic as division.
 - `ext.builtin.method.fromhex`: read a real from hexadecimal figures,
   with an optional sign, point and binary exponent. The significand is
   kept whole until the answer is rounded to the binary width.
@@ -3090,7 +3099,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.hex` | - | - | - | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.join` | - | - | `join` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
@@ -3171,6 +3180,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__truediv__` | - | - | `__truediv__` `int.__truediv__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_count` | - | - | `bit_count` | - | - | - | - | - | - | - |
@@ -3178,8 +3189,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.capitalize` | - | - | `capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.method.center` | - | - | `center` | - | - | - | - | - | - | - |
 | `ext.builtin.method.clear` | - | - | `clear` | - | - | - | - | - | - | - |
+| `ext.builtin.method.conjugate` | - | - | `conjugate` | - | - | - | - | - | - | - |
 | `ext.builtin.method.copy` | - | - | `copy` | - | - | - | - | - | - | - |
 | `ext.builtin.method.count` | - | - | `count` | - | - | - | - | - | - | - |
+| `ext.builtin.method.denominator` | - | - | `denominator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.encode` | - | - | `encode` | - | - | - | - | - | - | - |
 | `ext.builtin.method.endswith` | - | - | `endswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.arguments` | - | - | `TypeError: invalid method arguments` | - | - | - | - | - | - | - |
@@ -3207,6 +3220,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.method.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
 | `ext.builtin.method.insert` | - | - | `insert` | - | - | - | - | - | - | - |
 | `ext.builtin.method.is_integer` | - | - | `is_integer` | - | - | - | - | - | - | - |
@@ -3222,7 +3236,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.ljust` | - | - | `ljust` | - | - | - | - | - | - | - |
 | `ext.builtin.method.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.method.lstrip` | - | - | `lstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.numerator` | - | - | `numerator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.method.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.method.remove` | - | - | `remove` | - | - | - | - | - | - | - |
 | `ext.builtin.method.replace` | - | - | `replace` | - | - | - | - | - | - | - |
 | `ext.builtin.method.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
@@ -3301,6 +3317,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int() with base ` `: ` | - | - | - | - | - | - | - |

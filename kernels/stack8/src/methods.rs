@@ -234,6 +234,10 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         Value::Small(_) | Value::Huge(_) | Value::Real(_) => {
             arity(0,0)?;
             match op {
+                "real" | "conjugate" => Ok(held.clone()),
+                "imag" => Ok(if matches!(held, Value::Real(_)) { crate::arith::to_real(&Value::Small(0), 16).unwrap().with_point(true) } else { Value::Small(0) }),
+                "numerator" | "__index__" if !matches!(held, Value::Real(_)) => Ok(Value::of_big(held.as_big()?)),
+                "denominator" if !matches!(held, Value::Real(_)) => Ok(Value::Small(1)),
                 "bit_count" if !matches!(held, Value::Real(_)) => {
                     let count: u64 = held.as_big()?.to_bytes_le().1.iter().map(|byte| u64::from(byte.count_ones())).sum();
                     Ok(Value::of_big(BigInt::from(count)))

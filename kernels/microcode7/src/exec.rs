@@ -2479,7 +2479,9 @@ impl<'a> Machine<'a> {
                 Prim::BindValueMethod => {
                     let receiver = self.value_of(&args[0], frame)?.keep(false);
                     let operation = self.value_of(&args[1], frame)?.bare();
-                    Ok(Value::Member(Rc::new(receiver), operation))
+                    if ["numerator", "denominator", "real", "imag"].contains(&operation.as_str()) {
+                        self.value_member(&receiver, &operation, vec![], vec![])
+                    } else { Ok(Value::Member(Rc::new(receiver), operation)) }
                 }
                 Prim::SortedValues => {
                     let raw = self.value_list(args, frame)?;
@@ -3193,6 +3195,11 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "__truediv__" {
+            let target = receiver.settled();
+            if !keywords.is_empty() || arguments.len() != 1 || !matches!(target, Value::Small(_) | Value::Huge(_) | Value::Frac(_)) { return Err(self.method_fault("arguments").into()); }
+            return self.prim(Prim::OverReal, name, &[target, arguments[0].settled()]).map_err(Escape::from);
+        }
         if self.table.has_any("ext.builtin.bytes") && (matches!(receiver.settled(), Value::Octets { .. }) || name == "encode") {
             let number = ["encode", "decode", "hex", "", "upper", "lower", "split", "join", "startswith", "replace", "strip", "find"].iter().position(|entry| *entry == name);
             if let Some(number) = number {
@@ -3398,6 +3405,8 @@ impl<'a> Machine<'a> {
             if !was_digit || (radix == 0 && !has_prefix && digits.starts_with('0') && digits.bytes().any(|b| b != b'0')) {
                 return Err(invalid());
             }
+            let bound = self.table.count("ext.builtin.to_int.digits").unwrap_or(0);
+            if bound != 0 && !base.is_power_of_two() && digits.len() > bound { return Err(self.argument_fault("ext.builtin.to_int.digits.amiss", Some(&bound.to_string()))); }
             let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| invalid())?;
             if negative { number = -number; }
             return Ok(Value::from_big(number));
@@ -4353,6 +4362,12 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op == Prim::AsText {
+            if let Some(Value::Huge(whole)) = v.first().map(Value::settled).as_ref() {
+                let bound = self.table.count("ext.builtin.to_int.digits").unwrap_or(0);
+                if bound > 0 && whole.abs().to_string().len() > bound { return Err(self.argument_fault("ext.builtin.to_int.digits.amiss", Some(&bound.to_string()))); }
+            }
+        }
         if matches!(op, Prim::Added | Prim::Placed) {
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
@@ -4483,6 +4498,10 @@ impl<'a> Machine<'a> {
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
             Prim::ValueMethod if self.table.spells("ext.builtin.method.fromhex", name) => return crate::members::hexadecimal(v, &|key| self.method_fault(key)),
+            Prim::ValueMethod if self.table.spells("ext.builtin.method.__truediv__", name) => {
+                if v.len() != 2 { return Err(self.method_fault("arguments")); }
+                return self.prim(Prim::OverReal, name, v);
+            }
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -6016,12 +6035,15 @@ impl<'a> Machine<'a> {
             Prim::AsReal if self.table.flag("ext.builtin.to_real.text") && (v.is_empty() || matches!(v.first(), Some(Value::Text(_)))) => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
-                if let Some(Value::Text(chars)) = v.first() {
-                    if let Ok(binary) = chars.trim().to_ascii_lowercase().parse::<f64>() {
+                let worth = if let Some(Value::Text(chars)) = v.first() {
+                    let letters: Vec<char> = chars.chars().collect();
+                    if letters.iter().enumerate().any(|(i, ch)| *ch == '_' && (i == 0 || !letters[i - 1].is_ascii_digit() || letters.get(i + 1).map_or(true, |next| !next.is_ascii_digit()))) { return Err(failure()); }
+                    let cleaned: String = letters.into_iter().filter(|ch| *ch != '_').collect();
+                    if let Ok(binary) = cleaned.trim().to_ascii_lowercase().parse::<f64>() {
                         if !binary.is_finite() { return Ok(crate::data::past_the_numbers(binary, math::DEFAULT_PLACES)); }
                     }
-                }
-                let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
+                    number_spelled_in(&Value::text(&cleaned)).ok_or_else(failure)?
+                } else { Value::Small(0) };
                 math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?
             }
             Prim::AsReal => {

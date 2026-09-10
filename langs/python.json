@@ -370,9 +370,7 @@
   "ext.builtin.bytes.fromhex": [
     "bytes.fromhex"
   ],
-  "ext.builtin.bytes.hex": [
-    "hex"
-  ],
+  "ext.builtin.bytes.hex": [],
   "ext.builtin.bytes.join": [
     "join"
   ],
@@ -558,6 +556,13 @@
   "ext.builtin.max": [
     "max"
   ],
+  "ext.builtin.method.__index__": [
+    "__index__"
+  ],
+  "ext.builtin.method.__truediv__": [
+    "__truediv__",
+    "int.__truediv__"
+  ],
   "ext.builtin.method.append": [
     "append"
   ],
@@ -579,11 +584,17 @@
   "ext.builtin.method.clear": [
     "clear"
   ],
+  "ext.builtin.method.conjugate": [
+    "conjugate"
+  ],
   "ext.builtin.method.copy": [
     "copy"
   ],
   "ext.builtin.method.count": [
     "count"
+  ],
+  "ext.builtin.method.denominator": [
+    "denominator"
   ],
   "ext.builtin.method.encode": [
     "encode"
@@ -666,6 +677,9 @@
   "ext.builtin.method.hex": [
     "hex"
   ],
+  "ext.builtin.method.imag": [
+    "imag"
+  ],
   "ext.builtin.method.index": [
     "index"
   ],
@@ -711,8 +725,14 @@
   "ext.builtin.method.lstrip": [
     "lstrip"
   ],
+  "ext.builtin.method.numerator": [
+    "numerator"
+  ],
   "ext.builtin.method.pop": [
     "pop"
+  ],
+  "ext.builtin.method.real": [
+    "real"
   ],
   "ext.builtin.method.remove": [
     "remove"
@@ -890,6 +910,11 @@
   ],
   "ext.builtin.to_int.base.amiss": [
     "ValueError: int() base must be >= 2 and <= 36, or 0"
+  ],
+  "ext.builtin.to_int.digits": 4300,
+  "ext.builtin.to_int.digits.amiss": [
+    "ValueError: Exceeds the limit (",
+    " digits) for integer string conversion"
   ],
   "ext.builtin.to_int.infinity": [
     "OverflowError: cannot convert float infinity to integer"

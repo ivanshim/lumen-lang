@@ -1,0 +1,5 @@
+print((7).numerator, (7).denominator, (7).real, (7).imag, (7).conjugate(), (7).__index__())
+print((2.5).real, (2.5).imag, (2.5).conjugate(), int.__truediv__(2**100 + 1, 2**100))
+print(float.fromhex('-0x0p0').hex(), float.fromhex('0x0.0000000000001p-1022').hex())
+print(round(1250, -2), round(1350, -2), round(-1250, -2), round(-1350, -2), round(123, 3))
+print(float(' 1_0.5 '), (123).is_integer(), (1.25).is_integer())

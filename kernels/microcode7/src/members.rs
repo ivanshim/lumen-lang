@@ -79,6 +79,13 @@ impl Request<'_> {
     fn on_number(&self,value:Value)->ResultValue{
         self.takes(0,0)?;
         let real=matches!(value,Value::Frac(_));
+        match self.operation {
+            "conjugate" | "real" => return Ok(value),
+            "imag" => return Ok(if real { Value::Frac(Rc::new(crate::data::Ratio { above: BigInt::from(0), beneath: BigInt::from(1), places: Some(16), under: false, pointed: true })) } else { Value::Small(0) }),
+            "__index__" | "numerator" if !real => return Ok(Value::from_big(value.as_big()?)),
+            "denominator" if !real => return Ok(Value::Small(1)),
+            _ => (),
+        }
         if !real && self.operation == "bit_count" {
             let magnitude = value.as_big()?.magnitude().clone();
             let mut total = BigInt::from(0);

@@ -2288,7 +2288,9 @@ impl<'a> Engine<'a> {
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::BindValueMethod(operation) => {
                 let target = self.drop_top()?.held(false);
-                Value::ValueMethod(Rc::new((target, operation.to_string())))
+                if matches!(operation.as_ref(), "numerator" | "denominator" | "real" | "imag") {
+                    self.value_method(&target, operation, Vec::new(), Vec::new())?
+                } else { Value::ValueMethod(Rc::new((target, operation.to_string()))) }
             }
             Action::Not => {
                 let held = self.drop_top()?;
@@ -4762,6 +4764,10 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if operation == "__truediv__" {
+            if args.len() != 1 || !named.is_empty() || !matches!(receiver.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+            return self.dyadic_numbers(&Action::DivReal, &receiver.contents(), &args[0].contents());
+        }
         if !self.lang.byte_words["ext.builtin.bytes"].is_empty() && (matches!(receiver.contents(), Value::Bytes(..)) || operation == "encode") {
             let task = match operation { "encode" => Some(2), "decode" => Some(3), "hex" => Some(4), "upper" => Some(6), "lower" => Some(7), "split" => Some(8), "join" => Some(9), "startswith" => Some(10), "replace" => Some(11), "strip" => Some(12), "find" => Some(13), _ => None };
             if let Some(task) = task {
@@ -4871,6 +4877,9 @@ impl<'a> Engine<'a> {
         let cleaned = digits.replace('_', "");
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
             return Err(invalid());
+        }
+        if !radix.is_power_of_two() {
+            if let Some(limit) = self.lang.integer_digits.filter(|limit| *limit > 0 && cleaned.len() > *limit) { return Err(self.core_fault("to_int.digits.amiss", &limit.to_string())); }
         }
         let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
         Ok(Value::of_big(if minus { -whole } else { whole }))
@@ -5212,6 +5221,10 @@ impl<'a> Engine<'a> {
         Ok(match builtin {
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::ValueMethod if self.lang.value_methods.get(name).map(String::as_str) == Some("fromhex") => return crate::methods::from_hex(args, &|key| self.lang.method_errors[key].clone()),
+            Builtin::ValueMethod if self.lang.value_methods.get(name).map(String::as_str) == Some("__truediv__") => {
+                if args.len() != 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+                return self.value_method(&args[0], "__truediv__", vec![args[1].clone()], Vec::new());
+            }
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
             Builtin::Bytes(task) => return self.byte_call(task, args),
@@ -5804,6 +5817,9 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
             Builtin::ToText => {
                 arity(1)?;
+                if let (Some(limit), Value::Huge(whole)) = (self.lang.integer_digits, args[0].contents()) {
+                    if limit > 0 && whole.abs().to_str_radix(10).len() > limit { return Err(self.core_fault("to_int.digits.amiss", &limit.to_string())); }
+                }
                 Value::text(&args[0].display(&sp))
             }
             Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),
@@ -5815,11 +5831,16 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && args.is_empty() => arith::to_real(&Value::Small(0), arith::DEFAULT_PLACES).unwrap(),
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
-                let Value::Text(text) = &args[0] else { unreachable!() };
+                let Value::Text(source) = &args[0] else { unreachable!() };
+                let bytes = source.as_bytes();
+                for (at, &byte) in bytes.iter().enumerate() {
+                    if byte == b'_' && (at == 0 || !bytes[at - 1].is_ascii_digit() || !bytes.get(at + 1).map_or(false, u8::is_ascii_digit)) { return Err(self.lang.to_real_text_amiss[0].clone()); }
+                }
+                let text = source.replace('_', "");
                 if let Some(number) = text.trim().to_ascii_lowercase().parse::<f64>().ok().filter(|n| !n.is_finite()) {
                     return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES));
                 }
-                let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
+                let number = number_spelled(&text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
                 arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?
             }
             Builtin::AsReal => {
