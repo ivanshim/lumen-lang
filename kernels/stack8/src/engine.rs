@@ -950,9 +950,7 @@ impl<'a> Engine<'a> {
         })
     }
 
-    /// A value with no places at all cannot be walked. A language with
-    /// a word for a warning is told so and walks it no times, rather
-    /// than having the run stopped over it.
+    /// A whole number, with the language's complaint for another kind.
     fn whole_for_bits(&self, v: &Value) -> Res<BigInt> {
         if matches!(v.sort(), Some(Sort::Integer | Sort::Boolean)) {
             v.as_big()
@@ -2511,6 +2509,7 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_default().into()),
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {
                 let step = self.drop_top()?;

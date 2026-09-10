@@ -3565,6 +3565,10 @@ impl<'a> Machine<'a> {
                 Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
                 _ => return Err(self.table.single("ext.op.plus.non_number").unwrap_or("").to_owned()),
             },
+            Prim::MatrixProduct => {
+                let words = self.table.single("ext.op.matrix.unready").unwrap_or_default();
+                return Err(words.to_owned());
+            }
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

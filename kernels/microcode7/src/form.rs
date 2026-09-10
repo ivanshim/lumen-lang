@@ -40,6 +40,8 @@ pub enum Prim {
     Pointed,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
+    /// Read a matrix product; the run cannot yet ask its methods.
+    MatrixProduct,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

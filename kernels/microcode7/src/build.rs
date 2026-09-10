@@ -4194,7 +4194,7 @@ impl<'a> Builder<'a> {
             return self.with_annotation(expr, began);
         }
         if !self.on_writing() {
-            return Ok(expr);
+            return self.comma_tail(expr);
         }
         let tail = &self.tokens[began..self.pos];
         let attribute = tail.len() >= 2
@@ -4282,6 +4282,28 @@ impl<'a> Builder<'a> {
         (sequence(vec![stored, back]), Some(cell))
     }
 
+    fn binding_chain(&mut self, first: &str, answers: bool) -> Res<Form> {
+        let mut targets = vec![self.address_to_write(first)];
+        loop {
+            if self.look().shape != Shape::Bare
+                || !self.table.spells("stmt.assign", &self.glance(1).lexeme) { break; }
+            let target = self.expr_at(0, false)?;
+            let Form::Read(slot) = target else {
+                return Err("Invalid assignment target before '='".to_string());
+            };
+            targets.push(self.address_to_write(&slot.ident));
+            self.advance();
+        }
+        let value = self.comma_value()?;
+        let saved = self.gensym("chained");
+        let mut steps = vec![Form::Write(saved.clone(), Box::new(value))];
+        for place in targets {
+            steps.push(Form::Write(place, Box::new(Form::Read(saved.clone()))));
+        }
+        if answers { steps.push(Form::Read(saved)); }
+        Ok(sequence(steps))
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
@@ -4300,6 +4322,14 @@ impl<'a> Builder<'a> {
             if slot.ident.as_ref() == this {
                 self.stopped_fatally = true;
                 return Err(format!("Cannot re-assign {}", this));
+            }
+        }
+        if self.table.flag("ext.stmt.assign.names.chained") && compound.is_none()
+            && self.waiting.is_none() && self.stepping.is_none()
+            && self.look().shape == Shape::Bare
+            && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+            if let Form::Read(slot) = &expr {
+                return self.binding_chain(&slot.ident, gives_back);
             }
         }
         let plain = compound.is_none();
@@ -6008,7 +6038,7 @@ impl<'a> Builder<'a> {
     }
 
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
-        if self.table.has_any("ext.op.lambda") {
+        if self.table.flag("ext.syntax.call.chained") || self.table.has_any("ext.op.lambda") {
             node = self.called_on_value(node)?;
         }
         node = self.members(node)?;
@@ -6041,6 +6071,9 @@ impl<'a> Builder<'a> {
                 node = invoke(node, args);
             }
             node = self.members(node)?;
+        }
+        if self.table.flag("ext.syntax.call.chained") && self.on_any("syntax.call.open") {
+            return self.subscript(node);
         }
         Ok(node)
     }

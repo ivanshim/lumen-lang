@@ -139,7 +139,8 @@
       "*",
       "/",
       "//",
-      "%"
+      "%",
+      "@"
     ],
     [
       "-",
@@ -569,6 +570,9 @@
   "ext.literal.ellipsis": [
     "..."
   ],
+  "ext.literal.ellipsis.unready": [
+    "NotImplementedError: ellipsis values are not supported"
+  ],
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="
@@ -692,6 +696,12 @@
   "ext.op.lambda.unsupported": [
     "Lambda keyword parameters are not supported"
   ],
+  "ext.op.matrix": [
+    "@"
+  ],
+  "ext.op.matrix.unready": [
+    "NotImplementedError: matrix multiplication is not supported"
+  ],
   "ext.op.member": [
     "."
   ],
@@ -731,6 +741,7 @@
     "AssertionError"
   ],
   "ext.stmt.assign.chain": true,
+  "ext.stmt.assign.names.chained": true,
   "ext.stmt.async": [
     "async"
   ],
@@ -954,6 +965,7 @@
     "'"
   ],
   "ext.syntax.call.bind_names": true,
+  "ext.syntax.call.chained": true,
   "ext.syntax.call.spread": [
     "*"
   ],

@@ -1097,6 +1097,7 @@ impl<'a> Compiler<'a> {
                 let name = self.want_name("after the function keyword")?;
                 return self.function(name, gives_cell);
             }
+            if Lang::spells(&lang.with_words, &w) { return self.with_stmt(); }
             if Lang::spells(&lang.pass_words, &w) {
                 self.take();
                 return Ok(());
@@ -4387,6 +4388,36 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A chain of binding names shares one value, worked out once.
+    fn name_chain(&mut self, first: &str, keep: Option<&str>) -> Res<()> {
+        let mut names = vec![first.to_string()];
+        while self.look().shape == Shape::Instr
+            && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+            let began = self.mark();
+            self.expr_at(0, false)?;
+            let named = match &self.piece().instrs[began..] {
+                [Instr::Read(cell)] => cell.ident.to_string(),
+                _ => return Err("Invalid assignment target before '='".into()),
+            };
+            self.piece().instrs.truncate(began);
+            self.cell_to_write(&named);
+            names.push(named);
+            self.take();
+        }
+        let saved = self.gensym("chain_value");
+        self.scope_value()?;
+        self.write(&saved);
+        for named in names {
+            self.read(&saved);
+            self.write(&named);
+        }
+        if let Some(place) = keep {
+            self.read(&saved);
+            self.write(place);
+        }
+        Ok(())
+    }
+
     /// What a compound write takes with the value the place already
     /// holds: the source after the sign, or the one step a `++` means,
     /// which has no source of its own.
@@ -4525,10 +4556,15 @@ impl<'a> Compiler<'a> {
                     self.addend()?;
                     self.compound_act(op);
                     self.kept(keep);
+                    self.write(&name);
+                } else if self.lang.chained_names && self.waiting.is_none()
+                    && self.look().shape == Shape::Instr
+                    && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
+                    self.name_chain(&name, keep)?;
                 } else {
                     self.value_written(keep)?;
+                    self.write(&name);
                 }
-                self.write(&name);
                 Ok(())
             }
             // `a[i][j] = v` and `a[i][] = v`: each key is worked out once
@@ -6405,7 +6441,7 @@ impl<'a> Compiler<'a> {
 
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
-        if !lang.lambda_words.is_empty() { self.called_on_value()?; }
+        if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
         loop {
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
