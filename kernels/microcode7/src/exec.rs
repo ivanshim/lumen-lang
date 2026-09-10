@@ -1657,6 +1657,9 @@ impl<'a> Machine<'a> {
                     (Value::Unset, Some(g)) => self.outermost.cells.borrow()[g].clone(),
                     _ => held,
                 };
+                if matches!(held, Value::Unset) && (self.table.spells("ext.op.iterator.stop", &slot.ident) || self.table.spells("ext.op.iterator.end", &slot.ident)) {
+                    return Ok(self.fetch(slot, frame)?);
+                }
                 Ok(match held {
                     Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
                     other => other,
@@ -2646,7 +2649,12 @@ impl<'a> Machine<'a> {
         };
         let name = word.to_string();
         Some((|| {
-            let values = self.value_list(args, frame)?;
+            let mut values = self.value_list(args, frame)?;
+            if matches!(stands, Value::Native(..)) && self.table.flag("ext.syntax.call.bind_names") {
+                let (mut positional, keywords) = self.open_arguments(values)?;
+                if let Some(answer) = self.builtin_names(op, &name, &mut positional, keywords)? { return Ok(answer); }
+                values = positional;
+            }
             let made = self.prim(op, &name, &values);
             if let Some(away) = self.got_away.take() {
                 return Err(away);
@@ -2968,7 +2976,7 @@ impl<'a> Machine<'a> {
 
     /// Gather the positional things apart from the named ones, retaining
     /// every keyword until the call has checked for repeated names.
-    fn open_arguments(&self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+    fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
@@ -2988,6 +2996,10 @@ impl<'a> Machine<'a> {
                 }
                 Value::Flag(false) => {
                     match &collection_read(&pair.1) {
+                        Value::Lazy(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Window(_) | Value::Thing(_) if self.table.has_any("ext.builtin.iter") => {
+                            let source = self.start_walk(&pair.1)?;
+                            while let Some(member) = self.take_walk(&source)? { positions.push(member); }
+                        }
                         Value::Progression(walk) => {
                             let mut place = BigInt::from(0);
                             while place < walk.count() {
@@ -3009,7 +3021,7 @@ impl<'a> Machine<'a> {
         Ok((positions, names))
     }
 
-    fn fit_arguments(&self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
+    fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
         let (positional, named) = self.open_arguments(values)?;
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
@@ -3642,7 +3654,19 @@ impl<'a> Machine<'a> {
             },
             Prim::Partition(wanted, star) => {
                 let mut values: Vec<Value> = match &v[0] {
-                    Value::Progression(_) | Value::Lazy(_) | Value::Tuple(_) | Value::List(_) => self.gathered_members(&v[0])?,
+                    Value::Lazy(_) | Value::Thing(_) | Value::Window(_) | Value::Set(_) => {
+                        let result = (|| -> Res<Vec<Value>> {
+                            let walk = self.start_walk(&v[0])?;
+                            let mut collected = Vec::new();
+                            while let Some(member) = self.take_walk(&walk)? {
+                                collected.push(member);
+                                if star.is_none() && collected.len() > wanted { break; }
+                            }
+                            Ok(collected)
+                        })();
+                        match result { Ok(items) => items, Err(Escape::Error(words)) => return Err(words), Err(e) => { self.got_away = Some(e); return Err(String::new()); } }
+                    }
+                    Value::Progression(_) | Value::Tuple(_) | Value::List(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
                     Value::Vector(v) => v.to_vec(),
@@ -4648,9 +4672,11 @@ impl<'a> Machine<'a> {
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
-                if matches!(&v[1], Value::Lazy(_)) {
+                if self.table.has_any("ext.builtin.iter") && matches!(&v[1], Value::Lazy(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Window(_) | Value::Thing(_)) {
+                    let opened = self.start_walk(&v[1]);
+                    let iterator = match opened { Ok(walk) => walk, Err(Escape::Error(told)) => return Err(told), Err(escape) => { self.got_away = Some(escape); return Err(String::new()); } };
                     loop {
-                        let taken = self.take_walk(&v[1]);
+                        let taken = self.take_walk(&iterator);
                         let next = match taken { Ok(next) => next, Err(Escape::Error(words)) => return Err(words), Err(e) => { self.got_away = Some(e); return Err(String::new()); } };
                         let Some(next) = next else { return Ok(Value::Flag(op == Prim::Absent)); };
                         if v[0].equals(&next) { return Ok(Value::Flag(op == Prim::Contains)); }
@@ -4670,6 +4696,9 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
+                    (Value::Native(a, _), Value::Native(b, _)) => a == b,
+                    (Value::Window(a), Value::Window(b)) => Rc::ptr_eq(a, b),
+                    (Value::List(a), Value::List(b)) | (Value::Tuple(a), Value::Tuple(b)) | (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Lazy(a), Value::Lazy(b)) => Rc::ptr_eq(a, b),
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
@@ -5224,6 +5253,16 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        match target {
+            Value::List(parts) | Value::Tuple(parts) => {
+                let answer = self.element(&Value::Vector(parts.clone()), at, how)?;
+                if let (Value::Vector(v), Value::Span(_)) = (&answer, at) {
+                    return Ok(if matches!(target, Value::Tuple(_)) { Value::Tuple(v.clone()) } else { Value::List(v.clone()) });
+                }
+                return Ok(answer);
+            }
+            _ => ()
+        }
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
@@ -5774,6 +5813,13 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
 }
 
 fn written_into(held: &mut Value, key: Option<Value>, value: Value, no_places: &str, builds: bool, letter: Option<String>, cells_are_places: bool) -> Result<bool, String> {
+    if let Value::List(members) = held {
+        let mut position = match key { None => { Rc::make_mut(members).push(value); return Ok(false); }, Some(k) => k.as_big()? };
+        if position < BigInt::from(0) { position += members.len(); }
+        let place = position.to_usize().filter(|at| *at < members.len()).ok_or_else(|| no_places.to_owned())?;
+        Rc::make_mut(members)[place] = value;
+        return Ok(false);
+    }
     // Where a language writes into text, a named place in text takes a
     // letter and the name goes on holding text.
     if let (Value::Text(had), Some(put), Some(at)) = (&*held, &letter, &key) {

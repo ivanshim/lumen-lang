@@ -1397,13 +1397,17 @@ impl<'a> Engine<'a> {
 
     /// Untie call arguments only at the call boundary. A literal's ties
     /// have already become a map by then and remain ordinary values.
-    fn call_items(&self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
+    fn call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
         let mut items = Vec::new();
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
                     Value::Flag(false) => match &collection_contents(&pair.1) {
+                        Value::Cursor(_) | Value::Listed(_) | Value::Row(_) | Value::Bag(_) | Value::View(_) | Value::Object(_) if !self.cursor_word("ext.builtin.iter").is_empty() => {
+                            let iterator = self.cursor_from(&pair.1)?;
+                            while let Some(value) = self.cursor_next(&iterator)? { items.push((None, value)); }
+                        }
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
@@ -1434,7 +1438,7 @@ impl<'a> Engine<'a> {
 
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
-    fn bind_call(&self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
+    fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
         let items = self.call_items(args)?;
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
@@ -1676,7 +1680,12 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(told)) if !told.is_empty() && told == self.cursor_word("ext.op.iterator.stop") => match self.as_fault(&told) {
+                Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)),
+            },
+            ending => ending,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -2059,7 +2068,7 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
-        if self.lang.bind_names && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
+        if self.lang.bind_names && !(matches!(op, Action::WalkFrom) && !self.cursor_word("ext.builtin.iter").is_empty()) && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
             | Action::WalkFrom | Action::WalkAlone | Action::WalkMore | Action::WalkThis
             | Action::WalkKey | Action::WalkOnward) {
             let at = self.data.len().saturating_sub(argc);
@@ -2359,7 +2368,7 @@ impl<'a> Engine<'a> {
                 return match callee {
                     Value::Native(native, word) => {
                         let mut given = self.drop_many(argc - 1)?;
-                        let answer = self.builtin(native, &word, &mut given);
+                        let answer = if self.lang.bind_names { let items = self.call_items(given)?; self.builtin_call(native, &word, items) } else { self.builtin(native, &word, &mut given) };
                         if let Some(away) = self.carried.take() { return Err(away); }
                         self.data.push(answer?); Ok(())
                     }
@@ -2455,7 +2464,16 @@ impl<'a> Engine<'a> {
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
-                    Value::Counted(_) | Value::Cursor(_) => self.comprehension_items(&source)?,
+                    Value::Cursor(_) | Value::Object(_) | Value::View(_) | Value::Bag(_) => {
+                        let iterator = self.cursor_from(&source)?;
+                        let mut gathered = Vec::new();
+                        while let Some(part) = self.cursor_next(&iterator)? {
+                            gathered.push(part);
+                            if rest.is_none() && gathered.len() > *count { break; }
+                        }
+                        gathered
+                    }
+                    Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Array(items) | Value::Listed(items) | Value::Row(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -3461,6 +3479,9 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::Native(x, _), Value::Native(y, _)) => x == y,
+                    (Value::Listed(x), Value::Listed(y)) | (Value::Row(x), Value::Row(y)) | (Value::Bag(x), Value::Bag(y)) => Rc::ptr_eq(x, y),
+                    (Value::View(x), Value::View(y)) => Rc::ptr_eq(x, y),
                     (Value::Cursor(x), Value::Cursor(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
@@ -3998,6 +4019,14 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Listed(items) | Value::Row(items) = target {
+            let answer = self.element(&Value::Array(items.clone()), at, how)?;
+            return Ok(match (&answer, at) {
+                (Value::Array(parts), Value::Slice(_)) if matches!(target, Value::Row(_)) => Value::Row(parts.clone()),
+                (Value::Array(parts), Value::Slice(_)) => Value::Listed(parts.clone()),
+                _ => answer,
+            });
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -5089,6 +5118,7 @@ impl<'a> Engine<'a> {
                     held => held,
                 };
                 match target {
+                    Value::Listed(mut items) => { Rc::make_mut(&mut items).push(v); Value::Listed(items) }
                     Value::Array(mut items) => {
                         Rc::make_mut(&mut items).push(v);
                         Value::Array(items)
@@ -5107,6 +5137,14 @@ impl<'a> Engine<'a> {
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if let Value::Listed(mut items) = target {
+                    if matches!(at, Value::Slice(_)) { return Err(self.cursor_word("ext.op.iterator.unready")); }
+                    let mut index = at.as_big()?;
+                    if index < BigInt::from(0) { index += items.len(); }
+                    let Some(index) = index.to_usize().filter(|i| *i < items.len()) else { return Err(self.cursor_word("ext.op.iterator.unready")) };
+                    Rc::make_mut(&mut items)[index] = v;
+                    return Ok(Value::Listed(items));
+                }
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
                 }

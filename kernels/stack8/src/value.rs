@@ -350,7 +350,8 @@ impl Value {
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
-            (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Bag(a), Value::Bag(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
+            (Value::Row(a), Value::Row(b)) | (Value::Listed(a), Value::Listed(b)) | (Value::Array(a), Value::Listed(b)) | (Value::Listed(a), Value::Array(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }

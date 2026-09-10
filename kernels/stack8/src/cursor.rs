@@ -201,7 +201,7 @@ impl<'a> Engine<'a> {
         if builtin == Builtin::DictLazy && args.len() == 1 && matches!(collection_contents(&args[0]), Value::Map(_)) { return Ok(collection_contents(&args[0])); }
         let mut items = Vec::new();
         let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
-        let source = if matches!(builtin, Builtin::MinLazy | Builtin::MaxLazy) && args.len() > 1 { Value::array(args.to_vec()) } else { args[0].clone() };
+        let source = if matches!(builtin, Builtin::MinLazy | Builtin::MaxLazy) && args.len() > 1 { Value::array(args.to_vec()) } else if builtin == Builtin::JoinLazy { args[1].clone() } else { args[0].clone() };
         let cursor = self.cursor_from(&source)?;
         while let Some(item) = self.cursor_next(&cursor)? {
             if builtin == Builtin::Any && self.truth(&item) { return Ok(Value::Flag(true)); }
@@ -234,7 +234,7 @@ impl<'a> Engine<'a> {
                 else if builtin == Builtin::MinLazy { items.remove(0) } else { items.pop().unwrap() }
             }
             Builtin::JoinLazy => {
-                let Some(Value::Text(separator)) = args.get(1) else { return Err(self.cursor_word("ext.op.iterator.unready").into()) };
+                let Some(Value::Text(separator)) = args.first() else { return Err(self.cursor_word("ext.op.iterator.unready").into()) };
                 let text = items.iter().map(|v| match collection_contents(v) { Value::Text(s) => Ok(s.to_string()), _ => Err(self.cursor_word("ext.op.iterator.unready")) }).collect::<Result<Vec<_>, _>>()?;
                 Value::text(&text.join(separator))
             }

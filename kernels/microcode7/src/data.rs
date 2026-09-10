@@ -341,7 +341,8 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|member| b.iter().any(|other| member.equals(other))),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::List(a), Value::List(b)) | (Value::Vector(a), Value::List(b)) | (Value::List(a), Value::Vector(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }

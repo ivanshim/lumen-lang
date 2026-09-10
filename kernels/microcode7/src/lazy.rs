@@ -223,7 +223,7 @@ impl<'a> Machine<'a> {
             if let Value::Dict(_) = collection_read(&supplied[0]) { return Ok(collection_read(&supplied[0])); }
         }
         let many = matches!(operation, Prim::Least | Prim::Greatest) && supplied.len() > 1;
-        let argument = if many { Value::Vector(Rc::new(supplied.to_vec())) } else { supplied[0].clone() };
+        let argument = if many { Value::Vector(Rc::new(supplied.to_vec())) } else if operation == Prim::JoinedWalk { supplied[1].clone() } else { supplied[0].clone() };
         let iterator = self.start_walk(&argument)?;
         let mut contents = vec![];
         let mut sum = supplied.get(1).cloned().unwrap_or(Value::Small(0));
@@ -269,7 +269,7 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::JoinedWalk => {
-                let delimiter = supplied.get(1).map(collection_read);
+                let delimiter = supplied.first().map(collection_read);
                 let Some(Value::Text(delimiter)) = delimiter else { return Err(self.walk_word("ext.op.iterator.unready").into()) };
                 let mut words = Vec::new();
                 for value in contents {
