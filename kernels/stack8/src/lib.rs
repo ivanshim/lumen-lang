@@ -121,7 +121,10 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
-        if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        let slice_fault = [&lang.slice_zero, &lang.slice_bounds, &lang.slice_assign].iter().filter_map(|v| v.as_deref()).any(|word| e == word)
+            || lang.slice_length.first().filter(|word| !word.is_empty()).map_or(false, |word| e.starts_with(word))
+            || ["ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"].iter().any(|label| lang.slice_words.get(*label).filter(|word| !word.is_empty()).map_or(false, |word| e == *word));
+        if slice_fault || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }

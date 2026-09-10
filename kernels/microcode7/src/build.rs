@@ -4644,7 +4644,7 @@ impl<'a> Builder<'a> {
             (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
         // The value comes before the bounds of a slice assignment.
-        let before_bounds = if plain && slice_target(&expr) {
+        let before_bounds = if plain && (slice_target(&expr) || self.table.has_any("ext.op.index.get") && matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _))) {
             self.gensyms += 1;
             let saved = format!("#slice_value{}", self.gensyms);
             let first = self.write(&saved, value);
@@ -6318,17 +6318,15 @@ impl<'a> Builder<'a> {
             self.expr(0)?;
             return Ok(self.scope_unrun("ext.op.index.spread.unsupported"));
         }
-        if self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
-            self.advance();
-            return Ok(constant(Value::Ellipsis));
-        }
         let separators = self.table.strings("ext.op.index.slice").to_vec();
         let mut parts = Vec::new();
         let mut spanning = false;
         loop {
             let at_mark = separators.iter().any(|word| self.sign(word));
             let at_end = self.sign(close) || comma.map_or(false, |word| self.sign(word));
-            parts.push(if at_mark || (spanning && at_end) { constant(Value::Nil) } else { self.expr(0)? });
+            parts.push(if at_mark || (spanning && at_end) { constant(Value::Nil) }
+                else if self.on_any("ext.op.index.slice.ellipsis") { self.advance(); constant(Value::Ellipsis) }
+                else { self.expr(0)? });
             if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) { break; }
             spanning = true;
             self.advance();

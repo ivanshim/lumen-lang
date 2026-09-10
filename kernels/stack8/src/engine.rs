@@ -2154,8 +2154,10 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
-                            self.truth(&told)
+                            let (left, right) = (av.clone(), bv.clone());
+                            let found = if matches!(op, Action::Eq | Action::Ne) { self.compare_slices(op, &left, &right) } else { self.dyadic(op, &left, &right) };
+                            if let Some(fault) = self.carried.take() { return Err(fault); }
+                            self.truth(&found?)
                         }
                     };
                     if !holds {
@@ -2188,7 +2190,15 @@ impl<'a> Engine<'a> {
                         Some(v) => v,
                         None if matches!(op, Action::At) => {
                             let (target, key) = (av.clone(), bv.clone());
-                            self.read_index(&target, &key)?
+                            let found = self.read_index(&target, &key);
+                            if let Some(fault) = self.carried.take() { return Err(fault); }
+                            found?
+                        }
+                        None if matches!(op, Action::Eq | Action::Ne) => {
+                            let (left, right) = (av.clone(), bv.clone());
+                            let found = self.compare_slices(op, &left, &right);
+                            if let Some(fault) = self.carried.take() { return Err(fault); }
+                            found?
                         }
                         None => self.dyadic(op, av, bv)?,
                     };
@@ -2588,8 +2598,9 @@ impl<'a> Engine<'a> {
                         let mut positional = Vec::new();
                         let mut named = Vec::new();
                         for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
-                        let result = self.value_method(&method.0, &method.1, positional, named)?;
-                        self.data.push(result);
+                        let result = self.value_method(&method.0, &method.1, positional, named);
+                        if let Some(fault) = self.carried.take() { return Err(fault); }
+                        self.data.push(result?);
                         return Ok(());
                     }
                     Value::Native(b, word) => {
@@ -3555,7 +3566,16 @@ impl<'a> Engine<'a> {
             Action::At => {
                 let key = self.drop_top()?;
                 let target = self.drop_top()?;
-                self.read_index(&target, &key)?
+                let found = self.read_index(&target, &key);
+                if let Some(fault) = self.carried.take() { return Err(fault); }
+                found?
+            }
+            Action::Eq | Action::Ne => {
+                let right = self.drop_top()?;
+                let left = self.drop_top()?;
+                let found = self.compare_slices(op, &left, &right);
+                if let Some(fault) = self.carried.take() { return Err(fault); }
+                found?
             }
             dyadic => {
                 let b = self.drop_top()?;
@@ -4396,9 +4416,28 @@ impl<'a> Engine<'a> {
         return self.element_held(target, at, how).map(seen);
     }
 
-    /// Bring the bounds within the row before walking it. A missing
-    /// last bound on a backward walk lies before the first place;
-    /// an expressly written minus one lies at the last place instead.
+    fn compare_slices(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let (Value::Slice(left), Value::Slice(right)) = (a, b) else { return self.dyadic(op, a, b); };
+        let mut same = true;
+        for (x, y) in left.iter().zip(right.iter()) {
+            let alike = if x.equals(y) { true }
+                else if let Some(answer) = self.index_method(x, "ext.op.index.slice.equal", vec![y.clone()])? { self.truth(&answer) }
+                else if let Some(answer) = self.index_method(y, "ext.op.index.slice.equal", vec![x.clone()])? { self.truth(&answer) }
+                else { false };
+            if !alike { same = false; break; }
+        }
+        Ok(Value::Flag(same == matches!(op, Action::Eq)))
+    }
+
+    fn hash_slice(&self, slice: &Value) -> Res<Value> {
+        if let Value::Slice(parts) = slice {
+            for part in parts.iter() {
+                if part.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &part.core_kind())); }
+            }
+        }
+        slice.core_hash().map(Value::Small).ok_or_else(|| self.core_fault("core.unhashable", &slice.core_kind()))
+    }
+
     fn slice_word(&self, label: &str) -> String {
         self.lang.slice_words.get(label).cloned().unwrap_or_default()
     }
@@ -4431,6 +4470,7 @@ impl<'a> Engine<'a> {
         let mut counted = parts.clone();
         for i in [2, 0, 1] {
             if !matches!(parts[i], Value::Null) { counted[i] = Value::of_big(self.slice_integer(&parts[i])?); }
+            if i == 2 && counted[i].equals(&Value::Small(0)) { return Err(self.lang.slice_zero.clone().unwrap_or_default()); }
         }
         Ok(counted)
     }
@@ -4467,9 +4507,15 @@ impl<'a> Engine<'a> {
             let counted = self.slice_counted(parts)?;
             return self.element(target, &Value::Slice(Rc::new(counted)), Reading::Plain);
         }
+        if matches!(key, Value::Tuple(_) | Value::Ellipsis) && matches!(target.contents(), Value::Array(_) | Value::Tuple(_) | Value::Text(_)) {
+            return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
+        }
         self.element(target, key, Reading::Plain)
     }
 
+    /// Bring the bounds within the row before walking it. A missing
+    /// last bound on a backward walk lies before the first place;
+    /// an expressly written minus one lies at the last place instead.
     fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
         let count = |v: &Value| -> Res<Option<i128>> {
             Ok(match v {
@@ -4788,13 +4834,20 @@ impl<'a> Engine<'a> {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
         }
+        if operation == "itemgetter" {
+            if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let Value::Tuple(keys) = receiver else { unreachable!() };
+            let mut values = Vec::new();
+            for key in keys.iter() { values.push(self.read_index(&args[0], key)?); }
+            return Ok(if values.len() == 1 { values.remove(0) } else { Value::Tuple(Rc::new(values)) });
+        }
         if let Value::Slice(parts) = receiver {
             if operation == "indices" && args.len() == 1 {
                 let bounds = self.slice_indices(parts, &args[0])?;
                 return Ok(Value::Tuple(Rc::new(bounds.into_iter().map(Value::of_big).collect())));
             }
             if operation == "slice_hash" && args.is_empty() {
-                return receiver.core_hash().map(Value::Small).ok_or_else(|| self.core_fault("core.unhashable", "slice"));
+                return self.hash_slice(receiver);
             }
         }
         let mut used = std::collections::HashSet::new();
@@ -5676,6 +5729,10 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let (p, q) = arith::parts(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
                 Value::of_big(if builtin == Builtin::Numer { p } else { q })
+            }
+            Builtin::ItemGetter => {
+                if args.is_empty() { return Err(self.core_fault("core.arity", name)); }
+                Value::ValueMethod(Rc::new((Value::Tuple(Rc::new(args.clone())), "itemgetter".into())))
             }
             Builtin::MakeSlice => {
                 if !(1..=3).contains(&args.len()) { return Err(self.slice_word("ext.builtin.slice.arity")); }
@@ -6678,7 +6735,7 @@ impl Engine<'_> {
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
             Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
-            Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
+            Builtin::Hash => { arity(1, 1)?; if matches!(args[0], Value::Slice(_)) { return self.hash_slice(&args[0]); } Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
             Builtin::Identity => {
                 arity(1, 1)?;
                 let id = match &args[0] {

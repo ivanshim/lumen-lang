@@ -310,7 +310,9 @@
   "builtin.push": [
     "append"
   ],
-  "builtin.get": [],
+  "builtin.get": [
+    "operator.getitem"
+  ],
   "builtin.put": [],
   "builtin.precision": [],
   "builtin.to_string": [
@@ -485,6 +487,9 @@
   ],
   "ext.builtin.isinstance": [
     "isinstance"
+  ],
+  "ext.builtin.itemgetter": [
+    "operator.itemgetter"
   ],
   "ext.builtin.iter": [
     "iter"
@@ -1173,6 +1178,9 @@
   ],
   "ext.op.index.slice.ellipsis": [
     "..."
+  ],
+  "ext.op.index.slice.equal": [
+    "__eq__"
   ],
   "ext.op.index.slice.length": [
     "ValueError: attempt to assign sequence of size",

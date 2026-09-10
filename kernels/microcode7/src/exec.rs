@@ -1932,7 +1932,10 @@ impl<'a> Machine<'a> {
                 };
                 match fast {
                     Some(v) => Ok(v),
-                    None => Ok(self.prim(*op, name, &[av, bv])?),
+                    None => {
+                        let result = self.prim(*op, name, &[av, bv]);
+                        match self.got_away.take() { Some(escape) => Err(escape), None => Ok(result?) }
+                    }
                 }
             }
             Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
@@ -3205,13 +3208,22 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if name == "itemgetter" {
+            if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            if let Value::Tuple(keys) = receiver {
+                let mut taken = Vec::with_capacity(keys.len());
+                for key in keys.iter() { taken.push(self.keyed_value(&arguments[0], key)?); }
+                return Ok(match taken.len() { 1 => taken.pop().unwrap(), _ => Value::Tuple(Rc::new(taken)) });
+            }
+            return Err(self.method_fault("unready").into());
+        }
         if let Value::Span(bounds) = receiver {
             if keywords.is_empty() && name == "indices" && arguments.len() == 1 {
                 let normalized = self.normalized_span(bounds, &arguments[0])?;
                 return Ok(Value::Tuple(Rc::new(normalized.into_iter().map(Value::from_big).collect())));
             }
             if keywords.is_empty() && name == "slice_hash" && arguments.is_empty() {
-                return receiver.hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", "slice").into());
+                return self.span_hash_value(receiver).map_err(Escape::from);
             }
         }
         let mut found = Vec::new();
@@ -4062,6 +4074,20 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Eq | Prim::Ne) {
+            if let [Value::Span(left), Value::Span(right)] = v {
+                let mut equal = true;
+                for i in 0..left.len() {
+                    if left[i].equals(&right[i]) { continue; }
+                    let answer = match self.keyed_method(&left[i], "ext.op.index.slice.equal", &[right[i].clone()])? {
+                        Some(value) => Some(value),
+                        None => self.keyed_method(&right[i], "ext.op.index.slice.equal", &[left[i].clone()])?,
+                    };
+                    if !answer.as_ref().map_or(false, |value| self.stands_true(value)) { equal = false; break; }
+                }
+                return Ok(Value::Flag(if op == Prim::Eq { equal } else { !equal }));
+            }
+        }
         if matches!(op, Prim::Added | Prim::Placed) {
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
@@ -4154,6 +4180,10 @@ impl<'a> Machine<'a> {
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
+            Prim::GatherKeys => {
+                if v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
+                Value::Member(Rc::new(Value::Tuple(Rc::new(v.to_vec()))), "itemgetter".to_owned())
+            }
             Prim::SliceValue => {
                 if v.is_empty() || v.len() > 3 { return Err(self.table.single("ext.builtin.slice.arity").unwrap_or_default().to_owned()); }
                 let mut bounds = vec![Value::Nil; 3];
@@ -5788,7 +5818,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Fetch => {
                 n(2)?;
-                self.element(&v[0], &v[1], Reading::Plain)?
+                self.keyed_value(&v[0], &v[1])?
             }
             Prim::External => {
                 let target = match v.first() {
@@ -5926,6 +5956,14 @@ impl<'a> Machine<'a> {
         });
     }
 
+    fn span_hash_value(&self, value: &Value) -> Result<Value, String> {
+        let Value::Span(bounds) = value else { return Err(self.span_complaint("unsupported")); };
+        match bounds.iter().find(|bound| bound.hash_number().is_none()) {
+            Some(bound) => Err(self.core_complaint("core.unhashable", &bound.kind_word())),
+            None => Ok(Value::Small(value.hash_number().expect("the three bounds may be hashed"))),
+        }
+    }
+
     fn keyed_method(&mut self, subject: &Value, purpose: &str, values: &[Value]) -> Result<Option<Value>, String> {
         let Some(word) = self.table.single(purpose) else { return Ok(None); };
         let Value::Thing(thing) = subject else { return Ok(None); };
@@ -5955,6 +5993,7 @@ impl<'a> Machine<'a> {
         for position in [2_usize, 0, 1] {
             if matches!(bounds[position], Value::Nil) { continue; }
             result[position] = Value::from_big(self.bound_integer(&bounds[position])?);
+            if position == 2 && result[position].equals(&Value::Small(0)) { return Err(self.span_complaint("zero")); }
         }
         Ok(result)
     }
@@ -5984,7 +6023,12 @@ impl<'a> Machine<'a> {
 
     fn keyed_value(&mut self, subject: &Value, key: &Value) -> Result<Value, String> {
         if let Some(answer) = self.keyed_method(subject, "ext.op.index.get", &[key.clone()])? { return Ok(answer); }
-        let Value::Span(bounds) = key else { return self.element(subject, key, Reading::Plain); };
+        let Value::Span(bounds) = key else {
+            if matches!(subject.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Text(_)) && matches!(key, Value::Ellipsis | Value::Tuple(_)) {
+                return Err(self.span_complaint("unsupported"));
+            }
+            return self.element(subject, key, Reading::Plain);
+        };
         if let Value::Progression(walk) = subject {
             let clipped = self.normalized_span(bounds, &Value::from_big(walk.count()))?;
             let next = crate::data::Progression {
@@ -7198,6 +7242,7 @@ impl Machine<'_> {
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
+                if matches!(input[0], Value::Span(_)) { return self.span_hash_value(&input[0]); }
                 input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &input[0].kind_word()))
             }
             IdentityOf => {

@@ -4805,7 +4805,7 @@ impl<'a> Compiler<'a> {
         if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
             self.act(Action::SliceUnavailable, 0);
         }
-        if compound.is_none() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
+        if compound.is_none() && (!keys.is_empty() && !self.lang.slice_words["ext.op.index.get"].is_empty() || keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3))))) {
             let value = self.gensym("slice_value");
             self.value_written(None)?;
             self.write(&value);
@@ -6725,9 +6725,7 @@ impl<'a> Compiler<'a> {
         if ellipsis.iter().any(|word| self.at_symbol(word)) {
             self.take();
             self.constant(Value::Ellipsis);
-            return Ok(());
-        }
-        if marks.iter().any(|m| self.at_symbol(m)) {
+        } else if marks.iter().any(|m| self.at_symbol(m)) {
             self.constant(Value::Null);
         } else {
             self.expr(0)?;

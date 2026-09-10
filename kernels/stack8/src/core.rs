@@ -95,7 +95,14 @@ impl Value {
                 if r.p.is_negative() { h = -h; }
                 Some(finish(h))
             }
-            Value::Slice(parts) => Value::Tuple(std::rc::Rc::new(parts.to_vec())).core_hash(),
+            Value::Slice(parts) => {
+                let mut state = 2870177450012600261u64;
+                for bound in parts.iter() {
+                    state = state.wrapping_add((bound.core_hash()? as u64).wrapping_mul(14029467366897019727));
+                    state = state.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                Some(if state == u64::MAX { 1546275796 } else { state as i64 })
+            }
             Value::Tuple(items) => {
                 let mut h = 2870177450012600261u64;
                 for item in items.iter() {

@@ -58,6 +58,10 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        let bare = ["ext.op.index.slice.zero", "ext.op.index.slice.bounds", "ext.op.index.slice.assign", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"]
+            .iter().any(|label| table.single(label).map_or(false, |word| e == word));
+        let counted = table.single("ext.op.index.slice.length").map_or(false, |head| !head.is_empty() && e.starts_with(head));
+        if bare || counted { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

@@ -83,7 +83,15 @@ impl Value {
                     else { ((parts.above.abs() % &prime) * bottom.modpow(&(&prime-2),&prime) % &prime).to_i64()? };
                 if parts.above.is_negative() { -positive } else { positive }
             }
-            Self::Span(bounds) => return Self::Tuple(bounds.clone()).hash_number(),
+            Self::Span(bounds) => {
+                let mut mixed: u64 = 2_870_177_450_012_600_261;
+                for part in bounds.iter() {
+                    let increment = 14_029_467_366_897_019_727u64.wrapping_mul(part.hash_number()? as u64);
+                    mixed = mixed.wrapping_add(increment).rotate_left(31);
+                    mixed = 11_400_714_785_074_694_791u64.wrapping_mul(mixed);
+                }
+                return Some(match mixed { u64::MAX => 1_546_275_796, hash => hash as i64 });
+            }
             Self::Tuple(parts) => {
                 let mut accum: u64 = 2_870_177_450_012_600_261;
                 for part in parts.iter() {
