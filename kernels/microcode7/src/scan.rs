@@ -902,6 +902,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos += 1;
             continue;
         }
+        if table.spells("ext.lexical.line_continuation", &c.to_string()) {
+            pos += 1;
+            if src.get(pos) == Some(&'\r') { pos += 1; }
+            if src.get(pos) != Some(&'\n') { return Err(table.single("ext.lexical.line_continuation.amiss").unwrap_or_default().to_string()); }
+            row += 1;
+            pos += 1;
+            continue;
+        }
         if quotes.contains(&c) {
             let delimiter = table.strings("ext.lexical.string.long").iter().find(|word| {
                 let letters: Vec<char> = word.chars().collect();

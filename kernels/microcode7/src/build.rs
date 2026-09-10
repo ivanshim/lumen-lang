@@ -1172,6 +1172,7 @@ impl<'a> Builder<'a> {
     fn class_scope(&mut self) -> Res<Form> {
         self.advance();
         let name = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
             let _bases = self.arguments_of(&name, "ext.stmt.class.bases.close", "syntax.call.separator")?;
@@ -2072,6 +2073,7 @@ impl<'a> Builder<'a> {
     fn class_with_receiver(&mut self) -> Res<Form> {
         self.advance();
         let named = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
         let mut setup = Vec::new();
         let mut parent = None;
@@ -2190,6 +2192,25 @@ impl<'a> Builder<'a> {
         Ok(sequence(setup))
     }
 
+    fn class_type_parameters(&mut self) -> Res<()> {
+        self.advance();
+        let table = self.table;
+        let mut declared = Vec::new();
+        loop {
+            if ["ext.stmt.function.carries", "ext.stmt.function.carries.pairs"].iter().any(|key| self.on_any(key)) { self.advance(); }
+            let parameter = self.need_word("among the type parameters")?;
+            if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
+            declared.push(parameter);
+            if self.on_any("ext.stmt.annotation") { self.advance(); self.expr_at(0, false)?; }
+            if self.on_assign() { self.advance(); self.expr(0)?; }
+            if self.on_any("ext.stmt.type_params.close") { break; }
+            self.need_sign(table.single("syntax.call.separator").unwrap(), "between type parameters")?;
+            if self.on_any("ext.stmt.type_params.close") { break; }
+        }
+        self.need_sign(table.single("ext.stmt.type_params.close").unwrap(), "after the type parameters")?;
+        Ok(())
+    }
+
     fn class_decl(&mut self) -> Res<Form> {
         if self.table.flag("ext.stmt.class.this.explicit") {
             return self.class_with_receiver();
@@ -2197,6 +2218,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         // A class of method names only may be built on several at once;
         // a class is built on one and answers to any number.
         let bare = table.spells("ext.stmt.class.interface", &word);
@@ -5838,6 +5860,9 @@ impl<'a> Builder<'a> {
             if !reaching && !owning {
                 return Ok(node);
             }
+            let pipe_call = self.glance(2).shape == Shape::Sign && table.spells("syntax.call.open", &self.glance(2).lexeme);
+            if !owning && table.flag("ext.op.member.pipes") && pipe_call
+                && table.prims.contains_key(&self.glance(1).lexeme) && matches!(&node, Form::Read(_)) { return Ok(node); }
             self.advance();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.

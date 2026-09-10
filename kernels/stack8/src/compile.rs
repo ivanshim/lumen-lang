@@ -979,6 +979,7 @@ impl<'a> Compiler<'a> {
     fn scoped_class(&mut self) -> Res<()> {
         self.take();
         let named = self.want_name("as the class name")?;
+        if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         if self.on_any(&self.lang.class_bases_open) {
             self.take();
             let from = self.mark();
@@ -3121,6 +3122,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         self.take();
         let name = self.want_name("as the class name")?;
+        if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
@@ -3232,6 +3234,23 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn class_type_parameters(&mut self) -> Res<()> {
+        let lang = self.lang;
+        self.take();
+        let mut names = std::collections::HashSet::new();
+        loop {
+            if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
+            let name = self.want_name("as a type parameter")?;
+            if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
+            if self.on_any(&lang.annotation_marks) { self.take(); self.expr_at(0, false)?; }
+            if self.on_assign() { self.take(); self.expr(0)?; }
+            if !self.on_any(&lang.tuple_marks) { break; }
+            self.take();
+            if self.on_any(&lang.type_params_close) { break; }
+        }
+        self.want_sign(&lang.type_params_close[0], "after the type parameters")
+    }
+
     fn class_decl(&mut self) -> Res<()> {
         let lang = self.lang;
         if lang.explicit_this {
@@ -3239,6 +3258,7 @@ impl<'a> Compiler<'a> {
         }
         let word = self.take().lexeme;
         let name = self.want_name("as the class name")?;
+        if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         // A class of method names only may stand on several at once; a
         // class stands on one and answers to any number.
         let bare = Lang::spells(&lang.interface_words, &word);
@@ -6391,6 +6411,11 @@ impl<'a> Compiler<'a> {
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {
                 break;
+            }
+            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
+                && lang.calling.as_ref().map_or(false, |pair| self.look_ahead(2).is_lexeme(Shape::Sign, &pair.open))
+                && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) {
+                return Ok(());
             }
             self.take();
             // A value may stand where a member's name stands: the

@@ -370,6 +370,87 @@ only. The extension labels so far, all from PHP:
   in; the scanner turns such a string into a bracketed concatenation
   (`op.concat` inside `syntax.group`) starting from the empty string, so
   the result is always text. `\$` is a literal sigil.
+- `ext.lexical.number.point.bare` permits a decimal point with figures
+  on only one side. `ext.lexical.number.imaginary` names the suffix of
+  an imaginary number; its magnitude is read whole, and reaching it
+  raises `ext.lexical.number.imaginary.unready` until complex values
+  can be held. Decimal exponents, bit conjunction, left shifts and unary
+  plus use `ext.lexical.number.exponent`, `ext.op.bit.and`,
+  `ext.op.bit.left` and `ext.op.plus` as already described below.
+- `ext.stmt.type_params.open` and `.close` enclose type parameters after
+  a class name. Each names a type, a row of types after the existing
+  `ext.stmt.function.carries` mark, or a parameter row after `.pairs`.
+  A bound after `ext.stmt.annotation` and a default after `stmt.assign`
+  are read as expressions; a last comma is allowed and repeated names
+  are refused. The class still raises `ext.stmt.class.unready` when
+  reached. These labels also belong to the separate modern syntax piece;
+  this reading supplies only the class head needed here.
+- `ext.stmt.class.bases.open` and `.close` enclose the expressions a
+  class takes as bases. With `ext.stmt.class.unready` spelled, this small
+  reading reads the head and every statement within, then refuses the
+  declaration at the run with those words. The class piece supplies the
+  fuller meaning. These three class labels supply the reading in place
+  of a separate `ext.stmt.class.new` word. Decorators before a class or
+  an asynchronous declaration are read before its deferred body.
+  `ext.op.member.pipes` keeps the old builtin pipe for a call on a
+  plain named receiver; a member without call brackets remains a member,
+  even when its name also spells a builtin. Other member forms use
+  `ext.op.member`.
+- `ext.op.in` asks whether its left value is in its right; the preceding
+  `ext.op.in.negated` word reverses the question. Both operands are read
+  before `ext.op.in.unready` refuses the operation at the run.
+- `ext.op.identity` asks whether its two operands are the very same
+  value, with a following `ext.op.identity.negated` reversing it.
+  `ext.op.identity.unready` refuses the question at the run. The strict
+  equality of `ext.op.identical` is a different question and is not
+  borrowed for identity. The expression piece supplies both operations.
+- `ext.stmt.for.target.unready` says that a loop target which takes a
+  value apart cannot yet run. The target, iterable and whole body are
+  read; a plain named target keeps its former meaning. A language which
+  spells `ext.builtin.range.value` may give a loop any supported range
+  call, including a one-bound call or one with a step. A bare comma list
+  as the source is read by the tuple reading above.
+- `ext.op.lambda` reads a parameter list without outer brackets, then
+  a colon and one expression. `ext.op.lambda.unready` refuses this value
+  at the run; the expression piece supplies the function and its cells.
+- `ext.stmt.with` takes context expressions, each optionally followed by
+  `ext.stmt.with.as` and a target, then a body. Outer brackets and a final
+  comma are allowed. Every expression and statement is read, and the
+  run raises `ext.stmt.with.unready` before entering any context.
+- `ext.stmt.async` stands before a function, a loop or a context body;
+  `ext.op.await` takes the expression whose answer would be awaited.
+  Their readings finish before `ext.stmt.async.unready` speaks at the run.
+- `ext.stmt.yield` takes an optional value list, or `ext.stmt.yield.from`
+  and the value which would be walked. `ext.stmt.yield.unrun` refuses it
+  at the run until a routine can be suspended and entered again.
+- `ext.stmt.nonlocal` names enclosing bindings, separated by commas.
+  `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
+  provided. Outermost bindings use the existing `ext.stmt.global`.
+- `ext.stmt.del` reads one or more places to remove; `ext.stmt.del.unrun`
+  refuses their removal at the run. The separate block piece supplies
+  deletion, enclosing bindings and the fuller suspended forms above.
+- `ext.op.tuple` names the comma within a grouped value or a bare value
+  list. Its parts are read in order; `ext.op.tuple.unready` refuses the
+  value at the run until the tuple piece supplies its representation.
+  The existing `ext.op.assign.value` lets the value written to one name
+  be written to another in a chained assignment.
+- `ext.lexical.string.long` names repeated quote marks which enclose one
+  string across lines. The four `ext.lexical.string.prefix.raw`, `.plain`,
+  `.bytes` and `.format` lists name letters before a quote; a raw letter
+  keeps every backslash, and a plain letter leaves the text unchanged.
+  Raw may stand beside bytes or format. `ext.lexical.string.adjacent`
+  joins neighbouring string tokens, after line ends within brackets
+  have been removed as well as on one line. The small reading here carries byte
+  and formatted strings to the run, where `ext.lexical.string.unready`
+  says that their values cannot yet be represented. The same words serve
+  for a named character or half of a Unicode pair. Ordinary numbered
+  escapes yield their characters; `.amiss` says that a string was not
+  closed, and `ext.lexical.escape.codepoint.amiss` speaks of bad figures.
+  The fuller string reading is held in the separate string piece.
+- `ext.lexical.line_continuation` names a mark outside strings which
+  joins its line to the following line. A mark followed by anything but
+  a line end raises `ext.lexical.line_continuation.amiss`. Indentation
+  after that line end belongs to the continued line, not a fresh block.
 - `ext.lexical.heredoc`: the mark that opens a string written over lines,
   PHP's `<<<`. After it stands a label — a name, or a name in string
   quotes, with spaces or tabs about it if the program likes — and then a
@@ -2285,6 +2366,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
 | `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
+| `ext.lexical.line_continuation.amiss` | - | - | `unexpected character after line continuation character` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | `invalid numeric literal` | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.amiss.binary` | - | - | `SyntaxError: invalid binary literal` | - | - | - | - | - | - | - |
@@ -2319,12 +2401,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.format.unready` | - | - | `NotImplementedError: formatted strings are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
+| `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.value.unready` | - | - | `NotImplementedError: this string value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
-| `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
@@ -2350,9 +2433,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
 | `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
 | `ext.op.identical.unsupported` | - | - | `Identity of these values is not supported` | - | - | - | - | - | - | - |
+| `ext.op.identity` | - | - | `is` | - | - | - | - | - | - | - |
+| `ext.op.identity.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.identity.unready` | - | - | `NotImplementedError: identity is not supported` | - | - | - | - | - | - | - |
 | `ext.op.if_else` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.in.unready` | - | - | `NotImplementedError: membership is not supported` | - | - | - | - | - | - | - |
 | `ext.op.in.unsupported` | - | - | `Membership requires an array, string or map` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
@@ -2375,6 +2462,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
 | `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
+| `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | `.` | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2414,6 +2502,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.binding.unrun` | - | - | `This binding target cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
@@ -2463,6 +2552,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.for.target.unready` | - | - | `NotImplementedError: unpacking loop targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |
@@ -2500,6 +2590,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.close` | - | - | `]` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |

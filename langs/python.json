@@ -472,6 +472,9 @@
   "ext.lexical.line_continuation": [
     "\\"
   ],
+  "ext.lexical.line_continuation.amiss": [
+    "unexpected character after line continuation character"
+  ],
   "ext.lexical.number.amiss": [
     "invalid numeric literal"
   ],
@@ -557,6 +560,9 @@
     "r",
     "R"
   ],
+  "ext.lexical.string.unready": [
+    "NotImplementedError: this string cannot be represented"
+  ],
   "ext.lexical.string.value.unready": [
     "NotImplementedError: this string value is not supported"
   ],
@@ -567,6 +573,7 @@
   "ext.op.assign.expression": [
     ":="
   ],
+  "ext.op.assign.value": true,
   "ext.op.await": [
     "await"
   ],
@@ -620,6 +627,15 @@
   "ext.op.identical.unsupported": [
     "Identity of these values is not supported"
   ],
+  "ext.op.identity": [
+    "is"
+  ],
+  "ext.op.identity.negated": [
+    "not"
+  ],
+  "ext.op.identity.unready": [
+    "NotImplementedError: identity is not supported"
+  ],
   "ext.op.if_else": [
     "if",
     "else"
@@ -629,6 +645,9 @@
   ],
   "ext.op.in.negated": [
     "not"
+  ],
+  "ext.op.in.unready": [
+    "NotImplementedError: membership is not supported"
   ],
   "ext.op.in.unsupported": [
     "Membership requires an array, string or map"
@@ -663,6 +682,9 @@
   ],
   "ext.op.lambda.enclosing": [
     "Lambda cannot read an enclosing function variable"
+  ],
+  "ext.op.lambda.unready": [
+    "NotImplementedError: lambda values are not supported"
   ],
   "ext.op.lambda.unsupported": [
     "Lambda keyword parameters are not supported"
@@ -705,6 +727,9 @@
   "ext.stmt.assign.chain": true,
   "ext.stmt.async": [
     "async"
+  ],
+  "ext.stmt.async.unready": [
+    "NotImplementedError: asynchronous execution is not supported"
   ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
@@ -768,6 +793,9 @@
     "finally"
   ],
   "ext.stmt.for.collection": true,
+  "ext.stmt.for.target.unready": [
+    "NotImplementedError: unpacking loop targets are not supported"
+  ],
   "ext.stmt.function.carries": [
     "*"
   ],
@@ -855,6 +883,12 @@
     "try"
   ],
   "ext.stmt.try.else": true,
+  "ext.stmt.type_params.close": [
+    "]"
+  ],
+  "ext.stmt.type_params.open": [
+    "["
+  ],
   "ext.stmt.unpack": [
     "["
   ],
