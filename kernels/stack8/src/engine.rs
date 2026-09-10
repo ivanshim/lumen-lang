@@ -905,7 +905,7 @@ impl<'a> Engine<'a> {
     }
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
-        if self.fuller_classes() && told.starts_with(self.class_word("attribute.amiss")) {
+        if self.fuller_classes() && told.split(':').next()==self.class_word("attribute.amiss").split(':').next() {
             let (kind,message)=told.split_once(": ")?;
             let Value::Class(class)=self.form_class(kind.to_string(),vec![],vec![]).ok()? else{return None;};
             let slot=self.registry.slot(kind);self.world.resize(self.registry.idents.len(),Value::Blank);self.world[slot]=Value::Class(class.clone());
@@ -1220,7 +1220,7 @@ impl<'a> Engine<'a> {
         }
         if matches!(self.world[slot.far], Value::Blank) && self.fuller_classes() {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
-            if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
+            if let Some(b)=self.lang.builtins.get(slot.ident.as_ref()) {if *b==Builtin::ClassTool(11){if let Some(c)=&self.property_class{return Ok(Value::Class(c.clone()));}}return Ok(Value::Native(*b,Rc::from(slot.ident.as_ref()))); }
         }
         let g = &mut self.world[slot.far];
         match g {
@@ -2298,7 +2298,13 @@ impl<'a> Engine<'a> {
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
                 Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin,Builtin::SortOf) || argc==1 && self.data.last().map_or(false,|v|matches!(v,Value::Object(_))) || argc==3 => {
-                    let supplied=self.drop_many(argc)?;let mut args=Vec::new();
+                    let supplied=self.drop_many(argc)?;
+                    if *builtin==Builtin::ClassTool(11) {
+                        let items=self.call_items(supplied)?;
+                        let answer=self.builtin_call(*builtin,name,items)?;
+                        self.data.push(answer);return Ok(());
+                    }
+                    let mut args=Vec::new();
                     for (key,v) in self.call_items(supplied)? {
                         if key.is_some(){let words=&self.lang.call_builtin_amiss;return Err(format!("{}{}{}",words.first().map_or("",String::as_str),name,words.get(1).map_or("",String::as_str)).into());}
                         args.push(v);
@@ -4416,6 +4422,9 @@ impl<'a> Engine<'a> {
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         if matches!(target, Value::Collection(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
+        if let Value::Adapter(w)=target {if w.0==44 {if let Value::Class(c)=&w.1[0] {let view=Value::Map(Rc::new(c.shared.borrow().iter().map(|(n,v)|(Value::text(n),v.clone())).collect()));return self.element(&view,at,how);}}}
+
+        if let Value::Tuple(items)=target {if let Ok(index)=at.as_big(){if index<BigInt::from(0){return self.element_held(target,&Value::of_big(index+items.len()),how);}}}
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -4701,6 +4710,18 @@ impl<'a> Engine<'a> {
                 }
                 named.push((key, value));
             } else { args.push(value); }
+        }
+        if let Builtin::ClassTool(which)=builtin {
+            if which==11 {
+                let positional=args.len();
+                for (key,value) in named {
+                    let slot=["property.fget","property.fset","property.fdel","doc"].iter().position(|p|self.class_word(p)==key).ok_or_else(||Self::named_fault(&self.lang.call_unknown,&key))?;
+                    if slot<positional {return Err(Self::named_fault(&self.lang.call_duplicate,&key));}
+                    if args.len()<=slot {args.resize(slot+1,Value::Null);}
+                    args[slot]=value;
+                }
+            } else if !named.is_empty() {return Err(self.class_word("descriptor.unready").to_string());}
+            return self.class_work(which,args).map_err(|e|e.told(&self.wording()));
         }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();

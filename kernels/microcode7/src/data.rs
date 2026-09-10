@@ -394,10 +394,11 @@ impl Value {
             (Value::Couple(a), Value::Couple(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
+            (Value::Routine(p), Value::Routine(q)) => Rc::ptr_eq(p,q),
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
-            (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
+            (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_some(){Rc::ptr_eq(a,b)}else{a.name==b.name},
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && (Rc::ptr_eq(x,y) || *k==3 && x[0].equals(&y[0]) && x[1].equals(&y[1])),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),

@@ -93,7 +93,7 @@ impl<'a> Machine<'a> {
                         let key=kept[0].bare();
                         if tag==41{return self.object_entry(t,&key).ok_or_else(||self.absent_attribute(&values[0],&key));}
                         if tag==42&&values.len()!=2{return Err(self.class_unready());}
-                        if self.object_change(t,&key,values.get(1).cloned()){Ok(Value::Nil)}else{Err(self.absent_attribute(&values[0],&key))}
+                        if Self::change_entry(&mut t.holds.borrow_mut(),&format!("#member:{key}"),values.get(1).cloned()){Ok(Value::Nil)}else{Err(self.absent_attribute(&values[0],&key))}
                     }
                     0=>Ok(kept[0].clone()),
                     1 if values.len()==1=>{if let Some(Value::Blueprint(c))=values.first(){self.made+=1;Ok(Value::Thing(Rc::new(Thing{of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))}else{Err(self.class_unready())}},
@@ -143,7 +143,8 @@ impl<'a> Machine<'a> {
         if let Some(f)=self.protocol_entry(&entry,"descriptor.get"){return self.protocol_invoke(entry,f,vec![receiver.unwrap_or(Value::Nil),Value::Blueprint(owner)]);}
         if let Value::Wrapped(tag,items)=&entry {
             if (20..=26).contains(tag) && receiver.is_some(){return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()]));}
-            if *tag==40 {if let Some(subject)=receiver {let Value::Thing(t)=&subject else{return Err(self.class_unready());};return self.object_entry(t,&items[0].bare()).ok_or_else(||self.absent_attribute(&subject,&items[0].bare()));}return Ok(entry);}
+            if *tag==45 {if let Some(Value::Thing(t))=receiver {return Ok(t.holds.borrow().iter().find(|(n,_)|n==&items[0].bare()).map_or(Value::Nil,|(_,v)|v.clone()));}return Ok(entry);}
+            if *tag==40 {if let Some(subject)=receiver {let Value::Thing(t)=&subject else{return Err(self.class_unready());};return t.holds.borrow().iter().find(|(n,_)|n==&format!("#member:{}",items[0].bare())).map(|(_,v)|v.clone()).ok_or_else(||self.absent_attribute(&subject,&items[0].bare()));}return Ok(entry);}
         }
         if let Value::Adorned(d)=&entry {return match d.manner {'s'=>Ok(d.target.clone()),'c'=>Ok(Self::wrap(3,vec![d.target.clone(),Value::Blueprint(owner)])),'p' if receiver.is_some()=>self.apply_class_member(d.target.clone(),vec![receiver.unwrap()]),_=>Ok(entry)};}
         match &entry {
@@ -157,7 +158,7 @@ impl<'a> Machine<'a> {
         }else{Ok(entry)}
     }
     fn member_map(entries:&[(String,Value)])->Value {
-        let pairs=entries.iter().map(|(key,value)|(Value::text(key),value.clone())).collect();
+        let pairs=entries.iter().filter(|(key,_)|!key.starts_with('#')).map(|(key,value)|(Value::text(key),value.clone())).collect();
         Value::Dict(Rc::new(pairs))
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
@@ -167,12 +168,12 @@ impl<'a> Machine<'a> {
         result
     }
     fn read_ordered_attribute(&mut self,value:Value,key:&str,direct:bool)->Res {
-        if key==self.detail("descriptor.get") && matches!(&value,Value::Routine(_)|Value::Bound(..)|Value::Wrapped(..)){return Ok(Self::wrap(30,vec![value]));}
+        if key==self.detail("descriptor.get") && (matches!(&value,Value::Routine(_)|Value::Bound(..)) || matches!(&value,Value::Wrapped(4|5|20..=26|40|45,_))){return Ok(Self::wrap(30,vec![value]));}
         if let Value::Wrapped(40,parts)=&value {let tag=if key==self.detail("descriptor.set"){42}else if key==self.detail("descriptor.delete"){43}else{0};if tag>0{return Ok(Self::wrap(tag,parts.to_vec()));}}
         if let Value::Blueprint(b)=&value {
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}
-            if key==self.detail("namespace"){return Ok(Self::member_map(&b.shared.borrow()));}
+            if key==self.detail("namespace"){return Ok(Self::wrap(44,vec![value.clone()]));}
             if key==self.detail("bases"){return Ok(Value::Tuple(Rc::new(b.parents.iter().map(|p|Value::Blueprint(p.clone())).collect())));}
             if key==self.detail("mro")||key==self.detail("order"){
                 let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.iter().map(|p|Value::Blueprint(p.clone())));
@@ -186,10 +187,10 @@ impl<'a> Machine<'a> {
             }
         }else if let Value::Thing(t)=&value {
             if !direct {if let Some(reader)=self.inherited_entry(&t.of,self.detail("get")){return self.apply_class_member(reader,vec![value.clone(),Value::text(key)]);}}
-            if key==self.detail("kind"){return Ok(Value::Blueprint(t.of.clone()));}
-            if key==self.detail("namespace"){return Ok(self.object_dictionary(t));}
             let from_class=self.inherited_entry(&t.of,key);
-            if from_class.as_ref().map_or(false,|v|self.takes_precedence(v)){return self.member_binding(from_class.unwrap(),Some(value.clone()),t.of.clone());}
+            if from_class.as_ref().map_or(false,|v|self.takes_precedence(v) && (self.protocol_entry(v,"descriptor.get").is_some() || matches!(v,Value::Wrapped(..)))){return self.member_binding(from_class.unwrap(),Some(value.clone()),t.of.clone());}
+            if key==self.detail("kind"){return Ok(Value::Blueprint(t.of.clone()));}
+            if key==self.detail("namespace"){if !self.allowed_slot(&t.of,key){return Err(self.absent_attribute(&value,key));}return Ok(self.object_dictionary(t));}
             let own=self.object_entry(t,key);
             if let Some(v)=own{return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.of.clone());}
@@ -252,11 +253,13 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if let Some(member)=self.inherited_entry(&t.of,key) {
-                    if matches!(&member,Value::Wrapped(40,_)){return if self.object_change(t,key,replacement){Ok(Value::Nil)}else{Err(self.absent_attribute(&subject,key))};}
+                    if matches!(&member,Value::Wrapped(45,_)){return Err(self.detail("property.readonly").to_owned().into());}
+                    if matches!(&member,Value::Wrapped(40,_)){return if Self::change_entry(&mut t.holds.borrow_mut(),&format!("#member:{key}"),replacement){Ok(Value::Nil)}else{Err(self.absent_attribute(&subject,key))};}
                     if self.takes_precedence(&member) {let part=if replacement.is_some(){"descriptor.set"}else{"descriptor.delete"};let f=self.protocol_entry(&member,part).ok_or_else(||self.absent_attribute(&subject,key))?;let mut given=vec![subject.clone()];given.extend(replacement);self.protocol_invoke(member,f,given)?;return Ok(Value::Nil);}
                 }
                 if key==self.detail("namespace") {
-                    if let Some(v)=replacement {if let Value::Dict(pairs)=v.settled(){let mut own=Vec::new();for (k,v) in pairs.iter(){let Value::Text(n)=k else{return Err(self.class_unready());};own.push((n.to_string(),v.clone()));}t.holds.replace(own);return Ok(Value::Nil);}}
+                    if !self.allowed_slot(&t.of,key){return Err(self.absent_attribute(&subject,key));}
+                    if let Some(v)=replacement {if matches!(v.settled(),Value::Dict(_)){let stored=self.collection_cell(v);Self::change_entry(&mut t.holds.borrow_mut(),"#dictionary",Some(stored));return Ok(Value::Nil);}}
                     return Err(self.class_unready());
                 }
                 if key==self.detail("kind"){return Err(self.class_unready());}
@@ -276,6 +279,7 @@ impl<'a> Machine<'a> {
         if success{Ok(Value::Nil)}else{Err(self.absent_attribute(&subject,key))}
     }
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
+        let values=values.iter().map(Value::settled).collect::<Vec<_>>();
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.of.clone()));}}
         if let [Value::Text(title),sequence,Value::Dict(entries)]=values.as_slice(){
             let bases=match sequence{Value::Vector(v)|Value::Tuple(v)=>v,_=>return Err(self.class_unready())};
@@ -286,11 +290,18 @@ impl<'a> Machine<'a> {
         Err(self.class_unready())
     }
     fn is_beneath(&self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        if let Value::Intrinsic(word)=choice {
+            if !class_only{return Ok(self.core_belongs(&subject.settled(),choice)?);}
+            let op=self.table.prims.get(word.as_ref());
+            if !matches!(op,Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::Tupling|Prim::Uniques|Prim::Dictionary|Prim::Truthful|Prim::SortOf)){return Err(self.class_unready());}
+            return Ok(matches!(subject,Value::Intrinsic(other) if self.table.prims.get(other.as_ref())==op));
+        }
         match choice {
             Value::Tuple(options)|Value::Vector(options)=>{for option in options.iter(){if self.is_beneath(subject,option,class_only)?{return Ok(true);}}Ok(false)},
             Value::Blueprint(c)=>{
                 if c.name==self.detail("root"){
                     if !class_only||matches!(subject,Value::Blueprint(_)){return Ok(true);}
+                    if let Value::Intrinsic(word)=subject {return Ok(matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::Tupling|Prim::Uniques|Prim::Dictionary|Prim::Truthful|Prim::SortOf)));}
                     if let Value::Wrapped(8,parts)=subject{if let Value::Text(n)=&parts[0]{return Ok(matches!(self.table.prims.get(n.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf)));}}
                     return Err(self.class_unready());
                 }
@@ -369,6 +380,7 @@ impl Machine<'_> {
             for (tag,key) in [(20,"descriptor.get"),(21,"descriptor.set"),(22,"descriptor.delete"),(23,"property.getter"),(25,"property.deleter")] {
                 own.push((self.detail(key).to_owned(),Self::wrap(tag,Vec::new())));
             }
+            for key in ["property.fget","property.fset","property.fdel"] {let word=self.detail(key);own.push((word.to_owned(),Self::wrap(45,vec![Value::text(word)])));}
             for (tag,label) in [(24,"ext.stmt.class.property.setter"),(26,"ext.stmt.class.constructor")] {
                 if let Some(word)=self.table.single(label){own.push((word.into(),Self::wrap(tag,Vec::new())));}
             }
@@ -383,7 +395,7 @@ impl Machine<'_> {
         match descriptor {Value::Thing(t)=>self.inherited_entry(&t.of,self.detail(part)),_=>None}
     }
     fn takes_precedence(&self,descriptor:&Value)->bool {
-        if matches!(descriptor,Value::Wrapped(6|40,_)){return true;}
+        if matches!(descriptor,Value::Wrapped(6|40|45,_)){return true;}
         ["descriptor.set","descriptor.delete"].iter().any(|part|self.protocol_entry(descriptor,part).is_some())
     }
     fn protocol_invoke(&mut self,descriptor:Value,method:Value,arguments:Vec<Value>)->Res {

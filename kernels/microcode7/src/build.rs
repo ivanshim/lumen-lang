@@ -2672,6 +2672,7 @@ impl<'a> Builder<'a> {
                 if r.on_stmt_end() || r.look().shape == Shape::Open { r.body()? } else { r.stmt()? }
             } else { r.body()? };
             items.push(body);
+            if explicit {items.push(constant(Value::Nil));}
             Ok(sequence(items))
         });
         self.receiver = enclosing_receiver;

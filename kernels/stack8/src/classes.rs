@@ -93,7 +93,7 @@ impl<'a> Engine<'a> {
                     let Some(Value::Object(o))=args.first() else {return Err(self.class_refusal());};
                     let name=w.1[0].plain();
                     if w.0==41 {self.instance_value(o,&name).ok_or_else(||self.missing_member(&args[0],&name))}
-                    else {if w.0==42 && args.len()!=2 {return Err(self.class_refusal());}self.instance_write(o,&name,args.get(1).cloned()).map_err(|_|self.missing_member(&args[0],&name))?;Ok(Value::Null)}
+                    else {if w.0==42 && args.len()!=2 {return Err(self.class_refusal());}Self::write_members(&mut o.fields.borrow_mut(),&format!("#slot:{name}"),args.get(1).cloned()).map_err(|_|self.missing_member(&args[0],&name))?;Ok(Value::Null)}
                 }
                 0 => Ok(w.1[0].clone()),
                 1 => {
@@ -156,8 +156,9 @@ impl<'a> Engine<'a> {
         if let Value::Descriptor(d)=&value {return self.descriptor_read(d,subject.unwrap_or(Value::Class(class)));}
         if let Value::Adapter(w) = &value {
             return match w.0 {
+                45 if subject.is_some()=>{let Value::Object(o)=subject.unwrap() else{return Err(self.class_refusal());};let found=o.fields.borrow().iter().find(|(n,_)|n==&w.1[0].plain()).map(|(_,v)|v.clone());Ok(found.unwrap_or(Value::Null))},
                 20..=26 if subject.is_some()=>Ok(Self::adapter(3,vec![value.clone(),subject.unwrap()])),
-                40 if subject.is_some()=>{let obj=subject.unwrap();let Value::Object(o)=&obj else{return Err(self.class_refusal());};self.instance_value(o,&w.1[0].plain()).ok_or_else(||self.missing_member(&obj,&w.1[0].plain()))},
+                40 if subject.is_some()=>{let obj=subject.unwrap();let Value::Object(o)=&obj else{return Err(self.class_refusal());};o.fields.borrow().iter().find(|(n,_)|n==&format!("#slot:{}",w.1[0].plain())).map(|(_,v)|v.clone()).ok_or_else(||self.missing_member(&obj,&w.1[0].plain()))},
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
@@ -176,14 +177,14 @@ impl<'a> Engine<'a> {
         result
     }
     fn class_get_inner(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
-        if name==self.class_word("descriptor.get") && matches!(&subject,Value::Routine(_)|Value::Adapter(_)) {return Ok(Self::adapter(30,vec![subject]));}
+        if name==self.class_word("descriptor.get") && (matches!(&subject,Value::Routine(_)) || matches!(&subject,Value::Adapter(w) if matches!(w.0,4|5|20..=26|40|45))) {return Ok(Self::adapter(30,vec![subject]));}
         if let Value::Adapter(w)=&subject {if w.0==40 {let tag=if name==self.class_word("descriptor.set"){42}else if name==self.class_word("descriptor.delete"){43}else{0};if tag!=0{return Ok(Self::adapter(tag,w.1.clone()));}}}
         match &subject {
             Value::Class(c) => {
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
                 if name==self.class_word("qualified") { return Ok(self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name))); }
                 if name==self.class_word("bases") { return Ok(Value::Tuple(Rc::new(c.direct.iter().cloned().map(Value::Class).collect()))); }
-                if name==self.class_word("namespace") { return Ok(Self::namespace(&c.shared.borrow())); }
+                if name==self.class_word("namespace") { return Ok(Self::adapter(44,vec![subject.clone()])); }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().cloned().map(Value::Class));
                     let tuple=Value::Tuple(Rc::new(order));
@@ -202,10 +203,10 @@ impl<'a> Engine<'a> {
                 if !plain { if let Some(f)=self.class_value(&o.class,self.class_word("get")) {
                     return self.class_apply(f,vec![subject.clone(),Value::text(name)]);
                 } }
-                if name==self.class_word("kind") {return Ok(Value::Class(o.class.clone()));}
-                if name==self.class_word("namespace") {return Ok(self.instance_namespace(o));}
                 let member=self.class_value(&o.class,name);
-                if member.as_ref().map_or(false,|v|self.data_member(v)) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}
+                if member.as_ref().map_or(false,|v|self.data_member(v) && (self.descriptor_hook(v,"descriptor.get").is_some() || matches!(v,Value::Adapter(_)))) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}
+                if name==self.class_word("kind") {return Ok(Value::Class(o.class.clone()));}
+                if name==self.class_word("namespace") {if !self.slots_allow(&o.class,name){return Err(self.missing_member(&subject,name));}return Ok(self.instance_namespace(o));}
                 if let Some(v)=self.instance_value(o,name) {return Ok(v);}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class.clone());}
             }
@@ -248,7 +249,7 @@ impl<'a> Engine<'a> {
         }
         Err(self.missing_member(&subject,name))
     }
-    fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().map(|(n,v)|(Value::text(n),v.clone())).collect()))}
+    fn namespace(members:&[(String,Value)]) -> Value {Value::Map(Rc::new(members.iter().filter(|(n,_)|!n.starts_with('#')).map(|(n,v)|(Value::text(n),v.clone())).collect()))}
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
         let absent=self.missing_member(&subject,name);
         match &subject {
@@ -266,14 +267,18 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let Some(member)=self.class_value(&o.class,name) {
-                    if let Value::Adapter(w)=&member {if w.0==40 {self.instance_write(o,name,value).map_err(|_|absent)?;return Ok(Value::Null);}}
+                    if let Value::Adapter(w)=&member {if w.0==45{return Err(self.class_word("property.readonly").to_string().into());}if w.0==40 {Self::write_members(&mut o.fields.borrow_mut(),&format!("#slot:{name}"),value).map_err(|_|absent)?;return Ok(Value::Null);}}
                     if self.data_member(&member) {
                         let part=if value.is_some(){"descriptor.set"}else{"descriptor.delete"};
                         let hook=self.descriptor_hook(&member,part).ok_or_else(||self.missing_member(&subject,name))?;
                         let mut args=vec![subject.clone()];args.extend(value);self.descriptor_call(member,hook,args)?;return Ok(Value::Null);
                     }
                 }
-                if name==self.class_word("namespace") {if let Some(v)=value {if let Value::Map(entries)=v.contents(){let mut fields=Vec::new();for (k,v) in entries.iter(){let Value::Text(n)=k else{return Err(self.class_refusal());};fields.push((n.to_string(),v.clone()));}*o.fields.borrow_mut()=fields;return Ok(Value::Null);}}return Err(self.class_refusal());}
+                if name==self.class_word("namespace") {
+                    if !self.slots_allow(&o.class,name){return Err(absent);}
+                    if let Some(v)=value {if matches!(v.contents(),Value::Map(_)){Self::write_members(&mut o.fields.borrow_mut(),"#namespace",Some(v.held(true))).map_err(|_|self.class_refusal())?;return Ok(Value::Null);}}
+                    return Err(self.class_refusal());
+                }
                 if name==self.class_word("kind"){return Err(self.class_refusal());}
                 if value.is_some() && !self.slots_allow(&o.class,name) {return Err(absent);}
                 self.instance_write(o,name,value).map_err(|_|absent)?;
@@ -303,6 +308,7 @@ impl<'a> Engine<'a> {
         fits||c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_allow(b,name))
     }
     pub(super) fn class_type(&mut self,args:Vec<Value>)->Flow<Value> {
+        let args=args.into_iter().map(|v|v.contents()).collect::<Vec<_>>();
         match args.as_slice() {
             [Value::Object(o)]=>Ok(Value::Class(o.class.clone())),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
@@ -314,10 +320,15 @@ impl<'a> Engine<'a> {
         }
     }
     fn beneath(&self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+        if let Value::Native(b,word)=wanted {
+            if !subclass {return Ok(self.core_isinstance(&value.contents(),wanted)?);}
+            if !matches!(b,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::Tuple|Builtin::Set|Builtin::Dict|Builtin::Bool|Builtin::SortOf){return Err(self.class_refusal());}
+            return Ok(matches!(value,Value::Native(other,_) if other==b) || matches!(value,Value::Adapter(w) if w.0==8 && w.1[0].plain()==word.as_ref()));
+        }
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         if let Value::Class(c)=wanted {
             if c.name==self.class_word("root"){
-                if !subclass||matches!(value,Value::Class(_)){return Ok(true);}
+                if !subclass||matches!(value,Value::Class(_))||matches!(value,Value::Native(b,_) if matches!(b,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::Tuple|Builtin::Set|Builtin::Dict|Builtin::Bool|Builtin::SortOf)){return Ok(true);}
                 if let Value::Adapter(w)=value{if w.0==8{if let Value::Text(n)=&w.1[0]{return Ok(matches!(self.lang.builtins.get(n.as_ref()),Some(Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf)));}}}
                 return Err(self.class_refusal());
             }
@@ -383,6 +394,7 @@ impl Engine<'_> {
         for (part, tag) in [("descriptor.get",20), ("descriptor.set",21), ("descriptor.delete",22), ("property.getter",23), ("property.deleter",25)] {
             members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![])));
         }
+        for part in ["property.fget","property.fset","property.fdel"] {let word=self.class_word(part);members.push((word.to_string(),Self::adapter(45,vec![Value::text(word)])));}
         if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24,vec![]))); }
         if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26,vec![]))); }
         let class = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{name}'>")),
@@ -396,7 +408,7 @@ impl Engine<'_> {
         if let Value::Object(o) = value { self.class_value(&o.class,self.class_word(part)) } else { None }
     }
     fn data_member(&self, value: &Value) -> bool {
-        matches!(value,Value::Adapter(w) if w.0==40 || w.0==6)
+        matches!(value,Value::Adapter(w) if w.0==40 || w.0==6 || w.0==45)
             || self.descriptor_hook(value,"descriptor.set").is_some()
             || self.descriptor_hook(value,"descriptor.delete").is_some()
     }

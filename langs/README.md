@@ -1056,7 +1056,8 @@ only. The extension labels so far, all from PHP:
   The property builtin is a class and may have descendants. Its first
   string is the getter's first string unless another is given.
   `property.unreadable`, `property.unwritable` and `property.undeletable`
-  give plain complaints for missing accessors; `descriptor.unready`
+  give plain complaints for missing accessors; `property.readonly`
+  refuses a write to a kept accessor; `descriptor.unready`
   refuses a descriptor call whose working is not furnished. These too
   are lists of words. Functions bind afresh whilst their bound methods
   compare by function and receiver; the existing `receiver` and
@@ -1091,8 +1092,9 @@ only. The extension labels so far, all from PHP:
   These labels each take a list of builtin words.
   The indented definition's ancestry and base lists are immutable tuples;
   the ancestry call also yields a tuple at this stage. Ordinary tuple
-  expressions keep the earlier collection account. The namespace maps
-  are snapshots of own members, with inherited members left to lookup.
+  expressions keep the earlier collection account. The class namespace is a view of its own members, with inherited
+  members left to lookup; an instance dictionary shares its writes with
+  attribute lookup. A class namespace cannot be written through the view.
   The directory lists stored own and inherited names, sorted and without
   repeats; the common forebear's unwritten methods are not listed.
   A class subscript yields the class where its subscript hook is declared;
@@ -3450,7 +3452,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
 | `ext.stmt.annotation` | - | - | `:` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.amiss` | - | - | `invalid syntax` | - | - | - | - | - | - | - |
-| `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
@@ -3510,6 +3511,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.getter` | - | - | `getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.readonly` | - | - | `AttributeError: readonly attribute` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.undeletable` | - | - | `AttributeError: property has no deleter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.unreadable` | - | - | `AttributeError: property has no getter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.unwritable` | - | - | `AttributeError: property has no setter` | - | - | - | - | - | - | - |

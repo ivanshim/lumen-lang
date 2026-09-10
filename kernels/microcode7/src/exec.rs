@@ -1245,7 +1245,7 @@ impl<'a> Machine<'a> {
     }
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
-        if self.has_class_order() && told.starts_with(self.detail("attribute.amiss")) {
+        if self.has_class_order() && told.split(':').next()==self.detail("attribute.amiss").split(':').next() {
             let (name,words)=told.split_once(": ")?;
             let class=match self.build_class_value(name.into(),Vec::new(),Vec::new()).ok()? {Value::Blueprint(c)=>c,_=>return None};
             let index=self.place_called(name);self.outermost.cells.borrow_mut()[index]=Value::Blueprint(class.clone());
@@ -3307,6 +3307,18 @@ impl<'a> Machine<'a> {
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
         }
+        if let Prim::ClassWork(k)=op {
+            if k==11 {
+                let count=positional.len();
+                for (key,v) in keywords {
+                    let at=["property.fget","property.fset","property.fdel","doc"].iter().position(|part|self.detail(part)==key).ok_or_else(||self.argument_fault("ext.syntax.call.amiss.unknown",Some(&key)))?;
+                    if at<count {return Err(self.argument_fault("ext.syntax.call.amiss.duplicate",Some(&key)).into());}
+                    positional.resize(positional.len().max(at+1),Value::Nil);
+                    positional[at]=v;
+                }
+            } else if !keywords.is_empty() {return Err(self.detail("descriptor.unready").to_owned().into());}
+            return self.work_on_class(k,std::mem::take(positional)).map(Some);
+        }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let mut join = String::from(" ");
             let mut tail = String::from("\n");
@@ -4055,6 +4067,18 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.has_class_order() {
+            let result=match op {
+                Prim::Of if v.len()==2 && Self::ordered_subject(&v[0])=>Some(self.read_class_member(v[0].clone(),&v[1].bare(),false)),
+                Prim::Onto if v.len()==3 && Self::ordered_subject(&v[0])=>Some(self.alter_class_member(v[0].clone(),&v[1].bare(),Some(v[2].clone()),false)),
+                Prim::Pluck if v.len()==2 && Self::ordered_subject(&v[0])=>Some(self.alter_class_member(v[0].clone(),&v[1].bare(),None,false)),
+                Prim::ClassWork(k)=>Some(self.work_on_class(k,v.to_vec())),
+                Prim::SortOf if v.len()==3 || matches!(v,[Value::Thing(_)])=>Some(self.class_from_type(v.to_vec())),
+                _=>None,
+            };
+            if let Some(result)=result{return result.map_err(|e|self.suspension_fault(e));}
+        }
+
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -5923,6 +5947,9 @@ impl<'a> Machine<'a> {
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
+        if let Value::Wrapped(44,saved)=target {if let Value::Blueprint(b)=&saved[0] {let entries=b.shared.borrow().iter().map(|(key,v)|(Value::text(key),v.clone())).collect();return self.element(&Value::Dict(Rc::new(entries)),at,how);}}
+
+        if let Value::Tuple(items)=target {if let Ok(index)=at.as_big(){if index<BigInt::from(0){return self.element_within(target,&Value::from_big(index+items.len()),how);}}}
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
