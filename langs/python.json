@@ -352,6 +352,9 @@
   "ext.builtin.callable": [
     "callable"
   ],
+  "ext.builtin.class.name": [
+    "__name__"
+  ],
   "ext.builtin.core.arity": [
     "TypeError: ",
     "() received invalid arguments"
@@ -464,6 +467,40 @@
   ],
   "ext.builtin.enumerate": [
     "enumerate"
+  ],
+  "ext.builtin.exceptions": [
+    "BaseException",
+    "Exception",
+    "ArithmeticError",
+    "ZeroDivisionError",
+    "OverflowError",
+    "LookupError",
+    "IndexError",
+    "KeyError",
+    "TypeError",
+    "ValueError",
+    "NameError",
+    "UnboundLocalError",
+    "AttributeError",
+    "RuntimeError",
+    "NotImplementedError",
+    "StopIteration",
+    "AssertionError",
+    "SystemExit",
+    "KeyboardInterrupt",
+    "ImportError",
+    "OSError",
+    "RecursionError",
+    "UnicodeError"
+  ],
+  "ext.builtin.exceptions.args": [
+    "args"
+  ],
+  "ext.builtin.exceptions.cause": [
+    "__cause__"
+  ],
+  "ext.builtin.exceptions.unready": [
+    "NotImplementedError: this exception operation cannot run yet"
   ],
   "ext.builtin.filter": [
     "filter"
@@ -1199,6 +1236,9 @@
   "ext.stmt.annotation.amiss": [
     "invalid syntax"
   ],
+  "ext.stmt.annotation.target.unready": [
+    "NotImplementedError: annotated attribute targets are not supported"
+  ],
   "ext.stmt.assert": [
     "assert"
   ],
@@ -1520,8 +1560,52 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.fault.attribute": [
+    "object has no attribute '",
+    "'"
+  ],
+  "ext.system.fault.class": [
+    "RuntimeError"
+  ],
+  "ext.system.fault.class.arithmetic": [
+    "ArithmeticError"
+  ],
+  "ext.system.fault.class.attribute": [
+    "AttributeError"
+  ],
+  "ext.system.fault.class.division": [
+    "ZeroDivisionError"
+  ],
+  "ext.system.fault.class.index": [
+    "IndexError"
+  ],
+  "ext.system.fault.class.key": [
+    "KeyError"
+  ],
+  "ext.system.fault.class.kind": [
+    "TypeError"
+  ],
+  "ext.system.fault.class.name": [
+    "NameError"
+  ],
+  "ext.system.fault.class.stop": [
+    "StopIteration"
+  ],
   "ext.system.fault.class.value": [
     "ValueError"
+  ],
+  "ext.system.fault.division": [
+    "division by zero"
+  ],
+  "ext.system.fault.index": [
+    "list index out of range"
+  ],
+  "ext.system.fault.kind": [
+    "unsupported operand types"
+  ],
+  "ext.system.fault.name": [
+    "name '",
+    "' is not defined"
   ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
