@@ -1,0 +1,6 @@
+(slice(1, 2, None), 3) 9
+Ellipsis 8
+() 7
+slice(1, 2, None)
+(1, 2)
+Ellipsis

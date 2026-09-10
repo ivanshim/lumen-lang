@@ -1,0 +1,7 @@
+(slice(None, 42, None), Ellipsis, slice(None, 24, None), 24, 100)
+(slice(None, 42, None), Ellipsis, slice(None, 24, None), 24, 100) Strange
+(slice(None, 42, None), Ellipsis, slice(None, 24, None), 24, 100)
+(slice(1, 2, None),)
+slice(None, None, 0)
+slice(Ellipsis, Ellipsis, Ellipsis)
+True

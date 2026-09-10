@@ -1,0 +1,6 @@
+slice(1, 2, None)
+(slice(1, 2, None), 3)
+Ellipsis
+(1, 2)
+()
+slice('x', 'y', None)
