@@ -360,6 +360,9 @@
   "ext.builtin.member.set": [
     "setattr"
   ],
+  "ext.op.object.binary": ["__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__", "__truediv__", "__rtruediv__", "__floordiv__", "__rfloordiv__", "__mod__", "__rmod__", "__pow__", "__rpow__", "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"],
+  "ext.op.object.call": ["__call__"],
+  "ext.builtin.object.text": ["__str__", "__repr__"],
   "ext.builtin.module.helper.amiss": [
     "TypeError: invalid module helper arguments"
   ],

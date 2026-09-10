@@ -1602,6 +1602,19 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+- `ext.op.object.binary`: methods asking an object to work an operation.
+  The first fourteen names are the ordinary and reflected methods for
+  addition, subtraction, multiplication, division, whole division,
+  remainder and power, in that order. The last six ask equality,
+  inequality, less, less or equal, greater, and greater or equal. A
+  right operand is asked the reflected question where the left has no
+  such method. A method's answer or complaint is carried onward.
+- `ext.op.object.call`: the method which lets an object answer a call.
+  Its owner comes first, followed by the call's arguments.
+- `ext.builtin.object.text`: the methods for plain and quoted text,
+  respectively. Printing and conversion to text ask the first, falling
+  back to the second where the first is absent. The answer must be text.
+
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.
@@ -2148,6 +2161,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
+| `ext.builtin.object.text` | - | - | `__str__` `__repr__` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
@@ -2297,6 +2311,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
+| `ext.op.object.binary` | - | - | `__add__` `__radd__` `__sub__` `__rsub__` `__mul__` `__rmul__` `__truediv__` `__rtruediv__` `__floordiv__` `__rfloordiv__` `__mod__` `__rmod__` `__pow__` `__rpow__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` | - | - | - | - | - | - | - |
+| `ext.op.object.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |

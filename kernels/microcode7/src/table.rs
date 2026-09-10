@@ -94,7 +94,7 @@ ext.builtin.module.load:L \
 ext.builtin.copy:L \
 ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
-ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L \
+ext.op.object.binary:L ext.op.object.call:L ext.builtin.object.text:L ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L \
 ext.builtin.math.floating:B \
 ext.builtin.class.derive:L \
 ext.builtin.call.outcome:L \

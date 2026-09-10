@@ -2,6 +2,7 @@
 pub static MODULES: &[(&str, &str)] = &[
     ("collections", include_str!("collections.py")),
     ("copy", include_str!("copy.py")),
+    ("fractions", include_str!("fractions.py")),
     ("functools", include_str!("functools.py")),
     ("gc", include_str!("gc.py")),
     ("io", include_str!("io.py")),
@@ -11,6 +12,9 @@ pub static MODULES: &[(&str, &str)] = &[
     ("random", include_str!("random.py")),
     ("sys", include_str!("sys.py")),
     ("test", include_str!("test/__init__.py")),
+    ("test.list_tests", include_str!("test/list_tests.py")),
+    ("test.mapping_tests", include_str!("test/mapping_tests.py")),
+    ("test.seq_tests", include_str!("test/seq_tests.py")),
     ("test.support", include_str!("test/support/__init__.py")),
     ("test.support.import_helper", include_str!("test/support/import_helper.py")),
     ("test.support.os_helper", include_str!("test/support/os_helper.py")),

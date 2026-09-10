@@ -26,25 +26,27 @@ requires_IEEE_754 = _identity
 skip_on_newlib = _identity
 nomemtest = _identity
 refcount_test = _identity
-requires_subprocess = _identity
+def requires_subprocess():
+    return unittest.skip('subprocesses are not supported')
 force_not_colorized_test_class = _identity
 
+def is_resource_enabled(resource):
+    return False
+
 def requires_resource(resource):
-    # Stub: resource selection belongs to the enclosing suite runner.
-    return _identity
+    return unittest.skipUnless(is_resource_enabled(resource), 'resource ' + resource + ' is not enabled')
 
 def thread_unsafe(reason=''):
     return _identity
 
 def bigmemtest(size, memuse, dry_run=True):
-    # Supplying a made-up size would silently change the test's question.
-    raise 'NotImplementedError: big-memory test argument injection is not supported'
+    return _SmallMemory(size, memuse, dry_run).decorate
 
 def requires_mac_ver(*version):
     return _identity
 
 def run_with_locale(*locales):
-    raise 'NotImplementedError: locale changes are not supported'
+    return _identity
 
 def run_with_limited_c_stack(*args, **kwargs):
     return _identity
@@ -55,8 +57,8 @@ def skip_wasi_stack_overflow():
 def skip_emscripten_stack_overflow():
     return _identity
 
-def skip_if_huge_c_stack(function):
-    return function
+def skip_if_huge_c_stack():
+    return _identity
 
 def linked_to_musl():
     # Stub: no host C library is inspected.
@@ -175,3 +177,30 @@ NEVER_EQ = _NeverEqual()
 # Tracing control is a stub; the kernel does not install trace callbacks.
 no_tracing = _identity
 SuppressCrashReport = _unavailable
+
+# The dry run uses the small trial size of the reference suite. A test
+# refusing a dry run needs the resource explicitly enabled.
+class _SmallMemory:
+    def __init__(self, size, memuse, dry_run):
+        self.size = size
+        self.memuse = memuse
+        self.dry_run = dry_run
+
+    def decorate(self, function):
+        self.function = function
+        return self.call
+
+    def call(self, testcase):
+        if not self.dry_run:
+            raise unittest.SkipTest('big-memory resource is not enabled')
+        return self.function(testcase, 5147)
+
+_1M = 1048576
+HAVE_DOCSTRINGS = False
+
+class _Sentinel:
+    pass
+
+sentinel = _Sentinel()
+
+from test.support.import_helper import import_module, import_fresh_module

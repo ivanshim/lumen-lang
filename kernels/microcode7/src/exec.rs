@@ -2180,6 +2180,14 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Thing(owner) = &stands {
+                    let body = self.table.strings("ext.op.object.call").iter().find_map(|word| owner.of.program(word)).cloned();
+                    if let Some(body) = body {
+                        let mut supplied = self.value_list(args, frame)?;
+                        supplied.insert(0, Value::Thing(owner.clone()));
+                        return self.invoke(body, self.outermost.clone(), supplied);
+                    }
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2745,6 +2753,13 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Thing(owner) = &stands {
+                    if let Some(body) = self.table.strings("ext.op.object.call").iter().find_map(|word| owner.of.program(word)).cloned() {
+                        let mut supplied = vec![Value::Thing(owner.clone())];
+                        supplied.extend(self.value_list(args, frame)?);
+                        return Ok(Next::Value(self.invoke(body, self.outermost.clone(), supplied)?));
+                    }
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -2820,11 +2835,14 @@ impl<'a> Machine<'a> {
 
     /// Fit only the names the builtin owns. The print writer answers
     /// here; the other calls go on with their places filled.
-    fn builtin_names(&self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
+    fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+        }
+        if op == Prim::Say {
+            for entry in positional.iter_mut() { *entry = self.method_text(entry)?; }
         }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
             let mut join = String::from(" ");
@@ -3494,7 +3512,59 @@ impl<'a> Machine<'a> {
 
     // ---------- operations
 
+    fn method_text(&mut self, original: &Value) -> Result<Value, String> {
+        if let Value::Thing(thing) = self.what_it_spells(original.clone()) {
+            let chosen = self.table.strings("ext.builtin.object.text").iter()
+                .filter_map(|word| thing.of.program(word)).next().cloned();
+            if let Some(body) = chosen {
+                return match self.invoke(body, self.outermost.clone(), vec![Value::Thing(thing)]) {
+                    Ok(answer @ Value::Text(_)) => Ok(answer),
+                    Err(Escape::Error(note)) => Err(note),
+                    Err(away) => {
+                        self.got_away = Some(away);
+                        Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into())
+                    }
+                    _ => Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into()),
+                };
+            }
+        }
+        Ok(original.clone())
+    }
+
+    fn object_operation(&mut self, op: Prim, values: &[Value]) -> Option<Result<Value, String>> {
+        if values.len() != 2 { return None; }
+        let (one, two) = match op {
+            Prim::Plus => (0, 1), Prim::Minus => (2, 3), Prim::Times => (4, 5),
+            Prim::Over | Prim::OverReal => (6, 7), Prim::IntDiv => (8, 9),
+            Prim::Mod => (10, 11), Prim::Power => (12, 13),
+            Prim::Eq => (14, 14), Prim::Ne => (15, 15),
+            Prim::Lt => (16, 18), Prim::Le => (17, 19),
+            Prim::Gt => (18, 16), Prim::Ge => (19, 17), _ => return None,
+        };
+        for (at, method) in [(0, one), (1, two)] {
+            let Value::Thing(receiver) = self.what_it_spells(values[at].clone()) else { continue };
+            let Some(word) = self.table.strings("ext.op.object.binary").get(method) else { continue };
+            let Some(body) = receiver.of.program(word).cloned() else { continue };
+            let handed = vec![Value::Thing(receiver), values[1 - at].clone()];
+            let answer = self.invoke(body, self.outermost.clone(), handed);
+            return Some(match answer {
+                Ok(value) => Ok(value), Err(Escape::Error(message)) => Err(message),
+                Err(escape) => {
+                    self.got_away = Some(escape);
+                    Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into())
+                }
+            });
+        }
+        None
+    }
+
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if let Some(answer) = self.object_operation(op, v) { return answer; }
+        let rendered;
+        let v = if matches!(op, Prim::Say | Prim::Out | Prim::AsText) {
+            rendered = v.iter().map(|value| self.method_text(value)).collect::<Result<Vec<_>, _>>()?;
+            &rendered[..]
+        } else { v };
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }

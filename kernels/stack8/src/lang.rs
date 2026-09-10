@@ -420,6 +420,9 @@ pub struct Lang {
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
     pub math_floating: bool,
+    pub object_binary: Vec<String>,
+    pub object_call: Vec<String>,
+    pub object_text: Vec<String>,
     pub module_helper_amiss: String,
     pub member_absent: Vec<String>,
     pub module_cache: Vec<String>,
@@ -827,6 +830,7 @@ w ext.builtin.module.load
 w ext.builtin.copy
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
+w ext.op.object.binary | w ext.op.object.call | w ext.builtin.object.text
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
 b ext.builtin.math.floating
 w ext.builtin.class.derive
@@ -1653,6 +1657,9 @@ impl Lang {
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
             math_floating: r.flag("ext.builtin.math.floating")?,
+            object_binary: r.strings("ext.op.object.binary")?,
+            object_call: r.strings("ext.op.object.call")?,
+            object_text: r.strings("ext.builtin.object.text")?,
             module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
             member_absent: r.strings("ext.builtin.member.absent")?,
             module_cache: r.strings("ext.system.module.cache")?,

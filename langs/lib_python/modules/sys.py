@@ -101,3 +101,24 @@ stderr = _Error()
 # process exit status and catchable SystemExit await exception support.
 def exit(status=0):
     sys.exit(status)
+
+float_repr_style = 'short'
+byteorder = 'little'
+maxunicode = 1114111
+
+def intern(string):
+    if not isinstance(string, str):
+        raise 'TypeError: intern() argument must be str'
+    return string
+
+def getsizeof(value, default=None):
+    # A rough count of the value's payload and its enclosing record.
+    if isinstance(value, str):
+        return 49 + len(value) * 4
+    if isinstance(value, list) or isinstance(value, tuple):
+        return 56 + len(value) * 8
+    if isinstance(value, int):
+        return 28
+    if isinstance(value, float):
+        return 24
+    return 16

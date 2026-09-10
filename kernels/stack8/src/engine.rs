@@ -1993,7 +1993,8 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let (left, right) = (av.clone(), bv.clone());
+                            let told = self.worked_pair(op, &left, &right)?;
                             self.truth(&told)
                         }
                     };
@@ -2025,7 +2026,10 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => {
+                            let (left, right) = (av.clone(), bv.clone());
+                            self.worked_pair(op, &left, &right)?
+                        },
                     };
                     self.data.push(r);
                 }
@@ -2312,6 +2316,14 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Object(object) if !self.lang.object_call.is_empty() => {
+                        let Some(method) = self.lang.object_call.iter().find_map(|name| object.class.method(name)).cloned() else {
+                            return Err(self.lang.module_helper_amiss.clone().into());
+                        };
+                        let mut given = vec![Value::Object(object)];
+                        given.extend(self.drop_many(argc - 1)?);
+                        self.invoke(&method, given)
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -3203,7 +3215,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.worked_pair(dyadic, &a, &b)?
             }
         };
         self.data.push(result);
@@ -3327,6 +3339,43 @@ impl<'a> Engine<'a> {
         }
         if used != values.len() { return Err(wrong()); }
         Ok(out)
+    }
+
+    fn worked_pair(&mut self, op: &Action, left: &Value, right: &Value) -> Flow<Value> {
+        let slot = match op {
+            Action::Add => Some((0, 1)), Action::Sub => Some((2, 3)),
+            Action::Mul => Some((4, 5)), Action::Div | Action::DivReal => Some((6, 7)),
+            Action::IntDiv => Some((8, 9)), Action::Mod => Some((10, 11)),
+            Action::Power => Some((12, 13)), Action::Eq => Some((14, 14)),
+            Action::Ne => Some((15, 15)), Action::Lt => Some((16, 18)),
+            Action::Le => Some((17, 19)), Action::Gt => Some((18, 16)),
+            Action::Ge => Some((19, 17)), _ => None,
+        };
+        if let Some((ordinary, reflected)) = slot {
+            for (owner, other, index) in [(left, right, ordinary), (right, left, reflected)] {
+                let held = self.what_it_spells(owner.clone());
+                if let Value::Object(object) = held {
+                    if let Some(method) = self.lang.object_binary.get(index).and_then(|name| object.class.method(name)).cloned() {
+                        self.invoke(&method, vec![Value::Object(object), other.clone()])?;
+                        return self.drop_top();
+                    }
+                }
+            }
+        }
+        Ok(self.dyadic(op, left, right)?)
+    }
+
+    fn object_said(&mut self, value: &Value) -> Res<Value> {
+        let Value::Object(object) = self.what_it_spells(value.clone()) else { return Ok(value.clone()) };
+        let method = self.lang.object_text.iter().find_map(|name| object.class.method(name)).cloned();
+        let Some(method) = method else { return Ok(value.clone()) };
+        let result = self.invoke(&method, vec![Value::Object(object)]).and_then(|()| self.drop_top());
+        match result {
+            Ok(text @ Value::Text(_)) => Ok(text),
+            Ok(_) => Err(self.lang.module_helper_amiss.clone()),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err(self.lang.module_helper_amiss.clone()) }
+        }
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
@@ -4187,6 +4236,9 @@ impl<'a> Engine<'a> {
                 named.push((key, value));
             } else { args.push(value); }
         }
+        if builtin == Builtin::Say {
+            for value in &mut args { *value = self.object_said(value)?; }
+        }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
@@ -4268,6 +4320,9 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if matches!(builtin, Builtin::Say | Builtin::Out | Builtin::ToText) {
+            for value in args.iter_mut() { *value = self.object_said(value)?; }
+        }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
