@@ -73,6 +73,12 @@ impl<'a> Machine<'a> {
                     2 if values.len()==1=>Ok(Value::Nil),
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
                     4|8=>self.apply_class_member(kept[0].clone(),values),
+                    13 if values.len()==1=>{
+                        let Value::Wrapped(6, property)=&kept[0] else{return Err(self.class_unready());};
+                        let mut parts=property.as_ref().clone();
+                        parts.resize(2, Value::Nil); parts[1]=values.remove(0);
+                        Ok(Self::wrap(6,parts))
+                    }
                     10|11|12 if values.len()>=2=>{
                         let subject=values[0].clone();
                         let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
@@ -128,6 +134,7 @@ impl<'a> Machine<'a> {
         Value::Dict(Rc::new(pairs))
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if matches!(&value,Value::Wrapped(6,_)) && self.table.spells("ext.stmt.class.property.setter",key) {return Ok(Self::wrap(13,vec![value]));}
         if let Value::Blueprint(b)=&value {
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}

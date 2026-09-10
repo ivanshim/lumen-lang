@@ -72,6 +72,12 @@ impl<'a> Engine<'a> {
                 2 if args.len()==1 => Ok(Value::Null),
                 3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
+                13 if args.len() == 1 => {
+                    let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
+                    let mut members = property.1.clone();
+                    members.resize(2, Value::Null); members[1] = args.remove(0);
+                    Ok(Self::adapter(6, members))
+                }
                 10..=12 => {
                     let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
                     let Some(Value::Text(name)) = args.get(1) else { return Err(self.class_refusal()); };
@@ -131,6 +137,9 @@ impl<'a> Engine<'a> {
         }
     }
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if let Value::Adapter(property) = &subject {
+            if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
+        }
         match &subject {
             Value::Class(c) => {
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
