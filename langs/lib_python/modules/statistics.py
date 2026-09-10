@@ -1,4 +1,5 @@
 import math
+from heapq import _ordered
 
 class StatisticsError(ValueError):
     pass
@@ -29,18 +30,18 @@ def fmean(data, weights=None):
     return __math('fdiv', math.fsum([values[i] * weights[i] for i in range(len(values))]), total)
 
 def median(data):
-    values = sorted(_values(data))
+    values = _ordered(_values(data))
     middle = len(values) // 2
     if len(values) % 2:
         return values[middle]
     return (values[middle - 1] + values[middle]) / 2
 
 def median_low(data):
-    values = sorted(_values(data))
+    values = _ordered(_values(data))
     return values[(len(values) - 1) // 2]
 
 def median_high(data):
-    values = sorted(_values(data))
+    values = _ordered(_values(data))
     return values[len(values) // 2]
 
 def mode(data):

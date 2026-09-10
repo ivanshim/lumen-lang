@@ -124,13 +124,13 @@ def prod(values, start=1):
 tau = 2 * pi
 
 def comb(n, k):
-    if type(n) != type(1) or type(k) != type(1):
+    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
         raise 'TypeError: comb needs integers'
     if n < 0 or k < 0:
         raise 'ValueError: comb arguments must be non-negative'
     if k > n:
         return 0
-    k = min(k, n - k)
+    k = k if k < n - k else n - k
     result = 1
     for i in range(1, k + 1):
         result = result * (n - k + i) // i
@@ -139,7 +139,7 @@ def comb(n, k):
 def perm(n, k=None):
     if k is None:
         return factorial(n)
-    if type(n) != type(1) or type(k) != type(1):
+    if (type(n) != type(1) and type(n) != type(True)) or (type(k) != type(1) and type(k) != type(True)):
         raise 'TypeError: perm needs integers'
     if n < 0 or k < 0:
         raise 'ValueError: perm arguments must be non-negative'
@@ -151,7 +151,7 @@ def perm(n, k=None):
     return result
 
 def isqrt(n):
-    if type(n) != type(1):
+    if type(n) != type(1) and type(n) != type(True):
         raise 'TypeError: isqrt needs an integer'
     if n < 0:
         raise 'ValueError: isqrt argument must be non-negative'
@@ -269,7 +269,7 @@ def lgamma(x):
     raise 'NotImplementedError: lgamma is not supported'
 
 def nextafter(x, y, steps=1):
-    if type(steps) != type(1):
+    if type(steps) != type(1) and type(steps) != type(True):
         raise 'TypeError: steps must be an integer'
     if steps < 0:
         raise 'ValueError: steps must be non-negative'
@@ -297,6 +297,12 @@ def frexp(x):
     raise 'NotImplementedError: frexp needs tuple values'
 
 def ldexp(x, i):
-    if type(i) != type(1):
+    if type(i) != type(1) and type(i) != type(True):
         raise 'TypeError: ldexp exponent must be an integer'
-    return __math('fdiv', x * 2 ** i, 1.0)
+    if i < -1023 or i > 1023:
+        raise 'NotImplementedError: ldexp exponent is outside the supported range'
+    return __math('fdiv', x * __math('pow', 2.0, i), 1.0)
+
+
+def exp2(x):
+    return __math('pow', 2.0, x)

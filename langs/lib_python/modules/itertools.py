@@ -146,7 +146,7 @@ def starmap(function, iterable):
 
 def compress(data, selectors):
     data, selectors = _finite(data), _finite(selectors)
-    return [data[i] for i in range(min(len(data), len(selectors))) if selectors[i]]
+    return [data[i] for i in range(len(data) if len(data) < len(selectors) else len(selectors)) if selectors[i]]
 
 def filterfalse(predicate, iterable):
     if predicate is None:

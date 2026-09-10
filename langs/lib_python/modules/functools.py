@@ -53,6 +53,9 @@ class _Cache:
     def __call__(self, *args, **kwargs):
         if len(kwargs) != 0:
             raise 'NotImplementedError: cache keyword keys are not supported'
+        for arg in args:
+            if type(arg) == type([]) or __is_mapping(arg):
+                raise 'TypeError: unhashable cache argument'
         for i in range(len(self.entries)):
             entry = self.entries[i]
             equal = len(entry[0]) == len(args)

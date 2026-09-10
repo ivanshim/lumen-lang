@@ -12,11 +12,11 @@ class array:
             self.extend(initializer)
 
     def append(self, value):
-        if type(value) != type(1):
+        if type(value) != type(1) and type(value) != type(True):
             raise 'TypeError: array item must be an integer'
         if value < -2147483648 or value > 2147483647:
             raise 'OverflowError: signed integer is greater than maximum'
-        self.data = [*self.data, value]
+        self.data = [*self.data, int(value)]
 
     def extend(self, values):
         for value in values:
