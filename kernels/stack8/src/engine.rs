@@ -195,7 +195,7 @@ impl Fault {
             Fault::Thrown(Value::Object(o)) => {
                 if let Some((_, Value::Text(original))) = o.fields.borrow().iter().find(|(n, _)| n == "\0uncaught-words") { return original.to_string(); }
                 if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
-                    return if message.is_empty() { format!("\0{}:", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
+                    return if message.is_empty() { format!("\0{}", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
                 }
                 let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
                 match told {
@@ -883,8 +883,6 @@ impl<'a> Engine<'a> {
     fn left_the_call(&mut self, amiss: bool, watching: bool, noted: bool) {
         if amiss && self.under.is_none() {
             self.under = Some(self.calls_told());
-            self.fault_frames = self.calls.iter().filter(|c| !c.from_library).map(|c| (c.from.clone(), c.on)).collect();
-            self.fault_frames.push((self.source.clone(), self.hurled_at.get().max(self.line)));
         }
         if watching {
             self.given.pop();
@@ -1214,7 +1212,7 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            if self.lang.catch_invalid.as_deref() == Some(told) {
+            if self.lang.fault_trace.is_empty() && self.lang.catch_invalid.as_deref() == Some(told) {
                 if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
             }
             return Some(value);
@@ -1905,6 +1903,10 @@ impl<'a> Engine<'a> {
         });
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
+        if outcome.is_err() && self.under.is_none() {
+            self.fault_frames = self.calls.iter().filter(|c| !c.from_library).map(|c| (c.from.clone(), c.on)).collect();
+            self.fault_frames.push((self.source.clone(), self.line));
+        }
         self.inside.pop();
         if let Some((was, on)) = elsewhere {
             self.source = was;
@@ -3952,6 +3954,7 @@ impl<'a> Engine<'a> {
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };

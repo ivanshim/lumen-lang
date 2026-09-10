@@ -345,7 +345,8 @@ impl<'a> Machine<'a> {
     fn group_made(&mut self, mut kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let invalid = self.argument_fault("ext.builtin.exceptions.group.invalid", None);
         let [message @ Value::Text(_), sequence] = supplied.as_slice() else { return Err(invalid.into()) };
-        let contents = match sequence {
+        let held = match sequence { Value::Shared(cell) => cell.borrow().clone(), value => value.clone() };
+        let contents = match &held {
             Value::Arguments(v) | Value::Vector(v) if !v.is_empty() => v.to_vec(),
             _ => return Err(invalid.into()),
         };
@@ -1511,7 +1512,7 @@ impl<'a> Machine<'a> {
                 }
             }
             match &raised {
-                Value::Thing(object) if self.table.single("ext.stmt.catch.invalid") == Some(told) => {
+                Value::Thing(object) if !self.table.has_any("ext.system.fault.trace") && self.table.single("ext.stmt.catch.invalid") == Some(told) => {
                     object.holds.borrow_mut().push(("\0former-complaint".into(), Value::text(told)));
                 }
                 _ => {}
@@ -1825,7 +1826,7 @@ impl<'a> Machine<'a> {
                 let original = thing.holds.borrow().iter().find(|(key, _)| key == "\0former-complaint").map(|(_, value)| value.bare());
                 if let Some(original) = original { return Err(original); }
                 if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values")) {
-                    return Err(if words.is_empty() { format!("\0{}:", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
+                    return Err(if words.is_empty() { format!("\0{}", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
                 }
                 let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
                 let said = match told.filter(|m| !m.is_empty()) {
@@ -2437,7 +2438,7 @@ impl<'a> Machine<'a> {
                                         if let Some(slot) = &part.held { self.store(slot, frame, Value::Unset)?; }
                                         match result {
                                             Ok(_) => {},
-                                            Err(Escape::Thrown(v)) if v.identical(&taken) => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
+                                            Err(Escape::Thrown(v)) if v.selfsame(&taken) => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
                                             Err(Escape::Thrown(v)) => thrown.push(v),
                                             Err(Escape::Error(words)) => {
                                                 if let Some(v) = self.as_raised(&words) { thrown.push(v); } else { return Err(Escape::Error(words)); }
@@ -3953,6 +3954,10 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        if matches!(outcome, Err(Escape::Error(_) | Escape::Thrown(_) | Escape::Stopped(_))) && self.under.is_none() {
+            self.fault_places = self.calls.iter().filter(|c| !c.from_library).map(|c| (c.from.clone(), c.on)).collect();
+            self.fault_places.push((self.written_in.clone(), self.row));
+        }
         if mine {
             self.frames_named.pop();
             self.inside.pop();
@@ -3968,8 +3973,6 @@ impl<'a> Machine<'a> {
         // sort is written down for it.
         let a_fault = matches!(outcome, Err(Escape::Error(_) | Escape::Thrown(_) | Escape::Stopped(_)));
         if a_fault && self.under.is_none() {
-            self.fault_places = self.calls.iter().filter(|c| !c.from_library).map(|c| (c.from.clone(), c.on)).collect();
-            self.fault_places.push((self.written_in.clone(), self.raised_on.max(self.row)));
             self.under = Some(self.calls_told());
         }
         if watching {
@@ -5260,6 +5263,7 @@ impl<'a> Machine<'a> {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
+                    (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
                     (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
@@ -5654,7 +5658,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Vector(l) | Value::Arguments(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),

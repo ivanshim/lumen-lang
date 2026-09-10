@@ -1160,7 +1160,7 @@ impl<'a> Builder<'a> {
         // Only the program's own lines are carried: what stands ahead of
         // it is the library, and a complaint from within that names the
         // line of the program that was running, as PHP names it.
-        if self.tells_place && self.look().row > self.before {
+        if (self.tells_place || self.table.has_any("ext.system.fault.trace")) && self.look().row > self.before {
             let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
             return Ok(Form::OnLine(row, Box::new(made)));

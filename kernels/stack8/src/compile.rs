@@ -1056,7 +1056,7 @@ impl<'a> Compiler<'a> {
         // Only the program's own lines are marked: what stands before it
         // is the library, and a complaint from inside that names the
         // line of the program that was running, as PHP names it.
-        if lang.tells_place && self.look().row as u32 > self.before {
+        if (lang.tells_place || !lang.fault_trace.is_empty()) && self.look().row as u32 > self.before {
             let row = self.look().row as u32 - self.before;
             if self.piece().line != row {
                 self.piece().line = row;
