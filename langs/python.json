@@ -1343,6 +1343,9 @@
   "ext.stmt.yield.close": [
     "close"
   ],
+  "ext.stmt.yield.escaped": [
+    "RuntimeError: generator raised StopIteration"
+  ],
   "ext.stmt.yield.exhausted": [
     "StopIteration"
   ],
@@ -1414,7 +1417,6 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
-  "ext.system.collection.repr": true,
   "ext.system.fault.attribute": [
     "object has no attribute '",
     "'"

@@ -2250,8 +2250,10 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.exceptions.info` and `.current`: builtins giving the class,
   value and absent traceback as a tuple, or the caught value alone. Outside
   a clause their places hold nothing.
-- `ext.system.collection.repr`: whether text members of a list are shown
-  within quotes when the list is written as a value.
+- Ordinary lists retain the rendering shared by all six kernels. Exception
+  probes use `repr` explicitly when checking quoted list members or notes.
+- `ext.stmt.yield.escaped`: the fault raised when the stop-iteration class
+  escapes a generator body, rather than ending its walk normally.
 - `ext.system.fault.trace`: three pieces for an uncaught exception: the
   header, the words before a file name, and those between it and its line
   number. The full kernels retain the call sites and the place raised;
@@ -2283,7 +2285,7 @@ only. The extension labels so far, all from PHP:
   division by nought, an index beyond a row and operands of wrong kinds.
   `ext.system.fault.name` and `.attribute` each hold two pieces, before
   and after the absent name. Native exceptions nobody takes are told on
-  one line, with the class, a colon and the message.
+  with their traceback header followed by the class and message.
 - `ext.system.fault.class`: the class a fault of the kernel's own is
   raised as, where a language names one. A statement written to take a
   raised value then takes a fault as it takes anything else, and one
@@ -3428,6 +3430,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.busy` | - | - | `ValueError: generator already executing` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.close` | - | - | `close` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.escaped` | - | - | `RuntimeError: generator raised StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
@@ -3457,7 +3460,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.system.collection.repr` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
 | `ext.system.complaint.markup.kind` | - | - | - | - | `<br />` `<b>` `</b>:  ` | - | - | - | - | - |

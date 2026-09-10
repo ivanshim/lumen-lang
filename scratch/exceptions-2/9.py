@@ -3,7 +3,7 @@ g.add_note("keep")
 def wanted(e):
     return type(e) is ValueError
 s = g.subgroup(wanted)
-print(s.message, s.__notes__, len(s.exceptions))
+print(s.message, repr(s.__notes__), len(s.exceptions))
 try:
     try:
         raise g

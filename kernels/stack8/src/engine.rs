@@ -1105,7 +1105,7 @@ impl<'a> Engine<'a> {
     fn class_for(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
         if !self.lang.exceptions.is_empty() {
-            if let Some(name) = self.lang.exceptions.iter().find(|n| told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
             let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
                 else if told.starts_with("Undefined variable") { &self.lang.fault_name }
                 else if told.starts_with("Undefined array key") { &self.lang.fault_key }
@@ -1161,6 +1161,7 @@ impl<'a> Engine<'a> {
 
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
+        if told == class || told == format!("{class}:") { return String::new(); }
         if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
         if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
         if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
@@ -2241,7 +2242,15 @@ impl<'a> Engine<'a> {
             kept.stack.clear();
             kept.frame.clear();
         }
-        result?;
+        if let Err(fault) = result {
+            let stop = match &fault {
+                Fault::Thrown(Value::Object(o)) => self.lang.fault_stop.as_ref().and_then(|name| self.native_exceptions.get(name)).map_or(false, |v| matches!(v, Value::Class(c) if Self::exception_beneath(&o.class, c))),
+                Fault::Note(words) => self.lang.fault_stop.as_deref() == self.class_for(words).as_deref(),
+                _ => false,
+            };
+            if stop && !self.lang.yield_escaped.is_empty() { return Err(self.lang.yield_escaped[0].clone().into()); }
+            return Err(fault);
+        }
         Ok(kept.handed.take())
     }
 
@@ -3472,6 +3481,17 @@ impl<'a> Engine<'a> {
                             self.data.push(value);
                             return Ok(());
                         }
+                    }
+                }
+                if !matches!(subject, Value::Object(_) | Value::Class(_)) {
+                    if let Some(operation) = self.lang.value_methods.get(name.as_ref()).cloned() {
+                        let items = self.call_items(args)?;
+                        let mut positional = Vec::new();
+                        let mut named = Vec::new();
+                        for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
+                        let result = self.value_method(&subject, &operation, positional, named)?;
+                        self.data.push(result);
+                        return Ok(());
                     }
                 }
                 if let Value::Generator(held) = subject {
@@ -6786,8 +6806,5 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
 
 /// Read the contents without giving up the collection's own cell.
 fn collection_contents(value: &Value) -> Value {
-    match value {
-        Value::Bond(cell) => cell.borrow().clone(),
-        other => other.clone(),
-    }
+    value.contents()
 }

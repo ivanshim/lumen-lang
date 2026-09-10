@@ -2894,7 +2894,7 @@ impl<'a> Compiler<'a> {
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
                 }
-                if !lang.comprehension_for.is_empty() {
+                if !lang.comprehension_for.is_empty() && !lang.yield_suspends {
                     self.act(Action::ComprehensionItems, 1);
                 }
                 self.write(&bag);

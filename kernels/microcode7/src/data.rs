@@ -222,7 +222,8 @@ impl Value {
             return format!("{mark}{letters}{mark}");
         }
         match self {
-            Value::Arguments(row) => Self::argument_text(row, words),
+            Value::Mutable(cell, _) | Value::Shared(cell) => cell.borrow().representation(words),
+            Value::Arguments(row) | Value::Tuple(row) | Value::Row(row) => Self::argument_text(row, words),
             Value::Thing(thing) => match self.arguments_held() {
                 Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
                 None => self.render(words),

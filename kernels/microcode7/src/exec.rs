@@ -383,9 +383,9 @@ impl<'a> Machine<'a> {
     fn group_made(&mut self, mut kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
         let invalid = self.argument_fault("ext.builtin.exceptions.group.invalid", None);
         let [message @ Value::Text(_), sequence] = supplied.as_slice() else { return Err(invalid.into()) };
-        let held = match sequence { Value::Shared(cell) => cell.borrow().clone(), value => value.clone() };
+        let held = sequence.settled();
         let contents = match &held {
-            Value::Arguments(v) | Value::Vector(v) if !v.is_empty() => v.to_vec(),
+            Value::Arguments(v) | Value::Tuple(v) | Value::Row(v) | Value::Vector(v) if !v.is_empty() => v.to_vec(),
             _ => return Err(invalid.into()),
         };
         let mut ordinary = true;
@@ -1446,7 +1446,7 @@ impl<'a> Machine<'a> {
         let told = told.trim_start_matches('\0');
         if self.table.has_any("ext.builtin.exceptions") {
             for kind in self.table.strings("ext.builtin.exceptions") {
-                if told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
+                if told == kind || told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
             }
             let label = if self.table.single("ext.stmt.catch.invalid") == Some(told) { Some("ext.system.fault.class.kind") }
                 else if told.starts_with("Undefined variable") { Some("ext.system.fault.class.name") }
@@ -1507,6 +1507,7 @@ impl<'a> Machine<'a> {
 
     fn fault_words(&self, raw: &str, kind: &str) -> String {
         let raw = raw.trim_start_matches('\0');
+        if raw == kind || raw == format!("{kind}:") { return String::new(); }
         if self.table.single("ext.stmt.catch.invalid") == Some(raw) { return raw.into(); }
         let prefix = format!("{kind}: ");
         if let Some(words) = raw.strip_prefix(&prefix) { return words.to_string(); }
@@ -2038,6 +2039,13 @@ impl<'a> Machine<'a> {
     fn suspension_fault(&self, fault: Escape) -> String {
         match fault {
             Escape::Error(words) | Escape::Stopped(words) => words,
+            Escape::Thrown(value @ Value::Thing(_)) => {
+                let Value::Thing(thing) = &value else { unreachable!() };
+                match value.raised_words(self.wording()) {
+                    Some(words) => format!("\0{}: {}", thing.of.name, words),
+                    None => format!("Uncaught {}", value.render(self.wording())),
+                }
+            }
             Escape::Thrown(value) => format!("Uncaught {}", value.render(self.wording())),
             _ => self.generator_words("unsupported"),
         }
@@ -2087,6 +2095,15 @@ impl<'a> Machine<'a> {
             state.ended = true;
             state.owed.clear();
             state.found.clear();
+        }
+        if let Err(fault) = outcome {
+            let stop = match &fault {
+                Escape::Thrown(Value::Thing(thing)) => self.table.single("ext.system.fault.class.stop").and_then(|name| self.fault_kinds.get(name)).map_or(false, |v| matches!(v, Value::Blueprint(kind) if Self::fault_descends(&thing.of, kind))),
+                Escape::Error(words) => self.table.single("ext.system.fault.class.stop") == self.class_of_fault(words).as_deref(),
+                _ => false,
+            };
+            if stop && self.table.has_any("ext.stmt.yield.escaped") { return Err(self.generator_words("escaped").into()); }
+            return Err(fault);
         }
         outcome
     }
@@ -3062,6 +3079,13 @@ impl<'a> Machine<'a> {
                     if let Value::Thing(thing) = &subject {
                         if self.is_fault_kind(&thing.of) && thing.of.program(&called).is_none() && self.member_place(&thing.holds.borrow(), &called).is_none() {
                             if let Some(result) = self.fault_member(thing.clone(), &called, &values) { return result; }
+                        }
+                    }
+                    if !matches!(subject, Value::Thing(_) | Value::Blueprint(_)) {
+                        if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, &called)) {
+                            let operation = label.trim_start_matches("ext.builtin.method.");
+                            let (positional, keywords) = self.open_arguments(values)?;
+                            return self.value_member(&subject, operation, positional, keywords);
                         }
                     }
                     if let Value::Generator(generator) = subject {

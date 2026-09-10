@@ -3475,8 +3475,8 @@ impl<'a> Builder<'a> {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
                 let source = match table.single("ext.op.comprehension.for") {
-                    Some(_) => prim_call(Prim::Iterated, vec![start]),
-                    None => start,
+                    Some(_) if !table.flag("ext.stmt.yield.suspends") => prim_call(Prim::Iterated, vec![start]),
+                    _ => start,
                 };
                 self.address_to_write(&var);
                 return self.walk(source, None, var, None, place);

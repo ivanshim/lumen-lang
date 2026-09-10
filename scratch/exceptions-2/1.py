@@ -1,6 +1,6 @@
 e = ValueError("x")
 e.add_note("n")
-print(e.__notes__, e.with_traceback(None) is e)
+print(repr(e.__notes__), e.with_traceback(None) is e)
 import sys
 try:
     1/0

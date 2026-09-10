@@ -233,6 +233,7 @@ impl Value {
 
     pub fn repr(&self, sp: &Wording) -> String {
         match self {
+            Value::Native(cell, _) | Value::Bond(cell) => cell.borrow().repr(sp),
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);
