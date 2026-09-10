@@ -430,7 +430,7 @@ impl<'a> Engine<'a> {
     /// untrue, and may name pieces of text it counts as untrue.
     fn truth(&self, v: &Value) -> bool {
         match v {
-            Value::Native(cell, _) => self.truth(&cell.borrow()),
+            Value::Collection(cell, _) => self.truth(&cell.borrow()),
             Value::Bond(shared) => self.truth(&shared.borrow()),
             Value::Array(items) if self.lang.untrue_empty => !items.is_empty(),
             Value::Map(pairs) if self.lang.untrue_empty => !pairs.is_empty(),
@@ -2375,7 +2375,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
-                let nested = match &*cell.borrow() { Value::Native(held, _) => Some(held.clone()), _ => None };
+                let nested = match &*cell.borrow() { Value::Collection(held, _) => Some(held.clone()), _ => None };
                 let cell = nested.unwrap_or(cell);
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
@@ -3577,7 +3577,7 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
-        if matches!(a, Value::Native(..)) || matches!(b, Value::Native(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
+        if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4234,7 +4234,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
-        if matches!(target, Value::Native(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
+        if matches!(target, Value::Collection(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -4451,7 +4451,7 @@ impl<'a> Engine<'a> {
                 Ok(items)
             }
             Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
-            Value::Native(cell, _) => self.comprehension_items(&cell.borrow()),
+            Value::Collection(cell, _) => self.comprehension_items(&cell.borrow()),
             Value::View(_) => self.comprehension_items(&value.contents()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4585,7 +4585,7 @@ impl<'a> Engine<'a> {
         if operation == "sort" {
             if !args.is_empty() || !matches!(receiver.contents(), Value::Array(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
             let row = self.order_values(receiver, &named)?;
-            let Value::Native(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
+            let Value::Collection(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
             *cell.borrow_mut() = Value::array(row);
             return Ok(Value::Null);
         }
@@ -4730,8 +4730,8 @@ impl<'a> Engine<'a> {
 
     fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if matches!(builtin, Builtin::Append | Builtin::Replace) {
-            if let Some(original @ Value::Native(..)) = args.last().cloned() {
-                let Value::Native(cell, _) = &original else { unreachable!() };
+            if let Some(original @ Value::Collection(..)) = args.last().cloned() {
+                let Value::Collection(cell, _) = &original else { unreachable!() };
                 let last = args.len()-1;
                 args[last] = original.contents();
                 let result = self.builtin(builtin, name, args)?;
@@ -5282,7 +5282,7 @@ impl<'a> Engine<'a> {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
                 let result = Value::array(self.comprehension_items(&args[0])?);
-                if matches!(args[0], Value::View(_) | Value::Native(_, true)) { result.held(true) } else { result }
+                if matches!(args[0], Value::View(_) | Value::Collection(_, true)) { result.held(true) } else { result }
             }
             Builtin::Any => {
                 arity(1)?;
@@ -5958,7 +5958,7 @@ fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usiz
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
-    if let Value::Native(cell, _) = held { return shared_item(&mut cell.borrow_mut(), at); }
+    if let Value::Collection(cell, _) = held { return shared_item(&mut cell.borrow_mut(), at); }
     // A thing's members are counted as an array's places are, but they
     // live behind a shared holding, so the cell is made within it.
     if let Value::Object(thing) = held {
@@ -6009,7 +6009,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
 /// along the way made where they are not there yet and the language
 /// makes what a write needs.
 fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<Value>>> {
-    if let Value::Native(cell, _) = held { return shared_deep(&mut cell.borrow_mut(), keys, makes); }
+    if let Value::Collection(cell, _) = held { return shared_deep(&mut cell.borrow_mut(), keys, makes); }
     let Some((last, first)) = keys.split_last() else {
         return Err("No place was named".to_string());
     };

@@ -144,7 +144,7 @@ impl Generator {
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Native(Rc<RefCell<Value>>, bool),
+    Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
     Stream(bool),
@@ -231,7 +231,7 @@ impl Value {
 
     pub fn contents(&self) -> Value {
         match self {
-            Value::Native(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
+            Value::Collection(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
             Value::View(view) => {
                 let Value::Map(pairs) = view.0.contents() else { return Value::array(Vec::new()); };
                 Value::array(pairs.iter().map(|(k,v)| match view.1.as_str() {
@@ -243,12 +243,12 @@ impl Value {
     }
 
     pub fn held(self, quoted: bool) -> Value {
-        match self { Value::Bond(cell) => Value::Native(cell, quoted), Value::Array(_) | Value::Map(_) => Value::Native(Rc::new(RefCell::new(self)), quoted), _ => self }
+        match self { Value::Bond(cell) => Value::Collection(cell, quoted), Value::Array(_) | Value::Map(_) => Value::Collection(Rc::new(RefCell::new(self)), quoted), _ => self }
     }
 
     pub fn representation(&self, words: &Wording) -> String {
         match self {
-            Value::Native(cell, _) => cell.borrow().representation(words),
+            Value::Collection(cell, _) => cell.borrow().representation(words),
             Value::Text(_) => self.string_field(words, "", "r").unwrap_or_else(|| self.plain()),
             Value::Array(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
             Value::Tuple(row) => format!("({}{})", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
@@ -280,7 +280,7 @@ impl Value {
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
-            Value::Native(cell, _) => return cell.borrow().sort(),
+            Value::Collection(cell, _) => return cell.borrow().sort(),
             Value::View(_) => Sort::Array,
             Value::Bond(shared) | Value::Binding(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
@@ -311,7 +311,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
-            Value::Native(cell, _) => cell.borrow().is_true(),
+            Value::Collection(cell, _) => cell.borrow().is_true(),
             Value::ValueMethod(_) => true,
             Value::View(_) => if let Value::Array(row) = self.contents() { !row.is_empty() } else { false },
             Value::Stream(_) => true,
@@ -350,7 +350,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
             Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Native(cell, _) => cell.borrow().as_big(),
+            Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
@@ -362,8 +362,8 @@ impl Value {
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
     pub fn equals(&self, other: &Value) -> bool {
-        if let Value::Native(cell, _) = self { return cell.borrow().equals(&other.contents()); }
-        if let Value::Native(cell, _) = other { return self.equals(&cell.borrow()); }
+        if let Value::Collection(cell, _) = self { return cell.borrow().equals(&other.contents()); }
+        if let Value::Collection(cell, _) = other { return self.equals(&cell.borrow()); }
         if let Some(order) = crate::arith::order_values(self, other) {
             return order == std::cmp::Ordering::Equal;
         }
@@ -432,7 +432,7 @@ impl Value {
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
         match self {
-            Value::Native(cell, quote) => if *quote { cell.borrow().representation(sp) } else { cell.borrow().display(sp) },
+            Value::Collection(cell, quote) => if *quote { cell.borrow().representation(sp) } else { cell.borrow().display(sp) },
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
@@ -563,7 +563,7 @@ impl Value {
     pub fn plain(&self) -> String {
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
-            Value::Native(cell, _) => cell.borrow().plain(),
+            Value::Collection(cell, _) => cell.borrow().plain(),
             Value::ValueMethod(_) => "<built-in method>".to_string(),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
