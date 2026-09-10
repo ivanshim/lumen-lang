@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    AsciiText,
+    UnicodeLimit,
     Octets(u8),
     OctetAssign(bool),
     /// A compound write may ask a real to retain its point.

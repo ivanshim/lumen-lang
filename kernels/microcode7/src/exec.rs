@@ -3513,6 +3513,68 @@ impl<'a> Machine<'a> {
                 return self.work_set(code, &values).map_err(Escape::from);
             }
         }
+        if matches!(receiver, Value::Octets { .. }) {
+            let code = match name { "hex" => Some(4), "find" => Some(13), "strip" => Some(12), "replace" => Some(11), "startswith" => Some(10), "join" => Some(9), "split" => Some(8), "lower" => Some(7), "upper" => Some(6), _ => None };
+            if let Some(code) = code {
+                if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
+                let mut supplied = vec![receiver.clone()]; supplied.extend(arguments);
+                return self.octet_routine(code, &supplied).map_err(Escape::from);
+            }
+        }
+        if self.table.flag("ext.system.text.unicode") {
+            if name == "maketrans" {
+                let wrong = || self.method_fault("arguments");
+                if !keywords.is_empty() || !(2..=3).contains(&arguments.len()) { return Err(wrong().into()); }
+                let a = match &arguments[0] { Value::Text(t) => t, _ => return Err(wrong().into()) };
+                let b = match &arguments[1] { Value::Text(t) => t, _ => return Err(wrong().into()) };
+                if a.chars().count() != b.chars().count() { return Err(wrong().into()); }
+                let mut result: Vec<(Value, Value)> = Vec::new();
+                for (one, two) in a.chars().zip(b.chars()) {
+                    let key = Value::Small(i64::from(u32::from(one)));
+                    result.retain(|(prior, _)| !prior.equals(&key));
+                    result.push((key, Value::Small(i64::from(u32::from(two)))));
+                }
+                if let Some(last) = arguments.get(2) {
+                    let Value::Text(t) = last else { return Err(wrong().into()); };
+                    for one in t.chars() {
+                        let key = Value::Small(i64::from(u32::from(one)));
+                        result.retain(|(prior, _)| !prior.equals(&key)); result.push((key, Value::Nil));
+                    }
+                }
+                return Ok(Value::Dict(Rc::new(result)).keep(true));
+            }
+            if let Value::Text(chars) = receiver {
+                if name == "translate" {
+                    if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+                    let Value::Dict(mapping) = arguments[0].settled() else { return Err(self.method_fault("unready").into()); };
+                    let mut result = String::new();
+                    for letter in chars.chars() {
+                        let found = mapping.iter().find(|(key, _)| key.equals(&Value::Small(letter as i64)));
+                        match found {
+                            Some((_, Value::Nil)) => (),
+                            Some((_, Value::Text(replacement))) => result.push_str(replacement),
+                            Some((_, number)) => result.push(number.as_big()?.to_u32().and_then(char::from_u32).ok_or_else(|| self.method_fault("unready"))?),
+                            None => result.push(letter),
+                        }
+                    }
+                    return Ok(Value::text(&result));
+                }
+                let predicate = crate::unicode::test(chars, name);
+                let changed = crate::unicode::change(chars, name);
+                if predicate.is_some() || changed.is_some() {
+                    if arguments.len() > 0 || keywords.len() > 0 { return Err(self.method_fault("arguments").into()); }
+                    return Ok(match predicate { Some(truth) => Value::Flag(truth), None => Value::text(&changed.unwrap()) });
+                }
+                if name == "expandtabs" {
+                    if arguments.len() > 1 || keywords.len() > 0 { return Err(self.method_fault("arguments").into()); }
+                    let size = match arguments.first() {
+                        None => 8,
+                        Some(value) => { let whole = value.as_big()?; if whole < BigInt::from(0) { 0 } else { whole.to_usize().filter(|n| *n <= 1_000_000).ok_or_else(|| self.method_fault("unready"))? } }
+                    };
+                    return Ok(Value::text(&crate::unicode::tabs(chars, size)));
+                }
+            }
+        }
         let mut found = Vec::new();
         for (word, _) in &keywords {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
@@ -4401,6 +4463,24 @@ impl<'a> Machine<'a> {
     }
 
     fn octet_work(&self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if self.table.flag("ext.system.text.unicode") && (operation == 2 || operation == 3) && values.len() == 3 {
+            let handling = match &values[2] {
+                Value::Text(word) => self.table.strings("ext.system.text.errors").iter().position(|s| s == word.as_ref()),
+                _ => None,
+            }.ok_or_else(|| self.octet_error("unready"))?;
+            let restricted = self.octet_encoding(values.get(1))? > 0;
+            match &values[0] {
+                Value::Text(chars) if operation == 2 => {
+                    if let Some(numbers) = crate::unicode::encode(chars, restricted, handling) { return Ok(self.octets(numbers, false)); }
+                }
+                Value::Octets { cell, .. } if operation == 3 => {
+                    if let Some(chars) = crate::unicode::decode(&cell.borrow(), restricted, handling) { return Ok(Value::text(&chars)); }
+                    if handling > 0 { return Err(self.octet_error("unready")); }
+                }
+                _ => return Err(self.octet_error("arguments")),
+            }
+            return self.octet_work(operation, &values[..2], negative_allowed);
+        }
         if operation < 4 && values.len() == 3 {
             match &values[2] {
                 Value::Text(word) if self.table.spells("ext.system.bytes.strict", word) => return self.octet_work(operation, &values[..2], negative_allowed),
@@ -5236,6 +5316,8 @@ impl<'a> Machine<'a> {
             });
         }
         Ok(match op {
+            Prim::UnicodeLimit => Value::Small(0x10ffff),
+            Prim::AsciiText => { n(1)?; Value::text(&crate::formatting::Layout { table: self.table, names: w }.quote(&v[0], true)?) }
             Prim::Positive => { n(1)?; v[0].clone() }
             Prim::OctetAssign(times) => {
                 let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
@@ -6466,8 +6548,6 @@ impl<'a> Machine<'a> {
                             (0..=numbers.len()).any(|i| numbers[i..].starts_with(&needle))
                         } else { numbers.contains(&self.octet_item(item)?) }
                     }
-                    (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
-                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
@@ -6967,6 +7047,10 @@ impl<'a> Machine<'a> {
             }
             Prim::CharOf => {
                 n(1)?;
+                if self.table.flag("ext.system.text.unicode") {
+                    let number = v[0].as_big()?;
+                    if number < BigInt::from(0) || number > BigInt::from(1114111) { return Err(self.table.single("ext.builtin.chr.range").unwrap_or_default().to_owned()); }
+                }
                 let code = match &v[0] {
                     Value::Small(i) => u32::try_from(*i).ok(),
                     Value::Huge(_) => None,
@@ -8487,6 +8571,14 @@ impl Machine<'_> {
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         for item in &mut input { *item = item.settled(); }
+        if keywords.is_empty() {
+            match (op, input.as_slice()) {
+                (Prim::Quoted, [Value::Text(t)]) if self.table.flag("ext.system.text.unicode") => return Ok(Value::text(&crate::unicode::quoted(t, false))),
+                (Prim::Belongs, [_, Value::OctetKind { .. }]) => return self.octet_routine(16, &input),
+                (Prim::Hashed, [Value::Octets { .. }]) => return self.octet_routine(17, &input),
+                _ => {}
+            }
+        }
         if keywords.is_empty() { if let Some(value) = self.user_operation(op, &input)? { return Ok(value); } }
         if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};

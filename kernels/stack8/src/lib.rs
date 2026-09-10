@@ -9,6 +9,7 @@
 
 mod methods;
 mod formatting;
+mod unicode;
 
 pub mod compile;
 pub mod lang;

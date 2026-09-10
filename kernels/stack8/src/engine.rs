@@ -4630,8 +4630,6 @@ impl<'a> Engine<'a> {
                             _ => row.contains(&self.byte_number(a)?),
                         }
                     }
-                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
-                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
                         _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
@@ -5736,6 +5734,55 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Bytes(..) = receiver {
+            let task = match operation { "upper" => Some(6), "lower" => Some(7), "split" => Some(8), "join" => Some(9), "startswith" => Some(10), "replace" => Some(11), "strip" => Some(12), "find" => Some(13), "hex" => Some(4), _ => None };
+            if let Some(task) = task {
+                if !named.is_empty() { return Err(self.byte_fault("unready")); }
+                let mut all = vec![receiver.clone()]; all.extend(args); return self.byte_call(task, &all);
+            }
+        }
+        if self.lang.unicode_text {
+            if operation == "maketrans" {
+                if !named.is_empty() || args.len() < 2 || args.len() > 3 { return Err(self.lang.method_errors["arguments"].clone()); }
+                let (Value::Text(from), Value::Text(to)) = (&args[0], &args[1]) else { return Err(self.lang.method_errors["arguments"].clone()); };
+                if from.chars().count() != to.chars().count() { return Err(self.lang.method_errors["arguments"].clone()); }
+                let mut pairs = Vec::new();
+                for (a, b) in from.chars().zip(to.chars()) { put_key(&mut pairs, Value::Small(a as i64), Value::Small(b as i64)); }
+                if let Some(remove) = args.get(2) {
+                    let Value::Text(remove) = remove else { return Err(self.lang.method_errors["arguments"].clone()); };
+                    for c in remove.chars() { put_key(&mut pairs, Value::Small(c as i64), Value::Null); }
+                }
+                return Ok(Value::Map(Rc::new(pairs)).held(true));
+            }
+            if let Value::Text(text) = receiver {
+                if operation == "translate" {
+                    if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    let Value::Map(pairs) = args[0].contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+                    let mut output = String::new();
+                    for c in text.chars() {
+                        let key = Value::Small(c as i64);
+                        match pairs.iter().find(|(k, _)| k.equals(&key)).map(|(_, v)| v) {
+                            None => output.push(c), Some(Value::Null) => (), Some(Value::Text(s)) => output.push_str(s),
+                            Some(v) => output.push(v.as_big()?.to_u32().and_then(char::from_u32).ok_or_else(|| self.lang.method_errors["unready"].clone())?),
+                        }
+                    }
+                    return Ok(Value::text(&output));
+                }
+                if let Some(answer) = crate::unicode::test(text, operation) {
+                    if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    return Ok(Value::Flag(answer));
+                }
+                if let Some(answer) = crate::unicode::change(text, operation) {
+                    if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    return Ok(Value::text(&answer));
+                }
+                if operation == "expandtabs" {
+                    if args.len() > 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                    let width = args.first().map(Value::as_big).transpose()?.map_or(Some(8), |n| if n.is_negative() { Some(0) } else { n.to_usize() }).filter(|n| *n <= 1_000_000).ok_or_else(|| self.lang.method_errors["unready"].clone())?;
+                    return Ok(Value::text(&crate::unicode::tabs(text, width)));
+                }
+            }
+        }
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None };
             if let Some(method) = method {
@@ -5964,6 +6011,20 @@ impl<'a> Engine<'a> {
     }
 
     fn byte_work(&self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if self.lang.unicode_text && matches!(task, 2 | 3) && args.len() == 3 {
+            let Value::Text(word) = &args[2] else { return Err(self.byte_fault("arguments")); };
+            let policy = self.lang.text_errors.iter().position(|w| w == word.as_ref()).ok_or_else(|| self.byte_fault("unready"))?;
+            let ascii = self.byte_codec(args.get(1))?;
+            if task == 2 {
+                let Value::Text(text) = &args[0] else { return Err(self.byte_fault("arguments")); };
+                if let Some(row) = crate::unicode::encode(text, ascii, policy) { return Ok(self.byte_make(row, false)); }
+            } else {
+                let Value::Bytes(row, ..) = &args[0] else { return Err(self.byte_fault("arguments")); };
+                if let Some(text) = crate::unicode::decode(&row.borrow(), ascii, policy) { return Ok(Value::text(&text)); }
+                if policy != 0 { return Err(self.byte_fault("unready")); }
+            }
+            return self.byte_work(task, &args[..2], signed);
+        }
         if matches!(task, 0..=3) && args.len() == 3 {
             let Value::Text(policy) = &args[2] else { return Err(self.byte_fault("arguments")); };
             if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
@@ -6192,6 +6253,11 @@ impl<'a> Engine<'a> {
                     Some(v) => return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(v)])),
                 };
                 Value::text(&writer.field(&args[0], spec, "")?)
+            }
+            Builtin::UnicodeMaximum => Value::Small(1114111),
+            Builtin::Ascii => {
+                arity(1)?;
+                Value::text(&crate::formatting::Writer { lang: self.lang, words: sp }.representation(&args[0], true)?)
             }
             Builtin::Bytes(task) => return self.byte_call(task, args),
             Builtin::Echo => {
@@ -6849,6 +6915,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::CharOf => {
                 arity(1)?;
+                if self.lang.unicode_text && args[0].as_big().ok().map_or(true, |n| n < BigInt::from(0) || n > BigInt::from(0x10ffff)) { return Err(self.lang.chr_range.clone()); }
                 let code = match &args[0] {
                     Value::Small(n) => u32::try_from(*n).ok(),
                     Value::Huge(_) => None,
@@ -7864,6 +7931,13 @@ impl Engine<'_> {
     }
 
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if named.is_empty() {
+            if b == Builtin::Repr && args.len() == 1 && self.lang.unicode_text {
+                if let Value::Text(text) = &args[0] { return Ok(Value::text(&crate::unicode::quoted(text, false))); }
+            }
+            if b == Builtin::InstanceOf && args.len() == 2 && matches!(&args[1], Value::ByteKind(..)) { return self.byte_call(16, &args); }
+            if b == Builtin::Hash && args.len() == 1 && matches!(&args[0], Value::Bytes(..)) { return self.byte_call(17, &args); }
+        }
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
         for value in &mut args { *value = value.contents(); }
@@ -7922,7 +7996,7 @@ impl Engine<'_> {
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Native(b, _) => *b as u64 + 16,
+                    Value::Native(b, _) => self.lang.builtins.values().position(|held| held == b).unwrap_or(0) as u64 + 16,
                     Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Real(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),

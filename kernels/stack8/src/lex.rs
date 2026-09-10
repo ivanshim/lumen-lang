@@ -561,9 +561,13 @@ impl<'a> Cursor<'a> {
         }
         if Some(next) == lang.named_letter && self.look(2) == Some('{') {
             self.step(); self.step(); self.step();
-            while self.look(0).map_or(false, |c| c != '}') { self.step(); }
+            let mut name = String::new();
+            while self.look(0).map_or(false, |c| c != '}') { name.push(self.step()); }
             if self.look(0).is_none() { return Err(self.string_words()); }
-            self.step(); *fault = true;
+            self.step();
+            if lang.unicode_text {
+                if let Some(value) = crate::unicode::named(&name) { text.push_str(value); } else { *fault = true; }
+            } else { *fault = true; }
             return Ok(());
         }
         let digits = if Some(next) == lang.codepoint_letter { lang.codepoint_digits }

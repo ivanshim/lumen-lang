@@ -431,6 +431,8 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Ascii,
+    UnicodeMaximum,
     MapFrom,
     Next,
     Iter,

@@ -11,6 +11,7 @@
 
 mod members;
 mod formatting;
+mod unicode;
 
 pub mod math;
 pub mod indent;

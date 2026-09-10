@@ -343,6 +343,9 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.ascii": [
+    "ascii"
+  ],
   "ext.builtin.bin": [
     "bin"
   ],
@@ -402,6 +405,9 @@
   ],
   "ext.builtin.callable": [
     "callable"
+  ],
+  "ext.builtin.chr.range": [
+    "ValueError: chr() arg not in range(0x110000)"
   ],
   "ext.builtin.class.name": [
     "__name__"
@@ -610,6 +616,9 @@
   "ext.builtin.method.capitalize": [
     "capitalize"
   ],
+  "ext.builtin.method.casefold": [
+    "casefold"
+  ],
   "ext.builtin.method.center": [
     "center"
   ],
@@ -679,6 +688,9 @@
   "ext.builtin.method.error.unready": [
     "NotImplementedError: this value method cannot run yet"
   ],
+  "ext.builtin.method.expandtabs": [
+    "expandtabs"
+  ],
   "ext.builtin.method.extend": [
     "extend"
   ],
@@ -709,11 +721,26 @@
   "ext.builtin.method.isalpha": [
     "isalpha"
   ],
+  "ext.builtin.method.isascii": [
+    "isascii"
+  ],
+  "ext.builtin.method.isdecimal": [
+    "isdecimal"
+  ],
   "ext.builtin.method.isdigit": [
     "isdigit"
   ],
+  "ext.builtin.method.isidentifier": [
+    "isidentifier"
+  ],
   "ext.builtin.method.islower": [
     "islower"
+  ],
+  "ext.builtin.method.isnumeric": [
+    "isnumeric"
+  ],
+  "ext.builtin.method.isprintable": [
+    "isprintable"
   ],
   "ext.builtin.method.isspace": [
     "isspace"
@@ -738,6 +765,9 @@
   ],
   "ext.builtin.method.lstrip": [
     "lstrip"
+  ],
+  "ext.builtin.method.maketrans": [
+    "maketrans"
   ],
   "ext.builtin.method.pop": [
     "pop"
@@ -790,8 +820,14 @@
   "ext.builtin.method.strip": [
     "strip"
   ],
+  "ext.builtin.method.swapcase": [
+    "swapcase"
+  ],
   "ext.builtin.method.title": [
     "title"
+  ],
+  "ext.builtin.method.translate": [
+    "translate"
   ],
   "ext.builtin.method.update": [
     "update"
@@ -1967,6 +2003,18 @@
   "ext.system.real.bits": 64,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
+  ],
+  "ext.system.text.errors": [
+    "strict",
+    "ignore",
+    "replace",
+    "backslashreplace",
+    "surrogateescape",
+    "xmlcharrefreplace"
+  ],
+  "ext.system.text.unicode": true,
+  "ext.system.unicode.maximum": [
+    "sys.maxunicode"
   ],
   "ext.system.untrue.empty_array": true,
   "ext.text.format": [

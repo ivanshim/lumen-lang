@@ -36,6 +36,7 @@ impl Layout<'_> {
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
+            Value::Text(text) if self.table.flag("ext.system.text.unicode") => crate::unicode::quoted(text, escaped),
             Value::Text(_) => {
                 let original = item.in_field(self.names, "", if escaped { "a" } else { "r" }).ok_or_else(|| self.refused())?;
                 original.chars().map(|letter| {

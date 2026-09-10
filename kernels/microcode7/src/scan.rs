@@ -630,10 +630,12 @@ impl Quotation<'_> {
         }
         if table.spells("ext.lexical.escape.named", &letter) && self.source.get(begin + 2) == Some(&'{') {
             self.forward(3);
+            let first = self.next;
             while self.here().map_or(false, |c| c != '}') { self.forward(1); }
             if self.here().is_none() { return Err(self.bad()); }
+            let word: String = self.source[first..self.next].iter().collect();
             self.forward(1);
-            *missing = true;
+            match crate::unicode::named(&word).filter(|_| table.flag("ext.system.text.unicode")) { Some(chars) => text.push_str(chars), None => *missing = true }
             return Ok(());
         }
         let count = ["ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter()
