@@ -27,7 +27,16 @@ enum Holds {
     Nothing,
 }
 
+#[derive(Clone, Default)]
+struct ScopeWords {
+    bound: Vec<String>,
+    outermost: Vec<(String, String)>,
+    borrowed: Vec<String>,
+}
+
 struct Layer {
+    comprehension: bool,
+    borrowed: Vec<String>,
     holds: Holds,
     idents: Vec<String>,
     formals: Vec<String>,
@@ -54,6 +63,8 @@ struct Fork {
 }
 
 pub struct Builder<'a> {
+    surveyed: HashMap<usize, ScopeWords>,
+    survey: bool,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
@@ -140,6 +151,7 @@ pub struct Builder<'a> {
     tells_place: bool,
     generator_seen: bool,
     reading_yield: bool,
+    source_before: Option<(usize, usize, String)>,
     unsupported_place: bool,
     iteration_binding: Option<(String, usize)>,
     place_depth: usize,
@@ -235,7 +247,15 @@ type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String
 type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
-    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let mut words = HashMap::new();
+    if table.flag("ext.stmt.function.closes_over") {
+        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true)?;
+    }
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false)
+}
+
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool) -> Res<Built> {
+    let top = Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -246,12 +266,13 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
+        source_before: None,
         unsupported_place: false,
         iteration_binding: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
@@ -316,6 +337,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         first.push(body);
         sequence(first)
     };
+    words.extend(r.surveyed.clone());
     let top = r.layers.pop().unwrap();
     // Where the text stands inside a routine, the layer just popped is
     // that routine's and the one under it holds the globals.
@@ -323,7 +345,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -769,11 +791,32 @@ impl<'a> Builder<'a> {
         Some(slot)
     }
 
+    fn lexical_address(&mut self, name: &str, borrowed: bool) -> Option<Address> {
+        let mut distance = 0;
+        let owner = self.layers.iter().rposition(|s| s.holds == Holds::Every).unwrap_or(0);
+        for index in (1..self.layers.len()).rev() {
+            let layer = &self.layers[index];
+            if layer.holds == Holds::Nothing { continue; }
+            if !(borrowed && index == owner) {
+                if layer.aliases.iter().any(|pair| pair.0 == name) { return None; }
+                if let Some(at) = layer.idents.iter().rposition(|word| word == name) {
+                    return Some(Address { ident: Rc::from(name), up: distance, at, fallback: None });
+                }
+            }
+            distance += 1;
+        }
+        None
+    }
+
     fn address_to_read(&mut self, name: &str) -> Address {
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
         if let Some(slot) = self.aliased(name) {
             return slot;
+        }
+        if self.table.flag("ext.stmt.function.closes_over") && !self.survey {
+            if let Some(slot) = self.lexical_address(name, false) { return slot; }
+            return self.global_address(name);
         }
         let frameless = |holds: Holds| holds == Holds::Nothing;
         let mut depth = 0;
@@ -829,8 +872,28 @@ impl<'a> Builder<'a> {
     fn address_to_write(&mut self, name: &str) -> Address {
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
+        if self.table.flag("ext.stmt.function.closes_over") && !name.starts_with('#') {
+            let here = self.layers.iter().rposition(|l| l.holds == Holds::Every).unwrap_or(0);
+            if self.layers[here].comprehension {
+                let owner = (0..here).rev().find(|&i| self.layers[i].holds == Holds::Every && !self.layers[i].comprehension).unwrap_or(0);
+                let target = self.layers[owner].aliases.iter().find(|pair| pair.0 == name).map(|pair| pair.1.clone());
+                match target {
+                    Some(global) => self.layers[here].aliases.push((name.to_string(), global)),
+                    None if owner == 0 => self.layers[here].aliases.push((name.to_string(), name.to_string())),
+                    None => {
+                        let layer = &mut self.layers[owner];
+                        if !layer.borrowed.iter().any(|n| n == name) && !layer.idents.iter().any(|n| n == name) { layer.idents.push(name.to_string()); }
+                        self.layers[here].borrowed.push(name.to_string());
+                    }
+                }
+            }
+        }
         if let Some(slot) = self.aliased(name) {
             return slot;
+        }
+        let is_borrowed = self.layers.iter().rev().find(|l| l.holds == Holds::Every).map_or(false, |l| l.borrowed.iter().any(|word| word == name));
+        if is_borrowed && !self.survey && self.table.flag("ext.stmt.function.closes_over") {
+            if let Some(slot) = self.lexical_address(name, true) { return slot; }
         }
         let depth = 0;
         let last = self.layers.len() - 1;
@@ -875,7 +938,7 @@ impl<'a> Builder<'a> {
                 if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }
             }
         }
-        if self.outside_lambda.iter().any(|word| word == name) {
+        if !self.table.flag("ext.stmt.function.closes_over") && self.outside_lambda.iter().any(|word| word == name) {
             let local = self.layers.iter().rev().find(|scope| scope.holds == Holds::Every)
                 .map_or(false, |scope| scope.idents.iter().any(|word| word == name));
             if !local {
@@ -925,6 +988,7 @@ impl<'a> Builder<'a> {
 
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
+        let began = self.pos;
         let taking = self.taking.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is set aside while
@@ -940,20 +1004,50 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        self.layers.push(Layer { comprehension: name == "<gathering>", borrowed: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
+            if let Some(known) = self.surveyed.get(&began) {
+                if known.borrowed.iter().any(|word| params.contains(word)) {
+                    return Err(self.table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
+                }
+                let scope = self.layers.last_mut().unwrap();
+                for word in &known.bound {
+                    if !scope.idents.contains(word) { scope.idents.push(word.clone()); }
+                }
+                scope.aliases.clone_from(&known.outermost);
+                scope.borrowed.clone_from(&known.borrowed);
+            }
+        }
+        let earlier_gathering = self.gather_names.clone();
+        if holds == Holds::Every && self.table.flag("ext.stmt.function.closes_over") {
+            let own = &self.layers.last().unwrap().idents;
+            self.gather_names.retain(|pair| !own.contains(&pair.0));
+        }
         let enclosing_yield = self.generator_seen;
         if holds == Holds::Every { self.generator_seen = false; }
         let mut body = body(self)?;
+        self.gather_names = earlier_gathering;
+        let generator = holds == Holds::Every && self.generator_seen && self.table.flag("ext.stmt.yield.suspends");
         if holds == Holds::Every {
-            if self.generator_seen {
+            if self.generator_seen && !generator {
                 body = prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.yield.unrun").unwrap_or_default()))]);
             }
             self.generator_seen = enclosing_yield;
         }
         let scope = self.layers.pop().unwrap();
+        if self.survey && holds == Holds::Every {
+            let bound = scope.idents.iter().filter(|word| !scope.borrowed.contains(word) && !scope.aliases.iter().any(|pair| pair.0 == **word)).cloned().collect();
+            self.surveyed.insert(began, ScopeWords { bound, outermost: scope.aliases.clone(), borrowed: scope.borrowed.clone() });
+        }
+        if generator && !self.table.flag("ext.stmt.function.closes_over") {
+            let names = self.layers.iter().skip(1).filter(|scope| scope.holds == Holds::Every)
+                .flat_map(|scope| scope.idents.iter()).filter(|name| !scope.idents.contains(name))
+                .map(String::as_str).collect::<Vec<_>>();
+            if borrows_enclosing(&body, &names) { body = self.scope_unrun("ext.stmt.yield.unsupported"); }
+        }
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(constant(Value::Routine(Rc::new(Routine { local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -970,7 +1064,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -1173,6 +1267,7 @@ impl<'a> Builder<'a> {
         self.advance();
         let name = self.need_word("as the class name")?;
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
+        if self.table.flag("ext.stmt.function.closes_over") { self.address_to_write(&name); }
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
             let _bases = self.arguments_of(&name, "ext.stmt.class.bases.close", "syntax.call.separator")?;
@@ -1243,12 +1338,22 @@ impl<'a> Builder<'a> {
                 return self.forget_list(false, true, None);
             }
             if self.key("ext.stmt.nonlocal") {
+                let in_class = self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len());
                 self.advance();
                 loop {
-                    self.need_word("after the nonlocal keyword")?;
+                    let word = self.need_word("after the nonlocal keyword")?;
+                    if !in_class {
+                        if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) { layer.borrowed.push(word.clone()); }
+                    }
+                    if !in_class && !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, true).is_none() {
+                        let pieces = self.table.strings("ext.stmt.nonlocal.amiss");
+                        return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), word, pieces.get(1).map_or("", String::as_str)));
+                    }
                     if !self.on_any("syntax.call.separator") { break; }
                     self.advance();
                 }
+                if in_class { return Ok(self.class_not_ready()); }
+                if self.table.flag("ext.stmt.function.closes_over") { return Ok(constant(Value::Nil)); }
                 return Ok(prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.nonlocal.unrun").unwrap_or_default()))]));
             }
             if self.key("stmt.if") {
@@ -1622,7 +1727,7 @@ impl<'a> Builder<'a> {
             let opens = token.shape == Shape::Sign && (self.table.spells("syntax.group.open", &token.lexeme) || self.table.spells("syntax.array.open", &token.lexeme));
             let closes = token.shape == Shape::Sign && (self.table.spells("syntax.group.close", &token.lexeme) || self.table.spells("syntax.array.close", &token.lexeme));
             if nesting == 0 {
-                if (bracketed && closes) || (!bracketed && self.table.spells("stmt.for.in", &token.lexeme)) { break; }
+                if (bracketed && closes) || (!bracketed && (self.table.spells("stmt.for.in", &token.lexeme) || self.table.spells("stmt.assign", &token.lexeme))) { break; }
                 if self.table.spells("syntax.call.separator", &token.lexeme) {
                     separated = true;
                     new_item = true;
@@ -1641,6 +1746,10 @@ impl<'a> Builder<'a> {
     fn require_items(&mut self, source: &str, width: usize, spread: bool) -> Form {
         let refusal = prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.binding.unrun").unwrap_or_default()))]);
         if spread { return refusal; }
+        if self.table.flag("ext.stmt.yield.suspends") {
+            let value = self.read(source);
+            return self.write(source, prim_call(Prim::BindingWidth(width), vec![value]));
+        }
         let value = self.read(source);
         let size = prim_call(Prim::Length, vec![value]);
         let right = prim_call(Prim::Eq, vec![size, constant(Value::Small(width as i64))]);
@@ -3783,13 +3892,15 @@ impl<'a> Builder<'a> {
         Ok(sequence(items))
     }
 
-    /// A lambda gives its single expression back. Only its defaults
-    /// are carried from the place where it was made.
+    /// A lambda gives its single expression back. Defaults keep their
+    /// values; free bindings are found through the enclosing frames.
     fn lambda_form(&mut self) -> Res<Form> {
         let table = self.table;
         let colon = table.single("block.intro").ok_or("Lambda needs a body mark")?;
         let comma = table.single("syntax.call.separator").ok_or("Lambda needs a parameter separator")?;
         let mut names = Vec::new();
+        let mut ways = Vec::new();
+        let mut positional_mark = false;
         let mut spares = Vec::new();
         let mut before = Vec::new();
         let mut gather = None;
@@ -3799,6 +3910,13 @@ impl<'a> Builder<'a> {
             if self.sign(colon) { self.advance(); break; }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
+                if table.flag("ext.stmt.function.closes_over") {
+                    if positional_mark || named_only || names.is_empty() {
+                        return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
+                    }
+                    positional_mark = true;
+                    for way in &mut ways { *way = 'p'; }
+                }
                 self.advance();
             } else {
                 let many = table.spells("op.mul", &self.look().lexeme);
@@ -3817,6 +3935,7 @@ impl<'a> Builder<'a> {
                 let parameter = self.need_word("as a lambda parameter")?;
                 if names.contains(&parameter) { return Err("Duplicate lambda parameter".to_string()); }
                 names.push(parameter);
+                ways.push(if many { 'v' } else { 'b' });
                 if self.on_assign() {
                     self.advance();
                     let worth = self.expr(0)?;
@@ -3829,6 +3948,8 @@ impl<'a> Builder<'a> {
         }
         let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
         let parameters = names.clone();
+        let bind_arguments = table.flag("ext.stmt.function.closes_over") && table.flag("ext.syntax.call.bind_names") && !cannot_call;
+        if bind_arguments { self.taking = Some(ways); }
         let enclosing: Vec<String> = self.layers.iter().skip(1).filter(|l| l.holds == Holds::Every).flat_map(|l| l.idents.clone()).collect();
         let mut unavailable = self.outside_lambda.clone();
         unavailable.extend(enclosing);
@@ -3836,6 +3957,7 @@ impl<'a> Builder<'a> {
         let mut function = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
             for (index, source) in &spares {
+                if bind_arguments { b.carrying.push(*index); continue; }
                 let cell = b.address_to_write(&source.ident);
                 b.carrying.push(cell.at);
                 let target = b.address_to_write(&parameters[*index]);
@@ -3851,7 +3973,7 @@ impl<'a> Builder<'a> {
         })?;
         self.outside_lambda = prior;
         if let Form::Const(Value::Routine(routine)) = &mut function {
-            Rc::get_mut(routine).expect("new lambda").gather_from = gather;
+            Rc::get_mut(routine).expect("new lambda").gather_from = if bind_arguments { None } else { gather };
         }
         if !spares.is_empty() {
             let mut carrying = vec![function];
@@ -4197,7 +4319,10 @@ impl<'a> Builder<'a> {
             return self.written(place, false);
         }
         Ok(match place {
-            Form::Read(_) => constant(Value::Nil),
+            Form::Read(slot) => {
+                if table.flag("ext.stmt.function.closes_over") { self.address_to_write(&slot.ident); }
+                constant(Value::Nil)
+            }
             Form::Apply(Callee::Prim(Prim::At, _), parts) => sequence(parts),
             Form::Apply(Callee::Prim(Prim::Of, _), mut parts) => parts.remove(0),
             _ => unreachable!("the annotation target was read above"),
@@ -4239,6 +4364,18 @@ impl<'a> Builder<'a> {
         }
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;
+            if self.on_assign() && self.table.flag("ext.stmt.yield.suspends") {
+                self.advance();
+                let value = self.comma_value()?;
+                let held = self.gensym("unpacked");
+                let name = held.ident.to_string();
+                let mut parts = vec![Form::Write(held, Box::new(value))];
+                let after = self.pos;
+                self.pos = began;
+                parts.extend(self.loop_targets(&name)?);
+                self.pos = after;
+                return Ok(sequence(parts));
+            }
             if self.on_assign() { self.advance(); let _value = self.comma_value()?; }
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
@@ -4901,6 +5038,12 @@ impl<'a> Builder<'a> {
                     left = invoke(self.read(&name), vec![left]);
                     break;
                 }
+                if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &name)) {
+                    let operation = label.strip_prefix("ext.builtin.method.").expect("a method label");
+                    left = prim_call(Prim::BindValueMethod, vec![left, constant(Value::text(operation))]);
+                    left = self.subscript(left)?;
+                    continue;
+                }
                 let mut args = vec![left];
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
@@ -4908,10 +5051,15 @@ impl<'a> Builder<'a> {
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
+                if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|label| table.spells(label, &name)) {
+                    args.insert(1, constant(Value::text(&name)));
+                    left = prim_call(Prim::Ask, args);
+                } else {
                 let mutation = matches!(table.prims.get(&name), Some(Prim::Append) | Some(Prim::Replace));
                 left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
                     self.scope_unrun("ext.system.scope.unready")
                 } else { self.named_call(&name, args)? };
+                }
                 if table.has_any("ext.system.scope.unready") { left = self.subscript(left)?; }
                 continue;
             }
@@ -5097,7 +5245,8 @@ impl<'a> Builder<'a> {
         let t = self.look().clone();
         if self.reading_yield && table.spells("op.mul", &t.lexeme) {
             self.advance();
-            return self.monadic_expr();
+            let value = self.monadic_expr()?;
+            return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
         if self.key("ext.op.await") {
             self.advance();
@@ -5111,15 +5260,22 @@ impl<'a> Builder<'a> {
             if from { self.advance(); }
             let at_end = |r: &Self| r.on_stmt_end() || r.exhausted() || r.look().shape == Shape::Close
                 || r.on_any("syntax.group.close") || r.on_any("syntax.array.close");
+            let mut values = Vec::new();
+            let mut comma = false;
             if from || !at_end(self) {
                 loop {
-                    let _ = self.expr(0)?;
+                    values.push(self.expr(0)?);
                     if from || !self.on_any("syntax.call.separator") { break; }
+                    comma = true;
                     self.advance();
                     if at_end(self) { break; }
                 }
             }
             self.reading_yield = previous_yield;
+            if table.flag("ext.stmt.yield.suspends") {
+                let value = if comma { prim_call(Prim::MakeTuple, values) } else { values.pop().unwrap_or_else(|| constant(Value::Nil)) };
+                return Ok(prim_call(if from { Prim::Delegate } else { Prim::Suspend }, vec![value]));
+            }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
         if table.spells("ext.literal.ellipsis", &t.lexeme) {
@@ -5380,12 +5536,12 @@ impl<'a> Builder<'a> {
                             tuple = true;
                             self.advance();
                         }
-                        let value = if tuple { prim_call(Prim::MakeArray, values) } else { values.pop().unwrap() };
+                        let value = if tuple { prim_call(if table.flag("ext.stmt.yield.suspends") { Prim::MakeTuple } else { Prim::MakeArray }, values) } else { values.pop().unwrap() };
                         self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                         value
                     } else {
                         match self.ahead_in_item("ext.op.comprehension.for") {
-                        Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
+                        Some(at) => self.generator_comprehension(at, table.single("syntax.group.close").unwrap())?,
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
                                 else if self.on_any("syntax.group.close") { prim_call(Prim::MakeArray, Vec::new()) }
@@ -5458,7 +5614,10 @@ impl<'a> Builder<'a> {
                 prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.del.unrun").unwrap_or_default()))])
             } else { match named {
                 Form::Read(slot) => {
-                    if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
+                    if targets && table.flag("ext.stmt.function.closes_over") {
+                        let own = self.address_to_write(&slot.ident);
+                        sequence(vec![Form::Read(own.clone()), Form::Forget(own)])
+                    } else if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
                     else { Form::Forget(slot) }
                 },
                 Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
@@ -6007,6 +6166,16 @@ impl<'a> Builder<'a> {
                         r.advance();
                         args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
                     }
+                    if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &named)) {
+                        let receiver = args.remove(0);
+                        let operation = label.strip_prefix("ext.builtin.method.").expect("method entry");
+                        let member = prim_call(Prim::BindValueMethod, vec![receiver, constant(Value::text(operation))]);
+                        return Ok(if calling { invoke(member, args) } else { member });
+                    }
+                    if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|key| table.spells(key, &named)) {
+                        args.insert(1, constant(Value::text(&named)));
+                        return Ok(prim_call(Prim::Ask, args));
+                    }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {
@@ -6192,7 +6361,40 @@ impl<'a> Builder<'a> {
         Ok(value)
     }
 
+    fn generator_comprehension(&mut self, clause: usize, end: &str) -> Res<Form> {
+        if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
+        let head = self.pos;
+        self.pos = clause;
+        while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
+        self.advance();
+        let begins = self.pos;
+        let source = self.expr(1)?;
+        let ends = self.pos;
+        let parameter = self.gather_name("first_source");
+        let previous = self.source_before.replace((begins, ends, parameter.clone()));
+        let routine = self.routine("<generator>", Holds::Every, Traps::Yields, vec![parameter], 1, |r| {
+            r.pos = clause;
+            let before = r.gather_names.len();
+            let body = r.gather_tail(head, "", false)?;
+            r.gather_names.truncate(before);
+            r.need_sign(end, "after a generator expression")?;
+            r.generator_seen = true;
+            Ok(body)
+        })?;
+        self.source_before = previous;
+        Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(Prim::Walked, vec![source])]))
+    }
+
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
+        if self.table.flag("ext.stmt.function.closes_over") {
+            let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, Vec::new(), 0,
+                |reader| reader.gather_in_scope(first_for, end, dictionary))?;
+            return Ok(Form::Apply(Callee::Code(Box::new(routine)), Vec::new()));
+        }
+        self.gather_in_scope(first_for, end, dictionary)
+    }
+
+    fn gather_in_scope(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
         let expression_at = self.pos;
         self.pos = first_for;
         let old_names = self.gather_names.len();
@@ -6228,7 +6430,10 @@ impl<'a> Builder<'a> {
             self.pos = expression_at;
             let spread = self.on_any(if dictionary { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spread { self.advance(); }
+            let previous = self.reading_yield;
+            self.reading_yield |= answer.is_empty();
             let mut term = self.expr(0)?;
+            self.reading_yield = previous;
             if dictionary && !spread {
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "in a map comprehension")?;
                 let worth = self.expr(0)?;
@@ -6236,6 +6441,7 @@ impl<'a> Builder<'a> {
             }
             if !self.on_any("ext.op.comprehension.for") && !self.on_any("ext.op.comprehension.async") { return Err("Expected a comprehension clause after its expression".into()); }
             self.pos = after_clauses;
+            if answer.is_empty() { return Ok(prim_call(if spread { Prim::Delegate } else { Prim::Suspend }, vec![term])); }
             let so_far = self.read(answer);
             let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
             return Ok(self.write(answer, enlarged));
@@ -6262,17 +6468,22 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.comprehension.in") { return Err("Expected the word before a comprehension source".into()); }
         self.advance();
         let unavailable = targets.iter().any(Option::is_none);
-        let source = self.expr(1)?;
+        let source = match self.source_before.clone().filter(|(at, _, _)| *at == self.pos) {
+            Some((_, end, parameter)) => { self.pos = end; self.read(&parameter) }
+            None => self.expr(1)?,
+        };
+        let walks = self.table.flag("ext.stmt.yield.suspends");
         let source_name = self.gather_name("gather_source");
-        let hold = self.write(&source_name, prim_call(Prim::Iterated, vec![source]));
+        let hold = self.write(&source_name, prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![source]));
         let cursor = self.gather_name("gather_cursor");
         let begin = self.write(&cursor, constant(Value::Small(0)));
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let test = prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]);
+        let test = if walks { prim_call(Prim::MoreYet, vec![bag, index]) }
+            else { prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]) };
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let mut item = prim_call(Prim::At, vec![bag, index]);
+        let mut item = prim_call(if walks { Prim::AtHand } else { Prim::At }, vec![bag, index]);
         if taken_apart { item = prim_call(Prim::CheckUnpack(targets.len()), vec![item]); }
         let item_name = self.gather_name("gather_item");
         let mut body = vec![self.write(&item_name, item)];
@@ -6373,7 +6584,7 @@ impl<'a> Builder<'a> {
     fn args(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
         if let Some(at) = self.ahead_in_item("ext.op.comprehension.for") {
             let end = self.table.single(close_key).unwrap().to_string();
-            return Ok(vec![self.gather_comprehension(at, &end, false)?]);
+            return Ok(vec![self.generator_comprehension(at, &end)?]);
         }
         let close = self.table.single(close_key).unwrap().to_string();
         let sep = self.table.single(sep_key).map(str::to_string);
@@ -6839,7 +7050,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
@@ -6850,7 +7061,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -7179,6 +7390,27 @@ fn slice_target(place: &Form) -> bool {
         Form::Apply(Callee::Prim(Prim::At, _), given) if given.len() == 2 => {
             matches!(&given[1], Form::Apply(Callee::Prim(Prim::SliceBounds, _), _)) || slice_target(&given[0])
         }
+        _ => false,
+    }
+}
+
+fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
+    let uses = |address: &Address| names.contains(&address.ident.as_ref());
+    match form {
+        Form::Read(place) | Form::Glance(place) | Form::Share(place) => uses(place),
+        Form::Write(_, value) | Form::OnLine(_, value) | Form::Muted(value) | Form::Silenced(value) => borrows_enclosing(value, names),
+        Form::Apply(Callee::Code(target), args) => borrows_enclosing(target, names) || args.iter().any(|arg| borrows_enclosing(arg, names)),
+        Form::Apply(_, args) => args.iter().any(|arg| borrows_enclosing(arg, names)),
+        Form::Const(Value::Routine(arm)) if arm.frameless => borrows_enclosing(&arm.body, names),
+        Form::Cycle { test, body, step, otherwise, .. } => borrows_enclosing(test, names) || borrows_enclosing(body, names)
+            || step.as_deref().map_or(false, |part| borrows_enclosing(part, names)) || otherwise.as_deref().map_or(false, |part| borrows_enclosing(part, names)),
+        Form::Dyad { a, b, .. } => [a, b].iter().any(|part| match part {
+            Input::Address(place) => uses(place), Input::Form(form) => borrows_enclosing(form, names), _ => false,
+        }),
+        Form::Assert { condition, message } => borrows_enclosing(condition, names) || borrows_enclosing(message, names),
+        Form::Attempt { body, clauses, last, otherwise } => borrows_enclosing(body, names)
+            || clauses.iter().any(|clause| borrows_enclosing(&clause.body, names))
+            || last.as_deref().map_or(false, |part| borrows_enclosing(part, names)) || otherwise.as_deref().map_or(false, |part| borrows_enclosing(part, names)),
         _ => false,
     }
 }

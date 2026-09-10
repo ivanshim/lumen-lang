@@ -116,8 +116,37 @@ impl Counted {
     }
 }
 
+/// A walk keeps its own cells and the part of the stack still wanted.
+#[derive(Debug)]
+pub struct Generator {
+    pub program: Option<Rc<Routine>>,
+    pub frame: Vec<Value>,
+    pub stack: Vec<Value>,
+    pub pc: usize,
+    pub started: bool,
+    pub closed: bool,
+    pub waiting: bool,
+    pub handed: Option<Value>,
+    pub returned: Value,
+    pub delegate: Option<Value>,
+    pub sent: Value,
+    pub items: Vec<Value>,
+    pub current: Option<Value>,
+}
+
+impl Generator {
+    pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
+        Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
+            closed: false, waiting: false, handed: None, returned: Value::Null,
+            delegate: None, sent: Value::Null, current: None }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
+    Native(Rc<RefCell<Value>>, bool),
+    ValueMethod(Rc<(Value, String)>),
+    View(Rc<(Value, String)>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -131,6 +160,8 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    Tuple(Rc<Vec<Value>>),
+    Generator(Rc<RefCell<Generator>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -196,6 +227,34 @@ impl Value {
         self
     }
 
+    pub fn contents(&self) -> Value {
+        match self {
+            Value::Native(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
+            Value::View(view) => {
+                let Value::Map(pairs) = view.0.contents() else { return Value::array(Vec::new()); };
+                Value::array(pairs.iter().map(|(k,v)| match view.1.as_str() {
+                    "keys" => k.clone(), "values" => v.clone(), _ => Value::Tuple(Rc::new(vec![k.clone(),v.clone()])),
+                }).collect())
+            }
+            _ => self.clone(),
+        }
+    }
+
+    pub fn held(self, quoted: bool) -> Value {
+        match self { Value::Bond(cell) => Value::Native(cell, quoted), Value::Array(_) | Value::Map(_) => Value::Native(Rc::new(RefCell::new(self)), quoted), _ => self }
+    }
+
+    pub fn representation(&self, words: &Wording) -> String {
+        match self {
+            Value::Native(cell, _) => cell.borrow().representation(words),
+            Value::Text(_) => self.string_field(words, "", "r").unwrap_or_else(|| self.plain()),
+            Value::Array(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(row) => format!("({}{})", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
+            Value::Map(row) => format!("{{{}}}", row.iter().map(|(k,v)| format!("{}: {}", k.representation(words), v.representation(words))).collect::<Vec<_>>().join(", ")),
+            _ => self.display(words),
+        }
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -218,7 +277,9 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
+            Value::Native(cell, _) => return cell.borrow().sort(),
+            Value::View(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -248,6 +309,9 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
+            Value::Native(cell, _) => cell.borrow().is_true(),
+            Value::ValueMethod(_) => true,
+            Value::View(_) => if let Value::Array(row) = self.contents() { !row.is_empty() } else { false },
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -257,8 +321,9 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -279,10 +344,12 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Native(cell, _) => cell.borrow().as_big(),
+            Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
@@ -293,6 +360,8 @@ impl Value {
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
     pub fn equals(&self, other: &Value) -> bool {
+        if let Value::Native(cell, _) = self { return cell.borrow().equals(&other.contents()); }
+        if let Value::Native(cell, _) = other { return self.equals(&cell.borrow()); }
         if let Some(order) = crate::arith::order_values(self, other) {
             return order == std::cmp::Ordering::Equal;
         }
@@ -308,6 +377,8 @@ impl Value {
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
+            (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -359,6 +430,8 @@ impl Value {
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
         match self {
+            Value::Native(cell, quote) => if *quote { cell.borrow().representation(sp) } else { cell.borrow().display(sp) },
+            Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
@@ -371,6 +444,10 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
+            Value::Tuple(items) => {
+                let shown = items.iter().map(|v| v.string_field(sp, "", "r").unwrap_or_else(|| v.plain())).collect::<Vec<_>>().join(", ");
+                format!("({}{})", shown, if items.len() == 1 { "," } else { "" })
+            }
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))
@@ -484,6 +561,9 @@ impl Value {
     pub fn plain(&self) -> String {
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
+            Value::Native(cell, _) => cell.borrow().plain(),
+            Value::ValueMethod(_) => "<built-in method>".to_string(),
+            Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -505,6 +585,8 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
+            Value::Generator(_) => "<generator>".to_string(),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),

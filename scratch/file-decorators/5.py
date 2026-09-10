@@ -1,0 +1,6 @@
+print(0x_FF)
+print(0X_f_f)
+print(0o_77)
+print(0O_7_7)
+print(0b_11)
+print(0B_1_1)
