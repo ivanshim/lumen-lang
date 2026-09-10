@@ -2150,6 +2150,7 @@ impl<'a> Engine<'a> {
 
     fn holds_object(value: &Value) -> bool {
         match value {
+            Value::Bond(cell) => Self::holds_object(&cell.borrow()),
             Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) => true,
             Value::Array(items) => items.iter().any(Self::holds_object),
             Value::Map(items) => items.iter().any(|(k, v)| Self::holds_object(k) || Self::holds_object(v)),
@@ -2305,7 +2306,7 @@ impl<'a> Engine<'a> {
             }
 
             if direct >= 18 && (matches!(a, Value::Object(_)) || matches!(b, Value::Object(_))) {
-                let words = &self.lang.binary_amiss;
+                let words = &self.lang.class_binary_amiss;
                 if words.len() == 4 {
                     return Err(format!("{}{}{}{}{}{}{}", words[0], self.written_as(op), words[1], self.special_kind(a), words[2], self.special_kind(b), words[3]));
                 }
@@ -2367,6 +2368,23 @@ impl<'a> Engine<'a> {
                 let digits = whole.to_str_radix(radix);
                 Value::text(&match digits.strip_prefix('-') { Some(tail) => format!("-{}{}", prefix, tail), None => format!("{}{}", prefix, digits) })
             }
+            Builtin::DividePair if args.len() == 2 => {
+                let (left, right) = (&args[0], &args[1]);
+                let mut answer = self.special_call(left, 64, vec![right.clone()])?;
+                if answer.as_ref().map_or(true, |v| matches!(v, Value::Declined(_))) {
+                    answer = self.special_call(right, 65, vec![left.clone()])?;
+                }
+                if let Some(answer) = answer.filter(|v| !matches!(v, Value::Declined(_))) { answer }
+                else if matches!(left, Value::Object(_)) || matches!(right, Value::Object(_)) { return Err(self.special_fault()); }
+                else { Value::array(vec![self.dyadic(&Action::IntDiv, left, right)?, self.dyadic(&Action::Mod, left, right)?]) }
+            }
+            Builtin::PowerCall if args.len() == 3 && args.iter().all(|v| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                let base = arith::whole_of(&args[0]).ok_or_else(|| self.special_fault())?;
+                let exponent = arith::whole_of(&args[1]).ok_or_else(|| self.special_fault())?;
+                let modulus = arith::whole_of(&args[2]).ok_or_else(|| self.special_fault())?;
+                if exponent < BigInt::from(0) || modulus == BigInt::from(0) { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
+                Value::of_big(base.modpow(&exponent, &modulus))
+            }
             Builtin::PowerCall if args.len() == 2 => self.special_dyad(&Action::Power, &args[0], &args[1])?,
             Builtin::Absolute if args.len() == 1 => {
                 let value = &args[0];
@@ -2401,6 +2419,18 @@ impl<'a> Engine<'a> {
                 Value::Map(Rc::new(kept))
             }
             Builtin::Fetch if args.len() == 2 => self.special_dyad(&Action::At, &args[0], &args[1])?,
+            Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Object(_)) && self.special_value(&args[2], 12).is_none() => {
+                let Value::Object(object) = &args[2] else { unreachable!() };
+                let contents = object.fields.borrow().iter().find(|(name, _)| name.is_empty()).map(|(_, value)| collection_contents(value));
+                let Some(Value::Map(entries)) = contents else { return Err(self.special_fault()); };
+                let mut pairs = entries.as_ref().clone();
+                let key = self.special_key(&args[0])?;
+                let mut found = None;
+                for (at, (old, _)) in pairs.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
+                match found { Some(at) => pairs[at].1 = args[1].clone(), None => pairs.push((key, args[1].clone())) }
+                object.fields.borrow_mut().iter_mut().find(|(name, _)| name.is_empty()).unwrap().1 = Value::Map(Rc::new(pairs));
+                args[2].clone()
+            }
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Fields(_)) => {
                 let (Value::Fields(o), Value::Text(key)) = (&args[2], &args[0]) else { return Err(self.special_fault()) };
                 let mut fields = o.fields.borrow_mut();
@@ -5739,7 +5769,12 @@ impl<'a> Engine<'a> {
                 arity(3)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
-                let at = self.key(&args.pop().expect("the key"));
+                let mut at = self.key(&args.pop().expect("the key"));
+                if matches!(target, Value::Array(_) | Value::Text(_)) {
+                    at = if let Value::Slice(parts) = &at {
+                        Value::Slice(Rc::new([self.special_index(&parts[0])?, self.special_index(&parts[1])?, self.special_index(&parts[2])?]))
+                    } else { self.special_index(&at)? };
+                }
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
                 }

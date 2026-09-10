@@ -2463,9 +2463,32 @@ impl<'a> Machine<'a> {
                     let (f, i) = self.locate(slot, frame)?;
                     let mut values = values;
                     let value = values.pop().unwrap();
-                    let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    let mut key = values.pop().map(|k| self.as_key_spoken(&k));
                     if self.table.has_any("ext.stmt.class.special") {
-                        let target = self.fetch(slot, frame)?;
+                        let target = collection_read(&self.fetch(slot, frame)?);
+                        if matches!(target, Value::Vector(_) | Value::Text(_)) {
+                            if let Some(given) = key {
+                                key = Some(if let Value::Span(bounds) = given {
+                                    let mut numbers = Vec::new();
+                                    for bound in bounds.iter() { numbers.push(self.index_answer(bound)?); }
+                                    Value::Span(Rc::new(numbers))
+                                } else { self.index_answer(&given)? });
+                            }
+                        }
+                        if let (Some(key), Value::Thing(object)) = (&key, &target) {
+                            if self.appointment(&target, 12).is_none() {
+                                let contents = object.holds.borrow().iter().find(|(n, _)| n.is_empty()).map(|(_, v)| collection_read(v));
+                                if let Some(Value::Dict(entries)) = contents {
+                                    let mut entries = entries.to_vec();
+                                    let wanted = self.hash_key(key)?;
+                                    let mut at = 0;
+                                    while at < entries.len() && !self.keys_agree(&entries[at].0, &wanted)? { at += 1; }
+                                    if at == entries.len() { entries.push((wanted, value)); } else { entries[at].1 = value; }
+                                    object.holds.borrow_mut().iter_mut().find(|(n, _)| n.is_empty()).unwrap().1 = Value::Dict(Rc::new(entries));
+                                    return Ok(Value::Nil);
+                                }
+                            }
+                        }
                         if let (Some(key), Value::Dict(entries)) = (&key, &target) {
                             let key = self.hash_key(key)?;
                             let mut entries = entries.to_vec();
@@ -3666,6 +3689,7 @@ impl<'a> Machine<'a> {
 
     fn carries_instance(value: &Value) -> bool {
         match value {
+            Value::Shared(cell) => Self::carries_instance(&cell.borrow()),
             Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) => true,
             Value::Vector(v) => v.iter().any(Self::carries_instance),
             Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(Self::carries_instance),
@@ -3920,6 +3944,17 @@ impl<'a> Machine<'a> {
                 let digits = whole.as_big()?.to_str_radix(radix);
                 let (sign, magnitude) = if digits.starts_with('-') { ("-", &digits[1..]) } else { ("", digits.as_str()) };
                 Value::text(&[sign, prefix, magnitude].concat())
+            }
+            (Prim::PowerCall, [base, exponent, modulus]) if operands.iter().all(|v| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                let exponent = exponent.as_big()?;
+                let modulus = modulus.as_big()?;
+                if exponent < BigInt::from(0) || modulus == BigInt::from(0) { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned()); }
+                Value::from_big(base.as_big()?.modpow(&exponent, &modulus))
+            }
+            (Prim::DividePair, [left, right]) => {
+                let quotient = self.prim(Prim::IntDiv, "", &[left.clone(), right.clone()])?;
+                let rest = self.prim(Prim::Mod, "", operands)?;
+                Value::Vector(Rc::new(vec![quotient, rest]))
             }
             (Prim::PowerCall, [_, _]) => self.prim(Prim::Power, "", operands)?,
             (Prim::Absolute, [item]) => {

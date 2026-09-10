@@ -347,6 +347,7 @@
     "bool"
   ],
   "ext.builtin.ceil": [
+    "math.ceil",
     "ceil"
   ],
   "ext.builtin.complex": [
@@ -359,6 +360,7 @@
     "divmod"
   ],
   "ext.builtin.floor": [
+    "math.floor",
     "floor"
   ],
   "ext.builtin.format": [
@@ -371,6 +373,7 @@
     "hex"
   ],
   "ext.builtin.index": [
+    "operator.index",
     "index"
   ],
   "ext.builtin.isinstance": [
@@ -461,6 +464,7 @@
     "round"
   ],
   "ext.builtin.sizeof": [
+    "sys.getsizeof",
     "getsizeof"
   ],
   "ext.builtin.sorted": [
@@ -501,6 +505,7 @@
     "NotImplementedError: str encoding and errors are not supported"
   ],
   "ext.builtin.trunc": [
+    "math.trunc",
     "trunc"
   ],
   "ext.lexical.escape.byte": [

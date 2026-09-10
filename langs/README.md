@@ -2754,7 +2754,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
-| `ext.builtin.ceil` | - | - | `ceil` | - | - | - | - | - | - | - |
+| `ext.builtin.ceil` | - | - | `math.ceil` `ceil` | - | - | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
@@ -2776,7 +2776,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
-| `ext.builtin.floor` | - | - | `floor` | - | - | - | - | - | - | - |
+| `ext.builtin.floor` | - | - | `math.floor` `floor` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
 | `ext.builtin.hex` | - | - | `hex` | - | - | - | - | - | - | - |
@@ -2784,7 +2784,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
-| `ext.builtin.index` | - | - | `index` | - | - | - | - | - | - | - |
+| `ext.builtin.index` | - | - | `operator.index` `index` | - | - | - | - | - | - | - |
 | `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
@@ -2833,7 +2833,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
-| `ext.builtin.sizeof` | - | - | `getsizeof` | - | - | - | - | - | - | - |
+| `ext.builtin.sizeof` | - | - | `sys.getsizeof` `getsizeof` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
@@ -2849,7 +2849,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
-| `ext.builtin.trunc` | - | - | `trunc` | - | - | - | - | - | - | - |
+| `ext.builtin.trunc` | - | - | `math.trunc` `trunc` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
