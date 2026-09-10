@@ -3093,6 +3093,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
+                            Value::Words(items, _) => items.len(),
                             Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),

@@ -483,6 +483,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
+                            Value::TextRow(row, _) => row.len(),
                             Value::Vector(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
