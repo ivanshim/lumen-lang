@@ -703,6 +703,7 @@ only. The extension labels so far, all from PHP:
   `class::class` giving the class's name.
 - `ext.stmt.class.detail.*`: words for the fuller account of classes.
   `root` names the common forebear; `main` names the outermost module.
+  `locals` marks a function in the full name of a nested function.
   `mro`, `order`, `bases`, `name`, `qualified`, `namespace` and `kind`
   name the ancestry tuple, the ancestry call, the direct bases, the name,
   the full name, the map of own members and the class of an object.
@@ -2446,6 +2447,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.getitem` | - | - | `__class_getitem__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.kind` | - | - | `__class__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.locals` | - | - | `<locals>` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.main` | - | - | `__main__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.module` | - | - | `__module__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.mro` | - | - | `__mro__` | - | - | - | - | - | - | - |

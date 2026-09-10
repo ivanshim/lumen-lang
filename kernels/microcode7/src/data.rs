@@ -353,6 +353,11 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
+            Value::Tuple(entries) => {
+                let mut parts=Vec::new();
+                for item in entries.iter(){parts.push(if let Value::Text(text)=item{format!("'{}'",text.replace('\\',"\\\\").replace('\'',"\\'"))}else{item.render(w)});}
+                format!("({}{})",parts.join(", "),if entries.len()==1{","}else{""})
+            }
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))

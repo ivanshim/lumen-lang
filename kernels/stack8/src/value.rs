@@ -370,6 +370,10 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
+            Value::Tuple(items) => {
+                let shown=items.iter().map(|v| match v {Value::Text(t)=>format!("'{}'",t.replace('\\',"\\\\").replace('\'',"\\'")), _=>v.display(sp)}).collect::<Vec<_>>();
+                format!("({}{})",shown.join(", "),if items.len()==1{","}else{""})
+            }
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))

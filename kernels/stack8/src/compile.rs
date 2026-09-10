@@ -340,7 +340,7 @@ pub fn compile_within(
         a.piece().instrs.extend(shifted);
     }
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { doc: None, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { qualified: String::new(), doc: None, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -821,6 +821,10 @@ impl<'a> Compiler<'a> {
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let first_body = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).next();
         let doc = first_body.filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.clone());
+        let local = self.lang.class_details.get("locals").and_then(|v|v.first()).cloned().unwrap_or_default();
+        let mut qualified = self.within.as_ref().map_or(String::new(),|(n,_)|format!("{n}."));
+        for p in self.pieces.iter().filter(|p|!p.outermost) {qualified.push_str(&format!("{}.{local}.",p.ident));}
+        qualified.push_str(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
@@ -873,7 +877,7 @@ impl<'a> Compiler<'a> {
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { doc, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { qualified, doc, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -3151,6 +3155,7 @@ impl<'a> Compiler<'a> {
             self.want_sign(&close, "after the bases")?;
         }
         let outer = self.within.replace((name.clone(), base.clone()));
+        let qualification=outer.as_ref().map_or_else(||name.clone(),|(n,_)|format!("{n}.{name}"));
         self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
         if !inline {
@@ -3162,8 +3167,18 @@ impl<'a> Compiler<'a> {
         self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
         let mut shared: Vec<(String, String)> = Vec::new();
+        if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
+            self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
+        }
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
+            let mut decorators=Vec::new();
+            while self.on_any(&lang.decorator_words) {
+                self.take();self.expr(0)?;
+                let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
+                self.skip_seps();
+            }
+            if !decorators.is_empty() && !self.on_keyword(&lang.function_words) {unready=true;}
             if self.on_keyword(&lang.function_words) {
                 self.take();
                 let named = self.want_name("as the method name")?;
@@ -3172,9 +3187,12 @@ impl<'a> Compiler<'a> {
                 shared.retain(|(old, _)| old != &named);
                 let slot = self.gensym("method");
                 self.constant(Value::Routine(method.clone()));
+                let wrapped=!decorators.is_empty();
+                for held in decorators.into_iter().rev() {self.read(&held);self.act(Action::Invoke(Rc::from("")),2);}
                 self.write(&slot);
+                if wrapped {shared.push((named.clone(),slot.clone()));}
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
-                methods.push((named, method));
+                if !wrapped {methods.push((named, method));}
             } else if self.on_keyword(&lang.pass_words) {
                 self.take();
             } else if self.look().shape == Shape::Quote {

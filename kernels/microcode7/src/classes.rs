@@ -39,7 +39,8 @@ impl<'a> Machine<'a> {
         }
         let module=self.detail("main");
         if entries.iter().all(|(k,_)|k!=self.detail("module")){entries.push((self.detail("module").into(),Value::text(module)));}
-        let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{title}'>")),name:title,
+        let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
+        let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:vec![],shared:RefCell::new(entries)});
         let hook=class.ancestry.iter().find_map(|b|Self::own_entry(b,self.detail("subclass")));
@@ -156,7 +157,7 @@ impl<'a> Machine<'a> {
                 if let Some((_,v))=members.iter().find(|(k,_)|k==key){return Ok(v.clone());}
             }
             if key==self.detail("name"){return Ok(Value::text(&code.ident));}
-            if key==self.detail("qualified"){let qualified=match &code.within{Some(c)=>format!("{c}.{}",code.ident),None=>code.ident.clone()};return Ok(Value::text(&qualified));}
+            if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(Value::text(&qualified));}
             if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
             if key==self.detail("module"){return Ok(Value::text(self.detail("main")));}
             if key==self.detail("code"){return Ok(Self::wrap(7,vec![value.clone()]));}
@@ -173,7 +174,7 @@ impl<'a> Machine<'a> {
             }
             if *tag==7 {
                 if let Value::Routine(p)|Value::Bound(p,_)=&items[0] {
-                    if key==self.detail("argcount"){return Ok(Value::Small(p.taking.as_ref().map_or(p.formals.len(),|rules|rules.iter().filter(|r|matches!(r,'a'|'p')).count()) as i64));}
+                    if key==self.detail("argcount"){return Ok(Value::Small(p.taking.as_ref().map_or(p.formals.len(),|rules|rules.iter().filter(|r|matches!(r,'b'|'p')).count()) as i64));}
                     if key==self.detail("varnames"){return Ok(Value::Tuple(Rc::new(p.idents.iter().filter(|s|!s.starts_with('#')).map(|s|Value::text(s)).collect())));}
                 }
             }

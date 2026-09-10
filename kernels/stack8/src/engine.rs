@@ -879,6 +879,12 @@ impl<'a> Engine<'a> {
     }
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
+        if self.fuller_classes() && told.starts_with(self.class_word("attribute.amiss")) {
+            let (kind,message)=told.split_once(": ")?;
+            let Value::Class(class)=self.form_class(kind.to_string(),vec![],vec![]).ok()? else{return None;};
+            let slot=self.registry.slot(kind);self.world.resize(self.registry.idents.len(),Value::Blank);self.world[slot]=Value::Class(class.clone());
+            return Some(Value::Object(Rc::new(Instance{class,mark:0,fields:RefCell::new(vec![("message".to_string(),Value::text(message))])})));
+        }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
@@ -995,7 +1001,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -1674,6 +1680,7 @@ impl<'a> Engine<'a> {
         let depth = self.data.len();
         let active = self.caught.len();
         let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match ending { Err(Fault::Note(told)) => match self.as_fault(&told) {Some(v)=>Err(Fault::Thrown(v)),None=>Err(Fault::Note(told))}, other=>other };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -2058,8 +2065,14 @@ impl<'a> Engine<'a> {
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
-                Action::Builtin(Builtin::ClassTool(i), _) => {let args=self.drop_many(argc)?;Some(self.class_work(*i,args)?)},
-                Action::Builtin(Builtin::SortOf, _) => {let args=self.drop_many(argc)?;Some(self.class_type(args)?)},
+                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) => {
+                    let supplied=self.drop_many(argc)?;let mut args=Vec::new();
+                    for (key,v) in self.call_items(supplied)? {
+                        if key.is_some(){let words=&self.lang.call_builtin_amiss;return Err(format!("{}{}{}",words.first().map_or("",String::as_str),name,words.get(1).map_or("",String::as_str)).into());}
+                        args.push(v);
+                    }
+                    Some(match builtin{Builtin::ClassTool(i)=>self.class_work(*i,args)?,_=>self.class_type(args)?})
+                },
                 _ => None,
             };
             if let Some(v)=result {self.data.push(v);return Ok(());}
@@ -2488,7 +2501,7 @@ impl<'a> Engine<'a> {
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
-                    Value::Array(items) => match items.get(at) {
+                    Value::Tuple(items) | Value::Array(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
                         Some(_) => Value::Small(at as i64),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
@@ -2814,6 +2827,7 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                if self.fuller_classes() {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -3108,7 +3122,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
-                            Value::Array(items) => items.len(),
+                            Value::Tuple(items) | Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
                             _ => 0,
@@ -3140,7 +3154,7 @@ impl<'a> Engine<'a> {
             }
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
-                Value::Array(items) => Value::Small(items.len() as i64),
+                Value::Tuple(items) | Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
                 // A language with a word for a warning is told a value
@@ -3433,6 +3447,7 @@ impl<'a> Engine<'a> {
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x,y),
                     (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
+                    (Value::Adapter(x), Value::Adapter(y)) => Rc::ptr_eq(x,y),
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
@@ -3442,6 +3457,10 @@ impl<'a> Engine<'a> {
             Action::Same => Value::Flag(a.identical(b)),
             Action::Unsame => Value::Flag(!a.identical(b)),
             Action::Join => joined(),
+            Action::At if self.fuller_classes() && matches!(a,Value::Class(_)) => {
+                let Value::Class(c)=a else{unreachable!()};
+                if self.class_value(c,self.class_word("getitem")).is_some(){a.clone()}else{return Err(self.class_word("unready").to_string());}
+            }
             Action::At => self.element(a, b, Reading::Plain)?,
             Action::Apart => self.element(a, b, Reading::Apart)?,
             Action::Toward => self.element(a, b, Reading::Toward)?,
@@ -3766,7 +3785,7 @@ impl<'a> Engine<'a> {
     /// its key where the places are unnamed.
     fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
         match v {
-            Value::Array(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
+            Value::Tuple(items) | Value::Array(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
             Value::Map(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
         }
@@ -4117,7 +4136,7 @@ impl<'a> Engine<'a> {
             Err(told) => return absent(told, at),
         };
         match target {
-            Value::Array(items) => match items.get(i) {
+            Value::Tuple(items) | Value::Array(items) => match items.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => absent(format!("Array index {} out of bounds (length: {})", i, items.len()), at),
             },
@@ -4157,7 +4176,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
@@ -4304,6 +4323,9 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin==Builtin::ToText && self.fuller_classes() {
+            if let [Value::Object(o)]=args.as_slice(){if self.class_word("attribute.amiss").starts_with(&format!("{}:",o.class.name)){if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)|n=="message"){return Ok(v.clone());}}}
+        }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -4909,7 +4931,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::Tuple(items) | Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),

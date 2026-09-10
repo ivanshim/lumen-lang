@@ -320,7 +320,7 @@ impl<'a> Machine<'a> {
     /// for its key where the places carry none.
     fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
         match v {
-            Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
+            Value::Vector(items) | Value::Tuple(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
             Value::Dict(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
         }
@@ -486,7 +486,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
-                            Value::Vector(items) => items.len(),
+                            Value::Vector(items) | Value::Tuple(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
                             _ => 0,
@@ -538,7 +538,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -1168,6 +1168,12 @@ impl<'a> Machine<'a> {
     }
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
+        if self.has_class_order() && told.starts_with(self.detail("attribute.amiss")) {
+            let (name,words)=told.split_once(": ")?;
+            let class=match self.build_class_value(name.into(),Vec::new(),Vec::new()).ok()? {Value::Blueprint(c)=>c,_=>return None};
+            let index=self.place_called(name);self.outermost.cells.borrow_mut()[index]=Value::Blueprint(class.clone());
+            return Some(Value::Thing(Rc::new(Thing{of:class,turn:0,holds:RefCell::new(vec![(String::from("message"),Value::text(words))])})));
+        }
         let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
@@ -2343,6 +2349,7 @@ impl<'a> Machine<'a> {
                     }
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
+                    if self.has_class_order(){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         if let Some(target) = self.attribute(&subject, &called) {
                             let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
@@ -2750,6 +2757,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if matches!(&stands,Value::Wrapped(..)){let given=self.value_list(args,frame)?;return Ok(Next::Value(self.apply_class_member(stands,given)?));}
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -3500,6 +3508,9 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op==Prim::AsText && self.has_class_order() {
+            if let [Value::Thing(t)]=v {if self.detail("attribute.amiss").starts_with(&format!("{}:",t.of.name)){if let Some((_,text))=t.holds.borrow().iter().find(|(key,_)|key=="message"){return Ok(text.clone());}}}
+        }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
@@ -3646,7 +3657,7 @@ impl<'a> Machine<'a> {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
                     }
-                    Value::Vector(items) => match items.get(at) {
+                    Value::Vector(items) | Value::Tuple(items) => match items.get(at) {
                         Some(_) if wants_key => Value::Small(at as i64),
                         Some(x) => x.clone(),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
@@ -3674,7 +3685,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
-                    Value::Vector(items) => Value::Small(items.len() as i64),
+                    Value::Vector(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
                     // A language with a word for a warning hears that a
@@ -4608,6 +4619,8 @@ impl<'a> Machine<'a> {
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a,b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
+                    (Value::Bound(a,_), Value::Bound(b,_)) => Rc::ptr_eq(a,b),
+                    (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
@@ -4620,6 +4633,11 @@ impl<'a> Machine<'a> {
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+            Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
+                let Value::Blueprint(class)=&v[0] else{unreachable!()};
+                if self.inherited_entry(class,self.detail("getitem")).is_none(){return Err(self.detail("unready").to_owned());}
+                v[0].clone()
+            }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
             Prim::Toward => self.element(&v[0], &v[1], Reading::Toward)?,
@@ -5642,7 +5660,7 @@ fn letter_put(had: &str, at: &Value, put: &str) -> Result<(Value, bool), String>
 fn found_at(walked: &Value, cell: &Rc<RefCell<Value>>, stood: usize) -> Option<usize> {
     let itself = |x: &Value| matches!(x, Value::Shared(other) if Rc::ptr_eq(other, cell));
     match walked {
-        Value::Vector(items) => match items.get(stood).map_or(false, &itself) {
+        Value::Vector(items) | Value::Tuple(items) => match items.get(stood).map_or(false, &itself) {
             true => Some(stood),
             false => items.iter().position(itself),
         },

@@ -591,6 +591,7 @@ pub enum Traps {
 #[derive(Debug)]
 pub struct Routine {
     pub doc: Option<String>,
+    pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.
     pub local_defaults: Vec<usize>,
     /// How many arguments must be given; the rest carry a value of their

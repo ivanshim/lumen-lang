@@ -682,6 +682,7 @@ pub enum Instr {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub doc: Option<String>,
+    pub qualified: String,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.

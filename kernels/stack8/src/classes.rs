@@ -36,7 +36,8 @@ impl<'a> Engine<'a> {
         if !members.iter().any(|(n,_)| n == self.class_word("module")) {
             members.push((self.class_word("module").to_string(), Value::text(&module)));
         }
-        let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{name}'>")),
+        let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
+        let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(members) });
         if let Some(hook) = c.lineage.iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
@@ -168,7 +169,7 @@ impl<'a> Engine<'a> {
                     if let Some((_,v))=members.iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 }
                 if name==self.class_word("name") {return Ok(Value::text(&f.ident));}
-                if name==self.class_word("qualified") {return Ok(Value::text(&f.within.as_ref().map_or_else(||f.ident.clone(),|c|format!("{c}.{}",f.ident))));}
+                if name==self.class_word("qualified") {return Ok(Value::text(&f.qualified));}
                 if name==self.class_word("doc") {return Ok(f.doc.clone().map_or(Value::Null,|s|Value::text(&s)));}
                 if name==self.class_word("module") {return Ok(Value::text(self.class_word("main")));}
                 if name==self.class_word("defaults") {

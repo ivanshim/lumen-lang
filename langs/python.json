@@ -787,6 +787,9 @@
   "ext.stmt.class.detail.kind": [
     "__class__"
   ],
+  "ext.stmt.class.detail.locals": [
+    "<locals>"
+  ],
   "ext.stmt.class.detail.main": [
     "__main__"
   ],
