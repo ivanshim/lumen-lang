@@ -258,6 +258,7 @@ impl<'a> Machine<'a> {
                 7 => seed.push(("\0key-fault".to_string(), Value::Flag(true))),
                 _ => {}
             }
+            if number == 24 { seed.push(("\0group-ancestor".into(), Value::Blueprint(chain[23].clone()))); }
             let kind = Blueprint {
                 name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
@@ -275,8 +276,14 @@ impl<'a> Machine<'a> {
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
         self.made += 1;
         let mut holds = kind.every_field();
-        for label in ["ext.builtin.exceptions.traceback", "ext.builtin.exceptions.name", "ext.builtin.exceptions.object"] {
+        for label in ["ext.builtin.exceptions.traceback"] {
             if let Some(key) = self.table.single(label) { holds.push((key.into(), Value::Nil)); }
+        }
+        let catalog = self.table.strings("ext.builtin.exceptions");
+        let named = catalog.get(10).map_or(false, |n| kind.goes_by(n, false));
+        let attributed = catalog.get(12).map_or(false, |n| kind.goes_by(n, false));
+        for (wanted, label) in [(named || attributed, "ext.builtin.exceptions.name"), (attributed, "ext.builtin.exceptions.object")] {
+            if wanted { if let Some(key) = self.table.single(label) { holds.push((key.into(), Value::Nil)); } }
         }
         if let Some(key) = self.table.single("ext.builtin.exceptions.suppress") { holds.push((key.into(), Value::Flag(false))); }
         if self.table.strings("ext.builtin.exceptions").get(20).map_or(false, |n| kind.goes_by(n, false)) {
@@ -293,6 +300,7 @@ impl<'a> Machine<'a> {
     }
 
     fn fault_descends(kind: &Rc<Blueprint>, ancestor: &Rc<Blueprint>) -> bool {
+        if kind.every_field().iter().any(|(k, v)| k == "\0group-ancestor" && matches!(v, Value::Blueprint(base) if Rc::ptr_eq(base, ancestor))) { return true; }
         Rc::ptr_eq(kind, ancestor) || kind.under.as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
     }
 
@@ -635,7 +643,7 @@ impl<'a> Machine<'a> {
             // be walked for it. Either way a walk begins here.
             Prim::Walked => {
                 n(1)?;
-                let mut walking = v[0].clone();
+                let mut walking = if let Value::Arguments(row) = &v[0] { Value::Vector(row.clone()) } else { v[0].clone() };
                 // Asking a thing what it hands over runs a piece of the
                 // program standing elsewhere. The walk is written where
                 // it is written, and is spoken of as standing there, so
@@ -1426,6 +1434,12 @@ impl<'a> Machine<'a> {
             let words = self.fault_words(told, &named);
             let values = if words.is_empty() || words == format!("{named}:") { vec![] } else { vec![Value::text(&words)] };
             let raised = self.make_fault(of, values, Value::Nil);
+            if self.table.single("ext.system.fault.class.name") == Some(named.as_str()) {
+                let absent = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
+                if let (Value::Thing(t), Some(key)) = (&raised, self.table.single("ext.builtin.exceptions.name")) {
+                    if let Some((_, v)) = t.holds.borrow_mut().iter_mut().find(|(n, _)| n == key) { *v = Value::text(absent); }
+                }
+            }
             match &raised {
                 Value::Thing(object) if self.table.single("ext.stmt.catch.invalid") == Some(told) => {
                     object.holds.borrow_mut().push(("\0former-complaint".into(), Value::text(told)));
@@ -2697,7 +2711,7 @@ impl<'a> Machine<'a> {
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
                     if let Value::Thing(thing) = &subject {
-                        if self.is_fault_kind(&thing.of) {
+                        if self.is_fault_kind(&thing.of) && thing.of.program(&called).is_none() && self.member_place(&thing.holds.borrow(), &called).is_none() {
                             if let Some(result) = self.fault_member(thing.clone(), &called, &values) { return result; }
                         }
                     }
@@ -3688,6 +3702,9 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        if let Some(bound) = self.table.count("ext.system.recursion.limit") {
+            if self.calls.len() >= bound { return Err(self.argument_fault("ext.system.recursion.exceeded", None).into()); }
+        }
         let memo = program.traps == Traps::Yields && self.memo_cell.map_or(false, |i| matches!(self.outermost.cells.borrow()[i], Value::Flag(true)));
         let key = memo.then(|| {
             let mut k = format!("{}(", program.ident);

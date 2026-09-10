@@ -219,6 +219,7 @@ impl<'a> Engine<'a> {
             let mut fields = Vec::new();
             if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
             if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
+            if at == 24 { fields.push(("\0group-base".into(), Value::Class(classes[23].clone()))); }
             if at >= 23 { fields.push(("\0group".into(), Value::Flag(at == 24))); }
             if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
             classes.push(Rc::new(Class {
@@ -234,8 +235,13 @@ impl<'a> Engine<'a> {
         let mut fields = class.all_fields();
         for name in &self.lang.builtin_exceptions_traceback { fields.push((name.clone(), Value::Null)); }
         for name in &self.lang.builtin_exceptions_suppress { fields.push((name.clone(), Value::Flag(false))); }
-        for name in self.lang.builtin_exceptions_name.iter().chain(self.lang.builtin_exceptions_object.iter()) {
-            fields.push((name.clone(), Value::Null));
+        let named = self.lang.exceptions.get(10).map_or(false, |n| class.named(n, false));
+        let attributed = self.lang.exceptions.get(12).map_or(false, |n| class.named(n, false));
+        if named || attributed {
+            for name in &self.lang.builtin_exceptions_name { fields.push((name.clone(), Value::Null)); }
+        }
+        if attributed {
+            for name in &self.lang.builtin_exceptions_object { fields.push((name.clone(), Value::Null)); }
         }
         if self.lang.exceptions.get(20).map_or(false, |name| class.named(name, false)) {
             for (at, name) in self.lang.builtin_exceptions_os.iter().enumerate() {
@@ -255,6 +261,7 @@ impl<'a> Engine<'a> {
     }
 
     fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+        if actual.all_fields().iter().any(|(key, v)| key == "\0group-base" && matches!(v, Value::Class(base) if Rc::ptr_eq(base, wanted))) { return true; }
         let mut class = Some(actual);
         while let Some(current) = class {
             if Rc::ptr_eq(current, wanted) { return true; }
@@ -1714,6 +1721,9 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        if self.lang.recursion_limit.map_or(false, |limit| self.calls.len() >= limit) {
+            return Err(self.lang.recursion_exceeded.first().cloned().unwrap_or_default().into());
+        }
         let n = if let Some(rules) = &program.parameter_rules {
             let given = self.drop_many(n)?;
             let bound = self.bind_call(program, given, rules)?;
@@ -3056,7 +3066,8 @@ impl<'a> Engine<'a> {
                     }
                     Value::Object(o) => {
                         if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
-                            let row = match &value {
+                            let plain = match &value { Value::Bond(cell) => cell.borrow().clone(), v => v.clone() };
+                            let row = match &plain {
                                 Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
                                 _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
                             };
@@ -3139,7 +3150,7 @@ impl<'a> Engine<'a> {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
                 if let Value::Object(o) = &subject {
-                    if self.exception_class(&o.class) {
+                    if self.exception_class(&o.class) && o.class.method(name).is_none() && self.member_at(&o.fields.borrow(), name).is_none() {
                         if let Some(answer) = self.exception_member(o.clone(), name, &args) {
                             let value = answer?;
                             self.data.push(value);
@@ -3388,7 +3399,9 @@ impl<'a> Engine<'a> {
             // A thing may be its own walk, or may hand another over to
             // be walked in its stead. Either way the walk begins here.
             Action::WalkFrom => {
-                let mut handed = self.drop_top()?;
+                let mut handed = match self.drop_top()? {
+                    Value::Tuple(row) => Value::Array(row), other => other,
+                };
                 // One thing may hand over another that hands over a
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that

@@ -6576,6 +6576,16 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+            let exception_method = [&lang.builtin_exceptions_note, &lang.builtin_exceptions_traceback_with,
+                &lang.builtin_exceptions_group_derive, &lang.builtin_exceptions_group_split,
+                &lang.builtin_exceptions_group_subgroup].iter().any(|names| names.contains(&named));
+            if member && exception_method && call.is_some() {
+                let call = call.as_ref().unwrap();
+                self.take();
+                let argc = self.arguments_of(&named, call)?;
+                self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
+                continue;
+            }
             if member && lang.member_pipes && (call.is_some() || (!self.writing_place && !self.on_writing())) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {

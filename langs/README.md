@@ -2061,8 +2061,8 @@ only. The extension labels so far, all from PHP:
   attached. `ext.builtin.exceptions.suppress` names the flag set by an
   explicit cause, including a cause given as nothing.
 - `ext.builtin.exceptions.name` and `.object`: the members for an absent
-  name and the object upon which a member was sought. `.os` holds four
-  names in order: error number, error words, first file and second file.
+  name and the object upon which a member was sought. `.os` holds two
+  names in order: error number and error words.
 - `ext.builtin.exceptions.group.members` and `.group.message`: the tuple
   of children and the message held by an exception group. `.group.derive`
   makes another group from a row of children; `.group.subgroup` takes the
@@ -2073,6 +2073,9 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.exceptions.info` and `.current`: builtins giving the class,
   value and absent traceback as a tuple, or the caught value alone. Outside
   a clause their places hold nothing.
+- `ext.system.recursion.limit`: the greatest number of nested calls the
+  run admits; `.exceeded` gives the words raised upon reaching it. A
+  language giving no bound keeps its former account.
 - `ext.stmt.throw.invalid`: the complaint for raising a value that is
   neither an exception nor an exception class.
 - `ext.builtin.exceptions.unready`: words said when an exception operation
@@ -2802,7 +2805,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.notes` | - | - | `__notes__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.notes.invalid` | - | - | `TypeError: Cannot add note: __notes__ is not a list` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.object` | - | - | `obj` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.os` | - | - | `errno` `strerror` `filename` `filename2` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os` | - | - | `errno` `strerror` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
@@ -3230,6 +3233,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
+| `ext.system.recursion.exceeded` | - | - | `RecursionError: maximum recursion depth exceeded` | - | - | - | - | - | - | - |
+| `ext.system.recursion.limit` | - | - | `100` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |

@@ -417,9 +417,7 @@
   ],
   "ext.builtin.exceptions.os": [
     "errno",
-    "strerror",
-    "filename",
-    "filename2"
+    "strerror"
   ],
   "ext.builtin.exceptions.suppress": [
     "__suppress_context__"
@@ -1205,6 +1203,10 @@
   "ext.system.module.name": [
     "__name__"
   ],
+  "ext.system.recursion.exceeded": [
+    "RecursionError: maximum recursion depth exceeded"
+  ],
+  "ext.system.recursion.limit": 100,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

@@ -5992,6 +5992,15 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
+            if reaching && calling && ["ext.builtin.exceptions.note", "ext.builtin.exceptions.traceback.with",
+                "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.split",
+                "ext.builtin.exceptions.group.derive"].iter().any(|key| table.spells(key, &named)) {
+                self.advance();
+                let mut values = vec![node, constant(Value::text(&named))];
+                values.extend(self.arguments_of(&named, "syntax.call.close", "syntax.call.separator")?);
+                node = prim_call(Prim::Ask, values);
+                continue;
+            }
             if reaching && table.flag("ext.op.member.pipes") && (calling || (self.place_depth == 0 && !self.on_writing())) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
