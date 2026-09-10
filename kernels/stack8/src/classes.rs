@@ -41,11 +41,6 @@ impl<'a> Engine<'a> {
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(members) });
         let declared = c.shared.borrow().clone();
-        for (name,value) in declared {
-            if let Some(hook)=self.descriptor_hook(&value,"descriptor.name") {
-                self.descriptor_call(value,hook,vec![Value::Class(c.clone()),Value::text(&name)])?;
-            }
-        }
         if let Some(slots)=Self::own_class_value(&c,self.class_word("slots")) {
             let slots=slots.contents();
             let names=match slots {Value::Tuple(v)|Value::Array(v)=>v.as_ref().clone(),v=>vec![v]};
@@ -53,9 +48,14 @@ impl<'a> Engine<'a> {
                 if let Value::Text(n)=name {
                     if n.as_ref()!=self.class_word("namespace") {
                         if Self::own_class_value(&c,&n).is_some(){return Err(self.class_refusal());}
-                        c.shared.borrow_mut().push((n.to_string(),Self::adapter(40,vec![Value::text(&n)])));
+                        c.shared.borrow_mut().push((n.to_string(),Self::adapter(40,vec![Value::text(&n),Value::Class(c.clone())])));
                     }
                 } else {return Err(self.class_refusal());}
+            }
+        }
+        for (name,value) in declared {
+            if let Some(hook)=self.descriptor_hook(&value,"descriptor.name") {
+                self.descriptor_call(value,hook,vec![Value::Class(c.clone()),Value::text(&name)])?;
             }
         }
         if let Some(hook) = c.lineage.iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
@@ -93,8 +93,9 @@ impl<'a> Engine<'a> {
                 41..=43 => {
                     let Some(Value::Object(o))=args.first() else {return Err(self.class_refusal());};
                     let name=w.1[0].plain();
-                    if w.0==41 {self.instance_value(o,&name).ok_or_else(||self.missing_member(&args[0],&name))}
-                    else {if w.0==42 && args.len()!=2 {return Err(self.class_refusal());}Self::write_members(&mut o.fields.borrow_mut(),&format!("#slot:{name}"),args.get(1).cloned()).map_err(|_|self.missing_member(&args[0],&name))?;Ok(Value::Null)}
+                    let place=self.slot_place(o,&w.1)?;
+                    if w.0==41 {let found=o.fields.borrow().iter().find(|(n,_)|n==&place).map(|(_,v)|v.clone());found.ok_or_else(||self.missing_member(&args[0],&name))}
+                    else {if w.0==42 && args.len()!=2 {return Err(self.class_refusal());}Self::write_members(&mut o.fields.borrow_mut(),&place,args.get(1).cloned()).map_err(|_|self.missing_member(&args[0],&name))?;Ok(Value::Null)}
                 }
                 0 => Ok(w.1[0].clone()),
                 1 => {
@@ -162,7 +163,8 @@ impl<'a> Engine<'a> {
                 40 if subject.is_some()=>{
                     let obj=subject.unwrap();
                     let Value::Object(o)=&obj else{return Err(self.class_refusal());};
-                    let found=o.fields.borrow().iter().find(|(n,_)|n==&format!("#slot:{}",w.1[0].plain())).map(|(_,v)|v.clone());
+                    let place=self.slot_place(o,&w.1)?;
+                    let found=o.fields.borrow().iter().find(|(n,_)|n==&place).map(|(_,v)|v.clone());
                     found.ok_or_else(||self.missing_member(&obj,&w.1[0].plain()))
                 },
                 4 => Ok(w.1[0].clone()),
@@ -273,7 +275,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let Some(member)=self.class_value(&o.class,name) {
-                    if let Value::Adapter(w)=&member {if w.0==45{return Err(self.class_word("property.readonly").to_string().into());}if w.0==40 {Self::write_members(&mut o.fields.borrow_mut(),&format!("#slot:{name}"),value).map_err(|_|absent)?;return Ok(Value::Null);}}
+                    if let Value::Adapter(w)=&member {if w.0==45{return Err(self.class_word("property.readonly").to_string().into());}if w.0==40 {let place=self.slot_place(o,&w.1)?;Self::write_members(&mut o.fields.borrow_mut(),&place,value).map_err(|_|absent)?;return Ok(Value::Null);}}
                     if self.data_member(&member) {
                         let part=if value.is_some(){"descriptor.set"}else{"descriptor.delete"};
                         let hook=self.descriptor_hook(&member,part).ok_or_else(||self.missing_member(&subject,name))?;
@@ -306,6 +308,13 @@ impl<'a> Engine<'a> {
     fn write_members(members:&mut Vec<(String,Value)>,name:&str,value:Option<Value>)->Result<(),()> {
         let at=members.iter().position(|(n,_)|n==name);
         match (at,value) {(Some(i),Some(v))=>members[i].1=v,(None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
+    }
+    fn slot_place(&self, object:&Instance, parts:&[Value])->Flow<String> {
+        let Some(Value::Class(owner))=parts.get(1) else{return Err(self.class_refusal());};
+        if !Rc::ptr_eq(&object.class,owner) && !object.class.lineage.iter().any(|c|Rc::ptr_eq(c,owner)) {
+            return Err(self.class_word("descriptor.unready").to_string().into());
+        }
+        Ok(format!("#slot:{:p}:{}",Rc::as_ptr(owner),parts[0].plain()))
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         let own=Self::own_class_value(c,self.class_word("slots"));

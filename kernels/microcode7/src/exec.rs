@@ -1010,6 +1010,10 @@ impl<'a> Machine<'a> {
 
     pub fn define(&mut self, name: &str, value: Value) {
         if let Some(i) = self.idents.iter().position(|n| n == name) {
+            let value=if !self.detail("descriptor.get").is_empty()
+                && matches!(&value,Value::Intrinsic(word) if self.table.prims.get(word.as_ref())==Some(&Prim::ClassWork(11))) {
+                Value::Blueprint(self.property_forebear())
+            } else {value};
             self.outermost.cells.borrow_mut()[i] = value;
         }
     }

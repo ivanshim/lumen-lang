@@ -1049,7 +1049,9 @@ only. The extension labels so far, all from PHP:
   receives an object (or nothing upon a class read) and the owning class.
   Writers and removers take precedence over an object's own dictionary;
   a reader alone gives way to that dictionary. The naming hook runs once
-  for each member declared in the class, before the inheritance hook.
+  for each member declared in the class, after slots are made and before
+  the inheritance hook. Each slot keeps the class which declared it and
+  has its own place, even where a descendant declares the same name.
   `property.fget`, `property.fset`, `property.fdel`, `property.getter` and
   `property.deleter` name the kept accessors and the calls which make a
   fresh property; `property.doc` names the constructor argument giving
