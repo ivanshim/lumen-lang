@@ -61,10 +61,7 @@ impl<'a> Machine<'a> {
                 arguments.insert(0, Value::Thing(receiver));
                 self.invoke(program, self.outermost.clone(), arguments)
             }
-            Value::Text(word) if self.table.prims.contains_key(word.as_ref()) => {
-                let op = self.table.prims[word.as_ref()];
-                self.prim(op, &word, &arguments).map_err(Escape::Error)
-            }
+            Value::Native(operation, spelling) => self.prim(operation, &spelling, &arguments).map_err(Escape::Error),
             other => self.walk_message(&other, "ext.op.iterator.call", arguments)?
                 .ok_or_else(|| Escape::Error(self.walk_word("ext.op.iterator.unready"))),
         }
@@ -177,7 +174,7 @@ impl<'a> Machine<'a> {
                     let Some(item) = self.take_walk(source)? else { shared.borrow_mut().finished = true; return Ok(None) };
                     gathered.push(item);
                 }
-                Some(self.walk_call(&function, gathered)?)
+                match self.walk_call(&function, gathered) { Ok(v) => Some(v), Err(e) if self.end_of_walk(&e, false) => None, Err(e) => return Err(e) }
             }
             Zip(inputs, strict) => {
                 if inputs.is_empty() { None } else {
@@ -202,6 +199,14 @@ impl<'a> Machine<'a> {
     }
 
     fn finish_walk(&mut self, operation: Prim, supplied: &[Value]) -> Res<Value> {
+        let valid = match operation {
+            Prim::Tupled | Prim::Unique | Prim::Dictionary => supplied.len() < 2,
+            Prim::JoinedWalk => supplied.len() == 2,
+            Prim::Least | Prim::Greatest => supplied.len() > 0,
+            Prim::Total => supplied.len() == 1 || supplied.len() == 2,
+            _ => supplied.len() == 1,
+        };
+        if !valid { return Err(self.argument_fault("ext.syntax.call.amiss", None).into()); }
         if operation == Prim::Represented {
             return match supplied { [value] => Ok(Value::text(&self.quoted_remainder(value)?)), _ => Err(self.argument_fault("ext.syntax.call.amiss", None).into()) };
         }
@@ -248,11 +253,11 @@ impl<'a> Machine<'a> {
             }
             Prim::Tupled => Ok(Value::Tuple(Rc::new(contents))),
             Prim::Ordered | Prim::Least | Prim::Greatest => {
-                let mut ordered = Vec::new();
+                let mut ordered: Vec<Value> = Vec::new();
                 for value in contents {
                     let mut position = ordered.len();
                     for (at, prior) in ordered.iter().enumerate() {
-                        if below(&value, prior)? { position = at; break; }
+                        if self.prim(Prim::Lt, "", &[value.clone(), prior.clone()])?.is_true() { position = at; break; }
                     }
                     ordered.insert(position, value);
                 }
@@ -312,6 +317,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Filtered if values.len() == 2 => { let input = self.start_walk(&values[1])?; Ok(self.suspend(title, PendingWalk::Filter(values[0].clone(), input))) }
             Prim::Enumerated if (1..=2).contains(&values.len()) => {
+                if values.get(1).map_or(false, |v| !matches!(collection_read(v), Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.walk_word("ext.op.iterator.unready").into()); }
                 let index = values.get(1).map(Value::as_big).transpose()?.unwrap_or_else(|| BigInt::from(0));
                 let input = self.start_walk(&values[0])?;
                 Ok(self.suspend(title, PendingWalk::Number(input, index)))

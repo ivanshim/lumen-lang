@@ -1193,6 +1193,10 @@ impl<'a> Machine<'a> {
     }
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
+        if self.table.spells("ext.op.iterator.stop", told) {
+            let empty = Blueprint { name: told.to_owned(), methods: vec![], constants: vec![], fields: vec![], shared: RefCell::new(vec![]), reaches: vec![], under: None, answers: vec![] };
+            return Some(Value::Thing(Rc::new(Thing { of: Rc::new(empty), holds: RefCell::new(vec![]), turn: 0 })));
+        }
         let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
@@ -1558,7 +1562,7 @@ impl<'a> Machine<'a> {
                 };
                 return Ok(Value::Blueprint(Rc::new(blueprint)));
             }
-            if self.table.prims.contains_key(slot.ident.as_ref()) { return Ok(Value::text(&slot.ident)); }
+            if let Some(primitive) = self.table.prims.get(slot.ident.as_ref()) { return Ok(Value::Native(*primitive, slot.ident.clone())); }
         }
         Err(format!("Undefined variable: {}", slot.ident))
     }
@@ -2635,8 +2639,11 @@ impl<'a> Machine<'a> {
     /// this way: the ones that hold on to the pieces they are written
     /// with have nothing to work on when there are none.
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
-        let Value::Text(word) = stands else { return None };
-        let op = self.table.prims.get(word.as_ref()).copied()?;
+        let (word, op) = match stands {
+            Value::Native(operation, name) => (name, *operation),
+            Value::Text(name) => (name, self.table.prims.get(name.as_ref()).copied()?),
+            _ => return None,
+        };
         let name = word.to_string();
         Some((|| {
             let values = self.value_list(args, frame)?;
@@ -5009,6 +5016,7 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Length => {
+                if let [Value::Window(window)] = v { return Ok(Value::Small(crate::data::window_members(&window.0, window.1).len() as i64)); }
                 if v.first().map_or(false, |x| matches!(x, Value::Lazy(_))) { return Err(self.no_walk("ext.op.iterator.unsized", &v[0])); }
                 n(1)?;
                 match &v[0] {

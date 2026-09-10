@@ -143,6 +143,7 @@ pub struct LazyWalk {
 
 #[derive(Clone)]
 pub enum Value {
+    Native(crate::form::Prim, Rc<str>),
     Lazy(Rc<RefCell<LazyWalk>>),
     Tuple(Rc<Vec<Value>>),
     Set(Rc<Vec<Value>>),
@@ -262,7 +263,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::List(_) | Value::Window(_) | Value::Set(_) | Value::Tuple(_) | Value::Lazy(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Native(..) | Value::List(_) | Value::Window(_) | Value::Set(_) | Value::Tuple(_) | Value::Lazy(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -298,7 +299,7 @@ impl Value {
             Value::List(_) | Value::Window(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Native(..) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Lazy(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
@@ -327,6 +328,7 @@ impl Value {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
             (Value::Channel(left), Value::Channel(right)) => left == right,
+            (Value::Native(first, _), Value::Native(second, _)) => first == second,
             (Value::Lazy(left), Value::Lazy(right)) => Rc::ptr_eq(left, right),
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -544,6 +546,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Native(_, spelling) => format!("<built-in function {}>", spelling),
             Value::List(members) => format!("[{}]", members.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Window(view) => format!("{}({})", view.2, Value::Vector(Rc::new(window_members(&view.0, view.1))).bare()),
             Value::Set(members) => format!("{{{}}}", members.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),

@@ -149,6 +149,7 @@ impl View {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Native(crate::code::Builtin, Rc<str>),
     Cursor(Rc<RefCell<Cursor>>),
     Row(Rc<Vec<Value>>),
     Bag(Rc<Vec<Value>>),
@@ -285,7 +286,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
-            Value::Stream(_) | Value::Cursor(_) => true,
+            Value::Native(..) | Value::Stream(_) | Value::Cursor(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -319,7 +320,7 @@ impl Value {
             Value::Listed(_) | Value::View(_) | Value::Bag(_) | Value::Row(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Native(..) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
@@ -336,6 +337,7 @@ impl Value {
         match (self, other) {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
+            (Value::Native(a, _), Value::Native(b, _)) => a == b,
             (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a, b),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
@@ -535,6 +537,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Listed(items) => format!("[{}]", items.iter().map(Value::plain).collect::<Vec<_>>().join(", ")),

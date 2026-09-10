@@ -876,6 +876,11 @@ impl<'a> Engine<'a> {
     }
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
+        if !told.is_empty() && told == self.cursor_word("ext.op.iterator.stop") {
+            let Value::Class(class) = cursor_binding(self.lang, told) else { return None };
+            self.made += 1;
+            return Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(Vec::new()), mark: self.made })));
+        }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
@@ -2015,6 +2020,10 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
+                        None if matches!(op, Action::Contains | Action::Lacks) => {
+                            let left = av.clone(); let right = bv.clone();
+                            self.working_pair(op, &left, &right)?
+                        }
                         None => self.dyadic(op, av, bv)?,
                     };
                     self.data.push(r);
@@ -2348,6 +2357,12 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Native(native, word) => {
+                        let mut given = self.drop_many(argc - 1)?;
+                        let answer = self.builtin(native, &word, &mut given);
+                        if let Some(away) = self.carried.take() { return Err(away); }
+                        self.data.push(answer?); Ok(())
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -3202,7 +3217,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.working_pair(dyadic, &a, &b)?
             }
         };
         self.data.push(self.keep_collection(result));
@@ -3330,11 +3345,19 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
-    fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
-        if matches!(op, Action::Contains | Action::Lacks) && matches!(collection_contents(b), Value::Cursor(_)) {
-            let found = (|| -> Flow<bool> { while let Some(value) = self.cursor_next(b)? { if a.equals(&value) { return Ok(true); } } Ok(false) })();
-            return match found { Ok(found) => Ok(Value::Flag(found != matches!(op, Action::Lacks))), Err(Fault::Note(note)) => Err(note), Err(e) => { self.carried = Some(e); Err(String::new()) } };
+    fn working_pair(&mut self, op: &Action, a: &Value, b: &Value) -> Flow<Value> {
+        if !self.cursor_word("ext.builtin.iter").is_empty() && matches!(op, Action::Contains | Action::Lacks)
+            && matches!(collection_contents(b), Value::Cursor(_) | Value::Listed(_) | Value::Row(_) | Value::Bag(_) | Value::View(_) | Value::Object(_)) {
+            let iterator = self.cursor_from(b)?;
+            while let Some(value) = self.cursor_next(&iterator)? {
+                if a.equals(&value) { return Ok(Value::Flag(!matches!(op, Action::Lacks))); }
+            }
+            return Ok(Value::Flag(matches!(op, Action::Lacks)));
         }
+        Ok(self.dyadic(op, a, b)?)
+    }
+
+    fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4976,6 +4999,7 @@ impl<'a> Engine<'a> {
             Builtin::Length => {
                 arity(1)?;
                 match &args[0] {
+                    Value::View(view) => Value::Small(view.members().len() as i64),
                     Value::Cursor(_) => return Err(self.cursor_fault("ext.op.iterator.unsized", &args[0])),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) | Value::Listed(items) | Value::Row(items) | Value::Bag(items) => Value::Small(items.len() as i64),

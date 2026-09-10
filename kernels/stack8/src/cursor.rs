@@ -54,6 +54,7 @@ impl<'a> Engine<'a> {
 
     fn cursor_call(&mut self, function: &Value, args: Vec<Value>) -> Flow<Value> {
         if let Some(answer) = self.cursor_method(function, "ext.op.iterator.call", args.clone())? { return Ok(answer); }
+        if matches!(collection_contents(function), Value::Text(_)) { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
         let count = args.len();
         self.data.extend(args);
         self.data.push(collection_contents(function));
@@ -155,13 +156,13 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if args.is_empty() { None }
-                else if state.way == 2 { Some(self.cursor_call(&state.function, args)?) }
+                else if state.way == 2 { match self.cursor_call(&state.function, args) { Ok(v) => Some(v), Err(e) if self.cursor_stopped(&e, false) => None, Err(e) => return Err(e) } }
                 else { Some(Value::Row(Rc::new(args))) }
             }
             3 => loop {
                 let Some(v) = self.cursor_next(&state.sources[0])? else { break None };
                 let selected = if matches!(state.function, Value::Null) { self.truth(&v) }
-                    else { let answer = self.cursor_call(&state.function, vec![v.clone()])?; self.truth(&answer) };
+                    else { let answer = match self.cursor_call(&state.function, vec![v.clone()]) { Ok(v) => v, Err(e) if self.cursor_stopped(&e, false) => break None, Err(e) => return Err(e) }; self.truth(&answer) };
                 if selected { break Some(v); }
             },
             5 => match self.cursor_next(&state.sources[0])? {
@@ -176,6 +177,14 @@ impl<'a> Engine<'a> {
     }
 
     fn cursor_consume(&mut self, builtin: Builtin, args: &[Value]) -> Flow<Value> {
+        let fits = match builtin {
+            Builtin::TupleLazy | Builtin::SetLazy | Builtin::DictLazy => args.len() <= 1,
+            Builtin::JoinLazy => args.len() == 2,
+            Builtin::MinLazy | Builtin::MaxLazy => !args.is_empty(),
+            Builtin::Sum => (1..=2).contains(&args.len()),
+            _ => args.len() == 1,
+        };
+        if !fits { return Err(self.lang.call_amiss[0].clone().into()); }
         if builtin == Builtin::ReprLazy {
             if args.len() != 1 { return Err(self.lang.call_amiss[0].clone().into()); }
             return Ok(Value::text(&self.rem_repr(&args[0])?));
@@ -263,6 +272,7 @@ impl<'a> Engine<'a> {
                 _ => Err(amiss().into()),
             };
         }
+        if builtin == Builtin::EnumerateLazy && args.get(1).map_or(false, |v| !matches!(collection_contents(v), Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
         let (way, sources, function, sentinel, mut at) = match builtin {
             Builtin::MapLazy if args.len() >= 2 => (2, &args[1..], args[0].clone(), Value::Null, BigInt::from(0)),
             Builtin::FilterLazy if args.len() == 2 => (3, &args[1..], args[0].clone(), Value::Null, BigInt::from(0)),
@@ -302,5 +312,5 @@ fn cursor_binding(lang: &Lang, name: &str) -> Value {
             reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
         }));
     }
-    if lang.builtins.contains_key(name) { Value::text(name) } else { Value::Blank }
+    match lang.builtins.get(name) { Some(native) => Value::Native(*native, Rc::from(name)), None => Value::Blank }
 }
