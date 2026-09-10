@@ -906,6 +906,20 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
   `ext.builtin.range.zero_step` give their words for a member that
   cannot be added, a bound that is not whole, and a step of nought.
+- `ext.builtin.iter` and `ext.builtin.next` make a walk and ask for its
+  next member. `ext.builtin.map`, `.filter`, `.zip`, `.enumerate` and
+  `.reversed` hold their sources until a member is wanted. Their printed
+  form is `<name object at 0x1>`; printing does not advance the walk.
+  `ext.op.iterator.give`, `.next`, `.item`, `.reverse`, `.call` and
+  `.length` name the methods asked of a thing. `.stop` names the end of
+  a walk and `.end` the end of an indexed sequence. `.unwalkable`,
+  `.unnextable` and `.unsized` give the words before and after the kind
+  in their complaints; `.unready` gives the words for work not yet
+  provided. `.kind` names list, text, range, key, sequence and callable
+  walks, then whole, real, flag, text, list, map and null values.
+  `ext.builtin.zip.strict` names its equal-length switch; `.short` and
+  `.long` enclose the number of the source that ended too soon or late.
+  `ext.builtin.enumerate.start` names its first count.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
   `ext.op.walk.class` is the class of method names saying so (PHP's
   `Iterator`), and `ext.op.walk.rewind`, `.more`, `.this`, `.key` and
@@ -2199,6 +2213,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
+| `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
+| `ext.builtin.enumerate.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
@@ -2206,14 +2222,18 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
+| `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
+| `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
@@ -2237,6 +2257,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed` | - | - | `reversed` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -2264,6 +2285,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.builtin.zip` | - | - | `zip` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.strict` | - | - | `strict` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |
@@ -2373,6 +2398,19 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
+| `ext.op.iterator.call` | - | - | `__call__` | - | - | - | - | - | - | - |
+| `ext.op.iterator.end` | - | - | `IndexError` | - | - | - | - | - | - | - |
+| `ext.op.iterator.give` | - | - | `__iter__` | - | - | - | - | - | - | - |
+| `ext.op.iterator.item` | - | - | `__getitem__` | - | - | - | - | - | - | - |
+| `ext.op.iterator.kind` | - | - | `list_iterator` `str_ascii_iterator` `range_iterator` `dict_keyiterator` `iterator` `callable_iterator` `int` `float` `bool` `str` `list` `dict` `NoneType` | - | - | - | - | - | - | - |
+| `ext.op.iterator.length` | - | - | `__len__` | - | - | - | - | - | - | - |
+| `ext.op.iterator.next` | - | - | `__next__` | - | - | - | - | - | - | - |
+| `ext.op.iterator.reverse` | - | - | `__reversed__` | - | - | - | - | - | - | - |
+| `ext.op.iterator.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.op.iterator.unnextable` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
+| `ext.op.iterator.unready` | - | - | `NotImplementedError: this iterator operation is not supported` | - | - | - | - | - | - | - |
+| `ext.op.iterator.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
+| `ext.op.iterator.unwalkable` | - | - | `TypeError: '` `' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |

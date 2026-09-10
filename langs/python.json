@@ -948,5 +948,94 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.builtin.iter": [
+    "iter"
+  ],
+  "ext.builtin.next": [
+    "next"
+  ],
+  "ext.builtin.map": [
+    "map"
+  ],
+  "ext.builtin.filter": [
+    "filter"
+  ],
+  "ext.builtin.zip": [
+    "zip"
+  ],
+  "ext.builtin.enumerate": [
+    "enumerate"
+  ],
+  "ext.builtin.reversed": [
+    "reversed"
+  ],
+  "ext.op.iterator.give": [
+    "__iter__"
+  ],
+  "ext.op.iterator.next": [
+    "__next__"
+  ],
+  "ext.op.iterator.item": [
+    "__getitem__"
+  ],
+  "ext.op.iterator.reverse": [
+    "__reversed__"
+  ],
+  "ext.op.iterator.call": [
+    "__call__"
+  ],
+  "ext.op.iterator.length": [
+    "__len__"
+  ],
+  "ext.op.iterator.stop": [
+    "StopIteration"
+  ],
+  "ext.op.iterator.end": [
+    "IndexError"
+  ],
+  "ext.op.iterator.unwalkable": [
+    "TypeError: '",
+    "' object is not iterable"
+  ],
+  "ext.op.iterator.unnextable": [
+    "TypeError: '",
+    "' object is not an iterator"
+  ],
+  "ext.op.iterator.unsized": [
+    "TypeError: object of type '",
+    "' has no len()"
+  ],
+  "ext.op.iterator.unready": [
+    "NotImplementedError: this iterator operation is not supported"
+  ],
+  "ext.op.iterator.kind": [
+    "list_iterator",
+    "str_ascii_iterator",
+    "range_iterator",
+    "dict_keyiterator",
+    "iterator",
+    "callable_iterator",
+    "int",
+    "float",
+    "bool",
+    "str",
+    "list",
+    "dict",
+    "NoneType"
+  ],
+  "ext.builtin.zip.strict": [
+    "strict"
+  ],
+  "ext.builtin.zip.short": [
+    "ValueError: zip() argument ",
+    " is shorter than argument 1"
+  ],
+  "ext.builtin.zip.long": [
+    "ValueError: zip() argument ",
+    " is longer than argument 1"
+  ],
+  "ext.builtin.enumerate.start": [
+    "start"
+  ]
 }

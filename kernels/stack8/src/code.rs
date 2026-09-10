@@ -416,6 +416,7 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Iterate, Next, MapLazy, FilterLazy, ZipLazy, EnumerateLazy, ReverseLazy,
     Sum,
     List,
     Any,

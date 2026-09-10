@@ -36,6 +36,7 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    IteratorOf, TakeNext, Mapped, Filtered, Zipped, Enumerated, Reversed,
     /// A compound write may ask a real to retain its point.
     Pointed,
     /// Whether a member, rather than the pipe, takes the name.

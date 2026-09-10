@@ -428,6 +428,21 @@ impl<'a> Machine<'a> {
     /// asked of the thing where it is one, and counted through as an
     /// array is where it is not.
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
+        if self.table.has_any("ext.builtin.iter") {
+            match op {
+                Prim::Walked => return self.start_walk(&v[0]),
+                Prim::MoreYet => {
+                    let next = self.take_walk(&v[0])?;
+                    let exists = next.is_some();
+                    if let Value::Lazy(state) = collection_read(&v[0]) { state.borrow_mut().saved = next; }
+                    else { return Err(self.walk_word("ext.op.iterator.unready").into()); }
+                    return Ok(Value::Flag(exists));
+                }
+                Prim::AtHand => return Ok(self.take_walk(&v[0])?.unwrap_or(Value::Nil)),
+                Prim::StepOn => return Ok(Value::Nil),
+                _ => ()
+            }
+        }
         if self.table.flag("ext.syntax.call.bind_names") && v.iter().any(|x| matches!(x, Value::Shared(_))) {
             let items: Vec<Value> = v.iter().map(collection_read).collect();
             return self.walking(op, name, &items);
@@ -2847,7 +2862,11 @@ impl<'a> Machine<'a> {
             return Ok(Some(Value::Nil));
         }
         for (key, value) in keywords {
+            if op == Prim::Zipped && table.spells("ext.builtin.zip.strict", &key) {
+                positional.push(Value::Couple(Rc::new((Value::text(&key), value)))); continue;
+            }
             let index = match op {
+                Prim::Enumerated if table.spells("ext.builtin.enumerate.start", &key) => 1,
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
                 Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
                 Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
@@ -3488,6 +3507,13 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::IteratorOf | Prim::TakeNext | Prim::Mapped | Prim::Filtered | Prim::Zipped | Prim::Enumerated | Prim::Reversed) {
+            return match self.lazy_primitive(op, name, v) {
+                Ok(answer) => Ok(answer),
+                Err(Escape::Error(words)) => Err(words),
+                Err(away) => { self.got_away = Some(away); Err(String::new()) }
+            };
+        }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -3592,7 +3618,7 @@ impl<'a> Machine<'a> {
             },
             Prim::Partition(wanted, star) => {
                 let mut values: Vec<Value> = match &v[0] {
-                    Value::Progression(_) => self.gathered_members(&v[0])?,
+                    Value::Progression(_) | Value::Lazy(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
                     Value::Vector(v) => v.to_vec(),
@@ -4612,6 +4638,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
+                    (Value::Lazy(a), Value::Lazy(b)) => Rc::ptr_eq(a, b),
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
@@ -4873,6 +4900,7 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::IteratorOf | Prim::TakeNext | Prim::Mapped | Prim::Filtered | Prim::Zipped | Prim::Enumerated | Prim::Reversed => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -4956,6 +4984,7 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::Length => {
+                if v.first().map_or(false, |x| matches!(x, Value::Lazy(_))) { return Err(self.no_walk("ext.op.iterator.unsized", &v[0])); }
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
@@ -5357,7 +5386,19 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
+    fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
+        if self.table.has_any("ext.builtin.iter") {
+            let gathered = (|| -> Res<Vec<Value>> {
+                let iterator = self.start_walk(source)?;
+                let mut output = Vec::new();
+                while let Some(item) = self.take_walk(&iterator)? { output.push(item); }
+                Ok(output)
+            })();
+            return match gathered {
+                Ok(output) => Ok(output), Err(Escape::Error(note)) => Err(note),
+                Err(escape) => { self.got_away = Some(escape); Err(String::new()) }
+            };
+        }
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Vector(values) => values.to_vec(),
@@ -6110,3 +6151,5 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
     }
     Ok(Some(gathered))
 }
+
+include!("lazy.rs");

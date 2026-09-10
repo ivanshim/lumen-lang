@@ -2055,6 +2055,22 @@ impl<'a> Engine<'a> {
             let at = self.data.len().saturating_sub(argc);
             if let Some(value) = self.data.get_mut(at) { *value = collection_contents(value); }
         }
+        if !self.cursor_word("ext.builtin.iter").is_empty() {
+            match op {
+                Action::WalkFrom => { let source = self.drop_top()?; let cursor = self.cursor_from(&source)?; self.data.push(cursor); return Ok(()); }
+                Action::WalkMore => {
+                    let pair = self.drop_many(2)?;
+                    let next = self.cursor_next(&pair[0])?;
+                    let more = next.is_some();
+                    if let Value::Cursor(c) = &pair[0] { c.borrow_mut().waiting = next; }
+                    else { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
+                    self.data.push(Value::Flag(more)); return Ok(());
+                }
+                Action::WalkThis => { let pair = self.drop_many(2)?; let value = self.cursor_next(&pair[0])?.unwrap_or(Value::Null); self.data.push(value); return Ok(()); }
+                Action::WalkOnward => { self.drop_top()?; self.data.push(Value::Null); return Ok(()); }
+                _ => {}
+            }
+        }
         let result = match op {
             Action::Match(pattern, names, tuple) => {
                 let subject = self.drop_top()?;
@@ -2418,7 +2434,7 @@ impl<'a> Engine<'a> {
             Action::Unpack(count, rest) => {
                 let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
-                    Value::Counted(_) => self.comprehension_items(&source)?,
+                    Value::Counted(_) | Value::Cursor(_) => self.comprehension_items(&source)?,
                     Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -3411,6 +3427,7 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::Cursor(x), Value::Cursor(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -4139,7 +4156,16 @@ impl<'a> Engine<'a> {
     // ---------- builtins ----------
 
     /// The collections this reader can walk without asking a protocol.
-    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+    fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+        if !self.cursor_word("ext.builtin.iter").is_empty() {
+            let result = (|| -> Flow<Vec<Value>> {
+                let cursor = self.cursor_from(value)?;
+                let mut gathered = Vec::new();
+                while let Some(item) = self.cursor_next(&cursor)? { gathered.push(item); }
+                Ok(gathered)
+            })();
+            return match result { Ok(items) => Ok(items), Err(Fault::Note(s)) => Err(s), Err(e) => { self.carried = Some(e); Err(String::new()) } };
+        }
         match value {
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
@@ -4235,7 +4261,10 @@ impl<'a> Engine<'a> {
             return Ok(Value::Null);
         }
         for (key, value) in named {
-            let place = if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
+            if builtin == Builtin::ZipLazy && Lang::spells(self.cursor_words("ext.builtin.zip.strict"), &key) {
+                args.push(Value::Tie(Rc::new((Value::text(&key), value)))); continue;
+            }
+            let place = if builtin == Builtin::EnumerateLazy && Lang::spells(self.cursor_words("ext.builtin.enumerate.start"), &key) { 1 } else if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
                 1
             } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_object, &key) {
                 0
@@ -4296,6 +4325,11 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if matches!(builtin, Builtin::Iterate | Builtin::Next | Builtin::MapLazy | Builtin::FilterLazy | Builtin::ZipLazy | Builtin::EnumerateLazy | Builtin::ReverseLazy) {
+            return match self.cursor_builtin(builtin, name, args) {
+                Ok(v) => Ok(v), Err(Fault::Note(words)) => Err(words), Err(other) => { self.carried = Some(other); Err(String::new()) }
+            };
+        }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
@@ -4331,6 +4365,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Iterate | Builtin::Next | Builtin::MapLazy | Builtin::FilterLazy | Builtin::ZipLazy | Builtin::EnumerateLazy | Builtin::ReverseLazy => unreachable!(),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -4926,6 +4961,7 @@ impl<'a> Engine<'a> {
             Builtin::Length => {
                 arity(1)?;
                 match &args[0] {
+                    Value::Cursor(_) => return Err(self.cursor_fault("ext.op.iterator.unsized", &args[0])),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
@@ -5816,3 +5852,5 @@ fn collection_contents(value: &Value) -> Value {
         other => other.clone(),
     }
 }
+
+include!("cursor.rs");

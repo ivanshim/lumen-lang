@@ -116,8 +116,22 @@ impl Counted {
     }
 }
 
+/// A walk keeps its sources and asks them only when a member is wanted.
+#[derive(Debug, Clone)]
+pub struct Cursor {
+    pub name: String,
+    pub sources: Vec<Value>,
+    pub function: Value,
+    pub sentinel: Value,
+    pub at: BigInt,
+    pub way: u8,
+    pub ended: bool,
+    pub waiting: Option<Value>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
+    Cursor(Rc<RefCell<Cursor>>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -248,7 +262,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
-            Value::Stream(_) => true,
+            Value::Stream(_) | Value::Cursor(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -283,7 +297,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -299,6 +313,7 @@ impl Value {
         match (self, other) {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
+            (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a, b),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -485,6 +500,7 @@ impl Value {
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
+            Value::Cursor(c) => format!("<{} object at 0x1>", c.borrow().name),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
             Value::Ellipsis => "Ellipsis".to_string(),
