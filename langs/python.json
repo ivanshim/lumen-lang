@@ -337,6 +337,12 @@
   "ext.builtin.class.methods": [
     "__class_methods"
   ],
+  "ext.builtin.class.name": [
+    "__class_name"
+  ],
+  "ext.builtin.clock": [
+    "__clock"
+  ],
   "ext.builtin.copy": [
     "__copy_value"
   ],
@@ -420,6 +426,9 @@
   ],
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
+  ],
+  "ext.builtin.repr": [
+    "repr"
   ],
   "ext.builtin.sum": [
     "sum"
@@ -908,14 +917,5 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true,
-  "ext.builtin.repr": [
-    "repr"
-  ],
-  "ext.builtin.class.name": [
-    "__class_name"
-  ],
-  "ext.builtin.clock": [
-    "__clock"
-  ]
+  "ext.system.untrue.empty_array": true
 }

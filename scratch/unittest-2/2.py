@@ -1,9 +1,17 @@
 import unittest
 
+def first_line(text):
+    line = ''
+    for character in text:
+        if character == '\n':
+            break
+        line += character
+    return line
+
 case = unittest.TestCase()
 with case.assertRaises(case.failureException) as lists:
     case.assertEqual([1, 2], [1, 3])
-print(str(lists.exception).split('\n')[0])
+print(first_line(str(lists.exception)))
 with case.assertRaises(case.failureException) as lines:
     case.assertEqual('first\nsecond\n', 'first\nthird\n')
-print(str(lines.exception).split('\n')[0])
+print(first_line(str(lines.exception)))

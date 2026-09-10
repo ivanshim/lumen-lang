@@ -65,6 +65,12 @@ class TestCase:
         self._cleanups = []
         self._result = None
 
+    def setUpClass(cls):
+        pass
+
+    def tearDownClass(cls):
+        pass
+
     def setUp(self):
         pass
 
@@ -158,7 +164,11 @@ class TestCase:
     def assertLessEqual(self, a, b, msg=None):
         self._check(a <= b, str(a) + ' not less than or equal to ' + str(b), msg)
 
-    def assertAlmostEqual(self, a, b, places=7, msg=None, delta=None):
+    def assertAlmostEqual(self, a, b, places=None, msg=None, delta=None):
+        if delta is not None and places is not None:
+            raise 'TypeError: specify delta or places not both'
+        if places is None:
+            places = 7
         difference = a - b
         if difference < 0:
             difference = -difference
@@ -220,10 +230,17 @@ class TestCase:
     def shortDescription(self):
         return None
 
+    def assertIsSubclass(self, cls, superclass, msg=None):
+        raise 'NotImplementedError: subclass assertions need class ancestry inspection'
+
     def assertNotIsInstance(self, value, kind, msg=None):
         self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
 
-    def assertNotAlmostEqual(self, a, b, places=7, msg=None, delta=None):
+    def assertNotAlmostEqual(self, a, b, places=None, msg=None, delta=None):
+        if delta is not None and places is not None:
+            raise 'TypeError: specify delta or places not both'
+        if places is None:
+            places = 7
         difference = a - b
         if difference < 0:
             difference = -difference
@@ -393,6 +410,7 @@ def expectedFailure(function):
 
 class TestSuite:
     def __init__(self, tests=None):
+        self.class_ = None
         self.tests = []
         if tests is not None:
             self.tests = list(tests)
@@ -404,9 +422,29 @@ class TestSuite:
         for test in tests:
             self.addTest(test)
 
+    def _fixture(self, name, result):
+        if self.class_ is None or getattr(self.class_, '__unittest_skip__', False):
+            return True
+        fixture = getattr(self.class_, name, None)
+        if fixture is None:
+            return True
+        outcome = __call_outcome(_Call(fixture, [self.class_], {}).invoke)
+        if outcome[0]:
+            return True
+        entry = [name, _message(outcome[1], outcome[2]), __class_name(self.class_)]
+        if isinstance(outcome[1], SkipTest):
+            result.skipped = [*result.skipped, entry]
+        else:
+            result.errors = [*result.errors, entry]
+        return False
+
     def run(self, result):
-        for test in self.tests:
-            test.run(result)
+        if self._fixture('setUpClass', result):
+            try:
+                for test in self.tests:
+                    test.run(result)
+            finally:
+                self._fixture('tearDownClass', result)
         return result
 
 class TestLoader:
@@ -414,7 +452,9 @@ class TestLoader:
         return _ordered([name for name in __class_methods(cls) if name[:4] == 'test'])
 
     def loadTestsFromTestCase(self, cls):
-        return TestSuite([cls(name) for name in self.getTestCaseNames(cls)])
+        suite = TestSuite([cls(name) for name in self.getTestCaseNames(cls)])
+        suite.class_ = cls
+        return suite
 
     def loadTestsFromModule(self, module, pattern=None):
         if module is None or module == '__main__':
@@ -462,14 +502,18 @@ def _representation(value):
     return repr(value)
 
 
+def _load_regex():
+    return __load_module('re')
+
+
 def _matches(pattern, text):
-    # A loaded expression module supplies the full search. Until then,
-    # the phrase is sought as written, without interpreting its marks.
-    try:
-        module = __load_module('re')
-    except:
-        return pattern in text
-    return module.search(pattern, text) is not None
+    # Native lookup faults are returned by the outcome helper too.
+    outcome = __call_outcome(_load_regex)
+    if not outcome[0]:
+        if "No module named 're'" in outcome[2]:
+            return pattern in text
+        raise outcome[1]
+    return outcome[1].search(pattern, text) is not None
 
 
 class _SubTest:
@@ -515,7 +559,7 @@ class _Warns:
 
     def __enter__(self):
         import warnings
-        self.manager = warnings.catch_warnings(record=True)
+        self.manager = warnings.catch_warnings(record=True, _internal=True)
         self.records = self.manager.__enter__()
         warnings.simplefilter('always', self.expected)
         return self
@@ -592,10 +636,14 @@ class TextTestRunner:
 
     def _run(self, test, result):
         if isinstance(test, TestSuite):
-            for member in test.tests:
-                self._run(member, result)
-                if self.failfast and not result.wasSuccessful():
-                    break
+            if test._fixture('setUpClass', result):
+                try:
+                    for member in test.tests:
+                        self._run(member, result)
+                        if self.failfast and not result.wasSuccessful():
+                            break
+                finally:
+                    test._fixture('tearDownClass', result)
             return None
         failures = len(result.failures)
         errors = len(result.errors)
@@ -641,7 +689,10 @@ class TextTestRunner:
         for failure in result.failures:
             self._failure('FAIL', failure, 'AssertionError: ')
         self._write('-' * 70 + '\n')
-        self._write('Ran ' + str(result.testsRun) + ' tests in ' + ('%.3f' % elapsed) + 's\n\n')
+        noun = ' tests'
+        if result.testsRun == 1:
+            noun = ' test'
+        self._write('Ran ' + str(result.testsRun) + noun + ' in ' + ('%.3f' % elapsed) + 's\n\n')
         counts = []
         if len(result.failures) > 0:
             counts = [*counts, 'failures=' + str(len(result.failures))]

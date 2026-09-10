@@ -3784,7 +3784,10 @@ impl<'a> Machine<'a> {
                     return match &v[0] {
                         Value::Thing(owner) => {
                             let contents = owner.holds.borrow();
-                            let pairs = contents.iter().map(|(key, item)| (Value::text(key), item.clone())).collect();
+                            let pairs = contents.iter().map(|(key, item)| {
+                                let owned = if let Value::Shared(cell) = item { cell.borrow().clone() } else { item.clone() };
+                                (Value::text(key), owned)
+                            }).collect();
                             Ok(Value::Dict(Rc::new(pairs)))
                         }
                         _ => Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
@@ -6217,6 +6220,7 @@ impl Machine<'_> {
             return format!("{delimiter}{body}{delimiter}");
         }
         let (opening, closing, members) = match worth {
+            Value::Shared(cell) => return self.quote_worth(&cell.borrow()),
             Value::Vector(values) => ("[", "]", values.iter().map(|one| self.quote_worth(one)).collect::<Vec<_>>()),
             Value::Dict(entries) => {
                 let members = entries.iter().map(|entry| {

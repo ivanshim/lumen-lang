@@ -56,10 +56,11 @@ def resetwarnings():
     _state.filters = []
 
 class catch_warnings:
-    def __init__(self, record=False, module=None, action=None, category=None, lineno=0, append=False):
+    def __init__(self, record=False, module=None, action=None, category=None, lineno=0, append=False, _internal=False):
         if module is not None:
             raise 'NotImplementedError: alternate warning modules are not supported'
         self.record = record
+        self.internal = _internal
         self.action = action
         self.category = category
         self.lineno = lineno
@@ -70,6 +71,8 @@ class catch_warnings:
     def __enter__(self):
         if self.entered:
             raise 'RuntimeError: warning capture is already entered'
+        if self.record and not self.internal:
+            raise 'NotImplementedError: shared warning record lists are not supported'
         self.entered = True
         self.previous = _state.context
         self.filters = _state.filters
