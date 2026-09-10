@@ -176,7 +176,9 @@ class _Reader:
         for i in range(4):
             if self.at >= len(self.text):
                 self.bad('Invalid Unicode escape')
-            c = self.text[self.at].lower()
+            c = self.text[self.at]
+            if c in 'ABCDEF':
+                c = chr(ord(c) + 32)
             self.at += 1
             digit = 0
             while digit < 16 and '0123456789abcdef'[digit] != c:

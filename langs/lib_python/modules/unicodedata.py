@@ -24,7 +24,12 @@ def name(c, default=None):
     raise 'ValueError: no such name'
 
 def lookup(name):
-    name = name.upper()
+    folded = ''
+    for letter in name:
+        if letter >= 'a' and letter <= 'z':
+            letter = chr(ord(letter) - 32)
+        folded += letter
+    name = folded
     for i in range(256):
         if _names[i] != '' and _names[i] == name:
             return chr(i)

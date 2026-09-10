@@ -44,6 +44,7 @@ pub enum Prim {
     WriteMember,
     ReadMember,
     IsDictionary,
+    LinesOfText,
     FaultHeld,
     HostFacts,
     FileSort,

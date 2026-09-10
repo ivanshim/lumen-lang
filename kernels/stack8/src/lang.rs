@@ -823,7 +823,7 @@ w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc 
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
 w ext.builtin.program.namespace
-w ext.builtin.map.test | w ext.system.module.getattr | w ext.builtin.member.has | w ext.system.fault.division | w ext.system.fault.bases | w ext.builtin.fault.current | w ext.builtin.host.info | w ext.builtin.file.kind
+w ext.builtin.text.lines | w ext.builtin.map.test | w ext.system.module.getattr | w ext.builtin.member.has | w ext.system.fault.division | w ext.system.fault.bases | w ext.builtin.fault.current | w ext.builtin.host.info | w ext.builtin.file.kind
 w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
@@ -1347,6 +1347,7 @@ impl Lang {
             ("ext.builtin.fault.current", Builtin::CurrentFault),
             ("ext.builtin.host.info", Builtin::HostInfo),
             ("ext.builtin.file.kind", Builtin::FileKind),
+            ("ext.builtin.text.lines", Builtin::TextLines),
             ("ext.builtin.map.test", Builtin::IsMap),
             ("ext.builtin.member.has", Builtin::MemberHas),
             ("ext.builtin.member.get", Builtin::MemberGet),

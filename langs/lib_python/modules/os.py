@@ -39,9 +39,9 @@ unlink = remove
 class _Path:
     def join(self, path, *parts):
         for part in parts:
-            if part.startswith('/'):
+            if part[:1] == '/':
                 path = part
-            elif path == '' or path.endswith('/'):
+            elif path == '' or path[-1:] == '/':
                 path += part
             else:
                 path += '/' + part
@@ -53,7 +53,7 @@ class _Path:
             at -= 1
         head = path[:at]
         if head != '/' * len(head):
-            while head.endswith('/'):
+            while head[-1:] == '/':
                 head = head[:-1]
         return (head, path[at:])
 
@@ -86,15 +86,26 @@ class _Path:
         return __file_kind(path) == 2
 
     def abspath(self, path):
-        if not path.startswith('/'):
+        if path[:1] != '/':
             path = self.join(getcwd(), path)
         parts = []
-        for part in path.split('/'):
+        words = []
+        word = ''
+        for letter in path + '/':
+            if letter == '/':
+                words.append(word)
+                word = ''
+            else:
+                word += letter
+        for part in words:
             if part == '..':
                 if len(parts) > 0:
-                    parts.pop()
+                    parts = parts[:-1]
             elif part != '' and part != '.':
                 parts.append(part)
-        return '/' + '/'.join(parts)
+        answer = ''
+        for part in parts:
+            answer += '/' + part
+        return answer if answer else '/'
 
 path = _Path()

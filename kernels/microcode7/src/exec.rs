@@ -3866,6 +3866,27 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
+            Prim::LinesOfText => {
+                if v.len() != 1 && v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into()); }
+                let text = match &v[0] { Value::Text(chars) => chars, _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into()) };
+                let with_endings = v.get(1).map_or(false, |flag| flag.is_true());
+                let chars: Vec<char> = text.chars().collect();
+                let mut result = Vec::new();
+                let (mut begin, mut cursor) = (0, 0);
+                while cursor < chars.len() {
+                    let stops = [10, 13, 11, 12, 28, 29, 30, 133, 8232, 8233].contains(&u32::from(chars[cursor]));
+                    if stops {
+                        let end = cursor;
+                        cursor += 1;
+                        if chars[end] == '\r' && chars.get(cursor) == Some(&'\n') { cursor += 1; }
+                        let bound = if with_endings { cursor } else { end };
+                        result.push(Value::text(&chars[begin..bound].iter().collect::<String>()));
+                        begin = cursor;
+                    } else { cursor += 1; }
+                }
+                if begin != chars.len() { result.push(Value::text(&chars[begin..].iter().collect::<String>())); }
+                Value::Vector(Rc::new(result))
+            }
             Prim::IsDictionary => { n(1)?; Value::Flag(if let Value::Dict(_) = &v[0] { true } else { false }) }
             Prim::HasMember => {
                 n(2)?;

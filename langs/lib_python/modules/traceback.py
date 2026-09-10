@@ -6,7 +6,7 @@ def format_exception(exc, value=None, tb=None, limit=None, chain=True):
     if kind is None:
         raise 'TypeError: an exception value is required'
     prefix = kind + ': '
-    if message.startswith(prefix):
+    if message[:len(prefix)] == prefix:
         message = message[len(prefix):]
     return [prefix + message + '\n']
 
@@ -17,7 +17,7 @@ def format_exc(limit=None, chain=True):
             return 'NoneType: None\n'
         return str(message) + '\n'
     prefix = kind + ': '
-    if message.startswith(prefix):
+    if message[:len(prefix)] == prefix:
         message = message[len(prefix):]
     return prefix + message + '\n'
 

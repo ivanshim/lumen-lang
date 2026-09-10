@@ -334,6 +334,7 @@ pub enum Builtin {
     MemberGet,
     MemberHas,
     IsMap,
+    TextLines,
     CurrentFault,
     HostInfo,
     FileKind,

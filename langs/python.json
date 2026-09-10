@@ -448,6 +448,9 @@
   "ext.builtin.sum.non_number": [
     "TypeError: sum needs numbers"
   ],
+  "ext.builtin.text.lines": [
+    "splitlines"
+  ],
   "ext.builtin.to_int.base": [
     "base"
   ],
@@ -921,7 +924,7 @@
   ],
   "ext.system.fault.bases": [
     "BaseException",
-    "",
+    "-",
     "Exception",
     "BaseException",
     "ArithmeticError",

@@ -4649,6 +4649,26 @@ impl<'a> Engine<'a> {
                     else { Some((Value::text(name), value.clone())) }
                 }).collect()))
             }
+            Builtin::TextLines => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                let Value::Text(text) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()); };
+                let keep = args.get(1).map_or(false, Value::is_true);
+                let mut lines = Vec::new();
+                let mut letters = text.char_indices().peekable();
+                let mut start = 0;
+                while let Some((at, letter)) = letters.next() {
+                    if !matches!(letter, '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}') { continue; }
+                    let mut after = at + letter.len_utf8();
+                    if letter == '\r' && letters.peek().map_or(false, |(_, next)| *next == '\n') {
+                        after += 1;
+                        letters.next();
+                    }
+                    lines.push(Value::text(&text[start..if keep { after } else { at }]));
+                    start = after;
+                }
+                if start < text.len() { lines.push(Value::text(&text[start..])); }
+                Value::array(lines)
+            }
             Builtin::IsMap => { arity(1)?; Value::Flag(matches!(&args[0], Value::Map(_))) }
             Builtin::MemberHas => {
                 arity(2)?;

@@ -1616,6 +1616,9 @@ only. The extension labels so far, all from PHP:
   answer or raised value, and the complaint's text. A library can thus
   count failures and errors itself. An ending of the run or exhaustion
   of its allotted time or room is carried onward, never counted as a test.
+- `ext.builtin.text.lines`: a builtin dividing text at line endings,
+  taking a carriage return followed by a line feed as one ending. A true
+  second value keeps the endings. An ending at the end adds no empty line.
 - `ext.builtin.map.test`: a builtin asking whether its value holds keys
   with their values, rather than a list of values alone.
 - `ext.system.module.getattr`: the routine a module may declare to answer
@@ -1625,7 +1628,7 @@ only. The extension labels so far, all from PHP:
 - `ext.system.fault.division`: the message a division by nought carries
   when made into a fault value.
 - `ext.system.fault.bases`: pairs of class names, each followed by its
-  parent, an empty parent beginning a root. They provide the fault classes
+  parent, a dash in place of the parent beginning a root. They provide the fault classes
   before source runs. A complaint beginning with one of these names and
   a colon belongs to that class, so a guarded import may take it.
 - `ext.builtin.fault.current`: a builtin returning the innermost fault
@@ -2208,6 +2211,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
+| `ext.builtin.text.lines` | - | - | `splitlines` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
@@ -2485,7 +2489,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
-| `ext.system.fault.bases` | - | - | `BaseException` `` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` | - | - | - | - | - | - | - |
+| `ext.system.fault.bases` | - | - | `BaseException` `-` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | `ZeroDivisionError` | - | `DivisionByZeroError` | - | - | - | - | - |
