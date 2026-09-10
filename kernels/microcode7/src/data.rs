@@ -487,6 +487,10 @@ impl Value {
 
     pub fn memo_key(&self, out: &mut String) {
         match self {
+            Value::Reverse(remaining, _) => {
+                out.push_str("reverse/");
+                out.push_str(&format!("{:p}/{}", Rc::as_ptr(remaining), remaining.borrow().len()));
+            }
             Value::Text(s) => out.push_str(&format!("s{:?}", s)),
             Value::Vector(items) => {
                 out.push('[');

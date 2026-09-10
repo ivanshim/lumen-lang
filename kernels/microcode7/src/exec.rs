@@ -5786,22 +5786,26 @@ impl<'a> Machine<'a> {
 
     fn sequence_builtin(&self, op: Prim, values: &[Value]) -> Result<Value, String> {
         let refusal = || self.sequence_fault("unready", &[]);
+        let amiss = || self.table.strings("ext.syntax.call.amiss").first().cloned().unwrap_or_default();
         if matches!(op, Prim::Least | Prim::Greatest | Prim::Ordered | Prim::Locate | Prim::Occurrences | Prim::Fingerprint)
             && values.iter().any(|value| Self::sequence_deferred(value, 0)) { return Err(refusal()); }
         match op {
             Prim::Frozen | Prim::Listed => {
-                if values.len() > 1 { return Err(refusal()); }
+                if values.len() > 1 { return Err(amiss()); }
                 if op == Prim::Frozen && matches!(values.first(), Some(Value::Tuple(_))) { return Ok(values[0].clone()); }
                 let row = if values.is_empty() { Vec::new() } else { self.gathered_members(&values[0])? };
                 Ok(if op == Prim::Frozen { Value::Tuple(Rc::new(row)) } else { Value::List(Rc::new(RefCell::new(row))) })
             }
             Prim::Fingerprint if values.len() == 1 => Ok(Value::Small(self.sequence_hash(&values[0])?)),
             Prim::Locate | Prim::Occurrences if (2..=4).contains(&values.len()) => {
-                let members = self.gathered_members(&values[0])?;
+                let source = &values[0];
+                if !matches!(source, Value::List(_) | Value::Tuple(_) | Value::Text(_)) { return Err(refusal()); }
+                if op == Prim::Occurrences && !matches!(source, Value::Text(_)) && values.len() != 2 { return Err(amiss()); }
+                let members = self.gathered_members(source)?;
                 let length = members.len();
                 let bound = |at: usize, default: usize| -> Result<usize, String> {
                     let Some(value) = values.get(at) else { return Ok(default); };
-                    if matches!(value, Value::Nil) { return Ok(default); }
+                    if matches!(value, Value::Nil) && matches!(source, Value::Text(_)) { return Ok(default); }
                     if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(refusal()); }
                     let mut n = value.as_big()?;
                     if n < BigInt::from(0) { n += length; }
@@ -5832,6 +5836,7 @@ impl<'a> Machine<'a> {
                     _ => format!("{}{}{}", words.first().map(String::as_str).unwrap_or(""), self.quoted_remainder(&values[1])?, words.get(1).map(String::as_str).unwrap_or("")),
                 })
             }
+            Prim::Fingerprint | Prim::Locate | Prim::Occurrences => Err(amiss()),
             Prim::Least | Prim::Greatest if !values.is_empty() => {
                 let row = if values.len() == 1 { self.gathered_members(&values[0])? } else { values.to_vec() };
                 let Some(mut best) = row.first().cloned() else { return Err(self.sequence_fault("empty", &[if op == Prim::Least { "min" } else { "max" }])); };
