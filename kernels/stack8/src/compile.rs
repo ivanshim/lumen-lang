@@ -6786,8 +6786,8 @@ impl<'a> Compiler<'a> {
 
     fn indexing(&mut self, from: usize) -> Res<()> {
         let lang = self.lang;
-        if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
         loop {
+            if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {

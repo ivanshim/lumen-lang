@@ -4422,6 +4422,7 @@ impl<'a> Engine<'a> {
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         if matches!(target, Value::Collection(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
+        if let Value::Adapter(w)=target {if w.0==47 {let pairs=self.function_members.iter().find(|(f,_)|f.equals(&w.1[0])).map_or(Vec::new(),|(_,m)|m.iter().map(|(n,v)|(Value::text(n),v.clone())).collect());return self.element(&Value::Map(Rc::new(pairs)),at,how);}}
         if let Value::Adapter(w)=target {if w.0==44 {if let Value::Class(c)=&w.1[0] {let view=Value::Map(Rc::new(c.shared.borrow().iter().map(|(n,v)|(Value::text(n),v.clone())).collect()));return self.element(&view,at,how);}}}
 
         if let Value::Tuple(items)=target {if let Ok(index)=at.as_big(){if index<BigInt::from(0){return self.element_held(target,&Value::of_big(index+items.len()),how);}}}
@@ -4715,7 +4716,7 @@ impl<'a> Engine<'a> {
             if which==11 {
                 let positional=args.len();
                 for (key,value) in named {
-                    let slot=["property.fget","property.fset","property.fdel","doc"].iter().position(|p|self.class_word(p)==key).ok_or_else(||Self::named_fault(&self.lang.call_unknown,&key))?;
+                    let slot=["property.fget","property.fset","property.fdel","property.doc"].iter().position(|p|self.class_word(p)==key).ok_or_else(||Self::named_fault(&self.lang.call_unknown,&key))?;
                     if slot<positional {return Err(Self::named_fault(&self.lang.call_duplicate,&key));}
                     if args.len()<=slot {args.resize(slot+1,Value::Null);}
                     args[slot]=value;
@@ -5696,6 +5697,7 @@ impl<'a> Engine<'a> {
                 if matches!(target, Value::Tuple(_) | Value::Set(_)) { return Err(self.core_fault("core.immutable", &target.core_kind())); }
                 let v = args.pop().expect("the value");
                 let at = self.key(&args.pop().expect("the key"));
+                if let Value::Adapter(w)=&target {if w.0==47 {let Value::Text(key)=&at else{return Err(self.not_an_array());};self.class_write(w.1[0].clone(),key,Some(v),true).map_err(|e|e.told(&self.wording()))?;return Ok(target);}}
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
                 }
@@ -6586,6 +6588,7 @@ impl Engine<'_> {
             return Ok(false);
         }
         if let Value::Class(class) = kind {
+            if self.fuller_classes() && class.name==self.class_word("root"){return Ok(true);}
             return Ok(matches!(value, Value::Object(o) if Rc::ptr_eq(&o.class,class) || o.class.lineage.iter().any(|b|Rc::ptr_eq(b,class)) || o.class.named(&class.name, false)));
         }
         let b = match kind {
@@ -6602,6 +6605,7 @@ impl Engine<'_> {
             Builtin::Tuple => matches!(value, Value::Tuple(_)),
             Builtin::Set => matches!(value, Value::Set(_)),
             Builtin::Dict => matches!(value, Value::Map(_)),
+            Builtin::SortOf if self.fuller_classes()=>matches!(value,Value::Class(_)) || matches!(value,Value::Native(b,_) if matches!(b,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::Tuple|Builtin::Set|Builtin::Dict|Builtin::Bool|Builtin::SortOf)),
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
         })
     }

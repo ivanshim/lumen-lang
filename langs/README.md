@@ -1052,7 +1052,8 @@ only. The extension labels so far, all from PHP:
   for each member declared in the class, before the inheritance hook.
   `property.fget`, `property.fset`, `property.fdel`, `property.getter` and
   `property.deleter` name the kept accessors and the calls which make a
-  fresh property. The earlier property `setter` names its writer's copy.
+  fresh property; `property.doc` names the constructor argument giving
+  its first string. The earlier property `setter` names its writer's copy.
   The property builtin is a class and may have descendants. Its first
   string is the getter's first string unless another is given.
   `property.unreadable`, `property.unwritable` and `property.undeletable`
@@ -3507,6 +3508,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fdel` | - | - | `fdel` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |

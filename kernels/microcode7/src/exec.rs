@@ -3311,7 +3311,7 @@ impl<'a> Machine<'a> {
             if k==11 {
                 let count=positional.len();
                 for (key,v) in keywords {
-                    let at=["property.fget","property.fset","property.fdel","doc"].iter().position(|part|self.detail(part)==key).ok_or_else(||self.argument_fault("ext.syntax.call.amiss.unknown",Some(&key)))?;
+                    let at=["property.fget","property.fset","property.fdel","property.doc"].iter().position(|part|self.detail(part)==key).ok_or_else(||self.argument_fault("ext.syntax.call.amiss.unknown",Some(&key)))?;
                     if at<count {return Err(self.argument_fault("ext.syntax.call.amiss.duplicate",Some(&key)).into());}
                     positional.resize(positional.len().max(at+1),Value::Nil);
                     positional[at]=v;
@@ -4094,12 +4094,13 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if op==Prim::Placed && v.len()==3 {if let Value::Wrapped(47,held)=&v[0] {let Value::Text(key)=&v[1] else{return Err(self.no_places());};self.alter_class_member(held[0].clone(),key,Some(v[2].clone()),true).map_err(|e|match e{Escape::Error(s)=>s,_=>self.detail("unready").to_owned()})?;return Ok(v[0].clone());}}
         if matches!(op, Prim::Added | Prim::Placed) {
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
                 arguments[0] = v[0].settled();
                 let changed = self.prim(op, name, &arguments)?;
-                cell.replace(changed);
+                cell.replace(changed.settled());
                 return Ok(v[0].clone());
             }
         }
@@ -5947,6 +5948,7 @@ impl<'a> Machine<'a> {
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
+        if let Value::Wrapped(47,held)=target {let entries=self.routine_members.iter().find(|(f,_)|f.equals(&held[0])).map_or(Vec::new(),|(_,a)|a.iter().map(|(n,v)|(Value::text(n),v.clone())).collect());return self.element(&Value::Dict(Rc::new(entries)),at,how);}
         if let Value::Wrapped(44,saved)=target {if let Value::Blueprint(b)=&saved[0] {let entries=b.shared.borrow().iter().map(|(key,v)|(Value::text(key),v.clone())).collect();return self.element(&Value::Dict(Rc::new(entries)),at,how);}}
 
         if let Value::Tuple(items)=target {if let Ok(index)=at.as_big(){if index<BigInt::from(0){return self.element_within(target,&Value::from_big(index+items.len()),how);}}}
@@ -7085,7 +7087,7 @@ impl Machine<'_> {
                 for kind in kinds.iter() { if self.core_belongs(item, kind)? { return Ok(true); } }
                 Ok(false)
             }
-            Value::Blueprint(class) => Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false))),
+            Value::Blueprint(class) => Ok(self.has_class_order() && class.name==self.detail("root") || matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false) || t.of.ancestry.iter().any(|b|Rc::ptr_eq(b,class)))),
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             Value::Intrinsic(word) => {
                 let op = self.table.prims.get(word.as_ref());
@@ -7098,6 +7100,7 @@ impl Machine<'_> {
                     Some(Prim::Tupling) => matches!(item, Value::Tuple(_)),
                     Some(Prim::Uniques) => matches!(item, Value::Set(_)),
                     Some(Prim::Dictionary) => matches!(item, Value::Dict(_)),
+                    Some(Prim::SortOf) if self.has_class_order()=>matches!(item,Value::Blueprint(_)) || matches!(item,Value::Intrinsic(word) if matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::Tupling|Prim::Uniques|Prim::Dictionary|Prim::Truthful|Prim::SortOf))),
                     _ => return Err(self.core_complaint("core.isinstance.amiss", "")),
                 };
                 Ok(answer)

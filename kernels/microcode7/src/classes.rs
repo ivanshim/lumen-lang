@@ -83,9 +83,10 @@ impl<'a> Machine<'a> {
                 match tag {
                     20..=26=>self.work_property(tag,values),
                     30=>{
+                        if let Value::Wrapped(4,inner)=&kept[0]{if !values.is_empty()&&values.len()<=2{return Ok(inner[0].clone());}}
                         if values.is_empty()||values.len()>2{return Err(self.class_unready());}
                         let receiver=if matches!(values[0],Value::Nil){None}else{Some(values[0].clone())};
-                        let owner=if let Some(Value::Blueprint(b))=values.get(1){b.clone()}else if let Some(Value::Thing(t))=&receiver{t.of.clone()}else{return Err(self.class_unready());};
+                        let owner=if let Some(Value::Blueprint(b))=values.get(1){b.clone()}else if let Some(Value::Thing(t))=&receiver{t.of.clone()}else if receiver.is_some()&&matches!(&kept[0],Value::Routine(_)|Value::Bound(..)){self.common_ancestor()}else{return Err(self.class_unready());};
                         self.member_binding(kept[0].clone(),receiver,owner)
                     }
                     41|42|43=>{
@@ -153,8 +154,8 @@ impl<'a> Machine<'a> {
             Value::Wrapped(6,items) if receiver.is_some()=>return self.apply_class_member(items[0].clone(),vec![receiver.unwrap()]),
             _=>{}
         }
-        if let Some(Value::Thing(t))=receiver {
-            match entry {Value::Routine(_)|Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,Value::Thing(t)])),_=>Ok(entry)}
+        if let Some(receiver)=receiver {
+            match entry {Value::Routine(_)|Value::Bound(..)=>Ok(Self::wrap(3,vec![entry,receiver])),_=>Ok(entry)}
         }else{Ok(entry)}
     }
     fn member_map(entries:&[(String,Value)])->Value {
@@ -207,7 +208,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("doc"){return Ok(code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d)));}
             if key==self.detail("module"){return Ok(Value::text(self.detail("main")));}
             if key==self.detail("code"){return Ok(Self::wrap(7,vec![value.clone()]));}
-            if key==self.detail("namespace"){return Ok(self.routine_members.iter().find(|(f,_)|f.equals(&value)).map_or_else(||Self::member_map(&[]),|(_,m)|Self::member_map(m)));}
+            if key==self.detail("namespace"){return Ok(Self::wrap(47,vec![value.clone()]));}
             if key==self.detail("defaults"){
                 let mut defaults=Vec::new();
                 if let Value::Bound(_,env)=&value {for slot in &code.carried{if let Some(i)=code.formal_slots.iter().position(|at|at==slot){if code.taking.as_ref().map_or(true,|rules|matches!(rules[i],'b'|'p')){defaults.push(env.cells.borrow()[*slot].clone());}}}}
@@ -259,7 +260,7 @@ impl<'a> Machine<'a> {
                 }
                 if key==self.detail("namespace") {
                     if !self.allowed_slot(&t.of,key){return Err(self.absent_attribute(&subject,key));}
-                    if let Some(v)=replacement {if matches!(v.settled(),Value::Dict(_)){let stored=self.collection_cell(v);Self::change_entry(&mut t.holds.borrow_mut(),"#dictionary",Some(stored));return Ok(Value::Nil);}}
+                    if let Some(v)=replacement {if matches!(v.settled(),Value::Dict(_)){let stored=v.keep(true);Self::change_entry(&mut t.holds.borrow_mut(),"#dictionary",Some(stored));return Ok(Value::Nil);}}
                     return Err(self.class_unready());
                 }
                 if key==self.detail("kind"){return Err(self.class_unready());}
@@ -270,6 +271,7 @@ impl<'a> Machine<'a> {
                 Self::change_entry(&mut b.shared.borrow_mut(),key,replacement)
             },
             Value::Routine(_)|Value::Bound(..)=>{
+                if key==self.detail("namespace") && matches!(&replacement,Some(Value::Wrapped(47,p)) if p[0].equals(&subject)){return Ok(Value::Nil);}
                 if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("namespace"){return Err(self.class_unready());}
                 let index=self.routine_members.iter().position(|(f,_)|f.equals(&subject)).unwrap_or_else(||{self.routine_members.push((subject.clone(),vec![]));self.routine_members.len()-1});
                 Self::change_entry(&mut self.routine_members[index].1,key,replacement)
@@ -333,7 +335,7 @@ impl<'a> Machine<'a> {
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
             return match self.read_class_member(values[0].clone(),key,false){
                 Ok(v)=>Ok(if op==6{Value::Flag(true)}else{v}),
-                Err(Escape::Error(words)) if words.starts_with(self.detail("attribute.amiss"))=>{
+                Err(Escape::Error(words)) if words.split(':').next()==self.detail("attribute.amiss").split(':').next()=>{
                     if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(words.into())}
                 }
                 failed=>failed,
@@ -348,7 +350,7 @@ impl<'a> Machine<'a> {
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().map(|(k,_)|k.clone()));Some(&t.of)},Value::Blueprint(b)=>Some(b),_=>None};
             if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().map(|(k,_)|k.clone()));}}
             else if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.iter().map(|(k,_)|k.clone()));}
-            names.sort_unstable();names.dedup();return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
+            names.retain(|n|!n.starts_with('#'));names.sort_unstable();names.dedup();return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
         }
         if op==11 {let b=self.property_forebear();return self.construct_ordered(b,values);}
         if (9..=10).contains(&op)&&values.len()==1{return Ok(Self::wrap(op-5,values));}
@@ -403,15 +405,25 @@ impl Machine<'_> {
         let callable=self.member_binding(method,Some(descriptor),class)?;
         self.apply_class_member(callable,arguments)
     }
-    fn work_property(&mut self,operation:u8,values:Vec<Value>)->Res {
+    fn work_property(&mut self,operation:u8,mut values:Vec<Value>)->Res {
         let property=match values.first(){Some(Value::Thing(t))=>t.clone(),_=>return Err(self.detail("descriptor.unready").to_owned().into())};
         match operation {
             26=>{
+                let (mut arguments,names)=self.open_arguments(values[1..].to_vec())?;
+                let count=arguments.len();
+                let mut used=vec![];
+                for (name,item) in names {
+                    let index=["property.fget","property.fset","property.fdel","property.doc"].iter().position(|p|self.detail(p)==name).ok_or_else(||self.class_unready())?;
+                    if index<count || used.contains(&index){return Err(self.class_unready());}used.push(index);
+                    arguments.resize(arguments.len().max(index+1),Value::Nil);arguments[index]=item;
+                }
+                values.truncate(1);values.extend(arguments);
                 if values.len()>5{return Err(self.class_unready());}
                 let mut entries=Vec::new();
                 for (i,key) in ["property.fget","property.fset","property.fdel"].into_iter().enumerate(){entries.push((self.detail(key).into(),values.get(i+1).cloned().unwrap_or(Value::Nil)));}
                 let doc=match values.get(4){Some(v) if !matches!(v,Value::Nil)=>v.clone(),_=>match values.get(1){Some(Value::Routine(p)|Value::Bound(p,_))=>p.doc.as_ref().map_or(Value::Nil,|s|Value::text(s)),_=>Value::Nil}};
                 entries.push((self.detail("doc").into(),doc));
+                entries.push(("#derived_doc".into(),Value::Flag(values.get(4).map_or(true,|v|matches!(v,Value::Nil)))));
                 property.holds.replace(entries);
                 Ok(Value::Nil)
             }
@@ -420,7 +432,7 @@ impl Machine<'_> {
                 let mut args=Vec::new();
                 for key in ["property.fget","property.fset","property.fdel","doc"] {args.push(property.holds.borrow().iter().find(|(n,_)|n==self.detail(key)).map_or(Value::Nil,|(_,v)|v.clone()));}
                 args[usize::from(operation-23)]=values[1].clone();
-                if operation==23{args[3]=Value::Nil;}
+                if property.holds.borrow().iter().any(|(n,v)|n=="#derived_doc" && matches!(v,Value::Flag(true))){args[3]=Value::Nil;}
                 self.construct_ordered(property.of.clone(),args)
             }
             _=>{

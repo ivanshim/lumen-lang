@@ -84,9 +84,10 @@ impl<'a> Engine<'a> {
             Value::Adapter(w) => match w.0 {
                 20..=26 => self.property_work(w.0,args),
                 30 => {
+                    if let Value::Adapter(member)=&w.1[0] {if member.0==4 && !args.is_empty() && args.len()<=2{return Ok(member.1[0].clone());}}
                     if args.is_empty() || args.len()>2 {return Err(self.class_refusal());}
                     let subject=if matches!(args[0],Value::Null){None}else{Some(args[0].clone())};
-                    let owner=match args.get(1) {Some(Value::Class(c))=>c.clone(),_=>match &subject{Some(Value::Object(o))=>o.class.clone(),_=>return Err(self.class_refusal())}};
+                    let owner=match args.get(1) {Some(Value::Class(c))=>c.clone(),_=>match &subject{Some(Value::Object(o))=>o.class.clone(),Some(_) if matches!(w.1[0],Value::Routine(_))=>self.root_class(),_=>return Err(self.class_refusal())}};
                     self.bind_class_value(w.1[0].clone(),subject,owner)
                 }
                 41..=43 => {
@@ -234,7 +235,7 @@ impl<'a> Engine<'a> {
                     return Ok(if values.is_empty(){Value::Null}else{Value::Tuple(Rc::new(values))});
                 }
                 if name==self.class_word("code") {return Ok(Self::adapter(7,vec![subject.clone()]));}
-                if name==self.class_word("namespace") {return Ok(self.function_members.iter().find(|(v,_)|v.equals(&subject)).map_or_else(||Self::namespace(&[]),|(_,v)|Self::namespace(v)));}
+                if name==self.class_word("namespace") {return Ok(Self::adapter(47,vec![subject.clone()]));}
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
@@ -293,6 +294,7 @@ impl<'a> Engine<'a> {
                 Self::write_members(&mut c.shared.borrow_mut(),name,value).map_err(|_|absent)?;
             }
             Value::Routine(_) => {
+                if name==self.class_word("namespace") && matches!(&value,Some(Value::Adapter(w)) if w.0==47 && w.1[0].equals(&subject)){return Ok(Value::Null);}
                 if ["defaults","code","namespace"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_refusal());}
                 let at=if let Some(i)=self.function_members.iter().position(|(v,_)|v.equals(&subject)){i}else{self.function_members.push((subject.clone(),vec![]));self.function_members.len()-1};
                 Self::write_members(&mut self.function_members[at].1,name,value).map_err(|_|absent)?;
@@ -359,14 +361,14 @@ impl<'a> Engine<'a> {
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
             2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
-            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{v}),Err(Fault::Note(s)) if s.starts_with(self.class_word("attribute.amiss"))=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{Err(s.into())},Err(e)=>Err(e)}},
+            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{v}),Err(Fault::Note(s)) if s.split(':').next()==self.class_word("attribute.amiss").split(':').next()=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{Err(s.into())},Err(e)=>Err(e)}},
             4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.class_refusal());};self.class_write(one,n,args.get(2).cloned(),false)},
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
                 else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.iter().map(|(n,_)|n.clone()));}
-                names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
+                names.retain(|n|!n.starts_with('#'));names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }
             11 => {let class=self.property_root();self.class_make(class,args)},
             9..=10 if args.len()==1=>Ok(Self::adapter(which-5,args)),
@@ -422,9 +424,20 @@ impl Engine<'_> {
         let bound = self.bind_class_value(hook,Some(value.clone()),o.class.clone())?;
         self.class_apply(bound,args)
     }
-    fn property_work(&mut self, tag: u8, args: Vec<Value>) -> Flow<Value> {
-        let Some(Value::Object(property)) = args.first() else { return Err(self.class_word("descriptor.unready").to_string().into()); };
+    fn property_work(&mut self, tag: u8, mut args: Vec<Value>) -> Flow<Value> {
+        let Some(Value::Object(property)) = args.first().cloned() else { return Err(self.class_word("descriptor.unready").to_string().into()); };
         if tag == 26 {
+            let opened=self.call_items(args[1..].to_vec())?;
+            let mut places=vec![None,None,None,None];
+            let mut at=0;
+            for (name,value) in opened {
+                let index=if let Some(name)=name {["property.fget","property.fset","property.fdel","property.doc"].iter().position(|p|self.class_word(p)==name).ok_or_else(||self.class_refusal())?}else{let i=at;at+=1;i};
+                if index>=4 || places[index].is_some(){return Err(self.class_refusal());}
+                places[index]=Some(value);
+            }
+            let subject=args[0].clone();
+            args=vec![subject];args.extend(places.into_iter().map(|v|v.unwrap_or(Value::Null)));
+            let Some(Value::Object(property))=args.first() else {return Err(self.class_refusal());};
             if args.len()>5 { return Err(self.class_refusal()); }
             let mut fields = Vec::new();
             for (at,part) in ["property.fget","property.fset","property.fdel"].iter().enumerate() {
@@ -433,6 +446,7 @@ impl Engine<'_> {
             let doc = if let Some(doc) = args.get(4).filter(|v|!matches!(v,Value::Null)) {doc.clone()}
                 else {match args.get(1) {Some(Value::Routine(f))=>f.doc.as_ref().map_or(Value::Null,|s|Value::text(s)),_=>Value::Null}};
             fields.push((self.class_word("doc").to_string(),doc));
+            fields.push(("#getter_doc".into(),Value::Flag(matches!(args.get(4),None|Some(Value::Null)))));
             *property.fields.borrow_mut() = fields;
             return Ok(Value::Null);
         }
@@ -441,7 +455,7 @@ impl Engine<'_> {
             let mut inputs = ["property.fget","property.fset","property.fdel","doc"].iter().map(|key|
                 property.fields.borrow().iter().find(|(n,_)|n==self.class_word(key)).map_or(Value::Null,|(_,v)|v.clone())).collect::<Vec<_>>();
             inputs[(tag-23) as usize] = args[1].clone();
-            if tag==23 {inputs[3]=Value::Null;}
+            if property.fields.borrow().iter().any(|(n,v)|n=="#getter_doc" && matches!(v,Value::Flag(true))) {inputs[3]=Value::Null;}
             return self.class_make(property.class.clone(),inputs);
         }
         if tag==20 && matches!(args.get(1),Some(Value::Null)) {return Ok(args[0].clone());}

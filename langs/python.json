@@ -1351,6 +1351,9 @@
   "ext.stmt.class.detail.property.deleter": [
     "deleter"
   ],
+  "ext.stmt.class.detail.property.doc": [
+    "doc"
+  ],
   "ext.stmt.class.detail.property.fdel": [
     "fdel"
   ],

@@ -6252,7 +6252,8 @@ impl<'a> Builder<'a> {
             let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
                 && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
                     && table.spells("syntax.group.close", &token.lexeme)));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
+            let dictionary_place=table.spells("ext.stmt.class.detail.namespace", &named) && table.single("op.index.open").map_or(false,|o|self.sign(o));
+            if reaching && !dictionary_place && table.flag("ext.op.member.pipes") && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
