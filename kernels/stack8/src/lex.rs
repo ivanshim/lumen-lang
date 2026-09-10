@@ -12,6 +12,10 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    StringBegin,
+    StringEnd,
+    StringField,
+    StringFault,
     Sign,
     LineEnd,
     /// The indentation of a line that has something on it.
@@ -79,6 +83,7 @@ fn drop_epilogue<'a>(source: &'a str, lang: &Lang) -> &'a str {
 }
 
 fn drop_comments(source: &str, lang: &Lang) -> String {
+    if !lang.long_quotes.is_empty() { return source.to_string(); }
     if lang.line_comments.is_empty() && lang.block_comments.is_empty() {
         return source.to_string();
     }
@@ -86,9 +91,25 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
     let mut ahead = source;
     let mut quote: Option<char> = None;
     let mut escaped = false;
-    let mut quoted_width = 1;
     while let Some(c) = ahead.chars().next() {
         let w = c.len_utf8();
+        if quote.is_none() {
+            if let Some(mark) = lang.long_quotes.iter().find(|mark| ahead.starts_with(mark.as_str())) {
+                let mut reach = mark.len();
+                while reach < ahead.len() {
+                    let rest = &ahead[reach..];
+                    if rest.starts_with(mark.as_str()) { reach += mark.len(); break; }
+                    let ch = rest.chars().next().expect("text remains");
+                    reach += ch.len_utf8();
+                    if ch == '\\' {
+                        if let Some(next) = ahead[reach..].chars().next() { reach += next.len_utf8(); }
+                    }
+                }
+                kept.push_str(&ahead[..reach]);
+                ahead = &ahead[reach..];
+                continue;
+            }
+        }
         match quote {
             Some(opener) => {
                 kept.push(c);
@@ -96,11 +117,8 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                     escaped = false;
                 } else if c == '\\' {
                     escaped = true;
-                } else if c == opener && ahead.chars().take(quoted_width).filter(|q| *q == opener).count() == quoted_width {
+                } else if c == opener {
                     quote = None;
-                    for _ in 1..quoted_width { kept.push(c); }
-                    ahead = &ahead[w * quoted_width..];
-                    continue;
                 }
                 ahead = &ahead[w..];
             }
@@ -115,9 +133,8 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
             }
             None if lang.quotes.contains(&c) => {
                 quote = Some(c);
-                quoted_width = if lang.triple_quotes && ahead.chars().take(3).filter(|q| *q == c).count() == 3 { 3 } else { 1 };
-                kept.push_str(&ahead[..w * quoted_width]);
-                ahead = &ahead[w * quoted_width..];
+                kept.push(c);
+                ahead = &ahead[w..];
             }
             None => {
                 if let Some((open, close)) = lang.block_comments.iter().find(|(o, _)| ahead.starts_with(o.as_str())) {
@@ -126,6 +143,9 @@ fn drop_comments(source: &str, lang: &Lang) -> String {
                     kept.extend(body[..end].chars().filter(|c| *c == '\n'));
                     ahead = &body[end..];
                 } else if lang.line_comments.iter().any(|m| ahead.starts_with(m.as_str())) {
+                    if lang.line_continuations.iter().any(|mark| kept.ends_with(mark.as_str())) {
+                        kept.push(' ');
+                    }
                     ahead = ahead.find('\n').map_or("", |at| &ahead[at..]);
                 } else {
                     kept.push(c);
@@ -258,7 +278,8 @@ impl<'a> Cursor<'a> {
             j += 1;
         }
         let end = self.text[j..].iter().position(|c| *c == '\n').map_or(self.text.len(), |p| j + p);
-        if self.text[j..end].iter().all(|c| c.is_whitespace()) {
+        if self.text[j..end].iter().all(|c| c.is_whitespace())
+            || self.lang.line_comments.iter().any(|mark| at_word(&self.text, j, mark)) {
             while self.at < end {
                 self.step();
             }
@@ -346,6 +367,15 @@ impl<'a> Cursor<'a> {
     fn escape(&mut self, how: &Escapes, s: &mut String, shielded: &mut Vec<usize>) -> Result<(), String> {
         self.step();
         let next = self.step();
+        if how.numbered && self.lang.line_continuations.iter().any(|mark| mark == "\\") {
+            if next == '\n' {
+                return Ok(());
+            }
+            if next == '\r' && self.look(0) == Some('\n') {
+                self.step();
+                return Ok(());
+            }
+        }
         if how.woven && Some(next) == self.lang.sigil {
             // An escaped sigil is just the sigil.
             shielded.push(s.chars().count());
@@ -395,7 +425,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
             shielded.push(s.chars().count());
-            s.push(char::from_u32(number & 0xFF).expect("a character of one byte"));
+            s.push(char::from_u32(if self.lang.codepoint_digits.is_some() { number } else { number & 0xFF }).expect("a character numbered in eights"));
             return Ok(());
         }
         // The same by number, but written bare: one figure in sixteens
@@ -420,6 +450,10 @@ impl<'a> Cursor<'a> {
                 't' => '\t',
                 'r' => '\r',
                 '0' => '\0',
+                'a' => '\u{7}',
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'v' => '\u{b}',
                 c => c,
             });
         } else {
@@ -429,10 +463,225 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn string(&mut self, quote: char, verbatim: bool) -> Result<(), String> {
+    fn string_open(&self) -> Option<(usize, String, bool, bool)> {
+        let lang = self.lang;
+        let mut count = 0;
+        let (mut raw, mut bytes, mut plain, mut format) = (false, false, false, false);
+        while let Some(c) = self.look(count) {
+            if lang.quotes.contains(&c) { break; }
+            if count == 2 { return None; }
+            if lang.raw_prefixes.contains(&c) && !raw { raw = true; }
+            else if lang.byte_prefixes.contains(&c) && !bytes { bytes = true; }
+            else if lang.plain_prefixes.contains(&c) && !plain { plain = true; }
+            else if lang.format_prefixes.contains(&c) && !format { format = true; }
+            else { return None; }
+            count += 1;
+        }
+        if count == 2 && (!raw || plain || bytes == format) { return None; }
+        let quote = self.look(count).filter(|c| lang.quotes.contains(c))?;
+        let mark = lang.long_quotes.iter().filter(|q| at_word(&self.text, self.at + count, q))
+            .max_by_key(|q| q.len()).cloned().unwrap_or_else(|| quote.to_string());
+        Some((count, mark, raw, format))
+    }
+
+    fn string_words(&self) -> String {
+        self.lang.string_amiss.clone().unwrap_or_else(|| "Invalid string literal".into())
+    }
+
+    fn string_text(&mut self, text: &mut String, fault: &mut bool, line: usize, col: usize) {
+        if *fault {
+            self.push(Shape::StringFault, self.lang.escape_unavailable.clone().unwrap_or_else(|| "Unicode escape cannot be represented".into()), 0, line, col);
+        } else {
+            self.push(Shape::Quote, std::mem::take(text), 0, line, col);
+        }
+        text.clear();
+        *fault = false;
+    }
+
+    /// A prefixed or long string, with each field kept apart from its
+    /// text until the assembler has read the expression it holds.
+    fn rich_string(&mut self, prefix: usize, mark: &str, raw: bool, format: bool) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        let wide = if self.lang.triple_quotes && self.look(1) == Some(quote) && self.look(2) == Some(quote) { 3 } else { 1 };
-        for _ in 0..wide { self.step(); }
+        let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
+        for _ in 0..prefix + mark.chars().count() { self.step(); }
+        if format { self.push(Shape::StringBegin, String::new(), 0, line, col); }
+        let (mut text, mut fault) = (String::new(), false);
+        loop {
+            if at_word(&self.text, self.at, mark) {
+                for _ in mark.chars() { self.step(); }
+                break;
+            }
+            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            if bytes && !c.is_ascii() { return Err(self.string_words()); }
+            if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
+            if format && (c == '{' || c == '}') {
+                if self.look(1) == Some(c) {
+                    self.step(); self.step(); text.push(c);
+                } else if c == '{' {
+                    self.string_text(&mut text, &mut fault, line, col);
+                    self.string_field(raw)?;
+                } else { return Err(self.string_words()); }
+            } else if c == '\\' {
+                self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
+            } else { text.push(self.step()); }
+        }
+        self.string_text(&mut text, &mut fault, line, col);
+        if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
+        Ok(())
+    }
+
+    fn rich_escape(&mut self, raw: bool, format: bool, bytes: bool, text: &mut String, fault: &mut bool) -> Result<(), String> {
+        let Some(next) = self.look(1) else { return Err(self.string_words()); };
+        if raw {
+            text.push(self.step());
+            if !format || !matches!(next, '{' | '}') { text.push(self.step()); }
+            return Ok(());
+        }
+        let lang = self.lang;
+        if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {
+            text.push(self.step()); text.push(self.step());
+            return Ok(());
+        }
+        if bytes && lang.octal_escapes && next.is_digit(8) {
+            self.step();
+            let mut number = 0;
+            for _ in 0..3 {
+                let Some(digit) = self.look(0).and_then(|c| c.to_digit(8)) else { break; };
+                number = number * 8 + digit;
+                self.step();
+            }
+            text.push(char::from((number & 255) as u8));
+            return Ok(());
+        }
+        if Some(next) == lang.named_letter && self.look(2) == Some('{') {
+            self.step(); self.step(); self.step();
+            while self.look(0).map_or(false, |c| c != '}') { self.step(); }
+            if self.look(0).is_none() { return Err(self.string_words()); }
+            self.step(); *fault = true;
+            return Ok(());
+        }
+        let digits = if Some(next) == lang.codepoint_letter { lang.codepoint_digits }
+            else if Some(next) == lang.wide_letter { lang.wide_digits } else { None };
+        if let Some(digits) = digits {
+            self.step(); self.step();
+            let mut number = 0u32;
+            for _ in 0..digits {
+                let d = self.look(0).and_then(|c| c.to_digit(16))
+                    .ok_or_else(|| lang.codepoint_amiss.clone().unwrap_or_else(|| self.string_words()))?;
+                number = number.checked_mul(16).and_then(|n| n.checked_add(d))
+                    .ok_or_else(|| lang.codepoint_beyond.clone().unwrap_or_else(|| self.string_words()))?;
+                self.step();
+            }
+            if number > 0x10ffff { return Err(lang.codepoint_beyond.clone().unwrap_or_else(|| self.string_words())); }
+            match char::from_u32(number) { Some(c) => text.push(c), None => *fault = true }
+            return Ok(());
+        }
+        if Some(next) == lang.byte_letter {
+            if let Some(digits) = lang.byte_digits {
+                if !(0..digits).all(|n| self.look(n + 2).map_or(false, |c| c.is_ascii_hexdigit())) {
+                    return Err(lang.codepoint_amiss.clone().unwrap_or_else(|| self.string_words()));
+                }
+            }
+        }
+        if format && matches!(next, '{' | '}') { text.push(self.step()); return Ok(()); }
+        if lang.continued_strings && matches!(next, '\n' | '\r') {
+            self.step(); self.step();
+            if next == '\r' && self.look(0) == Some('\n') { self.step(); }
+            return Ok(());
+        }
+        let letters: Vec<char> = lang.escape_letters.iter().chain(&lang.control_escapes).copied().collect();
+        let how = Escapes { letters: &letters, quote: None, numbered: true, woven: false };
+        self.escape(&how, text, &mut Vec::new())
+    }
+
+    fn field_space(&mut self) -> String {
+        let mut kept = String::new();
+        loop {
+            if self.look(0).map_or(false, |c| c.is_whitespace()) { kept.push(self.step()); }
+            else if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
+            } else { break; }
+        }
+        kept
+    }
+
+    fn string_field(&mut self, raw: bool) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        self.step();
+        let mut expression = String::new();
+        let mut brackets = Vec::new();
+        loop {
+            let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            if let Some((prefix, mark, is_raw, format)) = self.string_open() {
+                let saved = self.out.len();
+                let began = self.at;
+                self.rich_string(prefix, &mark, is_raw, format)?;
+                self.out.truncate(saved);
+                expression.extend(self.text[began..self.at].iter());
+                continue;
+            }
+            if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
+                continue;
+            }
+            if brackets.is_empty() && (matches!(c, '}' | ':') || c == '!' && self.look(1) != Some('=')
+                || c == '=' && self.look(1) != Some('=') && !matches!(self.text.get(self.at.wrapping_sub(1)), Some('!' | '<' | '>' | '='))) { break; }
+            match c {
+                '(' => brackets.push(')'), '[' => brackets.push(']'), '{' => brackets.push('}'),
+                ')' | ']' | '}' => { if brackets.pop() != Some(c) { return Err(self.string_words()); } }
+                _ => {}
+            }
+            expression.push(self.step());
+        }
+        if expression.trim().is_empty() { return Err(self.string_words()); }
+        let debug = self.look(0) == Some('=');
+        if debug {
+            self.step();
+            let shown = format!("{}={}", expression, self.field_space());
+            self.push(Shape::Quote, shown, 0, line, col);
+        }
+        let mut conversion = String::new();
+        if self.look(0) == Some('!') {
+            self.step();
+            let Some(c @ ('r' | 's' | 'a')) = self.look(0) else { return Err(self.string_words()); };
+            conversion.push(c); self.step();
+            self.field_space();
+        } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
+        self.push(Shape::StringField, conversion, 0, line, col);
+        let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
+        self.push(Shape::Sign, group.open.clone(), 0, line, col);
+        let mut inner = Cursor { lang: self.lang, text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new() };
+        inner.run(false)?;
+        self.out.extend(inner.out.into_iter().filter(|t| !matches!(t.shape, Shape::Lead | Shape::LineEnd)));
+        self.push(Shape::Sign, group.close.clone(), 0, line, col);
+        self.push(Shape::StringBegin, String::new(), 0, line, col);
+        let (mut text, mut fault) = (String::new(), false);
+        if self.look(0) == Some(':') {
+            self.step();
+            loop {
+                match self.look(0) {
+                    Some('}') => break,
+                    Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(raw)?; }
+                    Some('\\') => self.rich_escape(raw, true, false, &mut text, &mut fault)?,
+                    Some(_) => text.push(self.step()),
+                    None => return Err(self.string_words()),
+                }
+            }
+        }
+        if self.look(0) != Some('}') { return Err(self.string_words()); }
+        self.step();
+        self.string_text(&mut text, &mut fault, line, col);
+        self.push(Shape::StringEnd, String::new(), 0, line, col);
+        Ok(())
+    }
+
+    fn string(&mut self, quote: char) -> Result<(), String> {
+        let (line, col) = (self.row, self.column);
+        let width = self.lang.long_quotes.iter().find(|mark| {
+            mark.chars().all(|ch| ch == quote)
+                && mark.chars().enumerate().all(|(i, ch)| self.look(i) == Some(ch))
+        }).map_or(1, |mark| mark.chars().count());
+        for _ in 0..width { self.step(); }
         let raw = self.lang.raw_quotes.contains(&quote);
         let woven = self.lang.interpolating.contains(&quote);
         let how = Escapes {
@@ -450,16 +699,11 @@ impl<'a> Cursor<'a> {
         loop {
             let Some(c) = self.look(0) else { return Err(format!("Unterminated {} string", quote)) };
             if c == '\\' && self.look(1).is_some() {
-                if verbatim {
-                    s.push(self.step());
-                    s.push(self.step());
-                    continue;
-                }
                 self.escape(&how, &mut s, &mut shielded)?;
                 continue;
             }
-            if (0..wide).all(|at| self.look(at) == Some(quote)) {
-                for _ in 0..wide { self.step(); }
+            if c == quote && (0..width).all(|i| self.look(i) == Some(quote)) {
+                for _ in 0..width { self.step(); }
                 break;
             }
             self.step();
@@ -662,7 +906,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn number(&mut self) {
+    fn number(&mut self) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         let lang = self.lang;
         let mut s = String::new();
@@ -677,12 +921,14 @@ impl<'a> Cursor<'a> {
             let mut it = prefix.chars();
             let (Some(digit), Some(letter)) = (it.next(), it.next()) else { return false };
             s.len() == 1 && s.starts_with(digit) && self.look(0) == Some(letter)
-                && self.look(1).map_or(false, |c| c.is_digit(*base))
+                && (lang.number_strict || self.look(1).map_or(false, |c| c.is_digit(*base))
+                    || (lang.separator_after_prefix && self.look(1).map_or(false, |c| broken(&c))
+                        && self.look(2).map_or(false, |c| c.is_digit(*base))))
         });
         if let Some((prefix, base)) = in_base.cloned() {
             s.push(prefix.chars().nth(1).expect("a letter after the digit"));
             self.step();
-            while let Some(c) = self.look(0).filter(|c| c.is_digit(base) || broken(c)) {
+            while let Some(c) = self.look(0).filter(|c| c.is_digit(base) || broken(c) || (lang.number_strict && lang.extends_name(*c))) {
                 s.push(c);
                 self.step();
             }
@@ -700,7 +946,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && self.look(1).map_or(false, |c| c.is_ascii_digit()) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.bare_number_point || lang.number_point_edge || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -711,17 +957,27 @@ impl<'a> Cursor<'a> {
             let letter = self.look(0).filter(|c| lang.exponent_letters.contains(c));
             let signed = matches!(self.look(1), Some('+') | Some('-'));
             let digits_at = if signed { 2 } else { 1 };
-            if letter.is_some() && self.look(digits_at).map_or(false, |c| c.is_ascii_digit()) {
+            if letter.is_some() && (lang.number_strict || self.look(digits_at).map_or(false, |c| c.is_ascii_digit())) {
                 for _ in 0..digits_at {
                     s.push(self.step());
                 }
-                while let Some(c) = self.look(0).filter(char::is_ascii_digit) {
+                while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
                     self.step();
                 }
             }
         }
+        if self.look(0).map_or(false, |c| lang.imaginary_letters.contains(&c)) {
+            s.push(self.step());
+        }
+        if lang.number_strict {
+            while self.look(0).map_or(false, |c| lang.extends_name(c)) {
+                s.push(self.step());
+            }
+            number_spelling(&s, lang)?;
+        }
         self.push(Shape::Numeral, s, 0, line, col);
+        Ok(())
     }
 
     fn word(&mut self, prefixed: bool) {
@@ -738,7 +994,7 @@ impl<'a> Cursor<'a> {
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
-        for name in lang.builtins.keys() {
+        for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
             if name.len() <= s.len() || !name.starts_with(s.as_str()) {
                 continue;
             }
@@ -809,14 +1065,36 @@ impl<'a> Cursor<'a> {
                     continue;
                 }
             }
+            if !lang.long_quotes.is_empty() {
+                if lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
+                    while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
+                    continue;
+                }
+                if let Some((prefix, mark, raw, format)) = self.string_open() {
+                    self.rich_string(prefix, &mark, raw, format)?;
+                    continue;
+                }
+                if lang.adjacent_strings && self.look(0) == Some('\\') && self.look(1) == Some('\n') {
+                    self.step(); self.step();
+                    continue;
+                }
+            }
             let c = self.text[self.at];
-            let prefixed = lang.raw_string_prefixes.iter().map(|p| (p, true))
-                .chain(lang.text_string_prefixes.iter().map(|p| (p, false)))
-                .find(|(p, _)| at_word(&self.text, self.at, p)
-                    && self.look(p.chars().count()).map_or(false, |q| lang.quotes.contains(&q)));
-            if let Some((mark, verbatim)) = prefixed {
-                for _ in mark.chars() { self.step(); }
-                self.string(self.look(0).expect("the quote after its prefix"), verbatim)?;
+            let joined = lang.line_continuations.iter().find_map(|mark| {
+                if !at_word(&self.text, self.at, mark) {
+                    return None;
+                }
+                let width = mark.chars().count();
+                match (self.look(width), self.look(width + 1)) {
+                    (Some('\n'), _) => Some(width + 1),
+                    (Some('\r'), Some('\n')) => Some(width + 2),
+                    _ => None,
+                }
+            });
+            if let Some(width) = joined {
+                for _ in 0..width {
+                    self.step();
+                }
                 continue;
             }
             if c == '\n' {
@@ -828,10 +1106,18 @@ impl<'a> Cursor<'a> {
                 self.step();
             } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
                 self.heredoc()?;
+            } else if lang.line_continuations.iter().any(|m| at_word(&self.text, self.at, m)) {
+                let mark = lang.line_continuations.iter().find(|m| at_word(&self.text, self.at, m)).unwrap();
+                for _ in mark.chars() { self.step(); }
+                if self.look(0) == Some('\r') { self.step(); }
+                if self.look(0) != Some('\n') { return Err(lang.continuation_amiss.first().cloned().unwrap_or_default()); }
+                self.step();
             } else if lang.quotes.contains(&c) {
-                self.string(c, false)?;
-            } else if c.is_ascii_digit() {
-                self.number();
+                self.string(c)?;
+            } else if c.is_ascii_digit()
+                || ((lang.bare_number_point || lang.number_point_edge) && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit()))
+            {
+                self.number()?;
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;
             } else if lang.name_leads.contains(&c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {
@@ -1062,4 +1348,71 @@ fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
 /// stands nowhere after it.
 fn word_at(chars: &[char], from: usize, mark: &str) -> Option<usize> {
     (from..chars.len()).find(|at| at_word(chars, *at, mark))
+}
+
+/// Check the places where digits and separating marks may stand before
+/// the marks are taken away. The words of a complaint belong to the table.
+pub fn number_spelling(text: &str, lang: &Lang) -> Result<(), String> {
+    let amiss = || lang.number_amiss.clone().unwrap_or_else(|| format!("Invalid number: {}", text));
+    let separated = |s: &str, radix: u32, after_prefix: bool| {
+        let chars: Vec<char> = s.chars().collect();
+        !chars.is_empty() && chars.iter().enumerate().all(|(i, c)| {
+            c.is_digit(radix) || (lang.digit_separators.contains(c)
+                && (i == 0 && after_prefix || i > 0 && chars[i - 1].is_digit(radix))
+                && chars.get(i + 1).map_or(false, |d| d.is_digit(radix)))
+        })
+    };
+    for (prefix, radix) in &lang.base_prefixes {
+        if let Some(body) = text.strip_prefix(prefix.as_str()) {
+            let (plain, pieces) = match radix {
+                2 => (&lang.binary_amiss, &lang.binary_digit_amiss),
+                8 => (&lang.octal_amiss, &lang.octal_digit_amiss),
+                _ => (&lang.hex_amiss, &lang.binary_digit_amiss),
+            };
+            let mut may_separate = true;
+            for c in body.chars() {
+                if c.is_digit(*radix) {
+                    may_separate = true;
+                } else if lang.digit_separators.contains(&c) && may_separate {
+                    may_separate = false;
+                } else {
+                    if *radix < 10 && pieces.len() == 2 && c.is_ascii_digit() {
+                        return Err(format!("{}{}{}", pieces[0], c, pieces[1]));
+                    }
+                    return Err(plain.clone().unwrap_or_else(amiss));
+                }
+            }
+            return if separated(body, *radix, true) { Ok(()) } else { Err(plain.clone().unwrap_or_else(amiss)) };
+        }
+    }
+    let imaginary = text.chars().last().filter(|c| lang.imaginary_letters.contains(c));
+    let bare = imaginary.map_or(text, |c| &text[..text.len() - c.len_utf8()]);
+    let (mantissa, power) = match bare.find(|c| lang.exponent_letters.contains(&c)) {
+        Some(at) => (&bare[..at], Some(&bare[at + 1..])),
+        None => (bare, None),
+    };
+    if let Some(exponent) = power {
+        if !separated(exponent.trim_start_matches(['+', '-']), 10, false)
+            || exponent.starts_with("++") || exponent.starts_with("--") || exponent.starts_with("+-") || exponent.starts_with("-+") {
+            return Err(amiss());
+        }
+    }
+    let point = lang.point.and_then(|c| mantissa.find(c).map(|at| (at, c.len_utf8())));
+    if let Some((at, width)) = point {
+        let (left, right) = (&mantissa[..at], &mantissa[at + width..]);
+        if left.is_empty() && right.is_empty()
+            || !left.is_empty() && !separated(left, 10, false)
+            || !right.is_empty() && !separated(right, 10, false) {
+            return Err(amiss());
+        }
+    } else if !separated(mantissa, 10, false) {
+        return Err(amiss());
+    }
+    if point.is_none() && power.is_none() && imaginary.is_none() && bare.starts_with('0')
+        && bare.chars().any(|c| c.is_ascii_digit() && c != '0') {
+        if let Some(words) = &lang.number_leading_zero {
+            return Err(words.clone());
+        }
+    }
+    Ok(())
 }

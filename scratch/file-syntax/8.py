@@ -1,0 +1,1 @@
+print("\N{LATIN CAPITAL LETTER A}")

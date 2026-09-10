@@ -1,0 +1,11 @@
+d = {1: 2, 3: 4}
+print(1 in d)
+print(2 in d)
+print(2 not in d)
+print(not 1 in d)
+print(2 in [1, 2, 3])
+print("bc" in "abcd")
+print("zz" not in "abcd")
+print(sum([x for x in range(5) if x in d]))
+print(sum([x for x in range(5) if x not in d]))
+print({1: 2, 3: 4} in [{3: 4, 1: 2}])

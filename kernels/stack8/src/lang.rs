@@ -43,19 +43,83 @@ pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
+    pub continuation_amiss: Vec<String>,
+    pub type_params_open: Vec<String>,
+    pub type_params_close: Vec<String>,
 
+    pub line_continuations: Vec<String>,
+    pub bare_number_point: bool,
+    pub separator_after_prefix: bool,
+    pub whole_bits: bool,
+    pub print_real_point: bool,
+    pub with_as: Vec<String>,
+    pub with_unready: Vec<String>,
+    pub yield_from: Vec<String>,
+    pub member_pipes: bool,
+    pub tuple_unready: Vec<String>,
+    pub bytes_unready: Vec<String>,
+    pub format_unready: Vec<String>,
+    pub identity_unready: Vec<String>,
+    pub in_values: Vec<String>,
+    pub in_not: Vec<String>,
+    pub in_unready: Vec<String>,
+    pub if_else: Vec<String>,
+    pub assign_chain: bool,
+    pub deferred_escapes: Vec<char>,
+    pub imaginary_suffixes: Vec<String>,
+    pub await_words: Vec<String>,
+    pub async_words: Vec<String>,
+    pub match_words: Vec<String>,
+    pub match_cases: Vec<String>,
+    pub type_alias_words: Vec<String>,
+    pub type_parameters: bool,
+    pub pipe_attribute: bool,
     pub line_comments: Vec<String>,
+    pub ellipsis_words: Vec<String>,
+    pub ellipsis_unready: Option<String>,
+    pub lambda_words: Vec<String>,
+    pub lambda_unready: Option<String>,
+    pub expression_assign: Vec<String>,
+    pub chained_calls: bool,
+    pub chained_names: bool,
+    pub with_words: Vec<String>,
+    pub with_as_words: Vec<String>,
+    pub tuple_marks: Vec<String>,
+    pub matrix_words: Vec<String>,
+    pub matrix_unready: Option<String>,
     pub block_comments: Vec<(String, String)>,
     pub quotes: Vec<char>,
-    pub raw_quotes: Vec<char>,
-    pub triple_quotes: bool,
-    pub raw_string_prefixes: Vec<String>,
-    pub text_string_prefixes: Vec<String>,
+    pub long_quotes: Vec<String>,
     pub adjacent_strings: bool,
-    pub identity_unready: Option<String>,
-    pub comparison_chains: bool,
-    pub range_stop_only: bool,
+    pub nonlocal_words: Vec<String>,
+    pub nonlocal_unrun: Vec<String>,
+    pub with_unrun: Vec<String>,
+    pub async_unrun: Vec<String>,
+    pub del_words: Vec<String>,
+    pub del_unrun: String,
+    pub loop_else: bool,
+    pub continued_escapes: bool,
+    pub yield_words: Vec<String>,
+    pub yield_from_words: Vec<String>,
+    pub raw_quotes: Vec<char>,
+    pub raw_prefixes: Vec<char>,
+    pub byte_prefixes: Vec<char>,
+    pub plain_prefixes: Vec<char>,
+    pub format_prefixes: Vec<char>,
+    pub string_amiss: Option<String>,
+    pub bytes_unavailable: Option<String>,
+    pub format_unavailable: Option<String>,
+    pub string_unready: Option<String>,
+    pub range_zero_start: bool,
+    pub byte_digits: Option<usize>,
+    pub codepoint_digits: Option<usize>,
+    pub wide_letter: Option<char>,
+    pub wide_digits: Option<usize>,
+    pub named_letter: Option<char>,
+    pub escape_unavailable: Option<String>,
     pub escape_letters: Vec<char>,
+    pub control_escapes: Vec<char>,
+    pub continued_strings: bool,
     /// The letter that, after the escape mark, begins a character
     /// named by its number, and the brackets that number stands in.
     pub codepoint_letter: Option<char>,
@@ -71,8 +135,20 @@ pub struct Lang {
     pub byte_letter: Option<char>,
     /// What a language says of a number it cannot read.
     pub number_amiss: Option<String>,
+    pub imaginary_letters: Vec<char>,
+    pub imaginary_unready: Option<String>,
+    pub number_point_edge: bool,
+    pub number_strict: bool,
+    pub number_leading_zero: Option<String>,
+    pub binary_amiss: Option<String>,
+    pub binary_digit_amiss: Vec<String>,
+    pub octal_amiss: Option<String>,
+    pub octal_digit_amiss: Vec<String>,
+    pub hex_amiss: Option<String>,
+
     pub prologue: Option<String>,
     pub point: Option<char>,
+    pub bare_point: bool,
     pub base_mark: Option<char>,
     pub exponent_mark: Option<char>,
     pub hex_prefix: Option<String>,
@@ -116,6 +192,7 @@ pub struct Lang {
     pub block_closes: Vec<String>,
     pub block_intros: Vec<String>,
     pub stmt_ends: Vec<String>,
+    pub stmt_separators: Vec<String>,
     pub grouping: Option<Brackets>,
     pub calling: Option<Brackets>,
     pub argument_labels: Vec<String>,
@@ -125,10 +202,14 @@ pub struct Lang {
     pub pair_mark: Option<String>,
     pub index_brackets: Option<Brackets>,
     pub text_indexable: bool,
+    pub whole_bits_amiss: Option<String>,
+    pub whole_bits_large: Option<String>,
+    pub matrix_unavailable: Option<String>,
     pub slice_marks: Vec<String>,
     pub slice_ellipsis: Vec<String>,
     pub slice_zero: Option<String>,
     pub slice_bounds: Option<String>,
+    pub index_spread_unsupported: Option<String>,
     pub slice_unsupported: Option<String>,
     pub slice_assign: Option<String>,
     pub slice_length: Vec<String>,
@@ -166,6 +247,8 @@ pub struct Lang {
     pub break_words: Vec<String>,
     pub continue_words: Vec<String>,
     pub function_words: Vec<String>,
+    pub async_functions: Vec<String>,
+    pub async_functions_unavailable: Vec<String>,
     pub return_marks: Vec<String>,
     pub named_result: bool,
     pub pass_words: Vec<String>,
@@ -180,6 +263,28 @@ pub struct Lang {
     pub quote_close: Vec<String>,
 
     pub builtins: HashMap<String, Builtin>,
+    pub print_sep: Vec<String>,
+    pub print_end: Vec<String>,
+    pub print_file: Vec<String>,
+    pub print_flush: Vec<String>,
+    pub print_file_error: Vec<String>,
+    pub print_file_output: Vec<String>,
+    pub print_file_unready: Vec<String>,
+    pub print_sep_amiss: Vec<String>,
+    pub print_end_amiss: Vec<String>,
+    pub to_int_base: Vec<String>,
+    pub to_int_base_amiss: Vec<String>,
+    pub to_int_text_amiss: Vec<String>,
+    pub to_int_text_required: Vec<String>,
+    pub to_real_text: bool,
+    pub to_real_text_amiss: Vec<String>,
+    pub to_string_object: Vec<String>,
+    pub to_string_encoding: Vec<String>,
+    pub to_string_errors: Vec<String>,
+    pub to_string_unready: Vec<String>,
+    pub range_zero: Vec<String>,
+    pub range_integer: Vec<String>,
+    pub range_index: Vec<String>,
     pub holes: Vec<String>,
     pub args_binding: Option<String>,
     /// The same arguments as a list, the file the run was started with
@@ -279,6 +384,9 @@ pub struct Lang {
     /// worth, the way arithmetic reads one, rather than reading it
     /// straight as bits.
     pub shift_by_number: bool,
+    pub bit_room: Option<String>,
+    pub plus_non_number: Option<String>,
+    pub left_shift_unready: Option<String>,
     /// Whether dividing two whole numbers evenly gives a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -346,31 +454,13 @@ pub struct Lang {
     /// `x op= e` for every binary operator, when the switch is on.
     pub compound: HashMap<String, Action>,
     pub static_words: Vec<String>,
+    pub class_bases_open: Vec<String>,
+    pub class_bases_close: Vec<String>,
+    pub class_unready: Vec<String>,
+    pub yield_unrun: Vec<String>,
+    pub scope_unready: Vec<String>,
     pub global_words: Vec<String>,
-    pub type_params_open: Vec<String>,
-    pub type_params_close: Vec<String>,
-    pub type_alias_words: Vec<String>,
-    pub class_suite_words: Vec<String>,
-    pub class_suite_unsupported: Vec<String>,
-    pub with_words: Vec<String>,
-    pub with_as: Vec<String>,
-    pub with_open: Vec<String>,
-    pub with_close: Vec<String>,
-    pub with_unsupported: Vec<String>,
-    pub nonlocal_words: Vec<String>,
-    pub nonlocal_unsupported: Vec<String>,
-    pub delete_words: Vec<String>,
-    pub delete_unsupported: Vec<String>,
-    pub yield_words: Vec<String>,
-    pub yield_from: Vec<String>,
-    pub yield_unsupported: Vec<String>,
-    pub tuple_separator: Vec<String>,
-    pub tuple_unsupported: Vec<String>,
-    pub value_spread: Vec<String>,
-    pub value_spread_unsupported: Vec<String>,
-    pub index_spread_unsupported: Vec<String>,
-    pub conditional_words: Vec<String>,
-    pub short_bare: bool,
+    pub binding_unrun: String,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
@@ -378,6 +468,12 @@ pub struct Lang {
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
+    pub match_wildcards: Vec<String>,
+    pub match_ors: Vec<String>,
+    pub match_guards: Vec<String>,
+    pub match_as: Vec<String>,
+    pub match_unready: Vec<String>,
+    pub match_invalid: Vec<String>,
     pub switch_words: Vec<String>,
     pub case_words: Vec<String>,
     pub default_words: Vec<String>,
@@ -418,8 +514,22 @@ pub struct Lang {
     pub amiss_words: Vec<(&'static str, String)>,
     /// Letters that open a decimal exponent in a number (1e9).
     pub exponent_letters: Vec<char>,
+    pub imaginary_unrun: String,
     /// A sign that leaves its operand as it is.
     pub plus_words: Vec<String>,
+    pub if_else_words: Vec<String>,
+    pub lambda_unsupported: Option<String>,
+    pub lambda_enclosing: Option<String>,
+    pub identity_not: Vec<String>,
+    pub identity_unsupported: Option<String>,
+    pub membership_words: Vec<String>,
+    pub membership_not: Vec<String>,
+    pub membership_unsupported: Option<String>,
+    pub chained_comparisons: bool,
+    pub rem_formats_text: bool,
+    pub format_unsupported: Option<String>,
+    pub format_arguments: Option<String>,
+
     pub hush_words: Vec<String>,
     /// The mark written before a value to say that the value spells a
     /// name, and the name is what is meant.
@@ -522,6 +632,11 @@ pub struct Lang {
     /// The words that open a taking-apart: a list of places written on
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
+    pub unpack_rest: Vec<String>,
+    pub unpack_short: Option<String>,
+    pub unpack_long: Option<String>,
+    pub unpack_unwalkable: Option<String>,
+    pub unpack_amiss: Option<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
     /// the way that is not there yet.
@@ -539,9 +654,38 @@ pub struct Lang {
     pub append_index: bool,
     /// `for v in a` walks what a holds when a is not a range.
     pub for_collections: bool,
+    pub comprehension_async: Vec<String>,
+    pub comprehension_async_unavailable: Vec<String>,
+    pub comprehension_target_unavailable: Vec<String>,
+    pub sum_non_number: Vec<String>,
+    pub range_non_integer: Vec<String>,
+    pub range_zero_step: Vec<String>,
+
+    pub comprehension_for: Vec<String>,
+    pub comprehension_in: Vec<String>,
+    pub comprehension_if: Vec<String>,
+    pub set_literals: bool,
+    pub tuple_separator: Option<String>,
+    pub or_maps: bool,
+    pub unordered_maps: bool,
+    pub print_separator: Option<String>,
+    pub print_ending: Option<String>,
+    pub print_option_type: Option<String>,
+    pub map_argument_amiss: Option<String>,
+    pub map_pair_amiss: Option<String>,
+    pub array_spread: Vec<String>,
+    pub map_spread: Vec<String>,
+    pub collection_unwalkable: Vec<String>,
+    pub spread_unmapped: Vec<String>,
+    pub comprehension_unpack_amiss: Vec<String>,
+    pub range_value: bool,
+
 
     /// Classes and their objects.
     pub class_words: Vec<String>,
+    pub bases_open: Option<String>,
+    pub bases_close: Option<String>,
+    pub explicit_this: bool,
     pub extends_words: Vec<String>,
     pub new_words: Vec<String>,
     /// The name a method knows its own object by.
@@ -626,7 +770,6 @@ pub struct Lang {
     pub call_builtin_amiss: Vec<String>,
     pub spread_amiss: Vec<String>,
     pub spread_pairs_amiss: Vec<String>,
-    pub defaults_amiss: Vec<String>,
     pub parameters_amiss: Vec<String>,
 
     /// The word a routine written short says, and the mark standing
@@ -717,20 +860,21 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
-w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported
-w ext.lexical.string.raw_prefix | w ext.lexical.string.text_prefix | b ext.syntax.string.adjacent
-w ext.op.identity | w ext.op.identity.unsupported | b ext.op.comparison.chain
-b ext.stmt.for.range.stop
-w ext.stmt.type_params.open | w ext.stmt.type_params.close | w ext.stmt.type_alias | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare
+w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported | w ext.lexical.string.raw_prefix | w ext.lexical.string.text_prefix | b ext.syntax.string.adjacent | w ext.op.identity.unsupported | b ext.op.comparison.chain | b ext.stmt.for.range.stop | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.stmt.yield.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare | b ext.lexical.string.triple
+
+w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point | w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready | w ext.stmt.type_params.close | w ext.stmt.type_params.open | w ext.stmt.for.target.unready | w ext.op.identity.unready | w ext.op.identity.negated | w ext.op.identity | w ext.op.in.unready | w ext.op.in.negated | w ext.op.in | w ext.stmt.del.unrun | w ext.stmt.async.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.with.unready | w ext.op.lambda.unready | b ext.op.member.pipes | w ext.op.tuple.unready | w ext.lexical.number.imaginary.unready | w ext.lexical.number.imaginary | w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | b ext.lexical.escape.continued | b ext.stmt.loop.else | w ext.stmt.with.unrun | w ext.stmt.async.unrun | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters | b ext.op.pipe.attribute
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
-w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
-w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.string.triple | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step | w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.stmt.assign.names.chained | b ext.syntax.call.chained | w ext.op.lambda | w ext.op.lambda.unready | w ext.op.assign.expression | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.op.contains | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss
+w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
+ | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.match.invalid
+
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
-w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
+w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | b ext.lexical.number.point_edge | b ext.lexical.number.separator.strict | w ext.lexical.number.amiss.leading_zero | w ext.lexical.number.amiss.binary | w ext.lexical.number.amiss.binary.digit | w ext.lexical.number.amiss.octal | w ext.lexical.number.amiss.octal.digit | w ext.lexical.number.amiss.hex | w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments | b ext.stmt.loop.else | b ext.lexical.string.adjacent | w ext.lexical.string.prefix.bytes | w ext.lexical.string.bytes.unready | w ext.op.lambda | w ext.lexical.number.imaginary.unrun | w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels | b ext.lexical.number.point.bare
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new
 w ext.stmt.class.this | w ext.stmt.class.constructor | w ext.stmt.class.destructor | w ext.stmt.class.reader | w ext.stmt.class.writer | w ext.stmt.class.caller
@@ -741,7 +885,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
+w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable | w ext.stmt.function.async | w ext.stmt.function.async.unavailable | w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers | w ext.op.bit.left.unready
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
@@ -755,18 +899,22 @@ w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
+w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
-w ext.system.fault.modulo | w ext.system.fault.shift | b ext.op.bit.shift.numbers
+w ext.system.fault.modulo | w ext.system.fault.shift
 w ext.op.name_by_value | b ext.op.cast | w ext.stmt.unpack
+w ext.op.tuple | w ext.stmt.unpack.rest | b ext.stmt.assign.chain
+w ext.stmt.unpack.short | w ext.stmt.unpack.long | w ext.stmt.unpack.unwalkable | w ext.stmt.unpack.amiss
 w ext.system.source.routine | w ext.system.source.class | w ext.system.source.method
 b ext.op.member.by_value | b ext.op.index.text | w ext.op.index.text.first | w ext.system.globals
 w ext.op.reference.unshared.written | w ext.op.reference.unshared.given | w ext.op.reference.unshared.handed
-b ext.stmt.terminator.only
+b ext.stmt.terminator.only | w ext.stmt.separator
 w ext.stmt.block.instead | w ext.stmt.block.instead.close | b ext.op.spelled | b ext.system.class.folded
-w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
+
+w ext.lexical.line_continuation | w ext.lexical.string.bytes.unavailable | w ext.lexical.string.format.unavailable | w ext.lexical.string.long | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.amiss | n ext.lexical.escape.byte.digits | n ext.lexical.escape.codepoint.digits | w ext.lexical.escape.codepoint.wide | n ext.lexical.escape.codepoint.wide.digits | w ext.lexical.escape.named | w ext.lexical.escape.unavailable | w ext.lexical.string.value.unready | b ext.builtin.range.zero_start | w ext.lexical.string.unready
+b ext.lexical.escape.continued | w ext.lexical.escape.controls | w ext.lexical.escape.codepoint | w ext.lexical.escape.codepoint.open | w ext.lexical.escape.codepoint.close
 w ext.lexical.escape.codepoint.amiss | w ext.lexical.escape.codepoint.beyond | w ext.lexical.number.amiss
 w ext.lexical.escape.byte | w ext.lexical.interpolating.index.amiss | w ext.builtin.eval.place
 w ext.system.reading.unexpected | w ext.system.reading.unexpected.character | w ext.system.fault.class.reading
@@ -774,7 +922,17 @@ w ext.system.reading.unclosed | w ext.system.reading.unclosed.line | w ext.syste
 w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.lexical.number.octal_lead | w ext.lexical.number.separator
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
+w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit
+b ext.op.member.pipes | w ext.stmt.class.unready
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
+
+w ext.stmt.with.unready
+b ext.op.member.pipes
+w ext.op.tuple.unready
+w ext.lexical.string.prefix.bytes.unready
+w ext.lexical.string.prefix.format.unready
+b ext.stmt.assign.chain
+w ext.lexical.escape.deferred
 ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
@@ -1094,14 +1252,13 @@ impl Lang {
         };
         let mut binary = HashMap::new();
         for (tag, op) in [
-            ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
+            ("ext.op.contains", Action::Contains), ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
             ("op.ne", Action::Ne), ("op.lt", Action::Lt), ("op.le", Action::Le), ("op.gt", Action::Gt), ("op.ge", Action::Ge),
             ("op.and", Action::And), ("op.or", Action::Or), ("op.concat", Action::Join), ("ext.op.compare", Action::Rank),
-            ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
+            ("ext.op.matrix", Action::Matrix), ("ext.op.bit.and", Action::BitBoth), ("ext.op.bit.or", Action::BitEither), ("ext.op.bit.xor", Action::BitOne),
             ("ext.op.bit.left", Action::BitUp), ("ext.op.bit.right", Action::BitDown),
-            ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
-            ("ext.op.identity", Action::Identity),
+            ("ext.op.in", Action::Contains), ("ext.op.identical", Action::Same), ("ext.op.not_identical", Action::Unsame),
         ] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, false).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1195,6 +1352,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.map", Builtin::MapFrom), ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
@@ -1282,18 +1440,69 @@ impl Lang {
             ident: name,
             extensions: r.strings("extensions")?,
             banner: prefix,
+            line_continuations: r.strings("ext.lexical.line_continuation")?,
+            bare_number_point: r.flag("ext.lexical.number.point.bare")?,
+            separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
+            whole_bits: r.flag("ext.op.bit.whole")?,
+            print_real_point: r.flag("ext.builtin.print.real_point")?,
+            with_as: r.strings("ext.stmt.with.as")?,
+            with_unready: r.strings("ext.stmt.with.unready")?,
+            yield_from: r.strings("ext.stmt.yield.from")?,
+            member_pipes: r.flag("ext.op.member.pipes")?,
+            tuple_unready: r.strings("ext.op.tuple.unready")?,
+            bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
+            format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
+            identity_unready: r.strings("ext.op.identical.unsupported")?,
+            in_values: r.strings("ext.op.in")?,
+            in_not: r.strings("ext.op.in.negated")?,
+            in_unready: r.strings("ext.op.in.unsupported")?,
+            if_else: r.strings("ext.op.if_else")?,
+            assign_chain: r.flag("ext.stmt.assign.chain")?,
+            deferred_escapes: r.letters("ext.lexical.escape.deferred")?,
+            imaginary_suffixes: r.strings("ext.lexical.number.imaginary")?,
+            await_words: r.strings("ext.op.await")?,
+            async_words: r.strings("ext.stmt.async")?,
+            match_words: r.strings("ext.stmt.match")?,
+            match_cases: r.strings("ext.stmt.match.case")?,
+            type_alias_words: r.strings("ext.stmt.type_alias")?,
+            type_parameters: r.flag("ext.stmt.type_parameters")?,
+            pipe_attribute: r.flag("ext.op.pipe.attribute")?,
             line_comments: r.strings("lexical.comment_line")?,
             block_comments: comment_opens.into_iter().zip(comment_closes).collect(),
             quotes,
+            long_quotes: r.strings("ext.lexical.string.long")?,
+            adjacent_strings: r.flag("ext.lexical.string.adjacent")?,
+            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
+            nonlocal_unrun: r.strings("ext.stmt.nonlocal.unrun")?,
+            with_words: r.strings("ext.stmt.with")?,
+            with_as_words: r.strings("ext.stmt.with.as")?,
+            with_unrun: r.strings("ext.stmt.with.unrun")?,
+            async_unrun: r.strings("ext.stmt.async.unrun")?,
+            del_words: r.strings("ext.stmt.del")?,
+            del_unrun: r.head("ext.stmt.del.unrun")?.unwrap_or_default(),
+            continued_escapes: r.flag("ext.lexical.escape.continued")?,
+            loop_else: r.flag("ext.stmt.loop.else")?,
+            yield_words: r.strings("ext.stmt.yield")?,
+            yield_from_words: r.strings("ext.stmt.yield.from")?,
             raw_quotes,
-            triple_quotes: r.flag("ext.lexical.string.triple")?,
-            raw_string_prefixes: r.strings("ext.lexical.string.raw_prefix")?,
-            text_string_prefixes: r.strings("ext.lexical.string.text_prefix")?,
-            adjacent_strings: r.flag("ext.syntax.string.adjacent")?,
-            identity_unready: r.head("ext.op.identity.unsupported")?,
-            comparison_chains: r.flag("ext.op.comparison.chain")?,
-            range_stop_only: r.flag("ext.stmt.for.range.stop")?,
+            raw_prefixes: r.letters("ext.lexical.string.prefix.raw")?,
+            byte_prefixes: r.letters("ext.lexical.string.prefix.bytes")?,
+            plain_prefixes: r.letters("ext.lexical.string.prefix.plain")?,
+            format_prefixes: r.letters("ext.lexical.string.prefix.format")?,
+            string_amiss: r.head("ext.lexical.string.amiss")?,
+            bytes_unavailable: r.head("ext.lexical.string.bytes.unavailable")?,
+            format_unavailable: r.head("ext.lexical.string.format.unavailable")?,
+            string_unready: r.head("ext.lexical.string.value.unready")?,
+            range_zero_start: r.flag("ext.builtin.range.zero_start")?,
+            byte_digits: r.count("ext.lexical.escape.byte.digits")?,
+            codepoint_digits: r.count("ext.lexical.escape.codepoint.digits")?,
+            wide_letter: r.letter("ext.lexical.escape.codepoint.wide")?,
+            wide_digits: r.count("ext.lexical.escape.codepoint.wide.digits")?,
+            named_letter: r.letter("ext.lexical.escape.named")?,
+            escape_unavailable: r.head("ext.lexical.escape.unavailable")?,
             escape_letters: escapes,
+            control_escapes: r.letters("ext.lexical.escape.controls")?,
+            continued_strings: r.flag("ext.lexical.escape.continued")?,
             codepoint_letter: r.letter("ext.lexical.escape.codepoint")?,
             codepoint_open: r.letter("ext.lexical.escape.codepoint.open")?,
             codepoint_close: r.letter("ext.lexical.escape.codepoint.close")?,
@@ -1301,8 +1510,20 @@ impl Lang {
             codepoint_beyond: r.head("ext.lexical.escape.codepoint.beyond")?,
             byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
+            imaginary_letters: r.letters("ext.lexical.number.imaginary")?,
+            imaginary_unready: r.head("ext.lexical.number.imaginary.unready")?,
+            number_point_edge: r.flag("ext.lexical.number.point_edge")?,
+            number_strict: r.flag("ext.lexical.number.separator.strict")?,
+            number_leading_zero: r.head("ext.lexical.number.amiss.leading_zero")?,
+            binary_amiss: r.head("ext.lexical.number.amiss.binary")?,
+            binary_digit_amiss: r.strings("ext.lexical.number.amiss.binary.digit")?,
+            octal_amiss: r.head("ext.lexical.number.amiss.octal")?,
+            octal_digit_amiss: r.strings("ext.lexical.number.amiss.octal.digit")?,
+            hex_amiss: r.head("ext.lexical.number.amiss.hex")?,
+
             prologue: r.head("lexical.prologue")?,
             point: r.letter("lexical.number.decimal_point")?,
+            bare_point: r.flag("ext.lexical.number.point.bare")?,
             base_mark: r.letter("lexical.number.base_marker")?,
             exponent_mark: r.letter("lexical.number.exponent_marker")?,
             hex_prefix,
@@ -1320,6 +1541,9 @@ impl Lang {
             names_folded: r.flag("identifier.case_insensitive")?,
             quote_for_names: r.letter("lexical.name_quote")?,
             symbols: Vec::new(),
+            continuation_amiss: r.strings("ext.lexical.line_continuation.amiss")?,
+            type_params_open: r.strings("ext.stmt.type_params.open")?,
+            type_params_close: r.strings("ext.stmt.type_params.close")?,
             keywords: HashSet::new(),
             blocks: style,
             rpn: postfix,
@@ -1328,6 +1552,7 @@ impl Lang {
             block_closes: closers,
             block_intros: r.strings("block.intro")?,
             stmt_ends: r.strings("stmt.terminator")?.into_iter().chain(r.strings("ext.stmt.terminator")?).collect(),
+            stmt_separators: r.strings("ext.stmt.separator")?,
             grouping: r.brackets("syntax.group.open", "syntax.group.close", None)?,
             calling: call,
             argument_labels: call_labels,
@@ -1339,6 +1564,11 @@ impl Lang {
             slice_marks: r.strings("ext.op.index.slice")?,
             slice_zero: r.head("ext.op.index.slice.zero")?,
             slice_bounds: r.head("ext.op.index.slice.bounds")?,
+            whole_bits_amiss: r.head("ext.op.bit.whole.amiss")?,
+            whole_bits_large: r.head("ext.op.bit.whole.large")?,
+            matrix_words: r.strings("ext.op.matrix")?,
+            matrix_unavailable: r.head("ext.op.matrix.unavailable")?,
+            index_spread_unsupported: r.head("ext.op.index.spread.unsupported")?,
             slice_unsupported: r.head("ext.op.index.slice.unsupported")?,
             slice_assign: r.head("ext.op.index.slice.assign")?,
             slice_length: r.strings("ext.op.index.slice.length")?,
@@ -1372,6 +1602,8 @@ impl Lang {
             break_words: r.strings("stmt.break")?,
             continue_words: r.strings("stmt.continue")?,
             function_words: functions,
+            async_functions: r.strings("ext.stmt.function.async")?,
+            async_functions_unavailable: r.strings("ext.stmt.function.async.unavailable")?,
             return_marks: returns_marks,
             named_result: result_by_name,
             pass_words: r.strings("stmt.pass")?,
@@ -1399,7 +1631,7 @@ impl Lang {
             spare_args: reads_arguments,
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
-            loose_equality: tells_same,
+            loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
             complaint_words: {
                 let named = [
                     (Complaint::Warning, "ext.system.complaint.warning"),
@@ -1437,6 +1669,9 @@ impl Lang {
             fault_modulo: r.head("ext.system.fault.modulo")?,
             fault_shift: r.head("ext.system.fault.shift")?,
             shift_by_number: r.flag("ext.op.bit.shift.numbers")?,
+            bit_room: r.head("ext.op.bit.whole.room")?,
+            plus_non_number: r.head("ext.op.plus.non_number")?,
+            left_shift_unready: r.head("ext.op.bit.left.unready")?,
             div_stays_whole,
             mod_whole: r.flag("op.mod.whole")?,
             step_up_text: r.head("ext.op.increment.text")?,
@@ -1453,6 +1688,15 @@ impl Lang {
                 }
                 found
             },
+            ellipsis_words: r.strings("ext.literal.ellipsis")?,
+            ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
+            lambda_words: r.strings("ext.op.lambda")?,
+            lambda_unready: r.head("ext.op.lambda.unready")?,
+            expression_assign: r.strings("ext.op.assign.expression")?,
+            chained_calls: r.flag("ext.syntax.call.chained")?,
+            chained_names: r.flag("ext.stmt.assign.names.chained")?,
+            tuple_marks: r.strings("ext.op.tuple")?,
+            matrix_unready: r.head("ext.op.matrix.unready")?,
             epilogue: r.strings("ext.lexical.epilogue")?,
             prologue_echo: r.head("ext.lexical.prologue.echo")?,
             prologue_folded: r.flag("ext.lexical.prologue.folded")?,
@@ -1472,31 +1716,13 @@ impl Lang {
             c_for_words: r.strings("ext.stmt.for.c")?,
             compound: HashMap::new(),
             static_words: r.strings("ext.stmt.static")?,
+            class_bases_open: r.strings("ext.stmt.class.bases.open")?,
+            class_bases_close: r.strings("ext.stmt.class.bases.close")?,
+            class_unready: r.strings("ext.stmt.class.unready")?,
+            yield_unrun: r.strings("ext.stmt.yield.unrun")?,
+            scope_unready: r.strings("ext.system.scope.unready")?,
             global_words: r.strings("ext.stmt.global")?,
-            type_params_open: r.strings("ext.stmt.type_params.open")?,
-            type_params_close: r.strings("ext.stmt.type_params.close")?,
-            type_alias_words: r.strings("ext.stmt.type_alias")?,
-            class_suite_words: r.strings("ext.stmt.class.suite")?,
-            class_suite_unsupported: r.strings("ext.stmt.class.suite.unsupported")?,
-            with_words: r.strings("ext.stmt.with")?,
-            with_as: r.strings("ext.stmt.with.as")?,
-            with_open: r.strings("ext.stmt.with.group.open")?,
-            with_close: r.strings("ext.stmt.with.group.close")?,
-            with_unsupported: r.strings("ext.stmt.with.unsupported")?,
-            nonlocal_words: r.strings("ext.stmt.nonlocal")?,
-            nonlocal_unsupported: r.strings("ext.stmt.nonlocal.unsupported")?,
-            delete_words: r.strings("ext.stmt.delete")?,
-            delete_unsupported: r.strings("ext.stmt.delete.unsupported")?,
-            yield_words: r.strings("ext.stmt.yield")?,
-            yield_from: r.strings("ext.stmt.yield.from")?,
-            yield_unsupported: r.strings("ext.stmt.yield.unsupported")?,
-            tuple_separator: r.strings("ext.syntax.tuple.separator")?,
-            tuple_unsupported: r.strings("ext.syntax.tuple.unsupported")?,
-            value_spread: r.strings("ext.syntax.value.spread")?,
-            value_spread_unsupported: r.strings("ext.syntax.value.spread.unsupported")?,
-            index_spread_unsupported: r.strings("ext.op.index.spread.unsupported")?,
-            conditional_words: r.strings("ext.op.conditional")?,
-            short_bare: r.flag("ext.stmt.function.short.bare")?,
+            binding_unrun: r.head("ext.stmt.binding.unrun")?.unwrap_or_default(),
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
@@ -1504,6 +1730,12 @@ impl Lang {
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
+            match_wildcards: r.strings("ext.stmt.match.wildcard")?,
+            match_ors: r.strings("ext.stmt.match.or")?,
+            match_guards: r.strings("ext.stmt.match.guard")?,
+            match_as: r.strings("ext.stmt.match.as")?,
+            match_unready: r.strings("ext.stmt.match.unready")?,
+            match_invalid: r.strings("ext.stmt.match.invalid")?,
             switch_words: r.strings("ext.stmt.switch")?,
             case_words: r.strings("ext.stmt.case")?,
             default_words: r.strings("ext.stmt.default")?,
@@ -1537,7 +1769,21 @@ impl Lang {
                 said
             },
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
+            imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
+            if_else_words: r.strings("ext.op.if_else")?,
+            lambda_unsupported: r.head("ext.op.lambda.unsupported")?,
+            lambda_enclosing: r.head("ext.op.lambda.enclosing")?,
+            identity_not: r.strings("ext.op.identical.negated")?,
+            identity_unsupported: r.head("ext.op.identical.unsupported")?,
+            membership_words: r.strings("ext.op.in")?,
+            membership_not: r.strings("ext.op.in.negated")?,
+            membership_unsupported: r.head("ext.op.in.unsupported")?,
+            chained_comparisons: r.flag("ext.op.compare.chained")?,
+            rem_formats_text: r.flag("ext.op.rem.formats_text")?,
+            format_unsupported: r.head("ext.op.rem.format.unsupported")?,
+            format_arguments: r.head("ext.op.rem.format.arguments")?,
+
             hush_words: hushes,
             naming_words: r.strings("ext.op.name_by_value")?,
             casts_kinds: r.flag("ext.op.cast")?,
@@ -1574,6 +1820,11 @@ impl Lang {
             args_below: r.head("ext.builtin.args.at.below")?,
             args_beyond: r.head("ext.builtin.args.at.beyond")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
+            unpack_rest: r.strings("ext.stmt.unpack.rest")?,
+            unpack_short: r.head("ext.stmt.unpack.short")?,
+            unpack_long: r.head("ext.stmt.unpack.long")?,
+            unpack_unwalkable: r.head("ext.stmt.unpack.unwalkable")?,
+            unpack_amiss: r.head("ext.stmt.unpack.amiss")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
             untrue_empty: r.flag("ext.system.untrue.empty_array")?,
@@ -1581,7 +1832,35 @@ impl Lang {
             template: r.flag("ext.lexical.template")?,
             append_index: r.flag("ext.op.index.append")?,
             for_collections: r.flag("ext.stmt.for.collection")?,
+            comprehension_async: r.strings("ext.op.comprehension.async")?,
+            comprehension_async_unavailable: r.strings("ext.op.comprehension.async.unavailable")?,
+            comprehension_target_unavailable: r.strings("ext.op.comprehension.target.unavailable")?,
+            sum_non_number: r.strings("ext.builtin.sum.non_number")?,
+            range_non_integer: r.strings("ext.builtin.range.non_integer")?,
+            range_zero_step: r.strings("ext.builtin.range.zero_step")?,
+
+            comprehension_for: r.strings("ext.op.comprehension.for")?,
+            comprehension_in: r.strings("ext.op.comprehension.in")?,
+            comprehension_if: r.strings("ext.op.comprehension.if")?,
+            set_literals: r.flag("ext.syntax.set")?,
+            tuple_separator: r.head("ext.op.tuple")?,
+            or_maps: r.flag("ext.op.bit.or.maps")?,
+            unordered_maps: r.flag("ext.op.eq.maps.unordered")?,
+            print_separator: r.head("ext.builtin.print.separator")?,
+            print_ending: r.head("ext.builtin.print.end")?,
+            print_option_type: r.head("ext.builtin.print.option.type")?,
+            map_argument_amiss: r.head("ext.builtin.map.arguments.amiss")?,
+            map_pair_amiss: r.head("ext.builtin.map.pair.amiss")?,
+            array_spread: r.strings("ext.syntax.array.spread")?,
+            map_spread: r.strings("ext.syntax.map.spread")?,
+            collection_unwalkable: r.strings("ext.syntax.collection.unwalkable")?,
+            spread_unmapped: r.strings("ext.syntax.map.spread.unmapped")?,
+            comprehension_unpack_amiss: r.strings("ext.op.comprehension.unpack.amiss")?,
+
             class_words: r.strings("ext.stmt.class")?,
+            bases_open: r.head("ext.stmt.class.bases.open")?,
+            bases_close: r.head("ext.stmt.class.bases.close")?,
+            explicit_this: r.flag("ext.stmt.class.this.explicit")?,
             extends_words: r.strings("ext.stmt.class.extends")?,
             new_words: r.strings("ext.stmt.class.new")?,
             this_word: r.head("ext.stmt.class.this")?,
@@ -1628,9 +1907,31 @@ impl Lang {
             call_unknown: r.strings("ext.syntax.call.amiss.unknown")?,
             call_duplicate: r.strings("ext.syntax.call.amiss.duplicate")?,
             call_builtin_amiss: r.strings("ext.syntax.call.amiss.builtin")?,
+            print_sep: r.strings("ext.builtin.print.sep")?,
+            print_end: r.strings("ext.builtin.print.end")?,
+            print_file: r.strings("ext.builtin.print.file")?,
+            print_flush: r.strings("ext.builtin.print.flush")?,
+            print_file_error: r.strings("ext.builtin.print.file.error")?,
+            print_file_output: r.strings("ext.builtin.print.file.output")?,
+            print_file_unready: r.strings("ext.builtin.print.file.unready")?,
+            print_sep_amiss: r.strings("ext.builtin.print.sep.amiss")?,
+            print_end_amiss: r.strings("ext.builtin.print.end.amiss")?,
+            to_int_base: r.strings("ext.builtin.to_int.base")?,
+            to_int_base_amiss: r.strings("ext.builtin.to_int.base.amiss")?,
+            to_int_text_amiss: r.strings("ext.builtin.to_int.text.amiss")?,
+            to_int_text_required: r.strings("ext.builtin.to_int.text.required")?,
+            to_real_text: r.flag("ext.builtin.to_real.text")?,
+            to_real_text_amiss: r.strings("ext.builtin.to_real.text.amiss")?,
+            to_string_object: r.strings("ext.builtin.to_string.object")?,
+            to_string_encoding: r.strings("ext.builtin.to_string.encoding")?,
+            to_string_errors: r.strings("ext.builtin.to_string.errors")?,
+            to_string_unready: r.strings("ext.builtin.to_string.unready")?,
+            range_value: r.flag("ext.builtin.range.value")?,
+            range_zero: r.strings("ext.builtin.range.zero")?,
+            range_integer: r.strings("ext.builtin.range.integer")?,
+            range_index: r.strings("ext.builtin.range.index")?,
             spread_amiss: r.strings("ext.syntax.call.spread.amiss")?,
             spread_pairs_amiss: r.strings("ext.syntax.call.spread.pairs.amiss")?,
-            defaults_amiss: r.strings("ext.stmt.function.defaults.amiss")?,
             parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
 
             short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
@@ -1683,7 +1984,10 @@ impl Lang {
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
         }
-        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || lang.new_words.is_empty()) {
+        if lang.type_params_open.is_empty() != lang.type_params_close.is_empty() {
+            return Err("ext.stmt.type_params needs both opening and closing brackets".into());
+        }
+        if !lang.class_words.is_empty() && (lang.member_mark.is_none() || (lang.new_words.is_empty() && !lang.explicit_this)) {
             return Err("ext.stmt.class needs ext.op.member and ext.stmt.class.new".to_string());
         }
         if !lang.foreach_words.is_empty() && lang.foreach_as_words.is_empty() {
@@ -1698,6 +2002,7 @@ impl Lang {
             // itself ends in the sign (`==`, whose `===` is another operator).
             let mut compound = HashMap::new();
             for (lex, op) in &lang.dyadic {
+                if matches!(op.action, Action::Contains) { continue; }
                 for assign in &lang.assign_words {
                     let joined = format!("{lex}{assign}");
                     if !lex.ends_with(assign.as_str()) && !lang.dyadic.contains_key(&joined) && !lang.monadic.contains_key(&joined) {
@@ -1742,8 +2047,8 @@ impl Lang {
             place(question);
             place(mark);
         }
-        for words in [&self.class_suite_words, &self.type_params_open, &self.type_params_close, &self.type_alias_words, &self.with_words, &self.with_as, &self.with_open, &self.with_close, &self.nonlocal_words, &self.delete_words, &self.yield_words, &self.yield_from, &self.tuple_separator, &self.value_spread, &self.conditional_words] {
-            for lex in words { place(lex); }
+        for mark in &self.long_quotes {
+            place(mark);
         }
         for lex in &self.plus_words {
             place(lex);
@@ -1754,7 +2059,7 @@ impl Lang {
         if let Some(mark) = &self.pair_mark {
             place(mark);
         }
-        for mark in [&self.member_mark, &self.scope_mark, &self.catch_between, &self.catch_tuple_open, &self.catch_tuple_close, &self.catch_group, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
+        for mark in [&self.tuple_separator, &self.bases_open, &self.bases_close, &self.member_mark, &self.scope_mark, &self.catch_between, &self.catch_tuple_open, &self.catch_tuple_close, &self.catch_group, &self.reference_mark, &self.otherwise_mark].into_iter().flatten() {
             place(mark);
         }
         for pair in [&self.grouping, &self.calling, &self.array_brackets, &self.map_brackets, &self.index_brackets].into_iter().flatten() {
@@ -1765,10 +2070,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks,
-            &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open,
-            &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words,
-            &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs,
+            &self.type_params_open, &self.type_params_close, &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words, &self.line_continuations, &self.match_ors, &self.matrix_words, &self.async_functions, &self.await_words, &self.async_words, &self.match_words, &self.match_cases, &self.type_alias_words,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);
@@ -1784,6 +2086,9 @@ impl Lang {
             &self.switch_words, &self.case_words, &self.default_words, &self.foreach_words, &self.foreach_as_words,
             &self.class_words, &self.extends_words, &self.new_words, &self.modifier_words, &self.shared_words,
             &self.instanceof_words, &self.interface_words, &self.implements_words, &self.parent_words, &self.self_words, &self.try_words, &self.catch_words,
+            &self.finally_words, &self.throw_words,
+            &self.with_words, &self.with_as_words, &self.del_words, &self.nonlocal_words,
+            &self.async_words, &self.await_words, &self.yield_words, &self.yield_from_words,
             &self.finally_words, &self.throw_words, &self.assert_words, &self.catch_as, &self.throw_from,
             &self.import_words, &self.import_from_words, &self.import_as_words,
         ];
@@ -1807,7 +2112,7 @@ impl Lang {
     }
 
     pub fn ends_stmt(&self, lex: &str) -> bool {
-        Lang::spells(&self.stmt_ends, lex)
+        Lang::spells(&self.stmt_ends, lex) || Lang::spells(&self.stmt_separators, lex)
     }
 
     /// Whether a kind written before a parameter names a class: a word

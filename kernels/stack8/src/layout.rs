@@ -54,7 +54,10 @@ impl Lang {
 /// which the mark opening code puts there, are none of the program's:
 /// a line the language names is counted from the program's own first.
 pub fn layout(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result<Vec<Token>, (String, usize)> {
-    let pairs: Vec<&crate::lang::Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets].into_iter().flatten().collect();
+    let mut pairs: Vec<&crate::lang::Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets].into_iter().flatten().collect();
+    if lang.set_literals {
+        pairs.extend(lang.map_brackets.as_ref());
+    }
     let weighed = bracket_pairs(lang);
     let watching = lang.unclosed_words.is_some() && lang.unmatched_words.is_some();
     let mut waiting: Vec<Waiting> = Vec::new();
