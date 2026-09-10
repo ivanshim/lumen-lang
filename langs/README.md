@@ -297,8 +297,8 @@ only. The extension labels so far, all from PHP:
   read as members. Full dispatch belongs to the class piece.
 - `ext.stmt.with` and `.as`: a context expression, an optional bound
   name, and a body. Several such expressions may stand before the body.
-  Each expression and the whole body are read; the context protocol
-  awaits the blocks piece.
+  Entry and exit follow the methods named by `.enter` and `.exit`;
+  without those names, the values themselves fill the bindings.
 - `ext.stmt.with.unready`: what the run says before entering a context
   whose entry and exit it cannot yet honour.
 - `ext.op.tuple`: the separator making a parenthesised sequence a
@@ -401,7 +401,8 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.with` and `ext.stmt.with.as`: work out each value, bind it
   where an `as` target follows, then run the block. Several items may
   be separated as call arguments are, with brackets about the whole.
-  In this stage no `__enter__` or `__exit__` method is called.
+  Where `.enter` and `.exit` are named, the entered values fill those
+  targets, and every entered context is left in reverse order.
 - `ext.stmt.del`: takes names, indexed places and properties away, as
   `ext.builtin.unset` does, with commas between targets and no call
   brackets required. Lists close the gap left by a deleted place; maps
@@ -453,8 +454,8 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.with` reads a context expression and its suite;
   `ext.stmt.with.as` gives a name to what that context hands in. Further
   contexts may be separated as arguments are. The suite is read whole,
-  then `ext.system.scope.unready` refuses to run this form until entering
-  and leaving the context can both be honoured.
+  and the named entry and exit methods govern its running, a return or
+  a loop step leaving through exit just as an ordinary end does.
 - `ext.stmt.del` reads the names or indexed places to be taken away.
   This reading leaves the places untouched and raises
   `ext.system.scope.unready` when reached; removal belongs to the fuller
@@ -801,8 +802,8 @@ only. The extension labels so far, all from PHP:
   must remain guarded until the receiver can choose between the two.
 - `ext.stmt.with` and `ext.stmt.with.as`: the word opening a context and
   the word before its binding, for one manager or several, with optional
-  outer brackets. Each expression and the body are read. Reaching this
-  form says `ext.stmt.with.unready` until entering and leaving can run.
+  outer brackets. Each expression and the body are read. The entry and
+  exit names, where given, require the context protocol to be honoured.
 - `ext.stmt.del` and `ext.stmt.del.unrun`: the word before places to be
   removed and the complaint when removal cannot yet be done.
 - `ext.stmt.nonlocal` and `ext.stmt.nonlocal.unrun`: names belonging to an
@@ -835,15 +836,23 @@ only. The extension labels so far, all from PHP:
   answer takes up the raised value. `ext.stmt.with.invalid` gives the
   complaint when either method is wanting.
 - `ext.system.exception.classes`: pairs naming a raised class and its
-  parent, parents standing first; the first parent is empty. These
+  parent, parents standing first; the root names itself as parent. These
   classes are bound before the program begins. `.parts` names, in order,
   the preceding exception, the stated cause, the flag hiding context,
   and the trace. `.invalid` and `.cause.invalid` give the complaints for
-  values that cannot be raised or made a cause.
+  values that cannot be raised or made a cause. More than one argument
+  to a built-in exception stops with `.arguments.unsupported`, since the
+  kernels cannot yet keep its argument tuple faithfully.
 - `ext.system.kind.name`: the member giving a kind's name. `.names`
   gives the names of whole numbers, ratios, reals, text, flags, arrays
   and nothing, in that order; `.type` names the kind of classes.
   `ext.system.traceback.class` names a trace handed to a context's exit.
+- `ext.op.walk.next`: a method handing out the next item or raising the
+  class named by `ext.op.walk.end` when none remains. With this method
+  named, `ext.op.walk.giver` asks an object for its iterator without a
+  required parent class. Other exceptions leave the loop through its
+  surrounding last parts and contexts. Lists keep their own storage
+  while the walk counts places, so additions and removals are seen.
 - `ext.system.recursion.limit`: the greatest number of routine frames a
   run may hold at once, the outermost frame included. A call that would
   reach this count says `ext.system.recursion.exceeded`; a tail call is
@@ -2417,13 +2426,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |
 | `ext.op.tuple.unready` | - | - | `NotImplementedError: tuples are not supported` | - | - | - | - | - | - | - |
 | `ext.op.walk.class` | - | - | - | - | `Iterator` | - | - | - | - | - |
-| `ext.op.walk.giver` | - | - | - | - | `getIterator` | - | - | - | - | - |
+| `ext.op.walk.end` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.op.walk.giver` | - | - | `__iter__` | - | `getIterator` | - | - | - | - | - |
 | `ext.op.walk.giver.class` | - | - | - | - | `IteratorAggregate` | - | - | - | - | - |
 | `ext.op.walk.giver.unwalkable` | - | - | - | - | `Objects returned by` `must be traversable or implement interface Iterator` | - | - | - | - | - |
 | `ext.op.walk.key` | - | - | - | - | `key` | - | - | - | - | - |
 | `ext.op.walk.key.no_cell` | - | - | - | - | `Key element cannot be a reference` | - | - | - | - | - |
 | `ext.op.walk.live` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.walk.more` | - | - | - | - | `valid` | - | - | - | - | - |
+| `ext.op.walk.next` | - | - | `__next__` | - | - | - | - | - | - | - |
 | `ext.op.walk.no_cell` | - | - | - | - | `An iterator cannot be used with foreach by reference` | - | - | - | - | - |
 | `ext.op.walk.onward` | - | - | - | - | `next` | - | - | - | - | - |
 | `ext.op.walk.rewind` | - | - | - | - | `rewind` | - | - | - | - | - |
@@ -2568,8 +2579,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
+| `ext.system.exception.arguments.unsupported` | - | - | `NotImplementedError: multiple exception arguments are not supported` | - | - | - | - | - | - | - |
 | `ext.system.exception.cause.invalid` | - | - | `TypeError: exception causes must derive from BaseException` | - | - | - | - | - | - | - |
-| `ext.system.exception.classes` | - | - | `BaseException` `` `Exception` `BaseException` `ValueError` `Exception` `TypeError` `Exception` `RuntimeError` `Exception` `RecursionError` `RuntimeError` `AssertionError` `Exception` `NameError` `Exception` `StopIteration` `Exception` `GeneratorExit` `BaseException` | - | - | - | - | - | - | - |
+| `ext.system.exception.classes` | - | - | `BaseException` `BaseException` `Exception` `BaseException` `ValueError` `Exception` `TypeError` `Exception` `RuntimeError` `Exception` `RecursionError` `RuntimeError` `AssertionError` `Exception` `NameError` `Exception` `StopIteration` `Exception` `GeneratorExit` `BaseException` `NotImplementedError` `RuntimeError` | - | - | - | - | - | - | - |
 | `ext.system.exception.invalid` | - | - | `TypeError: exceptions must derive from BaseException` | - | - | - | - | - | - | - |
 | `ext.system.exception.parts` | - | - | `__context__` `__cause__` `__suppress_context__` `__traceback__` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |

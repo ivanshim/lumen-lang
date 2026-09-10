@@ -124,6 +124,7 @@ pub struct Machine<'a> {
     /// was raised on.
     row: u32,
     holding_fault: Vec<Value>,
+    iterator_values: HashMap<usize, Value>,
     raised_on: u32,
     written_in: Rc<str>,
     /// Where the language keeps its own pages, as the run was
@@ -259,6 +260,7 @@ impl<'a> Machine<'a> {
             made: 0,
             row: 0,
             holding_fault: Vec::new(),
+            iterator_values: HashMap::new(),
             raised_on: 0,
             allowed: 0,
             alongside: HashMap::new(),
@@ -449,6 +451,19 @@ impl<'a> Machine<'a> {
             Prim::Walked => {
                 n(1)?;
                 let mut walking = v[0].clone();
+                if self.table.has_any("ext.op.walk.next") {
+                    if let Value::Thing(object) = &walking {
+                        let body = self.table.single("ext.op.walk.giver").and_then(|word| object.of.program(word)).cloned()
+                            .ok_or_else(|| self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().to_string())?;
+                        let iterator = self.invoke(body, self.outermost.clone(), vec![walking])?;
+                        let valid = match &iterator {
+                            Value::Thing(thing) => self.table.single("ext.op.walk.next").and_then(|word| thing.of.program(word)).is_some(),
+                            _ => false,
+                        };
+                        if valid { return Ok(iterator); }
+                        return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().to_string().into());
+                    }
+                }
                 // Asking a thing what it hands over runs a piece of the
                 // program standing elsewhere. The walk is written where
                 // it is written, and is spoken of as standing there, so
@@ -485,6 +500,21 @@ impl<'a> Machine<'a> {
             }
             Prim::MoreYet => {
                 n(2)?;
+                if let (Value::Thing(iterator), Some(word)) = (&v[0], self.table.single("ext.op.walk.next")) {
+                    let next = iterator.of.program(word).cloned()
+                        .ok_or_else(|| self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().to_string())?;
+                    match self.invoke(next, self.outermost.clone(), vec![v[0].clone()]) {
+                        Ok(item) => {
+                            self.iterator_values.insert(iterator.turn, item);
+                            return Ok(Value::Flag(true));
+                        }
+                        Err(Escape::Thrown(Value::Thing(exception))) if self.table.single("ext.op.walk.end").map_or(false, |end| exception.of.goes_by(end, false)) => {
+                            self.iterator_values.remove(&iterator.turn);
+                            return Ok(Value::Flag(false));
+                        }
+                        Err(escape) => return Err(escape),
+                    }
+                }
                 match self.walk_asked(&v[0], self.table.single("ext.op.walk.more").map(str::to_string))? {
                     Some(answer) => Value::Flag(self.stands_true(&answer)),
                     None if matches!(&v[0], Value::Progression(_)) => {
@@ -505,6 +535,12 @@ impl<'a> Machine<'a> {
             }
             Prim::AtHand | Prim::NamedHere => {
                 let names = matches!(op, Prim::NamedHere);
+                if !names && self.table.has_any("ext.op.walk.next") {
+                    if let Value::Thing(iterator) = &v[0] {
+                        return self.iterator_values.get(&iterator.turn).cloned()
+                            .ok_or_else(|| self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().to_string().into());
+                    }
+                }
                 let asked = match names {
                     true => "ext.op.walk.key",
                     false => "ext.op.walk.this",
@@ -1197,7 +1233,15 @@ impl<'a> Machine<'a> {
             let parent = self.class_bound(&entry[1]).and_then(|value| {
                 if let Value::Blueprint(class) = value { Some(class) } else { None }
             });
-            let value = Value::Blueprint(Self::plain_blueprint(&entry[0], parent));
+            let root = parent.is_none();
+            let mut class = Self::plain_blueprint(&entry[0], parent);
+            if root {
+                let fields = self.table.strings("ext.system.exception.parts").iter().enumerate().map(|(i, word)| {
+                    (word.clone(), if i == 2 { Value::Flag(false) } else { Value::Nil })
+                }).collect();
+                Rc::get_mut(&mut class).expect("a class just made").fields = fields;
+            }
+            let value = Value::Blueprint(class);
             self.define(&format!("{}{}", entry[0], crate::form::OF_A_CLASS), value.clone());
             self.define(&entry[0], value);
         }
@@ -2115,11 +2159,17 @@ impl<'a> Machine<'a> {
                     fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
                 };
+                let of = match self.class_bound(&kind.name) {
+                    Some(Value::Blueprint(class)) if self.table.has_any("ext.system.exception.parts") => class,
+                    _ => Rc::new(kind),
+                };
+                let mut fields = of.every_field();
+                fields.push(("message".to_string(), held));
+                self.made += 1;
+                let raised = Value::Thing(Rc::new(Thing { of, turn: self.made, holds: RefCell::new(fields) }));
+                self.link_raised(&raised, None);
                 self.raised_on = self.row;
-                Err(Escape::Thrown(Value::Thing(Rc::new(Thing {
-                    of: Rc::new(kind), turn: 0,
-                    holds: RefCell::new(vec![("message".to_string(), held)]),
-                }))))
+                Err(Escape::Thrown(raised))
             }
             Form::Attempt { body, clauses, last, otherwise } => {
                 if clauses.iter().any(|part| part.grouped) {
@@ -2796,10 +2846,10 @@ impl<'a> Machine<'a> {
             given.extend(args);
             self.invoke(body, self.outermost.clone(), given)?;
         } else if self.table.strings("ext.system.exception.classes").first().map_or(false, |root| class.goes_by(root, false)) {
-            let mut fields = object.holds.borrow_mut();
-            for (index, name) in self.table.strings("ext.system.exception.parts").iter().enumerate() {
-                fields.push((name.clone(), if index == 2 { Value::Flag(false) } else { Value::Nil }));
+            if args.len() > 1 {
+                return Err(self.table.single("ext.system.exception.arguments.unsupported").unwrap_or_default().to_string().into());
             }
+            let mut fields = object.holds.borrow_mut();
             if let Some(message) = args.first() { fields.push(("message".to_owned(), message.clone())); }
         } else if !args.is_empty() {
             return Err(format!("Class {} takes no arguments when it is made", class.name).into());

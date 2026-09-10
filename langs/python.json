@@ -687,6 +687,15 @@
   "ext.op.tuple.unready": [
     "NotImplementedError: tuples are not supported"
   ],
+  "ext.op.walk.end": [
+    "StopIteration"
+  ],
+  "ext.op.walk.giver": [
+    "__iter__"
+  ],
+  "ext.op.walk.next": [
+    "__next__"
+  ],
   "ext.stmt.annotation": [
     ":"
   ],
@@ -879,6 +888,15 @@
   "ext.stmt.with.as": [
     "as"
   ],
+  "ext.stmt.with.enter": [
+    "__enter__"
+  ],
+  "ext.stmt.with.exit": [
+    "__exit__"
+  ],
+  "ext.stmt.with.invalid": [
+    "TypeError: object does not support the context manager protocol"
+  ],
   "ext.stmt.with.unready": [
     "NotImplementedError: context managers are not supported"
   ],
@@ -936,32 +954,78 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.exception.arguments.unsupported": [
+    "NotImplementedError: multiple exception arguments are not supported"
+  ],
+  "ext.system.exception.cause.invalid": [
+    "TypeError: exception causes must derive from BaseException"
+  ],
+  "ext.system.exception.classes": [
+    "BaseException",
+    "BaseException",
+    "Exception",
+    "BaseException",
+    "ValueError",
+    "Exception",
+    "TypeError",
+    "Exception",
+    "RuntimeError",
+    "Exception",
+    "RecursionError",
+    "RuntimeError",
+    "AssertionError",
+    "Exception",
+    "NameError",
+    "Exception",
+    "StopIteration",
+    "Exception",
+    "GeneratorExit",
+    "BaseException",
+    "NotImplementedError",
+    "RuntimeError"
+  ],
+  "ext.system.exception.invalid": [
+    "TypeError: exceptions must derive from BaseException"
+  ],
+  "ext.system.exception.parts": [
+    "__context__",
+    "__cause__",
+    "__suppress_context__",
+    "__traceback__"
+  ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
   ],
   "ext.system.fault.shift": [
     "negative shift count"
   ],
+  "ext.system.kind.name": [
+    "__name__"
+  ],
+  "ext.system.kind.names": [
+    "int",
+    "rational",
+    "float",
+    "str",
+    "bool",
+    "list",
+    "NoneType"
+  ],
+  "ext.system.kind.type": [
+    "type"
+  ],
   "ext.system.module.name": [
     "__name__"
   ],
-  "ext.stmt.with.enter": ["__enter__"],
-  "ext.stmt.with.exit": ["__exit__"],
-  "ext.stmt.with.invalid": ["TypeError: object does not support the context manager protocol"],
-  "ext.system.exception.classes": ["BaseException", "", "Exception", "BaseException", "ValueError", "Exception", "TypeError", "Exception", "RuntimeError", "Exception", "RecursionError", "RuntimeError", "AssertionError", "Exception", "NameError", "Exception", "StopIteration", "Exception", "GeneratorExit", "BaseException"],
-  "ext.system.exception.parts": ["__context__", "__cause__", "__suppress_context__", "__traceback__"],
-  "ext.system.exception.invalid": ["TypeError: exceptions must derive from BaseException"],
-  "ext.system.exception.cause.invalid": ["TypeError: exception causes must derive from BaseException"],
-  "ext.system.kind.name": ["__name__"],
-  "ext.system.kind.names": ["int", "rational", "float", "str", "bool", "list", "NoneType"],
-  "ext.system.kind.type": ["type"],
-  "ext.system.traceback.class": ["traceback"],
-  "ext.system.recursion.limit": 1000,
   "ext.system.recursion.exceeded": [
     "RecursionError: maximum recursion depth exceeded"
   ],
+  "ext.system.recursion.limit": 1000,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
+  ],
+  "ext.system.traceback.class": [
+    "traceback"
   ],
   "ext.system.untrue.empty_array": true
 }

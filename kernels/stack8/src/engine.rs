@@ -31,6 +31,7 @@ pub struct Engine<'a> {
     registry: crate::compile::Registry,
     data: Vec<Value>,
     caught: Vec<Value>,
+    walk_items: HashMap<usize, Value>,
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
@@ -215,6 +216,7 @@ impl<'a> Engine<'a> {
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
             caught: Vec::new(),
+            walk_items: HashMap::new(),
             memo: HashMap::new(),
             buffer: Vec::new(),
             given: Vec::new(),
@@ -2710,6 +2712,7 @@ impl<'a> Engine<'a> {
                         self.drop_top()?;
                     }
                     None if self.lang.exception_classes.first().map_or(false, |root| class.named(root, false)) => {
+                        if args.len() > 1 { return Err(self.lang.exception_arguments_unsupported.clone().unwrap_or_default().into()); }
                         if let Some(message) = args.first() { object.fields.borrow_mut().push(("message".to_string(), message.clone())); }
                     }
                     None if !args.is_empty() => {
@@ -3065,13 +3068,18 @@ impl<'a> Engine<'a> {
                     answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
                     methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
                 });
+                let class = if self.lang.exception_parts.is_empty() { class } else {
+                    match self.class_named(&class.name) { Some(Value::Class(known)) => known.clone(), _ => class }
+                };
                 self.made += 1;
-                let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
+                let mut fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
                     Vec::new()
                 } else { vec![("message".to_string(), message)] };
+                fields.extend(class.all_fields());
                 let raised = Value::Object(Rc::new(Instance {
                     class, fields: RefCell::new(fields), mark: self.made,
                 }));
+                self.join_exception(&raised, None);
                 self.hurled_at.set(self.line);
                 return Err(Fault::Thrown(raised));
             }
@@ -3156,6 +3164,19 @@ impl<'a> Engine<'a> {
             // be walked in its stead. Either way the walk begins here.
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if self.lang.walk_next.is_some() {
+                    if let Value::Object(object) = &handed {
+                        let method = self.lang.walk_giver.as_deref().and_then(|name| object.class.method(name)).cloned()
+                            .ok_or_else(|| self.lang.collection_unwalkable.first().cloned().unwrap_or_default())?;
+                        self.invoke(&method, vec![handed.clone()])?;
+                        handed = self.drop_top()?;
+                        if !matches!(&handed, Value::Object(iterator) if self.lang.walk_next.as_deref().and_then(|name| iterator.class.method(name)).is_some()) {
+                            return Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_default().into());
+                        }
+                        self.data.push(handed);
+                        return Ok(());
+                    }
+                }
                 // One thing may hand over another that hands over a
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that
@@ -3219,6 +3240,24 @@ impl<'a> Engine<'a> {
             }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
+                if let (Some(next), Value::Object(object)) = (self.lang.walk_next.clone(), &pair[0]) {
+                    let method = object.class.method(&next).cloned().ok_or_else(|| self.lang.collection_unwalkable.first().cloned().unwrap_or_default())?;
+                    let taken = self.invoke(&method, vec![pair[0].clone()]);
+                    let more = match taken {
+                        Ok(()) => {
+                            let value = self.drop_top()?;
+                            self.walk_items.insert(object.mark, value);
+                            true
+                        }
+                        Err(Fault::Thrown(Value::Object(fault))) if self.lang.walk_end.as_ref().map_or(false, |name| fault.class.named(name, false)) => {
+                            self.walk_items.remove(&object.mark);
+                            false
+                        }
+                        Err(fault) => return Err(fault),
+                    };
+                    self.data.push(Value::Flag(more));
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None if matches!(&pair[0], Value::Counted(_)) => {
@@ -3243,6 +3282,13 @@ impl<'a> Engine<'a> {
                     false => self.lang.walk_this.clone(),
                 };
                 let pair = self.drop_many(2)?;
+                if !key && self.lang.walk_next.is_some() {
+                    if let Value::Object(object) = &pair[0] {
+                        let value = self.walk_items.get(&object.mark).cloned().ok_or_else(|| self.lang.collection_unwalkable.first().cloned().unwrap_or_default())?;
+                        self.data.push(value);
+                        return Ok(());
+                    }
+                }
                 match self.walk_asked(&pair[0], named)? {
                     Some(answer) => answer,
                     None => {
