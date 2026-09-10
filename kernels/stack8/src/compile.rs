@@ -5520,7 +5520,9 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.lexeme) || Lang::spells(&lang.class_root, &tok.lexeme)
+        if Lang::spells(&lang.special_stop, &tok.lexeme)
+            || (Lang::spells(&lang.class_root, &tok.lexeme) && !self.piece().idents.contains(&tok.lexeme)
+                && !lang.assign_words.contains(&self.look_ahead(1).lexeme))
             || (lang.class_special.len() > 77 && lang.builtins.get(&tok.lexeme) == Some(&Builtin::MapFrom)
                 && !self.piece().idents.contains(&tok.lexeme) && !lang.assign_words.contains(&self.look_ahead(1).lexeme)
                 && !lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).lexeme == c.open)) {

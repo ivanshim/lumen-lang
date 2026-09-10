@@ -5198,7 +5198,9 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.stmt.class.special.stop", &t.lexeme) || table.spells("ext.stmt.class.root", &t.lexeme)
+        if table.spells("ext.stmt.class.special.stop", &t.lexeme)
+            || (table.spells("ext.stmt.class.root", &t.lexeme)
+                && !self.layers.last().map_or(false, |scope| scope.idents.contains(&t.lexeme)) && !table.spells("stmt.assign", &self.glance(1).lexeme))
             || (table.strings("ext.stmt.class.special").len() > 77 && table.spells("ext.builtin.map", &t.lexeme)
                 && !self.layers.last().map_or(false, |scope| scope.idents.contains(&t.lexeme)) && !table.spells("stmt.assign", &self.glance(1).lexeme)
                 && !table.spells("syntax.call.open", &self.glance(1).lexeme)) {

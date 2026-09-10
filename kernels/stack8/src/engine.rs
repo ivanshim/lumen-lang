@@ -2765,6 +2765,7 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
+                let named = if !self.lang.class_special.is_empty() && matches!(target, Value::Array(_)) { self.special_index(&named)? } else { named };
                 let at = self.key_quietly(&named);
                 let holder = self.drop_top()?;
                 let Value::Bond(cell) = holder else {
@@ -5978,8 +5979,11 @@ impl<'a> Engine<'a> {
                 // Taking a place out of an array: the array is given back
                 // without it.
                 arity(2)?;
-                let at = self.key_quietly(&args.pop().expect("the place"));
-                match args.pop().expect("the array") {
+                let key = args.pop().expect("the place");
+                let source = args.pop().expect("the array");
+                let key = if !self.lang.class_special.is_empty() && matches!(source, Value::Array(_)) { self.special_index(&key)? } else { key };
+                let at = self.key_quietly(&key);
+                match source {
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
                         let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
                         let i = if raw < 0 { items.len() as i64 + raw } else { raw };

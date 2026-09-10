@@ -1921,7 +1921,11 @@ impl<'a> Machine<'a> {
                     self.ask_special(&target, 13, &[named])?;
                     return Ok(Value::Nil);
                 }
-                let at = self.as_key_spoken(&named);
+                let key = match (&target, self.table.has_any("ext.stmt.class.special")) {
+                    (Value::Vector(_), true) => self.index_answer(&named)?,
+                    _ => named,
+                };
+                let at = self.as_key_spoken(&key);
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
@@ -5218,7 +5222,8 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 match &v[0] {
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
-                        let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
+                        let index = if self.table.has_any("ext.stmt.class.special") { self.index_answer(&v[1])? } else { v[1].clone() };
+                        let offset = (match &index { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string().into()); }
                         let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
