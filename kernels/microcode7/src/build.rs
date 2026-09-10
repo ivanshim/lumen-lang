@@ -2142,6 +2142,19 @@ impl<'a> Builder<'a> {
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
+            let mut decorators = Vec::new();
+            while self.on_any("ext.stmt.decorator") {
+                self.advance();
+                let value = self.expr(0)?;
+                let slot = self.gensym("member_decoration");
+                setup.push(Form::Write(slot.clone(), Box::new(value)));
+                decorators.push(slot);
+                if self.look().shape != Shape::LineEnd { return Err(table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()); }
+                self.skip_line_ends();
+            }
+            if !decorators.is_empty() && !self.key("stmt.function") {
+                return Err(table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
             if self.key("stmt.function") {
                 self.advance();
                 let method_name = self.need_word("as the method name")?;
@@ -2152,7 +2165,16 @@ impl<'a> Builder<'a> {
                     values.remove(i + usize::from(parent.is_some()));
                 }
                 let slot = self.gensym("method_body");
-                setup.push(Form::Write(slot.clone(), Box::new(constant(Value::Routine(body.clone())))));
+                let decorated = !decorators.is_empty();
+                let mut function = constant(Value::Routine(body.clone()));
+                while let Some(decoration) = decorators.pop() {
+                    function = invoke(Form::Read(decoration), vec![function]);
+                }
+                setup.push(Form::Write(slot.clone(), Box::new(function)));
+                if decorated {
+                    attributes.push(method_name.clone());
+                    values.push(Form::Read(slot.clone()));
+                }
                 self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
                 methods.push((method_name, body));
             } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {

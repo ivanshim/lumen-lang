@@ -264,6 +264,10 @@ only. The extension labels so far, all from PHP:
   call gives empty text. Encoding and errors are read but cannot yet be
   run, nor can their positional forms; `ext.builtin.to_string.unready`
   gives the plain complaint rather than pretending to decode bytes.
+- `ext.builtin.to_string.method`: the object method used by the text
+  conversion builtin before its usual value rendering.
+- `ext.builtin.class_method`: wraps a callable so reading it from a class
+  or an instance supplies the actual class as its first argument.
 - `ext.builtin.range.value`: a switch making the range builtin a value
   with one, two or three whole-number arguments: end; start and end;
   start, end and step. Its bounds are kept, so its length, indexed places
@@ -428,7 +432,9 @@ only. The extension labels so far, all from PHP:
   words said when the line does not end there or what follows is neither.
   Where `ext.stmt.class.unready` is given, a class may follow as well:
   its whole body is read, but reaching the class gives that complaint
-  before any decorator can be applied to it.
+  before any decorator can be applied to it. With explicit receivers,
+  supported classes and their methods apply decorators and retain the
+  decorated members in the class namespace.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -2127,6 +2133,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.name` | - | - | `__class_name` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
+| `ext.builtin.class_method` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
@@ -2201,6 +2208,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_real.text.amiss` | - | - | `ValueError: could not convert string to float` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.method` | - | - | `__str__` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |

@@ -140,6 +140,7 @@ pub enum Value {
     /// gathered into a map.
     Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
+    Receiver(Rc<(Value, Value)>),
     Method(Rc<Instance>, Rc<Routine>),
     SortOf(Sort),
     /// A slot nothing was stored in.
@@ -235,7 +236,7 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::Receiver(_) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -258,7 +259,7 @@ impl Value {
             Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Receiver(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
@@ -435,6 +436,7 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
+            Value::Receiver(_) => "<bound function>".to_string(),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),

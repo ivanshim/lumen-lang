@@ -1,5 +1,4 @@
 # Assertions and the test lifecycle live beside the modules they serve.
-# In the absence of a regular-expression module, phrases are literal.
 class AssertionError:
     def __init__(self, message):
         self.message = str(message)
@@ -65,9 +64,11 @@ class TestCase:
         self._cleanups = []
         self._result = None
 
+    @classmethod
     def setUpClass(cls):
         pass
 
+    @classmethod
     def tearDownClass(cls):
         pass
 
@@ -358,7 +359,9 @@ class _Skip:
             setattr(function, '__unittest_skip__', True)
             setattr(function, '__unittest_skip_why__', self.reason)
             return function
-        return self.call
+        def skipped(*args, _reason=self.reason, **kwargs):
+            raise SkipTest(_reason)
+        return skipped
 
 def skip(reason):
     return _Skip(reason).decorate
@@ -404,7 +407,15 @@ class _Unexpected:
         return self.message
 
 def expectedFailure(function):
-    return _ExpectedFailure(function).call
+    def expected(*args, _function=function, **kwargs):
+        try:
+            _function(*args, **kwargs)
+        except SkipTest:
+            raise
+        except:
+            raise _Expected('expected failure')
+        raise _Unexpected('unexpected success')
+    return expected
 
 class TestSuite:
     def __init__(self, tests=None):
@@ -426,7 +437,7 @@ class TestSuite:
         fixture = getattr(self.class_, name, None)
         if fixture is None:
             return True
-        outcome = __call_outcome(_Call(fixture, [self.class_], {}).invoke)
+        outcome = __call_outcome(fixture)
         if outcome[0]:
             return True
         entry = [name, _message(outcome[1], outcome[2]), __class_name(self.class_)]
@@ -504,9 +515,52 @@ def _representation(value):
 
 
 def _matches(pattern, text):
-    # No expression module is carried by this source store. Seek the
-    # phrase as written until that module is supplied.
-    return pattern in text
+    search = getattr(pattern, 'search', None)
+    if search is not None:
+        return search(text) is not None
+    for character in pattern:
+        if character in '[](){}|':
+            raise 'NotImplementedError: grouped regular expressions are not supported'
+    if pattern[:1] == '^':
+        return _match_at(pattern[1:], text)
+    for start in range(len(text) + 1):
+        if _match_at(pattern, text[start:]):
+            return True
+    return False
+
+
+def _match_at(pattern, text):
+    if pattern == '':
+        return True
+    if pattern == '$':
+        return text == '' or text == '\n'
+    atom = pattern[0]
+    width = 1
+    escaped = atom == '\\'
+    if escaped:
+        if len(pattern) < 2:
+            raise 'ValueError: trailing regular expression escape'
+        atom = pattern[1]
+        width = 2
+        if atom == 'n':
+            atom = '\n'
+        elif atom == 't':
+            atom = '\t'
+        elif atom not in '.^$*+?\\':
+            raise 'NotImplementedError: this regular expression escape is not supported'
+    first = len(text) > 0 and (text[0] == atom or (atom == '.' and not escaped and text[0] != '\n'))
+    tail = pattern[width:]
+    quantifier = tail[:1]
+    if quantifier == '*' or quantifier == '?':
+        if _match_at(tail[1:], text):
+            return True
+    if not first:
+        return False
+    if quantifier == '*' or quantifier == '+':
+        return _match_at(tail[1:], text[1:]) or _match_at(pattern[:width] + '*' + tail[1:], text[1:])
+    if quantifier == '?':
+        return _match_at(tail[1:], text[1:])
+    return _match_at(tail, text[1:])
 
 
 class _SubTest:

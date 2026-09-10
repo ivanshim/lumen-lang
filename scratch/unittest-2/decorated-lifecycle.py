@@ -22,4 +22,6 @@ class LifecycleTest(unittest.TestCase):
     def test_expected(self):
         self.fail('known failure')
 
-unittest.main(exit=False)
+program = unittest.main(exit=False)
+result = program.result
+print(result.testsRun, len(result.failures), len(result.errors), len(result.skipped), len(result.expectedFailures))

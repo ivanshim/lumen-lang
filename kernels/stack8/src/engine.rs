@@ -2312,6 +2312,14 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::Receiver(pair) => {
+                        if matches!(pair.1, Value::Null) { return Err("Unbound class method".into()); }
+                        let arguments = self.drop_many(argc - 1)?;
+                        self.data.push(pair.1.clone());
+                        self.data.extend(arguments);
+                        self.data.push(pair.0.clone());
+                        self.perform(&Action::Invoke(name.clone()), argc + 1)
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -2638,8 +2646,13 @@ impl<'a> Engine<'a> {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
                     } else {
-                        self.data.push(Value::Class(c));
-                        return self.perform(&Action::Reach(name.clone()), 1);
+                        self.data.push(Value::Class(c.clone()));
+                        self.perform(&Action::Reach(name.clone()), 1)?;
+                        let value = self.drop_top()?;
+                        match value {
+                            Value::Receiver(pair) if matches!(pair.1, Value::Null) => Value::Receiver(Rc::new((pair.0.clone(), Value::Class(c)))),
+                            other => other,
+                        }
                     }
                 }
                 Value::Object(o) => {
@@ -2661,6 +2674,7 @@ impl<'a> Engine<'a> {
                             self.data.push(Value::Class(o.class.clone()));
                             self.perform(&Action::Reach(name.clone()), 1)?;
                             match self.drop_top()? {
+                                Value::Receiver(pair) if matches!(pair.1, Value::Null) => Value::Receiver(Rc::new((pair.0.clone(), Value::Class(o.class.clone())))),
                                 Value::Routine(method) => Value::Method(o, method),
                                 held => held,
                             }
@@ -4629,7 +4643,16 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let found = field.or_else(|| class.and_then(|c| {
-                    if let Some(holder) = c.holder(&name) { return holder.shared.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| v.clone()); }
+                    if let Some(holder) = c.holder(&name) {
+                        return holder.shared.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| match v {
+                            Value::Receiver(pair) if matches!(pair.1, Value::Null) => Value::Receiver(Rc::new((pair.0.clone(), Value::Class(c.clone())))),
+                            Value::Routine(method) => match value {
+                                Value::Object(o) => Value::Method(o.clone(), method.clone()),
+                                _ => v.clone(),
+                            },
+                            _ => v.clone(),
+                        });
+                    }
                     c.constant(&name).cloned().or_else(|| c.method(&name).map(|m| match value {
                         Value::Object(o) => Value::Method(o.clone(), m.clone()), _ => Value::Routine(m.clone()),
                     }))
@@ -4956,10 +4979,22 @@ impl<'a> Engine<'a> {
                     _ => return Err(format!("{}() requires a real argument", name)),
                 }
             }
+            Builtin::ClassBind => {
+                arity(1)?;
+                Value::Receiver(Rc::new((args[0].clone(), Value::Null)))
+            }
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
             Builtin::ToText => {
                 arity(1)?;
+                if let Value::Object(object) = &args[0] {
+                    if let Some(method) = self.lang.text_method.as_deref().and_then(|name| object.class.method(name)).cloned() {
+                        match self.invoke(&method, vec![args[0].clone()]) {
+                            Ok(()) => return self.drop_top(),
+                            Err(fault) => { self.carried = Some(fault); return Err("text conversion failed".into()); }
+                        }
+                    }
+                }
                 Value::text(&args[0].display(&sp))
             }
             Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),

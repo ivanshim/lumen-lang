@@ -2180,6 +2180,13 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Receiver(binding) = &stands {
+                    if matches!(binding.1, Value::Nil) { return Err("Unbound class method".to_string().into()); }
+                    let mut given = vec![Form::Const(binding.1.clone())];
+                    given.extend(self.value_list(args, frame)?.into_iter().map(Form::Const));
+                    let call = Form::Apply(Callee::Code(Box::new(Form::Const(binding.0.clone()))), given);
+                    return self.value_of(&call, frame);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2671,7 +2678,9 @@ impl<'a> Machine<'a> {
         if let Some(keeper) = class.keeper(name) {
             return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| {
                 match (value, x) {
-                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    (_, Value::Receiver(pair)) if matches!(pair.1, Value::Nil) => Value::Receiver(Rc::new((pair.0.clone(), Value::Blueprint(class.clone())))),
+                    (Value::Thing(object), Value::Bound(..)) => Value::Receiver(Rc::new((x.clone(), Value::Thing(object.clone())))),
+                    (Value::Thing(object), Value::Routine(body)) => Value::Method(body.clone(), object.clone()),
                     _ => x.clone(),
                 }
             });
@@ -2866,7 +2875,11 @@ impl<'a> Machine<'a> {
         for (key, value) in keywords {
             let index = match op {
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
-                Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
+                Prim::BindClass => {
+                n(1)?;
+                Value::Receiver(Rc::new((v[0].clone(), Value::Nil)))
+            }
+            Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
                 Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
                     return Err(self.argument_fault("ext.builtin.to_string.unready", None).into());
                 }
@@ -5015,6 +5028,14 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
+                if let Value::Thing(object) = &v[0] {
+                    if let Some(body) = self.table.single("ext.builtin.to_string.method").and_then(|name| object.of.program(name)).cloned() {
+                        return match self.invoke(body, self.outermost.clone(), vec![v[0].clone()]) {
+                            Ok(value) => Ok(value),
+                            Err(over) => { self.got_away = Some(over); Err("text conversion failed".into()) }
+                        };
+                    }
+                }
                 Value::text(&v[0].render(w))
             }
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,

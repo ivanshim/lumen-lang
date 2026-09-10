@@ -304,6 +304,8 @@
   "builtin.get": [],
   "builtin.put": [],
   "builtin.precision": [],
+  "ext.builtin.class_method": ["classmethod"],
+  "ext.builtin.to_string.method": ["__str__"],
   "builtin.to_string": [
     "str"
   ],

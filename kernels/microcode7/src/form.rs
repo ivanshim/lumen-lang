@@ -248,6 +248,7 @@ pub enum Prim {
     MakeReal,
     Places,
     AsText,
+    BindClass,
     AsInt,
     AsReal,
     Length,

@@ -483,6 +483,7 @@ pub enum Builtin {
     MakeReal,
     Places,
     ToText,
+    ClassBind,
     ToInt,
     AsReal,
     Length,

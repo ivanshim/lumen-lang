@@ -424,6 +424,7 @@ pub struct Lang {
     pub member_absent: Vec<String>,
     pub module_cache: Vec<String>,
     pub module_names: Vec<String>,
+    pub text_method: Option<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
@@ -818,7 +819,7 @@ w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.
 
 w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
- | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+ | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.builtin.class_method | w ext.builtin.to_string.method | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
 w ext.builtin.program.namespace
 w ext.builtin.member.get
@@ -1321,7 +1322,7 @@ impl Lang {
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
-            ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText),
+            ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText), ("ext.builtin.class_method", Builtin::ClassBind),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
@@ -1660,6 +1661,7 @@ impl Lang {
             member_absent: r.strings("ext.builtin.member.absent")?,
             module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
+            text_method: r.head("ext.builtin.to_string.method")?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
