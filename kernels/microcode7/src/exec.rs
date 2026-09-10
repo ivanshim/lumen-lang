@@ -2875,11 +2875,7 @@ impl<'a> Machine<'a> {
         for (key, value) in keywords {
             let index = match op {
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
-                Prim::BindClass => {
-                n(1)?;
-                Value::Receiver(Rc::new((v[0].clone(), Value::Nil)))
-            }
-            Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
+                Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
                 Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
                     return Err(self.argument_fault("ext.builtin.to_string.unready", None).into());
                 }
@@ -5022,6 +5018,10 @@ impl<'a> Machine<'a> {
                     Value::Frac(e) if e.places.is_some() => Value::Small(e.places.unwrap() as i64),
                     _ => return Err(format!("{}() requires a real argument", name)),
                 }
+            }
+            Prim::BindClass => {
+                n(1)?;
+                Value::Receiver(Rc::new((v[0].clone(), Value::Nil)))
             }
             Prim::AsText if self.table.single("ext.builtin.to_string.object").is_some() && v.len() != 1 => {
                 if v.is_empty() { Value::text("") } else { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
