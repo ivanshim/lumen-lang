@@ -95,6 +95,7 @@ ext.builtin.copy:L \
 ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
 ext.builtin.math.floating:B \
+ext.builtin.call.outcome:L \
 ext.stmt.import:L ext.stmt.import.from:L ext.stmt.import.as:L ext.system.module.name:L \
 ext.stmt.decorator:L ext.stmt.decorator.amiss:L ext.stmt.const:L ext.builtin.define:L ext.builtin.define.class_constant:L ext.builtin.var_dump:L ext.stmt.switch:L ext.stmt.case:L \
 ext.stmt.default:L ext.stmt.case.mark:L ext.op.ternary:L ext.block.lone_statement:B ext.stmt.function.hoisted:B ext.stmt.function.outermost:B ext.system.request.amiss:L ext.system.request.amiss.boundary:L ext.system.request.amiss.boundary.wrong:L ext.system.request.amiss.part:L ext.system.request.amiss.body.large:L ext.system.request.body:L \
@@ -156,7 +157,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 78] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 79] = [
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
@@ -183,6 +184,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 78] = [
     ("ext.builtin.instance", Prim::IsInstance),
     ("ext.builtin.module.load", Prim::LoadModule),
     ("ext.builtin.copy", Prim::CopyWorth),
+    ("ext.builtin.call.outcome", Prim::CallResult),
     ("ext.builtin.clock", Prim::SinceEpoch),
     ("ext.builtin.room.used", Prim::RoomHeld), ("ext.builtin.room.most", Prim::RoomHighest),
     ("ext.builtin.room.most.forget", Prim::RoomAnew), ("ext.builtin.room.limit", Prim::RoomMark),

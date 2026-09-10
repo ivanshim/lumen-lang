@@ -1602,6 +1602,11 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+- `ext.builtin.call.outcome`: a builtin calling the routine it is given
+  without arguments and returning three values: whether it returned, its
+  answer or raised value, and the complaint's text. A library can thus
+  count failures and errors itself. An ending of the run or exhaustion
+  of its allotted time or room is carried onward, never counted as a test.
 - `ext.builtin.module.load`: a builtin fetching the module named by its
   text argument, through the same source store and cache as an import.
 - `ext.builtin.copy`: a builtin copying a value; its second argument says
@@ -2097,6 +2102,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
+| `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |

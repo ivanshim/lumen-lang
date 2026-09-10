@@ -328,6 +328,9 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.call.outcome": [
+    "__call_outcome"
+  ],
   "ext.builtin.class.methods": [
     "__class_methods"
   ],

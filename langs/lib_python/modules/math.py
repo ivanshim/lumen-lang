@@ -11,22 +11,28 @@ def sqrt(x):
 
 def fabs(x):
     if x < 0:
-        return -float(x)
-    return float(x)
+        return __math('fdiv', -x, 1.0)
+    return __math('fdiv', x, 1.0)
 
 def floor(x):
+    if isinf(x) or isnan(x):
+        raise 'ValueError: a non-finite value has no integer floor'
     n = int(x)
     if n > x:
         n -= 1
     return n
 
 def ceil(x):
+    if isinf(x) or isnan(x):
+        raise 'ValueError: a non-finite value has no integer ceiling'
     n = int(x)
     if n < x:
         n += 1
     return n
 
 def trunc(x):
+    if isinf(x) or isnan(x):
+        raise 'ValueError: a non-finite value has no integer truncation'
     return int(x)
 
 def pow(x, y):
@@ -40,7 +46,9 @@ def log(x, base=None):
         raise 'ValueError: math domain error'
     answer = __math('log', x)
     if base is not None:
-        answer /= __math('log', base)
+        if base <= 0 or base == 1:
+            raise 'ValueError: invalid logarithm base'
+        answer = __math('fdiv', answer, __math('log', base))
     return answer
 
 def isnan(x):
@@ -71,6 +79,8 @@ def copysign(x, y):
 def gcd(*integers):
     result = 0
     for value in integers:
+        if type(value) != type(1) and type(value) != type(True):
+            raise 'TypeError: gcd needs integers'
         if value < 0:
             value = -value
         while value != 0:
@@ -80,7 +90,7 @@ def gcd(*integers):
 def factorial(n):
     if n < 0:
         raise 'ValueError: factorial() not defined for negative values'
-    if n != int(n):
+    if type(n) != type(1) and type(n) != type(True):
         raise 'TypeError: factorial needs an integer'
     value = 1
     for i in range(2, n + 1):
@@ -102,7 +112,7 @@ def fsum(values):
             x = high
         kept.append(x)
         partials = kept
-    return float(sum(partials))
+    return __math('fdiv', sum(partials), 1.0)
 
 def prod(values, start=1):
     for x in values:

@@ -68,7 +68,7 @@ def getitem(a, b):
     return a[b]
 
 def index(a):
-    if a != int(a):
+    if type(a) != type(1) and type(a) != type(True):
         raise 'TypeError: value cannot be interpreted as an integer'
     return int(a)
 
@@ -111,11 +111,13 @@ def attrgetter(*names):
 # Bit work can be written with division and remainders, including the
 # sign extension of negative whole numbers.
 def _bits(a, b, operation):
+    a = index(a)
+    b = index(b)
     result = 0
     place = 1
     while a not in (0, -1) or b not in (0, -1):
-        left = a % 2
-        right = b % 2
+        left = a - (a // 2) * 2
+        right = b - (b // 2) * 2
         if operation == 'and':
             digit = left * right
         elif operation == 'or':
@@ -143,14 +145,16 @@ def xor(a, b):
     return _bits(a, b, 'xor')
 
 def invert(a):
-    return -a - 1
+    return -index(a) - 1
 
 def lshift(a, b):
+    a, b = index(a), index(b)
     if b < 0:
         raise 'ValueError: negative shift count'
     return a * 2 ** b
 
 def rshift(a, b):
+    a, b = index(a), index(b)
     if b < 0:
         raise 'ValueError: negative shift count'
     return a // 2 ** b

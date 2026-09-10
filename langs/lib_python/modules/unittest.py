@@ -48,6 +48,7 @@ class TestResult:
 
 class TestCase:
     _test_case = True
+    failureException = AssertionError
 
     def __init__(self, methodName='runTest'):
         self._method = methodName
@@ -167,26 +168,32 @@ class TestCase:
     def skipTest(self, reason):
         raise SkipTest(reason)
 
+    def _run_test(self):
+        self.setUp()
+        try:
+            getattr(self, self._method)()
+        finally:
+            self.tearDown()
+
     def run(self, result=None):
         if result is None:
             result = TestResult()
         result.testsRun += 1
-        try:
-            self.setUp()
-            try:
-                getattr(self, self._method)()
-            finally:
-                self.tearDown()
-        except _Expected as error:
-            result.expectedFailures.append([self._method, error.message])
-        except _Unexpected as error:
-            result.unexpectedSuccesses.append([self._method, error.message])
-        except AssertionError as error:
-            result.failures.append([self._method, error.message])
-        except SkipTest as error:
-            result.skipped.append([self._method, error.message])
-        except:
-            result.errors.append([self._method, 'unhandled exception'])
+        outcome = __call_outcome(self._run_test)
+        if outcome[0]:
+            return result
+        error = outcome[1]
+        entry = [self._method, getattr(error, 'message', outcome[2])]
+        if isinstance(error, AssertionError):
+            result.failures = result.failures + [entry]
+        elif isinstance(error, SkipTest):
+            result.skipped = result.skipped + [entry]
+        elif isinstance(error, _Expected):
+            result.expectedFailures = result.expectedFailures + [entry]
+        elif isinstance(error, _Unexpected):
+            result.unexpectedSuccesses = result.unexpectedSuccesses + [entry]
+        else:
+            result.errors = result.errors + [entry]
         return result
 
 class _Skip:
@@ -244,7 +251,7 @@ class TestSuite:
             self.tests = list(tests)
 
     def addTest(self, test):
-        self.tests.append(test)
+        self.tests = self.tests + [test]
 
     def addTests(self, tests):
         for test in tests:

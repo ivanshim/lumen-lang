@@ -3731,6 +3731,22 @@ impl<'a> Machine<'a> {
                 let mut known = Vec::new();
                 self.copy_worth(&v[0], deep, &mut known)
             }
+            Prim::CallResult => {
+                n(1)?;
+                let call = Form::Apply(Callee::Code(Box::new(Form::Const(v[0].clone()))), Vec::new());
+                let outer = self.outermost.clone();
+                let mut items = Vec::with_capacity(3);
+                match self.value_of(&call, &outer) {
+                    Ok(value) => items.extend([Value::Flag(true), value, Value::text("")]),
+                    Err(Escape::Error(told)) => items.extend([Value::Flag(false), Value::text(&told), Value::text(&told)]),
+                    Err(Escape::Thrown(value)) => {
+                        let message = value.render(self.wording());
+                        items.extend([Value::Flag(false), value, Value::text(&message)]);
+                    }
+                    Err(escape) => { self.got_away = Some(escape); return Err("the call ended the run".into()); }
+                }
+                Value::Vector(Rc::new(items))
+            }
             Prim::ProgramNames => {
                 n(0)?;
                 let cells = self.outermost.cells.borrow();

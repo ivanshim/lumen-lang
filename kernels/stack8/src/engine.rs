@@ -4555,6 +4555,26 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
             }
+            Builtin::CallOutcome => {
+                arity(1)?;
+                let depth = self.data.len();
+                self.data.push(args[0].clone());
+                let result = self.perform(&Action::Invoke(Rc::from(name)), 1);
+                let answer = match result {
+                    Ok(()) => {
+                        let value = self.drop_top()?;
+                        Value::array(vec![Value::Flag(true), value, Value::text("")])
+                    }
+                    Err(Fault::Note(words)) => Value::array(vec![Value::Flag(false), Value::text(&words), Value::text(&words)]),
+                    Err(Fault::Thrown(value)) => {
+                        let message = value.display(&sp);
+                        Value::array(vec![Value::Flag(false), value, Value::text(&message)])
+                    }
+                    Err(fault) => { self.data.truncate(depth); self.carried = Some(fault); return Err("the call stopped the run".into()); }
+                };
+                self.data.truncate(depth);
+                answer
+            }
             Builtin::ProgramNamespace => {
                 arity(0)?;
                 Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {

@@ -826,6 +826,7 @@ w ext.builtin.copy
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
 b ext.builtin.math.floating
+w ext.builtin.call.outcome
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
@@ -1340,6 +1341,7 @@ impl Lang {
             ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
+            ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
