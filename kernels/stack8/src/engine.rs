@@ -1918,15 +1918,16 @@ impl<'a> Engine<'a> {
                     for k in keys.iter_mut() {
                         *k = self.key(k);
                     }
-                    let makes = self.lang.makes_places;
+                    let language = self.lang;
+                    let makes = language.makes_places;
                     let held = self.peek_cell_mut(slot, frame)?;
                     let shared = match held {
                         Value::Bond(cell) => {
                             let cell = cell.clone();
                             let mut inside = cell.borrow_mut();
-                            shared_deep(&mut inside, &keys, makes, self.lang)?
+                            shared_deep(&mut inside, &keys, makes, language)?
                         }
-                        _ => shared_deep(held, &keys, makes, self.lang)?,
+                        _ => shared_deep(held, &keys, makes, language)?,
                     };
                     self.data.push(Value::Bond(shared));
                 }

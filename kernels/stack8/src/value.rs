@@ -385,7 +385,12 @@ impl Value {
             Value::Set(items) if items.is_empty() => return "set()".to_string(),
             Value::Set(items) => (Rc::as_ptr(items) as usize, "{", "}"),
             Value::Map(pairs) => (Rc::as_ptr(pairs) as usize, "{", "}"),
-            _ => return self.ordinary_display(words),
+            _ => {
+                let mut shown = self.ordinary_display(words);
+                if within && matches!(self, Value::Real(r) if !r.outside())
+                    && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown.push_str(".0"); }
+                return shown;
+            }
         };
         if path.contains(&identity) { return format!("{open}...{close}"); }
         path.push(identity);
