@@ -1508,6 +1508,10 @@ impl<'a> Machine<'a> {
         if let Value::Shared(cell) = v {
             return Ok(if self.table.flag("ext.syntax.call.bind_names") { Value::Shared(cell) } else { cell.borrow().clone() });
         }
+        if matches!(v, Value::Unset) && self.table.flag("ext.stmt.function.closes_over") && !Rc::ptr_eq(&f, &self.outermost) {
+            let label = if slot.up == 0 { "ext.stmt.function.local.unbound" } else { "ext.stmt.function.free.unbound" };
+            return Err(self.argument_fault(label, Some(&slot.ident)));
+        }
         if !matches!(v, Value::Unset) {
             return Ok(v);
         }
@@ -1871,6 +1875,8 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                // Captures address the environment slot itself. Deletion
+                // must leave any collection shared by another name alive.
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
                 Ok(Value::Nil)
             }

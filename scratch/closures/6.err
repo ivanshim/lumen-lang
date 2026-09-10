@@ -1,0 +1,1 @@
+PythonError: NameError: cannot access free variable 'x' where it is not associated with a value in enclosing scope

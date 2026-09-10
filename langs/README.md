@@ -529,6 +529,12 @@ only. The extension labels so far, all from PHP:
   nearest enclosing function. The full kernels do not yet carry those
   cells into inner functions; reaching this statement stops the run.
   `ext.stmt.nonlocal.unrun` holds the plain words said then.
+- `ext.stmt.nonlocal`: reads names belonging to enclosing functions.
+  With `ext.stmt.function.closes_over`, a write to such a name reaches
+  the nearest enclosing binding, whose cell lasts beyond its call.
+  `ext.stmt.nonlocal.amiss` holds two pieces about a name with no such
+  binding: the words before the name and those after it.
+  Without the switch, `ext.stmt.nonlocal.unrun` gives the refusal.
 - `ext.stmt.loop.else`: a switch; the `stmt.else` block after a for or
   while loop runs when its test ends the loop, including an empty walk.
   A break leaves that block behind; a continue does not.
@@ -550,8 +556,8 @@ only. The extension labels so far, all from PHP:
 - `ext.op.lambda` begins a short routine whose names precede the body
   mark, and whose body is one expression. The reader enters a fresh
   scope for that expression, including another short routine within it.
-  Keeping the enclosing cells is still owed, so reaching this form
-  raises `ext.system.scope.unready` before any part of it runs.
+  Where `ext.stmt.function.closes_over` is on, the routine keeps the
+  enclosing cells it reads, just as a routine written under a name does.
 - `ext.op.tuple` joins values within grouping marks, a returned value,
   an assigned value, or a statement's targets. A final mark still joins
   a tuple of one, and empty grouping marks hold a tuple of none. This
@@ -664,6 +670,23 @@ only. The extension labels so far, all from PHP:
   by this and lasts from call to call as any other does. Without the
   switch a `static` read in this way makes a hidden global of its own,
   which nothing outside the reading can name.
+- `ext.stmt.function.closes_over`: a switch; a routine keeps the cells
+  of the enclosing functions whose names it reads. The cells outlive
+  their calls, and a later write is seen by every routine sharing one.
+  Each function's whole body is read first to find its own bindings:
+  assignment makes a local unless a declaration says otherwise. A bare
+  annotation declares a local too, though it fills no cell. Each running
+  of a comprehension has its own enclosing cells; its lambdas share the
+  walk's last binding, without changing an earlier running's cells.
+  A named assignment expression in a comprehension still belongs to
+  the function around it.
+  `ext.stmt.global` reaches the outermost binding even within an inner
+  routine; `ext.stmt.nonlocal` instead writes an enclosing cell.
+  `ext.stmt.function.local.unbound` and `ext.stmt.function.free.unbound`
+  each hold two pieces about a binding read before it holds a value,
+  before and after its name. The former speaks of this function's own
+  name, the latter of an enclosing function's. Languages leaving the
+  switch out keep their former rules for carrying names away.
 - `ext.stmt.function.own_names`: a switch; a variable a function does no
   more than read is kept among that function's own names all the same,
   rather than meaning the outermost binding of that name outright. The
@@ -2218,9 +2241,10 @@ only. The extension labels so far, all from PHP:
   a power sign before a parameter and parameters after a bare
   multiplication sign are read as keyword parameters. Such parameters
   cannot yet be called: `ext.op.lambda.unsupported` gives the words said
-  on reaching that body. A name of the enclosing routine is not carried
-  away; `ext.op.lambda.enclosing` gives the complaint when such a body
-  is called. These are lists of plain words, one message apiece.
+  on reaching that body. With `ext.stmt.function.closes_over`, free
+  names read the enclosing cells as they stand at the time of the call.
+  Without it, `ext.op.lambda.enclosing` gives the complaint about such
+  a name. These complaints are lists of plain words, one apiece.
 - `ext.op.in`: membership of the left value among an array's items, a
   map's keys, or the substrings of text on the right. `ext.op.in.negated`
   is a word before the operator that turns the answer about (`not in`).
@@ -3081,9 +3105,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.async.unavailable` | - | - | `NotImplementedError: asynchronous functions are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
+| `ext.stmt.function.closes_over` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.function.free.unbound` | - | - | `NameError: cannot access free variable '` `' where it is not associated with a value in enclosing scope` | - | - | - | - | - | - | - |
 | `ext.stmt.function.hoisted` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.keyword_only` | - | - | `*` | - | - | - | - | - | - | - |
+| `ext.stmt.function.local.unbound` | - | - | `UnboundLocalError: cannot access local variable '` `' where it is not associated with a value` | - | - | - | - | - | - | - |
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
@@ -3104,6 +3131,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.match.unready` | - | - | `NotImplementedError: this pattern is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.match.wildcard` | - | - | `_` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal` | - | - | `nonlocal` | - | - | - | - | - | - | - |
+| `ext.stmt.nonlocal.amiss` | - | - | `SyntaxError: no binding for nonlocal '` `' found` | - | - | - | - | - | - | - |
 | `ext.stmt.nonlocal.unrun` | - | - | `Nonlocal bindings cannot be run without enclosing function cells` | - | - | - | - | - | - | - |
 | `ext.stmt.separator` | - | - | `;` | - | - | - | - | - | - | - |
 | `ext.stmt.static` | - | - | - | - | `static` | - | - | - | - | - |
