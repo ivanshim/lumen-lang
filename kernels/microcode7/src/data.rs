@@ -304,6 +304,10 @@ impl Value {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
             (Value::Channel(left), Value::Channel(right)) => left == right,
+            (Value::Retreat(one), Value::Retreat(two)) => Rc::ptr_eq(one, two),
+            (Value::ProgressionMember { walk: one, part: p }, Value::ProgressionMember { walk: two, part: q }) => {
+                p == q && Rc::ptr_eq(one, two)
+            }
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
                 match left.count().to_u8() {

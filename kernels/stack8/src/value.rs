@@ -317,6 +317,8 @@ impl Value {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Stream(a), Value::Stream(b)) => a == b,
+            (Value::Backward(a), Value::Backward(b)) => Rc::ptr_eq(a, b),
+            (Value::RangeMethod(a, x), Value::RangeMethod(b, y)) => x == y && Rc::ptr_eq(a, b),
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
