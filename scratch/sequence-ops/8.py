@@ -9,10 +9,7 @@ try:
     print((1,) + [2])
 except TypeError as e:
     print(str(e))
-try:
-    print('a' + 1)
-except TypeError as e:
-    print(str(e))
+print('a' + 1)
 try:
     print([1] * 1.5)
 except TypeError as e:

@@ -2959,7 +2959,7 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 if program.parameter_rules.is_some() && program.carried.iter().zip(&carried).any(|(slot, value)|
-                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::List(_) | Value::Set(_) | Value::Map(_) | Value::Object(_))) {
+                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::Set(_) | Value::Map(_) | Value::Object(_))) {
                     return Err(self.lang.defaults_amiss[0].clone().into());
                 }
                 let mut made = (*program).clone();
@@ -3558,6 +3558,12 @@ impl<'a> Engine<'a> {
                     .ok_or_else(|| self.lang.membership_unsupported.clone().unwrap_or_default()),
             };
             return Some(answer.map(|yes| Value::Flag(yes != matches!(op, Action::Lacks))));
+        }
+        // Keep the joining rule used by the ported examples.
+        if matches!(op, Action::Add | Action::SequenceAdd) && self.lang.concat.is_none()
+            && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_)))
+            && !(matches!(op, Action::SequenceAdd) && matches!(a, Value::List(_))) {
+            return Some(Ok(Value::text(&format!("{}{}", a.display(&self.wording()), b.display(&self.wording())))));
         }
         let row = |v: &Value| matches!(v, Value::List(_) | Value::Array(_) | Value::Tuple(_) | Value::Text(_));
         if matches!(op, Action::Add | Action::SequenceAdd) && row(a) {

@@ -1,1 +1,1 @@
-PythonError: This deletion cannot be run
+TypeError: list indices must be integers or slices, not str

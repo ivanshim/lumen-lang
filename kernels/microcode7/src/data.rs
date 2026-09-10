@@ -355,22 +355,34 @@ impl Value {
     }
 
     pub fn render(&self, w: Names) -> String {
-        match self {
+        self.render_with(w, &mut std::collections::HashSet::new())
+    }
+
+    fn render_with(&self, w: Names, visiting: &mut std::collections::HashSet<usize>) -> String {
+        let holder = match self {
+            Value::List(items) => Some(Rc::as_ptr(items) as usize),
+            Value::Tuple(items) | Value::Set(items) | Value::Vector(items) => Some(Rc::as_ptr(items) as usize),
+            Value::Dict(items) => Some(Rc::as_ptr(items) as usize),
+            _ => None,
+        };
+        if let Some(holder) = holder {
+            if !visiting.insert(holder) { return String::from("[...]"); }
+        }
+        let text = match self {
             // A cell that names share is written as what it holds.
-            Value::Shared(cell) => cell.borrow().render(w),
+            Value::Shared(cell) => cell.borrow().render_with(w, visiting),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
             Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
-            Value::List(items) => format!("[{}]", items.borrow().iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
-            Value::Tuple(items) => format!("({}{})", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
-            Value::Set(items) => format!("{{{}}}", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
-            Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+            Value::List(items) => format!("[{}]", items.borrow().iter().map(|v| v.render_with(w, visiting)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(items) | Value::Set(items) => format!("[{}]", items.iter().map(|v| v.render_with(w, visiting)).collect::<Vec<_>>().join(", ")),
+            Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render_with(w, visiting)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
-                format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
+                format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render_with(w, visiting), v.render_with(w, visiting))).collect::<Vec<_>>().join(", "))
             }
-            Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
+            Value::Couple(e) => format!("{} => {}", e.0.render_with(w, visiting), e.1.render_with(w, visiting)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
@@ -380,7 +392,9 @@ impl Value {
             // its own count of figures.
             Value::Frac(e) if w.real_figures.is_some() => spelled_out(nearest_binary(&e.above, &e.beneath), figures_asked(false).unwrap_or(w.real_figures)),
             other => other.bare(),
-        }
+        };
+        if let Some(holder) = holder { visiting.remove(&holder); }
+        text
     }
 
     /// Common field presentations, with the ordinary spelling kept for

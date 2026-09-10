@@ -2391,7 +2391,7 @@ impl<'a> Machine<'a> {
                         let mut cells = took.cells.borrow_mut();
                         for (slot, held) in program.carried.iter().zip(values) {
                             if program.taking.is_some() && program.formal_slots.contains(slot)
-                                && matches!(held, Value::List(_) | Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_)) {
+                                && matches!(held, Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_)) {
                                 return Err(self.argument_fault("ext.stmt.function.defaults.amiss", None).into());
                             }
                             cells[*slot] = held;
@@ -5130,9 +5130,6 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
-                if self.table.flag("ext.op.sequence.values") && matches!(v[0], Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_)) {
-                    return Ok(Value::text(&self.quoted_remainder(&v[0])?));
-                }
                 if let Value::Thing(raised) = &v[0] {
                     if raised.of.fields.iter().any(|(key, _)| key == SEQUENCE_FAULT_MARK) {
                         return Ok(raised.holds.borrow().iter().find(|(key, _)| key == "message").map(|(_, text)| text.clone()).unwrap_or_else(|| Value::text("")));
@@ -5738,6 +5735,9 @@ impl<'a> Machine<'a> {
     fn sequence_arithmetic(&self, op: Prim, left: &Value, right: &Value, inplace: bool) -> Result<Option<Value>, String> {
         let is_row = |x: &Value| matches!(x, Value::List(_) | Value::Tuple(_) | Value::Text(_));
         if !is_row(left) && !is_row(right) { return Ok(None); }
+        if op == Prim::Plus && !self.table.has_any("op.concat")
+            && (matches!(left, Value::Text(_)) || matches!(right, Value::Text(_)))
+            && !(inplace && matches!(left, Value::List(_))) { return Ok(None); }
         if op == Prim::Plus {
             let answer = match (left, right) {
                 (Value::Text(a), Value::Text(b)) => Value::text(&format!("{}{}", a, b)),
@@ -5890,7 +5890,7 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> Result<String, String> {
         let w = self.wording();
         let argument = |x: &Value| -> Result<String, String> {
-            let text = if self.table.flag("ext.op.sequence.values") && matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_) | Value::Reverse(..)) { self.quoted_remainder(x)? } else { x.render(w) };
+            let text = x.render(w);
             Ok(match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,

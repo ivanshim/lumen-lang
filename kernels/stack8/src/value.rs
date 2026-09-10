@@ -385,36 +385,24 @@ impl Value {
         }
     }
 
-    fn sequence_shown(&self, words: &Wording, within: bool, path: &mut Vec<usize>) -> String {
-        if let Value::Bond(cell) = self { return cell.borrow().sequence_shown(words, within, path); }
-        if let Value::Text(_) = self {
-            return if within { self.string_field(words, "", "r") } else { self.plain() };
-        }
-        let (identity, open, close) = match self {
-            Value::List(items) => (Rc::as_ptr(items) as usize, "[", "]"),
-            Value::Array(items) => (Rc::as_ptr(items) as usize, "[", "]"),
-            Value::Tuple(items) => (Rc::as_ptr(items) as usize, "(", ")"),
-            Value::Set(items) if items.is_empty() => return "set()".to_string(),
-            Value::Set(items) => (Rc::as_ptr(items) as usize, "{", "}"),
-            Value::Map(pairs) => (Rc::as_ptr(pairs) as usize, "{", "}"),
-            _ => {
-                let mut shown = self.ordinary_display(words);
-                if within && matches!(self, Value::Real(r) if !r.outside())
-                    && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown.push_str(".0"); }
-                return shown;
-            }
+    fn sequence_shown(&self, words: &Wording, path: &mut Vec<usize>) -> String {
+        if let Value::Bond(cell) = self { return cell.borrow().sequence_shown(words, path); }
+        let identity = match self {
+            Value::List(items) => Rc::as_ptr(items) as usize,
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Rc::as_ptr(items) as usize,
+            Value::Map(pairs) => Rc::as_ptr(pairs) as usize,
+            _ => return self.ordinary_display(words),
         };
-        if path.contains(&identity) { return format!("{open}...{close}"); }
+        if path.contains(&identity) { return "[...]".to_string(); }
         path.push(identity);
         let shown = match self {
             Value::Map(pairs) => pairs.iter().map(|(key, value)| {
-                format!("{}: {}", key.sequence_shown(words, true, path), value.sequence_shown(words, true, path))
+                format!("{} => {}", key.sequence_shown(words, path), value.sequence_shown(words, path))
             }).collect::<Vec<_>>(),
-            _ => self.sequence_items().unwrap_or_default().iter().map(|item| item.sequence_shown(words, true, path)).collect(),
+            _ => self.sequence_items().unwrap_or_default().iter().map(|item| item.sequence_shown(words, path)).collect(),
         };
         path.pop();
-        let comma = if matches!(self, Value::Tuple(_)) && shown.len() == 1 { "," } else { "" };
-        format!("{open}{}{comma}{close}", shown.join(", "))
+        format!("[{}]", shown.join(", "))
     }
 
     pub fn sort(&self) -> Option<Sort> {
@@ -565,7 +553,7 @@ impl Value {
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
         if sp.sequence_values {
-            return self.sequence_shown(sp, false, &mut Vec::new());
+            return self.sequence_shown(sp, &mut Vec::new());
         }
         self.ordinary_display(sp)
     }

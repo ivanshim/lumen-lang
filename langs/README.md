@@ -1769,8 +1769,10 @@ only. The extension labels so far, all from PHP:
   while a tuple or text is bound anew. Equality looks within containers;
   maps and sets ask without regard to order. Lists and tuples are ordered
   by the first unlike pair of items, then by length. Text is ordered by
-  its letters. Text within a container is quoted; bare text keeps its
-  former printing.
+  its letters. Containers keep their former bracketed printing, with
+  unquoted text and arrows between map keys and values. Text addition
+  keeps the coercing join used by the examples. List parameter defaults
+  keep the same shared places across calls.
 - `ext.builtin.tuple` gathers the items of a collection into a tuple.
   `ext.builtin.hash` gives the hash of a value whose contents cannot be
   changed; a tuple asks the same of every item. `ext.builtin.index` finds
