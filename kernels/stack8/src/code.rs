@@ -166,6 +166,7 @@ pub enum Action {
     /// Keep a real's point after a compound write.
     KeepPoint,
     InPlace(Box<Action>),
+    ClassReady,
     ContextEnter,
     SettleObjects,
     Add,

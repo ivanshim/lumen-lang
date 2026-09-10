@@ -2104,9 +2104,9 @@ impl<'a> Engine<'a> {
     }
 
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
-        let Value::Object(object) = value else { return None };
+        let origin = match value { Value::Object(object) => &object.class, Value::Class(class) if place >= 76 => class, _ => return None };
         let named = self.lang.class_special.get(place)?;
-        let mut class = Some(&object.class);
+        let mut class = Some(origin);
         while let Some(current) = class {
             if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
             if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
@@ -2242,6 +2242,9 @@ impl<'a> Engine<'a> {
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
         let a = &collection_contents(a);
         let b = &collection_contents(b);
+        if matches!(op, Action::At | Action::Nested) && matches!(a, Value::Class(_)) {
+            if let Some(value) = self.special_call(a, 81, vec![b.clone()])? { return Ok(value); }
+        }
         if matches!(op, Action::At | Action::Nested) && self.special_value(a, 11).is_none() {
             if let Value::Object(object) = a {
                 let contents = object.fields.borrow().iter().find(|(key, _)| key.is_empty()).map(|(_, value)| collection_contents(value));
@@ -3021,6 +3024,22 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::ClassReady => {
+                let mut given = self.drop_many(argc)?;
+                let value = given.remove(0);
+                let Value::Class(class) = &value else { return Err(self.special_fault().into()) };
+                let members = class.shared.borrow().clone();
+                for (name, member) in members {
+                    self.special_call(&member, 79, vec![value.clone(), Value::text(&name)])?;
+                }
+                let method = class.base.as_ref().and_then(|base| self.special_method(&Value::Class(base.clone()), 80));
+                if let Some(method) = method {
+                    given.insert(0, value.clone());
+                    self.invoke(&method, given)?;
+                    self.drop_top()?;
+                } else if !given.is_empty() { return Err(self.special_fault().into()); }
+                value
+            }
             Action::InPlace(op) => {
                 let right = self.drop_top()?;
                 let left = self.drop_top()?;
@@ -3339,6 +3358,20 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                if self.lang.class_special.get(76).map_or(false, |word| word == name.as_ref()) {
+                    let default = matches!(&subject, Value::Class(c) if Lang::spells(&self.lang.class_root, &c.name))
+                        || (matches!(&subject, Value::Object(_)) && self.special_value(&subject, 76).is_none());
+                    if default {
+                        let receiver = if matches!(&subject, Value::Class(_)) && !args.is_empty() { args.remove(0) } else { subject.clone() };
+                        let [Value::Text(spec)] = args.as_slice() else { return Err(self.special_fault().into()) };
+                        if !spec.is_empty() {
+                            return Err(format!("{}{}{}", self.lang.format_amiss[0], self.special_kind(&receiver), self.lang.format_amiss[1]).into());
+                        }
+                        let text = self.special_text(&receiver, false)?;
+                        self.data.push(Value::text(&text));
+                        return Ok(());
+                    }
+                }
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {

@@ -3202,6 +3202,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as the class name")?;
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
+        let mut keywords = Vec::new();
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
@@ -3212,15 +3213,21 @@ impl<'a> Compiler<'a> {
                 let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
                 if spread { self.take(); unready = true; }
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
-                if keyword { self.take(); self.take(); unready = true; }
                 let from = self.mark();
+                if keyword { let name = self.take().lexeme; self.take(); self.constant(Value::text(&name)); }
                 self.expr(0)?;
-                if count == 0 && !keyword && !spread {
+                if keyword && lang.class_special.len() > 80 {
+                    self.act(Action::Tie, 2);
+                    let slot = self.gensym("class_argument");
+                    self.write(&slot);
+                    keywords.push(slot);
+                } else if count == 0 && !keyword && !spread {
                     let held = self.gensym("base");
                     self.write(&held);
                     base = Some(held);
                 } else {
                     self.piece().instrs.truncate(from);
+                    if keyword { unready = true; }
                 }
                 count += 1;
                 if apart.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); } else { break; }
@@ -3304,6 +3311,10 @@ impl<'a> Compiler<'a> {
         let plan = Plan { name: name.clone(), answers: 0, field_names: Vec::new(), field_reach: Vec::new(),
             shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), count);
+        if lang.class_special.len() > 80 {
+            for slot in &keywords { self.read(slot); }
+            self.act(Action::ClassReady, keywords.len() + 1);
+        }
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
             let private = self.gensym("class");
             self.write(&private);
@@ -5509,7 +5520,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.lexeme)
+        if Lang::spells(&lang.special_stop, &tok.lexeme) || Lang::spells(&lang.class_root, &tok.lexeme)
             || (lang.class_special.len() > 77 && lang.builtins.get(&tok.lexeme) == Some(&Builtin::MapFrom)
                 && !lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).lexeme == c.open)) {
             self.take();

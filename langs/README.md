@@ -936,6 +936,8 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
+- `ext.stmt.class.root` names the empty root class, whose ordinary
+  formatting accepts an empty specification and asks for text.
 - The special-method list continues with index, whole, real and complex
   conversion, rounding, truncation, floor, ceiling, absolute value, unary
   plus and inversion; matrix multiplication and its reflection; the
@@ -3061,6 +3063,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
+| `ext.stmt.class.root` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
 | `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__index__` `__int__` `__float__` `__complex__` `__round__` `__trunc__` `__floor__` `__ceil__` `__abs__` `__pos__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__missing__` `__reversed__` `__set_name__` `__init_subclass__` `__class_getitem__` `__sizeof__` `__dir__` | - | - | - | - | - | - | - |

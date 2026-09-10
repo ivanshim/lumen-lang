@@ -42,6 +42,7 @@ pub enum Prim {
     DistinctObjects,
     Absolute, BinaryText, HexText, OctalText, PowerCall, DividePair, FormatCall, RoundCall, ReversedCall, SizeCall, DirCall, ComplexCall, IndexCall, TruncCall, FloorCall, CeilCall,
     UpdateBy(usize),
+    ClassReady,
     SpecialRepr, SpecialHash, SpecialBool, SpecialSorted, SpecialIter, SpecialNext, SpecialIsInstance,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,

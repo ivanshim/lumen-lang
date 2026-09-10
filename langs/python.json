@@ -916,6 +916,9 @@
   "ext.stmt.class.reader": [
     "__getattr__"
   ],
+  "ext.stmt.class.root": [
+    "object"
+  ],
   "ext.stmt.class.special": [
     "__str__",
     "__repr__",

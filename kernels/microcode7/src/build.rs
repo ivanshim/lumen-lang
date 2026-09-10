@@ -2119,6 +2119,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let mut setup = Vec::new();
         let mut parent = None;
+        let mut class_arguments = Vec::new();
         let mut cannot = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
@@ -2128,9 +2129,16 @@ impl<'a> Builder<'a> {
                 let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
                 if expanded { self.advance(); cannot = true; }
                 let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
-                if keyword { self.pos += 2; cannot = true; }
+                let keyword_name = if keyword { let word = self.advance().lexeme; self.advance(); Some(word) } else { None };
                 let value = self.expr(0)?;
-                if first && !keyword && !expanded {
+                if let Some(word) = keyword_name {
+                    if table.strings("ext.stmt.class.special").len() > 80 {
+                        let slot = self.gensym("subclass_argument");
+                        let value = prim_call(Prim::Couple, vec![constant(Value::text(&word)), value]);
+                        setup.push(Form::Write(slot.clone(), Box::new(value)));
+                        class_arguments.push(Form::Read(slot));
+                    } else { cannot = true; }
+                } else if first && !expanded {
                     let slot = self.gensym("parent");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
                     parent = Some(slot);
@@ -2226,6 +2234,11 @@ impl<'a> Builder<'a> {
             shared_names: attributes, constant_names: vec![], methods, extends: parent.is_some(),
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
+        let declaration = if table.strings("ext.stmt.class.special").len() > 80 {
+            let mut given = vec![declaration];
+            given.extend(class_arguments);
+            prim_call(Prim::ClassReady, given)
+        } else { declaration };
         if self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len()) {
             let slot = self.gensym("inner_class");
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
@@ -5178,7 +5191,7 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.stmt.class.special.stop", &t.lexeme)
+        if table.spells("ext.stmt.class.special.stop", &t.lexeme) || table.spells("ext.stmt.class.root", &t.lexeme)
             || (table.strings("ext.stmt.class.special").len() > 77 && table.spells("ext.builtin.map", &t.lexeme)
                 && !table.spells("syntax.call.open", &self.glance(1).lexeme)) {
             self.advance();

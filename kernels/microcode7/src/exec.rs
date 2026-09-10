@@ -2388,6 +2388,19 @@ impl<'a> Machine<'a> {
                     }
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
+                    if self.table.strings("ext.stmt.class.special").get(76).map_or(false, |word| word == &called) {
+                        let root = matches!(&subject, Value::Blueprint(c) if self.table.spells("ext.stmt.class.root", &c.name));
+                        let ordinary = matches!(&subject, Value::Thing(_)) && self.appointment(&subject, 76).is_none();
+                        if root || ordinary {
+                            let receiver = if root && !values.is_empty() { values.remove(0) } else { subject.clone() };
+                            if let [Value::Text(spec)] = values.as_slice() {
+                                if spec.is_empty() { return Ok(Value::text(&self.object_words(&receiver, false)?)); }
+                                let words = self.table.strings("ext.stmt.class.format.amiss");
+                                return Err([words[0].clone(), self.operand_name(&receiver), words[1].clone()].concat().into());
+                            }
+                            return Err(self.bad_answer().into());
+                        }
+                    }
                     if self.table.flag("ext.op.member.pipes") {
                         if let Some(target) = self.attribute(&subject, &called) {
                             let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
@@ -3600,8 +3613,11 @@ impl<'a> Machine<'a> {
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
         let names = self.table.strings("ext.stmt.class.special");
         let word = names.get(index)?;
-        let Value::Thing(thing) = subject else { return None };
-        let mut blueprint = &thing.of;
+        let mut blueprint = match subject {
+            Value::Thing(thing) => &thing.of,
+            Value::Blueprint(class) if index >= 76 => class,
+            _ => return None,
+        };
         loop {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
             if own.is_some() { return own; }
@@ -3849,6 +3865,23 @@ impl<'a> Machine<'a> {
             }
         }
         let value = match (operation, operands) {
+            (Prim::ClassReady, [subject @ Value::Blueprint(class), rest @ ..]) => {
+                let members = class.shared.borrow().clone();
+                for (word, member) in members { self.ask_special(&member, 79, &[subject.clone(), Value::text(&word)])?; }
+                let inherited = class.under.as_ref().and_then(|parent| self.appointed(&Value::Blueprint(parent.clone()), 80));
+                if let Some(body) = inherited {
+                    let given = std::iter::once(subject.clone()).chain(rest.iter().cloned()).collect();
+                    match self.invoke(body, self.outermost.clone(), given) {
+                        Ok(_) => (),
+                        Err(Escape::Error(message)) => return Err(message),
+                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+                    }
+                } else if !rest.is_empty() { return Err(self.bad_answer()); }
+                subject.clone()
+            }
+            (Prim::At | Prim::Fetch, [subject @ Value::Blueprint(_), key]) => {
+                match self.ask_special(subject, 81, std::slice::from_ref(key))? { Some(value) => value, None => return Ok(None) }
+            }
             (Prim::At | Prim::Fetch, [subject @ Value::Thing(object), key]) if self.appointment(subject, 11).is_none() => {
                 let contents = object.holds.borrow().iter().find(|(name, _)| name.is_empty()).map(|(_, value)| collection_read(value));
                 if let Some(Value::Dict(entries)) = contents {
@@ -4181,7 +4214,7 @@ impl<'a> Machine<'a> {
                 return Err(words.to_owned());
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
-            Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::RoundCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
+            Prim::ClassReady | Prim::Absolute | Prim::BinaryText | Prim::HexText | Prim::OctalText | Prim::PowerCall | Prim::DividePair | Prim::FormatCall | Prim::RoundCall | Prim::ReversedCall | Prim::SizeCall | Prim::DirCall | Prim::ComplexCall | Prim::IndexCall | Prim::TruncCall | Prim::FloorCall | Prim::CeilCall | Prim::UpdateBy(_) |
             Prim::StartContext | Prim::DistinctObjects | Prim::SpecialRepr | Prim::SpecialHash | Prim::SpecialBool | Prim::SpecialSorted | Prim::SpecialIter | Prim::SpecialNext | Prim::SpecialIsInstance => return Err(self.bad_answer()),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
