@@ -40,13 +40,13 @@ class redirect_stdout:
 
     def __enter__(self):
         import sys
-        self.saved = [*self.saved, sys.stdout]
-        sys.stdout = self.target
+        self.saved = [*self.saved, getattr(sys, 'stdout')]
+        setattr(sys, 'stdout', self.target)
         return self.target
 
     def __exit__(self, kind, value, traceback):
         import sys
-        sys.stdout = self.saved[-1]
+        setattr(sys, 'stdout', self.saved[-1])
         self.saved = self.saved[:-1]
         return False
 

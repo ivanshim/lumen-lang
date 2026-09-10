@@ -443,7 +443,7 @@ impl<'a> Machine<'a> {
             // be walked for it. Either way a walk begins here.
             Prim::Walked => {
                 n(1)?;
-                let mut walking = v[0].clone();
+                let mut walking = self.protocol_value(&v[0], 4, &[])?.unwrap_or_else(|| v[0].clone());
                 // Asking a thing what it hands over runs a piece of the
                 // program standing elsewhere. The walk is written where
                 // it is written, and is spoken of as standing there, so
@@ -3576,7 +3576,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if op == Prim::Listed && v.len() == 1 {
+        if matches!(op, Prim::Listed | Prim::Iterated) && v.len() == 1 {
             if let Some(answer) = self.protocol_value(&v[0], 4, &[])? { return Ok(answer); }
         }
         let w = self.wording();

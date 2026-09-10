@@ -117,7 +117,7 @@ class _Reader:
                     last = self.pattern[self.i]
                     self.i += 1
                     end = self.escaped(True) if last == '\\' else ['lit', last]
-                    if entry[0] != 'lit' or end[0] != 'lit' or entry[1] > end[1]:
+                    if entry[0] != 'lit' or end[0] != 'lit' or ord(entry[1]) > ord(end[1]):
                         raise 'ValueError: bad character range'
                     entry = ['range', entry[1], end[1]]
                 entries.append(entry)
@@ -145,7 +145,7 @@ def _accept(node, letter):
     if kind == 'lit':
         return letter == node[1]
     if kind == 'range':
-        return node[1] <= letter and letter <= node[2]
+        return ord(node[1]) <= ord(letter) and ord(letter) <= ord(node[2])
     if kind == 'kind':
         mark = node[1]
         if mark in 'dD':

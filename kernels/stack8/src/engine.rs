@@ -2475,7 +2475,8 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                Value::array(self.comprehension_items(&source)?)
+                if let Some(items) = self.object_answer(&source, 4, vec![])? { items }
+                else { Value::array(self.comprehension_items(&source)?) }
             }
             Action::UnpackCount(wanted) => {
                 let source = self.drop_top()?;
@@ -3100,6 +3101,7 @@ impl<'a> Engine<'a> {
             // be walked in its stead. Either way the walk begins here.
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if let Some(items) = self.object_answer(&handed, 4, vec![])? { handed = items; }
                 // One thing may hand over another that hands over a
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that

@@ -5,10 +5,12 @@ class Colour(Enum):
     ALIAS = 1
 print(Colour.RED is Colour.ALIAS, Colour(1) is Colour.RED, Colour.RED == Colour.GREEN)
 from dataclasses import dataclass, field, asdict
+def empty_items():
+    return []
 @dataclass
 class Box:
     value: int
-    items: list = field(default_factory=list)
+    items: list = field(default_factory=empty_items)
 a = Box(2)
 b = Box(value=2)
 print(a == b, asdict(a))
@@ -25,3 +27,4 @@ import time
 first = time.monotonic()
 time.sleep(0)
 print(time.monotonic() >= first, time.time() > 0, time.perf_counter() >= 0)
+print([member.value for member in Colour])
