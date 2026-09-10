@@ -514,6 +514,9 @@
   "ext.lexical.number.imaginary.unready": [
     "NotImplementedError: complex arithmetic is not supported"
   ],
+  "ext.lexical.number.imaginary.unrun": [
+    "NotImplementedError: imaginary numbers cannot be run"
+  ],
   "ext.lexical.number.octal_prefix": [
     "0o",
     "0O"
@@ -751,6 +754,9 @@
   "ext.stmt.async.unready": [
     "NotImplementedError: asynchronous execution is not supported"
   ],
+  "ext.stmt.async.unrun": [
+    "NotImplementedError: asynchronous functions cannot be run"
+  ],
   "ext.stmt.binding.unrun": [
     "This binding target cannot be run"
   ],
@@ -935,6 +941,9 @@
   ],
   "ext.stmt.with.unready": [
     "NotImplementedError: context managers are not supported"
+  ],
+  "ext.stmt.with.unrun": [
+    "NotImplementedError: context managers cannot be run"
   ],
   "ext.stmt.yield": [
     "yield"

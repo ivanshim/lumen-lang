@@ -121,6 +121,7 @@ pub struct Compiler<'a> {
     yield_operand: bool,
     awkward_place: bool,
     for_binding: Option<(String, usize)>,
+    writing_place: bool,
     comprehension_names: Vec<(String, String)>,
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
@@ -271,7 +272,7 @@ pub fn compile_within(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { class_names: Vec::new(), method_self: None, yield_operand: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -902,14 +903,13 @@ impl<'a> Compiler<'a> {
         }
         let introduced = self.on_any(&self.lang.block_intros);
         self.skip_intro();
-        if introduced && self.lang.blocks == Blocks::Indented && self.lang.lone_stmt
-            && !matches!(self.look().shape, Shape::LineEnd | Shape::Open | Shape::Close | Shape::Finish)
-        {
-            while !matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
+        if introduced && self.lang.blocks == Blocks::Indented && self.lang.lone_stmt && !self.on_sep()
+            && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish) {
+            while !matches!(self.look().shape, Shape::LineEnd | Shape::Finish | Shape::Close) {
                 self.stmt()?;
                 if self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
                     self.take();
-                }
+                } else { break; }
             }
             return Ok(());
         }
@@ -1437,15 +1437,19 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
-        if self.on_any(&lang.class_words) && !lang.class_unready.is_empty() { return if lang.explicit_this { self.class_decl() } else { self.scoped_class() }; }
         if self.on_keyword(&lang.async_words) { self.take(); }
-        if !self.on_keyword(&lang.function_words) {
-            return Err(amiss());
-        }
-        self.take();
-        let gives_cell = self.skip_reference();
-        let name = self.want_name("after the function keyword")?;
-        self.function(name.clone(), gives_cell)?;
+        let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
+            let name = self.look_ahead(1).lexeme.clone();
+            self.class_decl()?;
+            name
+        } else {
+            if !self.on_keyword(&lang.function_words) { return Err(amiss()); }
+            self.take();
+            let gives_cell = self.skip_reference();
+            let name = self.want_name("after the function keyword")?;
+            self.function(name.clone(), gives_cell)?;
+            name
+        };
         for decorator in held.into_iter().rev() {
             let bound = if lang.routines_outermost {
                 Cell { ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
@@ -2076,7 +2080,7 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Skip(top));
         }
         self.pos = after;
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -2435,7 +2439,7 @@ impl<'a> Compiler<'a> {
                 None => self.land(at),
             }
         }
-        self.leave_cycle(end);
+        self.complete_cycle(end)?;
         Ok(())
     }
 
@@ -2626,7 +2630,7 @@ impl<'a> Compiler<'a> {
         self.expr(0)?;
         self.want_sign(&group.close, "after the condition")?;
         self.loop_back(top);
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -2673,7 +2677,7 @@ impl<'a> Compiler<'a> {
             self.put(w);
         }
         self.put(Instr::Skip(top));
-        self.leave_cycle(again);
+        self.complete_cycle(again)?;
         Ok(())
     }
 
@@ -4208,7 +4212,10 @@ impl<'a> Compiler<'a> {
         if !listed {
             self.pos = begin;
             let from = self.mark();
-            self.expr_at(255, false)?;
+            let reading = std::mem::replace(&mut self.writing_place, true);
+            let place = self.prefix();
+            self.writing_place = reading;
+            place?;
             if self.pos != end { return Err(amiss.clone()); }
             let previous = self.waiting.replace(held.to_string());
             let done = self.store_into(from, None, None, "=");
@@ -6526,7 +6533,7 @@ impl<'a> Compiler<'a> {
             }
             let named = self.want_name("after the member mark")?;
             let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
-            if member && lang.member_pipes && (call.is_some() || !self.on_writing()) {
+            if member && lang.member_pipes && (call.is_some() || (!self.writing_place && !self.on_writing())) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
@@ -7263,7 +7270,7 @@ impl<'a> Compiler<'a> {
             self.rpn_test()?;
             self.pos = after;
             self.loop_back(top);
-            self.leave_cycle(test);
+            self.complete_cycle(test)?;
             return Ok(());
         }
         if Lang::spells(&lang.until_words, word) {
@@ -7279,7 +7286,7 @@ impl<'a> Compiler<'a> {
                 self.put(w);
             }
             self.put(Instr::Skip(top));
-            self.leave_cycle(again);
+            self.complete_cycle(again)?;
             return Ok(());
         }
         if Lang::spells(&lang.return_words, word) {

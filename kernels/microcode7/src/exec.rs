@@ -2645,7 +2645,12 @@ impl<'a> Machine<'a> {
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
-                if let Some(at) = self.member_place(&fields, name) { return Some(fields[at].1.clone()); }
+                if let Some(at) = self.member_place(&fields, name) {
+                    return Some(match &fields[at].1 {
+                        Value::Shared(cell) => cell.borrow().clone(),
+                        held => held.clone(),
+                    });
+                }
                 &thing.of
             }
             Value::Blueprint(class) => class,

@@ -142,6 +142,7 @@ pub struct Builder<'a> {
     reading_yield: bool,
     unsupported_place: bool,
     iteration_binding: Option<(String, usize)>,
+    place_depth: usize,
     outside_lambda: Vec<String>,
 }
 
@@ -250,7 +251,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
     let outer_layers = layers.len();
     let mut r = Builder { class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
-        reading_yield: false,
+        reading_yield: false, place_depth: 0,
         unsupported_place: false,
         iteration_binding: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
@@ -1074,17 +1075,16 @@ impl<'a> Builder<'a> {
         }
         let head_mark = self.on_any("block.intro");
         self.skip_lead_word();
-        if head_mark && self.table.blocks == Blocks::Indented && self.table.flag("ext.block.lone_statement")
-            && self.look().shape != Shape::LineEnd && self.look().shape != Shape::Open
-        {
-            let mut line = Vec::new();
-            while !matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
-                line.push(self.stmt()?);
-                if self.look().shape == Shape::Sign && self.table.spells("stmt.terminator", &self.look().lexeme) {
-                    self.advance();
-                }
+        let same_line = head_mark && self.table.blocks == Blocks::Indented && self.table.flag("ext.block.lone_statement")
+            && !self.on_stmt_end() && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish);
+        if same_line {
+            let mut body = vec![self.stmt()?];
+            while self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme) {
+                self.advance();
+                if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+                body.push(self.stmt()?);
             }
-            return Ok(sequence(line));
+            return Ok(sequence(body));
         }
         self.skip_line_ends();
         match self.table.blocks {
@@ -1531,18 +1531,23 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") { forms.push(if self.table.flag("ext.stmt.class.this.explicit") { self.class_decl()? } else { self.class_scope()? }); return Ok(sequence(forms)); }
         if self.key("ext.stmt.async") { self.advance(); }
-        if !self.key("stmt.function") {
-            return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+        let named;
+        if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
+            named = self.glance(1).lexeme.clone();
+            forms.push(self.class_decl()?);
+        } else {
+            if !self.key("stmt.function") {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            self.advance();
+            let shared = self.skip_reference();
+            named = self.need_word("after the function keyword")?;
+            self.giving_cells.push(shared);
+            let definition = self.func(named.clone(), true);
+            self.giving_cells.pop();
+            forms.push(definition?);
         }
-        self.advance();
-        let shared = self.skip_reference();
-        let named = self.need_word("after the function keyword")?;
-        self.giving_cells.push(shared);
-        let definition = self.func(named.clone(), true);
-        self.giving_cells.pop();
-        forms.push(definition?);
         let binding = match self.table.flag("ext.stmt.function.outermost") {
             true => self.global_address(&named),
             false => self.address_to_write(&named),
@@ -4046,7 +4051,10 @@ impl<'a> Builder<'a> {
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
-            let place = self.expr_at(255, false)?;
+            self.place_depth += 1;
+            let reading = self.monadic_expr();
+            self.place_depth -= 1;
+            let place = reading?;
             if self.pos != hi { return Err(bad); }
             let sign = self.look().clone();
             let old = self.waiting.replace(source.to_string());
@@ -5942,7 +5950,7 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || !self.on_writing()) {
+            if reaching && table.flag("ext.op.member.pipes") && (calling || (self.place_depth == 0 && !self.on_writing())) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
