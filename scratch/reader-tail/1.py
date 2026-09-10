@@ -1,4 +1,4 @@
-# Whole-file reader probe: tests/python/test_fstring.py, quoted spreading signs in call arguments.
+# Whole-file reader probe: tests/python/test_fstring.py:1260, quoted spreading signs in call arguments.
 # -*- coding: utf-8 -*-
 # There are tests here with unicode string literals and
 # identifiers. There's a code in ast.c that was added because of a
