@@ -1,0 +1,50 @@
+FAIL: testComplexDefinitions (ScopeTests)
+AssertionError: [1, 2, 3] != (1, 2, 3)
+ERROR: testLocalsClass_WithTrace (ScopeTests)
+'ScopeTests' object has no attribute 'addCleanup'
+ERROR: testInteractionWithTraceFunc (ScopeTests)
+this class form cannot run yet
+ERROR: testCellLeak (ScopeTests)
+this class form cannot run yet
+ERROR: testNestingThroughClass (ScopeTests)
+this class form cannot run yet
+ERROR: testFreeVarInMethod (ScopeTests)
+this class form cannot run yet
+ERROR: testCellIsArgAndEscapes (ScopeTests)
+'function' object has no attribute '__closure__'
+ERROR: testCellIsLocalAndEscapes (ScopeTests)
+'function' object has no attribute '__closure__'
+ERROR: testUnoptimizedNamespaces (ScopeTests)
+NotImplementedError: syntax checks need a compile builtin
+ERROR: testUnboundLocal_AugAssign (ScopeTests)
+name 'exec' is not defined
+ERROR: testScopeOfGlobalStmt (ScopeTests)
+name 'exec' is not defined
+ERROR: testLeaks (ScopeTests)
+this class form cannot run yet
+ERROR: testClassAndGlobal (ScopeTests)
+name 'exec' is not defined
+ERROR: testLocalsFunction (ScopeTests)
+name 'locals' is not defined
+ERROR: testLocalsClass (ScopeTests)
+this class form cannot run yet
+ERROR: testBoundAndFree (ScopeTests)
+this class form cannot run yet
+ERROR: testEvalExecFreeVars (ScopeTests)
+name 'eval' is not defined
+ERROR: testEvalFreeVars (ScopeTests)
+name 'eval' is not defined
+ERROR: testFreeingCell (ScopeTests)
+this class form cannot run yet
+ERROR: testNonLocalMethod (ScopeTests)
+this class form cannot run yet
+ERROR: testGlobalInParallelNestedFunctions (ScopeTests)
+name 'exec' is not defined
+ERROR: testNonLocalClass (ScopeTests)
+this class form cannot run yet
+ERROR: testClassNamespaceOverridesClosure (ScopeTests)
+this class form cannot run yet
+ERROR: test_multiple_nesting (ScopeTests)
+this class form cannot run yet
+Ran 41 tests
+FAILED (failures=1, errors=23)

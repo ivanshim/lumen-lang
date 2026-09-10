@@ -10,6 +10,7 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    ByteQuote,
     Woven,
     WovenEnd,
     Field,
@@ -587,7 +588,9 @@ impl Quotation<'_> {
             let ch = self.here().ok_or_else(|| {
                 if end.len() > 1 && !fields { format!("Unterminated {} string", end[0]) } else { self.bad() }
             })?;
-            if bytes && !ch.is_ascii() { return Err(self.bad()); }
+            if bytes && (!ch.is_ascii() || ch == '\\' && self.source.get(self.next + 1).map_or(false, |c| !c.is_ascii())) {
+                return Err(self.table.single("ext.lexical.string.bytes.ascii").unwrap_or("").to_owned());
+            }
             match ch {
                 '\n' if end.len() == 1 => return Err(self.bad()),
                 '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing)?,
@@ -605,7 +608,7 @@ impl Quotation<'_> {
             }
         }
         self.forward(end.len());
-        self.flush(&mut saved, &mut missing);
+        if bytes { self.token(Shape::ByteQuote, saved); } else { self.flush(&mut saved, &mut missing); }
         if fields { self.token(Shape::WovenEnd, String::new()); }
         Ok(())
     }

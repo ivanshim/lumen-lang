@@ -1,0 +1,10 @@
+ERROR: test_common_tests (TestContains)
+unsupported operand types
+ERROR: test_builtin_sequence_types (TestContains)
+this class form cannot run yet
+ERROR: test_nonreflexive (TestContains)
+name 'fromkeys' is not defined
+ERROR: test_block_fallback (TestContains)
+this class form cannot run yet
+Ran 4 tests
+FAILED (failures=0, errors=4)

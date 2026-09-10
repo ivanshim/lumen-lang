@@ -161,6 +161,7 @@ impl Pattern {
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
 pub enum Action {
+    ByteAssign(bool),
     /// A pattern and its binding order; the flag marks a tuple subject,
     /// whose members may be taken but whose whole has no value here.
     Match(Rc<Pattern>, Vec<String>, bool),
@@ -172,6 +173,8 @@ pub enum Action {
     Adorn(u8),
     ContextEnter,
     SettleObjects,
+    Import(String, Option<String>, bool),
+    ImportAll,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -458,6 +461,16 @@ pub enum Builtin {
     SetSorted,
 
     Format,
+    DeriveClass,
+    CallOutcome,
+    CopyValue,
+    ModuleLoad,
+    MemberSet,
+    MemberGet,
+    ProgramNamespace,
+    Bytes(u8),
+    Text(crate::strings::TextOp),
+    ClassTool(u8),
     Sum,
     List,
     Any,
@@ -731,6 +744,8 @@ impl Builtin {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub generator: bool,
+    pub doc: Option<String>,
+    pub qualified: String,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.

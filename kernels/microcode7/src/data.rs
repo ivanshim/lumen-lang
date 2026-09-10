@@ -62,6 +62,7 @@ impl Kind {
 /// each other and in no other place.
 #[derive(Debug, Clone)]
 pub struct Ratio {
+    pub float_style: bool,
     pub above: BigInt,
     pub beneath: BigInt,
     pub places: Option<usize>,
@@ -154,6 +155,9 @@ pub enum Value {
     Refusal(Rc<str>),
     Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
     Arguments(Rc<Vec<Value>>),
+    Octets { cell: Rc<RefCell<Vec<u8>>>, changeable: bool, lead: Rc<str> },
+    OctetKind { changeable: bool, shown: Rc<str> },
+    Wrapped(u8, Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -162,6 +166,8 @@ pub enum Value {
     /// The coefficient of an imaginary literal, with its unready words.
     Imaginary { coefficient: f64, unready: Rc<str> },
     Text(Rc<str>),
+    TextRow(Rc<Vec<String>>, bool),
+    TextCall { subject: Rc<str>, work: crate::text::Work, name: Rc<str> },
     Flag(bool),
     Nil,
     Ellipsis,
@@ -432,14 +438,14 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
+            Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
             Value::Member(..) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Wrapped(..) | Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::TextCall { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
     }
@@ -452,6 +458,7 @@ impl Value {
             Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
             Value::Set(items) => !items.borrow().keys.is_empty(),
             Value::Arguments(row) => !row.is_empty(),
+            Value::Octets { cell, .. } => cell.borrow().len() > 0,
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -459,6 +466,7 @@ impl Value {
             // Neither worth standing past the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
+            Value::TextRow(words, _) => !words.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
@@ -479,13 +487,13 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
-            Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
+            Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
+            Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::TextCall { .. } | Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -495,6 +503,13 @@ impl Value {
     pub fn equals(&self, other: &Value) -> bool {
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
+        match (self, other) {
+            (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
+            (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
+                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
+            }
+            _ => (),
+        }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
             // Nought beneath is no ratio to cross-multiply: what lies
             // past every number is equal to another only where both lie
@@ -518,6 +533,8 @@ impl Value {
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
             (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
+            (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
+            (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -540,8 +557,9 @@ impl Value {
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
-            (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
+            (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
+            (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -610,6 +628,10 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
+            Value::Frac(e) if e.float_style => {
+                let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
+                format!("{number:?}").to_lowercase()
+            }
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -737,6 +759,10 @@ impl Value {
             Value::SetCursor { .. } => String::from("<set walk>"),
             Value::Set(items) => items.borrow().written(Value::bare),
             Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
+            Value::Octets { cell, changeable, lead } => octets_shown(&cell.borrow(), lead, *changeable),
+            Value::OctetKind { shown, .. } => shown.to_string(),
+            Value::TextCall { name, .. } => format!("<built-in method {}>", name),
+            Value::TextRow(words, closed) => crate::text::written_row(words, *closed),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
@@ -759,7 +785,6 @@ impl Value {
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Generator(_) => "<generator>".into(),
-            Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
             Value::Adorned(_) => String::from("<descriptor>"),
             Value::Backtrace(words) => words.to_string(),
             Value::Keyed(value, _) => value.bare(),
@@ -768,7 +793,12 @@ impl Value {
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
-            Value::Blueprint(b) => format!("<class {}>", b.name),
+            Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            Value::Wrapped(..) => "<member wrapper>".into(),
+            Value::Tuple(items) => {
+                let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
+                format!("({body}{})", if items.len() == 1 { "," } else { "" })
+            },
             Value::Thing(t) => format!("<object {}>", t.of.name),
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
@@ -847,6 +877,9 @@ pub enum Reach {
 
 #[derive(Debug)]
 pub struct Blueprint {
+    pub ancestry: Vec<Rc<Blueprint>>,
+    pub parents: Vec<Rc<Blueprint>>,
+    pub presentation: Option<String>,
     pub name: String,
     pub under: Option<Rc<Blueprint>>,
     /// The classes of method names only that this one answers to.
@@ -1041,7 +1074,7 @@ pub fn past_the_numbers(x: f64, figures: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Frac(Rc::new(Ratio { above, beneath: BigInt::zero(), places: Some(figures), under: false, pointed: false }))
+    Value::Frac(Rc::new(Ratio { float_style: false, above, beneath: BigInt::zero(), places: Some(figures), under: false, pointed: false }))
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,
@@ -1233,4 +1266,23 @@ fn ordinary_real(worth: f64, figures: usize) -> String {
             expanded.chars().take(dot + 1 + figures.saturating_sub(whole)).collect()
         }
     }
+}
+
+fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
+    let mark = match (content.contains(&39), content.contains(&34)) { (true, false) => 34, _ => 39 };
+    let mut pieces = Vec::new();
+    pieces.push(lead.to_owned());
+    pieces.push((mark as char).to_string());
+    for number in content.iter().copied() {
+        pieces.push(if number == mark || number == 92 {
+            format!("\\{}", number as char)
+        } else if let Some(letter) = match number { 9 => Some('t'), 10 => Some('n'), 13 => Some('r'), _ => None } {
+            format!("\\{}", letter)
+        } else if (32..127).contains(&number) {
+            (number as char).to_string()
+        } else { format!("\\x{number:02x}") });
+    }
+    pieces.push((mark as char).to_string());
+    if changing { pieces.push(")".to_owned()); }
+    pieces.concat()
 }

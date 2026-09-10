@@ -1,3 +1,5 @@
+pub mod strings;
+mod unicode;
 // Stack kernel, third design: eight words, the five of stack5 and three
 // fused from them where the measurements said a word earns its place.
 //
@@ -124,8 +126,12 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
         if !lang.exceptions.is_empty() {
             if let Some(told) = e.strip_prefix('\0') { return told.to_string(); }
         }
+        if lang.byte_words.iter().any(|(key, words)|
+            (key.starts_with("ext.system.bytes.") && !["repr", "type", "encodings", "order", "strict"].iter().any(|part| key.ends_with(&format!(".{}", part)))
+             || key == "ext.lexical.string.bytes.ascii" || key == "ext.lexical.string.bytes.mixed")
+            && words.first().map_or(false, |word| !word.is_empty() && e.starts_with(word))) { return e; }
         let words = &lang.call_builtin_amiss;
-        if crate::formatting::names_fault(lang, &e) { e }
+        if strings::already_named(lang, &e) || crate::formatting::names_fault(lang, &e) || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
         else if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
@@ -220,6 +226,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    if lang.import_values {
+        machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
+    }
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
     }

@@ -59,6 +59,7 @@ pub struct Frac {
 /// else.
 #[derive(Debug, Clone)]
 pub struct Real {
+    pub floating: bool,
     pub p: BigInt,
     pub q: BigInt,
     pub places: usize,
@@ -174,6 +175,9 @@ pub enum Value {
     Walking(Rc<RefCell<(Value, Option<Value>)>>),
     Declined(Rc<str>),
     Walk(Rc<RefCell<(Vec<Value>, usize)>>),
+    Bytes(Rc<RefCell<Vec<u8>>>, bool, Rc<str>),
+    ByteKind(bool, Rc<str>),
+    Adapter(Rc<(u8, Vec<Value>)>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -183,6 +187,8 @@ pub enum Value {
     /// An imaginary literal and the words for working with it too soon.
     Imaginary(f64, Rc<str>),
     Text(Rc<str>),
+    Words(Rc<Vec<String>>, bool),
+    TextMethod(Rc<str>, crate::strings::TextOp, Rc<str>),
     Flag(bool),
     Null,
     Ellipsis,
@@ -456,7 +462,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
+            Value::Words(..) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
             Value::View(_) => Sort::Array,
             Value::Bond(shared) | Value::Binding(shared) => return shared.borrow().sort(),
@@ -495,6 +501,8 @@ impl Value {
             Value::Native(..) | Value::Cursor(_) => true,
             Value::Set(s) => !s.borrow().held.is_empty(),
             Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Stream(_) => true,
+            Value::Bytes(row, ..) => !row.borrow().is_empty(),
+            Value::ByteKind(..) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -503,11 +511,12 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Words(row, _) => !row.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::TextMethod(..) | Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
+            Value::Adapter(_) | Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -526,14 +535,15 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
-            Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::TextMethod(..) | Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
-            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Bytes(..) | Value::ByteKind(..) | Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
+            Value::Adapter(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -556,11 +566,15 @@ impl Value {
                 let (a, b) = (a.borrow(), b.borrow());
                 a.held.len() == b.held.len() && a.beneath(&b)
             }
+            (Value::Bytes(a, ..), Value::Bytes(b, ..)) => *a.borrow() == *b.borrow(),
+            (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
+            (Value::Words(a, x), Value::Words(b, y)) => x == y && a == b,
+            (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| matches!(v,Value::Text(t) if s.as_str()==t.as_ref())),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -578,7 +592,8 @@ impl Value {
             // Two names for one object are the same object; two objects
             // of one class are not.
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
-            (Value::Class(a), Value::Class(b)) => a.name == b.name,
+            (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
+            (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
         }
     }
@@ -651,6 +666,7 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
+            Value::Real(r) if r.floating => format!("{:?}", if r.below && r.p.is_zero() { -0.0 } else { as_binary(&r.p, &r.q) }).to_lowercase(),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
@@ -761,6 +777,10 @@ impl Value {
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::SetWalk(..) => "<set walk>".into(),
             Value::Set(s) => s.borrow().show(Value::plain),
+            Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
+            Value::ByteKind(_, text) => text.to_string(),
+            Value::TextMethod(_, _, name) => format!("<built-in method {}>", name),
+            Value::Words(row, fixed) => crate::strings::row(row, *fixed),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -792,7 +812,8 @@ impl Value {
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
-            Value::Class(c) => format!("<class {}>", c.name),
+            Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
+            Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].plain(), parts[1].plain(), parts[2].plain()),
@@ -888,6 +909,9 @@ pub enum Reach {
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    pub lineage: Vec<Rc<Class>>,
+    pub direct: Vec<Rc<Class>>,
+    pub outline: Option<String>,
     pub name: String,
     pub base: Option<Rc<Class>>,
     /// The classes of method names only that this one answers to.
@@ -1116,7 +1140,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false, point: false }))
+    Value::Real(Rc::new(Real { floating: false, p, q: BigInt::zero(), places, below: false, point: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.
@@ -1281,4 +1305,23 @@ fn expanded_real(number: f64, places: usize) -> String {
         text.truncate(text.len().min(point + 1 + places.saturating_sub(whole)));
     }
     text
+}
+
+fn byte_repr(row: &[u8], mutable: bool, opening: &str) -> String {
+    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { '"' } else { '\'' };
+    let mut out = format!("{}{}", opening, quote);
+    for &byte in row {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b if b == quote as u8 => { out.push('\\'); out.push(quote); }
+            32..=126 => out.push(byte as char),
+            _ => { let _ = write!(out, "\\x{:02x}", byte); }
+        }
+    }
+    out.push(quote);
+    if mutable { out.push(')'); }
+    out
 }

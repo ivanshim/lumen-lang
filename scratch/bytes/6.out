@@ -1,0 +1,5 @@
+bytearray(b'Zbc') bytearray(b'Zbc') True True True
+bytearray(b'Zbc') bytearray(b'Xc') b'Zbc'
+bytearray(b'Z12c')
+bytearray(b'x1yc')
+bytearray(b'x1yc!')

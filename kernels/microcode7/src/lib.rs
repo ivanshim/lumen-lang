@@ -1,3 +1,5 @@
+pub mod text;
+mod unicode;
 // Microcode kernel, fourth design: seven forms, the four of microcode4
 // and three the kernel lab measured worth a form of their own.
 //
@@ -61,6 +63,14 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     go(&table, source, program_args, request).map_err(|e| {
         if table.has_any("ext.builtin.exceptions") && e.starts_with('\0') { return e[1..].to_string(); }
         if crate::formatting::is_complaint(&table, &e) { return e; }
+        if let [first, last] = table.strings("ext.stmt.import.missing") {
+            if e.starts_with(first) && e.ends_with(last) { return e; }
+        }
+        let byte_complaints = ["ext.system.bytes.arguments", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.system.bytes.hex", "ext.system.bytes.immutable", "ext.system.bytes.index", "ext.system.bytes.negative", "ext.system.bytes.overflow", "ext.system.bytes.range", "ext.system.bytes.separator", "ext.system.bytes.unhashable", "ext.system.bytes.unready", "ext.system.bytes.unsigned", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"];
+        for key in byte_complaints {
+            if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
+        }
+        if text::bears_kind(&table, &e) { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
@@ -240,6 +250,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    if table.flag("ext.stmt.import.value") {
+        for (kind, name, text, _) in request {
+            if kind == "MODULE" { machine.library_sources.insert(name.clone(), text.clone()); }
+        }
+    }
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());

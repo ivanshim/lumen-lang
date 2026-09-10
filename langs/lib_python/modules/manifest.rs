@@ -1,0 +1,22 @@
+// Modules kept as source until a program asks for them.
+pub static MODULES: &[(&str, &str)] = &[
+    ("collections", include_str!("collections.py")),
+    ("copy", include_str!("copy.py")),
+    ("functools", include_str!("functools.py")),
+    ("gc", include_str!("gc.py")),
+    ("io", include_str!("io.py")),
+    ("itertools", include_str!("itertools.py")),
+    ("math", include_str!("math.py")),
+    ("operator", include_str!("operator.py")),
+    ("random", include_str!("random.py")),
+    ("sys", include_str!("sys.py")),
+    ("test", include_str!("test/__init__.py")),
+    ("test.support", include_str!("test/support/__init__.py")),
+    ("test.support.import_helper", include_str!("test/support/import_helper.py")),
+    ("test.support.os_helper", include_str!("test/support/os_helper.py")),
+    ("test.support.script_helper", include_str!("test/support/script_helper.py")),
+    ("test.support.warnings_helper", include_str!("test/support/warnings_helper.py")),
+    ("unittest", include_str!("unittest.py")),
+    ("warnings", include_str!("warnings.py")),
+    ("weakref", include_str!("weakref.py")),
+];

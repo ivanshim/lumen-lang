@@ -349,11 +349,77 @@
   "ext.builtin.bool": [
     "bool"
   ],
+  "ext.builtin.bytearray": [
+    "bytearray"
+  ],
+  "ext.builtin.bytes": [
+    "bytes"
+  ],
+  "ext.builtin.bytes.decode": [
+    "decode"
+  ],
+  "ext.builtin.bytes.encode": [
+    "encode"
+  ],
+  "ext.builtin.bytes.find": [
+    "find"
+  ],
+  "ext.builtin.bytes.from_int": [
+    "to_bytes"
+  ],
+  "ext.builtin.bytes.fromhex": [
+    "bytes.fromhex"
+  ],
+  "ext.builtin.bytes.hex": [
+    "hex"
+  ],
+  "ext.builtin.bytes.join": [
+    "join"
+  ],
+  "ext.builtin.bytes.lower": [
+    "lower"
+  ],
+  "ext.builtin.bytes.replace": [
+    "replace"
+  ],
+  "ext.builtin.bytes.signed": [
+    "signed"
+  ],
+  "ext.builtin.bytes.split": [
+    "split"
+  ],
+  "ext.builtin.bytes.startswith": [
+    "startswith"
+  ],
+  "ext.builtin.bytes.strip": [
+    "strip"
+  ],
+  "ext.builtin.bytes.to_int": [
+    "int.from_bytes"
+  ],
+  "ext.builtin.bytes.upper": [
+    "upper"
+  ],
+  "ext.builtin.call.outcome": [
+    "__call_outcome"
+  ],
   "ext.builtin.callable": [
     "callable"
   ],
+  "ext.builtin.class.derive": [
+    "__derive_class"
+  ],
+  "ext.builtin.class.methods": [
+    "__class_methods"
+  ],
   "ext.builtin.class.name": [
     "__name__"
+  ],
+  "ext.builtin.classmethod": [
+    "classmethod"
+  ],
+  "ext.builtin.copy": [
+    "__copy_value"
   ],
   "ext.builtin.core.arity": [
     "TypeError: ",
@@ -462,6 +528,9 @@
   "ext.builtin.dict": [
     "dict"
   ],
+  "ext.builtin.dir": [
+    "dir"
+  ],
   "ext.builtin.divmod": [
     "divmod"
   ],
@@ -523,8 +592,14 @@
   "ext.builtin.id": [
     "id"
   ],
+  "ext.builtin.instance": [
+    "isinstance"
+  ],
   "ext.builtin.isinstance": [
     "isinstance"
+  ],
+  "ext.builtin.issubclass": [
+    "issubclass"
   ],
   "ext.builtin.iter": [
     "iter"
@@ -544,8 +619,22 @@
   "ext.builtin.map.pair.amiss": [
     "ValueError: dictionary update sequence element must have length 2"
   ],
+  "ext.builtin.math": [
+    "__math"
+  ],
+  "ext.builtin.math.floating": true,
   "ext.builtin.max": [
     "max"
+  ],
+  "ext.builtin.member.absent": [
+    "AttributeError: object has no attribute '",
+    "'"
+  ],
+  "ext.builtin.member.get": [
+    "getattr"
+  ],
+  "ext.builtin.member.set": [
+    "setattr"
   ],
   "ext.builtin.method.append": [
     "append"
@@ -757,11 +846,26 @@
   "ext.builtin.min": [
     "min"
   ],
+  "ext.builtin.module.helper.amiss": [
+    "TypeError: invalid module helper arguments"
+  ],
+  "ext.builtin.module.load": [
+    "__load_module"
+  ],
   "ext.builtin.next": [
     "next"
   ],
   "ext.builtin.oct": [
     "oct"
+  ],
+  "ext.builtin.output.drop": [
+    "__output_drop"
+  ],
+  "ext.builtin.output.held": [
+    "__output_held"
+  ],
+  "ext.builtin.output.hold": [
+    "__output_hold"
   ],
   "ext.builtin.pow": [
     "pow"
@@ -808,6 +912,12 @@
   ],
   "ext.builtin.print.separator": [
     "sep"
+  ],
+  "ext.builtin.program.namespace": [
+    "__program_namespace"
+  ],
+  "ext.builtin.property": [
+    "property"
   ],
   "ext.builtin.range.index": [
     "IndexError: range object index out of range"
@@ -939,11 +1049,280 @@
   "ext.builtin.start": [
     "start"
   ],
+  "ext.builtin.staticmethod": [
+    "staticmethod"
+  ],
   "ext.builtin.sum": [
     "sum"
   ],
   "ext.builtin.sum.non_number": [
     "TypeError: sum needs numbers"
+  ],
+  "ext.builtin.text.capitalize": [
+    "capitalize",
+    "str.capitalize"
+  ],
+  "ext.builtin.text.casefold": [
+    "casefold",
+    "str.casefold"
+  ],
+  "ext.builtin.text.center": [
+    "center",
+    "str.center"
+  ],
+  "ext.builtin.text.complaint": [
+    "TypeError:",
+    "ValueError:",
+    "NotImplementedError:",
+    "KeyError:",
+    "OverflowError:",
+    "IndexError:"
+  ],
+  "ext.builtin.text.count": [
+    "count",
+    "str.count"
+  ],
+  "ext.builtin.text.encode": [
+    "encode",
+    "str.encode"
+  ],
+  "ext.builtin.text.endswith": [
+    "endswith",
+    "str.endswith"
+  ],
+  "ext.builtin.text.expandtabs": [
+    "expandtabs",
+    "str.expandtabs"
+  ],
+  "ext.builtin.text.fault.arguments": [
+    "TypeError: invalid string method arguments"
+  ],
+  "ext.builtin.text.fault.codepoint": [
+    "ValueError: character mapping must be in range(0x110000)"
+  ],
+  "ext.builtin.text.fault.encode": [
+    "NotImplementedError: str.encode requires bytes, which are not supported"
+  ],
+  "ext.builtin.text.fault.fill": [
+    "TypeError: The fill character must be exactly one character long"
+  ],
+  "ext.builtin.text.fault.format": [
+    "NotImplementedError: this mapping format is not supported"
+  ],
+  "ext.builtin.text.fault.format.brace": [
+    "ValueError: unmatched brace in format string"
+  ],
+  "ext.builtin.text.fault.format.positional": [
+    "ValueError: Format string contains positional fields"
+  ],
+  "ext.builtin.text.fault.index": [
+    "IndexError: string index out of range"
+  ],
+  "ext.builtin.text.fault.integer": [
+    "TypeError: integer argument expected"
+  ],
+  "ext.builtin.text.fault.join": [
+    "TypeError: sequence item must be str"
+  ],
+  "ext.builtin.text.fault.key": [
+    "KeyError: "
+  ],
+  "ext.builtin.text.fault.maketrans.key": [
+    "ValueError: string keys in translate table must be of length 1"
+  ],
+  "ext.builtin.text.fault.maketrans.length": [
+    "ValueError: the first two maketrans arguments must have equal length"
+  ],
+  "ext.builtin.text.fault.maketrans.type": [
+    "TypeError: keys in translate table must be strings or integers"
+  ],
+  "ext.builtin.text.fault.mapping": [
+    "TypeError: translation table must be a mapping"
+  ],
+  "ext.builtin.text.fault.missing": [
+    "ValueError: substring not found"
+  ],
+  "ext.builtin.text.fault.protocol": [
+    "NotImplementedError: string method object protocols are not supported"
+  ],
+  "ext.builtin.text.fault.receiver": [
+    "TypeError: string method requires a str object"
+  ],
+  "ext.builtin.text.fault.room": [
+    "OverflowError: repeated string is too long"
+  ],
+  "ext.builtin.text.fault.separator": [
+    "ValueError: empty separator"
+  ],
+  "ext.builtin.text.fault.string": [
+    "TypeError: argument must be str"
+  ],
+  "ext.builtin.text.fault.surrogate": [
+    "NotImplementedError: surrogate code points are not supported"
+  ],
+  "ext.builtin.text.fault.translation": [
+    "TypeError: character mapping must return integer, None or str"
+  ],
+  "ext.builtin.text.fault.walk": [
+    "TypeError: can only join an iterable"
+  ],
+  "ext.builtin.text.find": [
+    "find",
+    "str.find"
+  ],
+  "ext.builtin.text.format_map": [
+    "format_map",
+    "str.format_map"
+  ],
+  "ext.builtin.text.index": [
+    "index",
+    "str.index"
+  ],
+  "ext.builtin.text.isascii": [
+    "isascii",
+    "str.isascii"
+  ],
+  "ext.builtin.text.isdecimal": [
+    "isdecimal",
+    "str.isdecimal"
+  ],
+  "ext.builtin.text.isidentifier": [
+    "isidentifier",
+    "str.isidentifier"
+  ],
+  "ext.builtin.text.isnumeric": [
+    "isnumeric",
+    "str.isnumeric"
+  ],
+  "ext.builtin.text.isprintable": [
+    "isprintable",
+    "str.isprintable"
+  ],
+  "ext.builtin.text.istitle": [
+    "istitle",
+    "str.istitle"
+  ],
+  "ext.builtin.text.join": [
+    "join",
+    "str.join"
+  ],
+  "ext.builtin.text.keyword.encoding": [
+    "encoding"
+  ],
+  "ext.builtin.text.keyword.errors": [
+    "errors"
+  ],
+  "ext.builtin.text.keyword.keepends": [
+    "keepends"
+  ],
+  "ext.builtin.text.keyword.maxsplit": [
+    "maxsplit"
+  ],
+  "ext.builtin.text.keyword.sep": [
+    "sep"
+  ],
+  "ext.builtin.text.keyword.tabsize": [
+    "tabsize"
+  ],
+  "ext.builtin.text.length": [
+    "str.__len__",
+    "__len__"
+  ],
+  "ext.builtin.text.ljust": [
+    "ljust",
+    "str.ljust"
+  ],
+  "ext.builtin.text.lower": [
+    "lower",
+    "str.lower"
+  ],
+  "ext.builtin.text.lstrip": [
+    "lstrip",
+    "str.lstrip"
+  ],
+  "ext.builtin.text.maketrans": [
+    "maketrans",
+    "str.maketrans"
+  ],
+  "ext.builtin.text.partition": [
+    "partition",
+    "str.partition"
+  ],
+  "ext.builtin.text.removeprefix": [
+    "removeprefix",
+    "str.removeprefix"
+  ],
+  "ext.builtin.text.removesuffix": [
+    "removesuffix",
+    "str.removesuffix"
+  ],
+  "ext.builtin.text.repeat": true,
+  "ext.builtin.text.replace": [
+    "replace",
+    "str.replace"
+  ],
+  "ext.builtin.text.repr": [
+    "repr"
+  ],
+  "ext.builtin.text.rfind": [
+    "rfind",
+    "str.rfind"
+  ],
+  "ext.builtin.text.rindex": [
+    "rindex",
+    "str.rindex"
+  ],
+  "ext.builtin.text.rjust": [
+    "rjust",
+    "str.rjust"
+  ],
+  "ext.builtin.text.rpartition": [
+    "rpartition",
+    "str.rpartition"
+  ],
+  "ext.builtin.text.rsplit": [
+    "rsplit",
+    "str.rsplit"
+  ],
+  "ext.builtin.text.rstrip": [
+    "rstrip",
+    "str.rstrip"
+  ],
+  "ext.builtin.text.split": [
+    "split",
+    "str.split"
+  ],
+  "ext.builtin.text.splitlines": [
+    "splitlines",
+    "str.splitlines"
+  ],
+  "ext.builtin.text.startswith": [
+    "startswith",
+    "str.startswith"
+  ],
+  "ext.builtin.text.strip": [
+    "strip",
+    "str.strip"
+  ],
+  "ext.builtin.text.swapcase": [
+    "swapcase",
+    "str.swapcase"
+  ],
+  "ext.builtin.text.title": [
+    "title",
+    "str.title"
+  ],
+  "ext.builtin.text.translate": [
+    "translate",
+    "str.translate"
+  ],
+  "ext.builtin.text.upper": [
+    "upper",
+    "str.upper"
+  ],
+  "ext.builtin.text.zfill": [
+    "zfill",
+    "str.zfill"
   ],
   "ext.builtin.to_int.base": [
     "base"
@@ -1107,6 +1486,12 @@
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
     "invalid string literal"
+  ],
+  "ext.lexical.string.bytes.ascii": [
+    "SyntaxError: bytes can only contain ASCII literal characters"
+  ],
+  "ext.lexical.string.bytes.mixed": [
+    "SyntaxError: cannot mix bytes and nonbytes literals"
   ],
   "ext.lexical.string.bytes.unavailable": [
     "bytes literals are not supported"
@@ -1296,6 +1681,7 @@
   "ext.op.index.spread.unsupported": [
     "NotImplementedError: starred subscripts are not supported"
   ],
+  "ext.op.index.text.negative": true,
   "ext.op.lambda": [
     "lambda"
   ],
@@ -1466,6 +1852,95 @@
   "ext.stmt.class.constructor": [
     "__init__"
   ],
+  "ext.stmt.class.detail.allocate": [
+    "__new__"
+  ],
+  "ext.stmt.class.detail.argcount": [
+    "co_argcount"
+  ],
+  "ext.stmt.class.detail.attribute.amiss": [
+    "AttributeError: '",
+    "' object has no attribute '",
+    "'"
+  ],
+  "ext.stmt.class.detail.bases": [
+    "__bases__"
+  ],
+  "ext.stmt.class.detail.call": [
+    "__call__"
+  ],
+  "ext.stmt.class.detail.code": [
+    "__code__"
+  ],
+  "ext.stmt.class.detail.defaults": [
+    "__defaults__"
+  ],
+  "ext.stmt.class.detail.doc": [
+    "__doc__"
+  ],
+  "ext.stmt.class.detail.function": [
+    "__func__"
+  ],
+  "ext.stmt.class.detail.get": [
+    "__getattribute__"
+  ],
+  "ext.stmt.class.detail.getitem": [
+    "__class_getitem__"
+  ],
+  "ext.stmt.class.detail.kind": [
+    "__class__"
+  ],
+  "ext.stmt.class.detail.locals": [
+    "<locals>"
+  ],
+  "ext.stmt.class.detail.main": [
+    "__main__"
+  ],
+  "ext.stmt.class.detail.module": [
+    "__module__"
+  ],
+  "ext.stmt.class.detail.mro": [
+    "__mro__"
+  ],
+  "ext.stmt.class.detail.mro.amiss": [
+    "TypeError: cannot create a consistent method resolution order"
+  ],
+  "ext.stmt.class.detail.name": [
+    "__name__"
+  ],
+  "ext.stmt.class.detail.namespace": [
+    "__dict__"
+  ],
+  "ext.stmt.class.detail.order": [
+    "mro"
+  ],
+  "ext.stmt.class.detail.qualified": [
+    "__qualname__"
+  ],
+  "ext.stmt.class.detail.receiver": [
+    "__self__"
+  ],
+  "ext.stmt.class.detail.remove": [
+    "__delattr__"
+  ],
+  "ext.stmt.class.detail.root": [
+    "object"
+  ],
+  "ext.stmt.class.detail.set": [
+    "__setattr__"
+  ],
+  "ext.stmt.class.detail.slots": [
+    "__slots__"
+  ],
+  "ext.stmt.class.detail.subclass": [
+    "__init_subclass__"
+  ],
+  "ext.stmt.class.detail.unready": [
+    "NotImplementedError: this class operation is not supported"
+  ],
+  "ext.stmt.class.detail.varnames": [
+    "co_varnames"
+  ],
   "ext.stmt.class.parent": [
     "super"
   ],
@@ -1608,6 +2083,18 @@
   "ext.stmt.import.from": [
     "from"
   ],
+  "ext.stmt.import.member.missing": [
+    "ImportError: cannot import name '",
+    "'"
+  ],
+  "ext.stmt.import.missing": [
+    "ModuleNotFoundError: No module named '",
+    "'"
+  ],
+  "ext.stmt.import.relative.unready": [
+    "NotImplementedError: relative imports require a package context"
+  ],
+  "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
   "ext.stmt.match": [
     "match"
@@ -1699,6 +2186,12 @@
   "ext.stmt.with.as": [
     "as"
   ],
+  "ext.stmt.with.enter": [
+    "__enter__"
+  ],
+  "ext.stmt.with.leave": [
+    "__exit__"
+  ],
   "ext.stmt.with.unready": [
     "NotImplementedError: context managers are not supported"
   ],
@@ -1785,6 +2278,72 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.args.list": [
+    "__program_argv"
+  ],
+  "ext.system.bytes.arguments": [
+    "TypeError: invalid bytes arguments"
+  ],
+  "ext.system.bytes.bad_order": [
+    "ValueError: byteorder must be either 'little' or 'big'"
+  ],
+  "ext.system.bytes.decode": [
+    "UnicodeDecodeError: "
+  ],
+  "ext.system.bytes.encode": [
+    "UnicodeEncodeError: "
+  ],
+  "ext.system.bytes.encodings": [
+    "utf-8",
+    "utf8",
+    "ascii",
+    "us-ascii"
+  ],
+  "ext.system.bytes.hex": [
+    "ValueError: non-hexadecimal number found in fromhex() arg at position "
+  ],
+  "ext.system.bytes.immutable": [
+    "TypeError: 'bytes' object does not support item assignment"
+  ],
+  "ext.system.bytes.index": [
+    "IndexError: index out of range"
+  ],
+  "ext.system.bytes.negative": [
+    "ValueError: negative count"
+  ],
+  "ext.system.bytes.order": [
+    "big",
+    "little"
+  ],
+  "ext.system.bytes.overflow": [
+    "OverflowError: int too big to convert"
+  ],
+  "ext.system.bytes.range": [
+    "ValueError: bytes must be in range(0, 256)"
+  ],
+  "ext.system.bytes.repr": [
+    "b",
+    "bytearray(b"
+  ],
+  "ext.system.bytes.separator": [
+    "ValueError: empty separator"
+  ],
+  "ext.system.bytes.strict": [
+    "strict"
+  ],
+  "ext.system.bytes.type": [
+    "<class '",
+    "'>"
+  ],
+  "ext.system.bytes.unhashable": [
+    "TypeError: unhashable type: 'bytearray'"
+  ],
+  "ext.system.bytes.unready": [
+    "NotImplementedError: this bytes operation is not supported"
+  ],
+  "ext.system.bytes.unsigned": [
+    "OverflowError: can't convert negative int to unsigned"
+  ],
   "ext.system.fault.attribute": [
     "object has no attribute '",
     "'"
@@ -1840,6 +2399,10 @@
   ],
   "ext.system.fault.shift": [
     "negative shift count"
+  ],
+  "ext.system.module.cache": [
+    "sys",
+    "modules"
   ],
   "ext.system.module.name": [
     "__name__"

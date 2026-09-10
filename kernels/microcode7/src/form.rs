@@ -36,6 +36,10 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    Octets(u8),
+    OctetAssign(bool),
+    Textual(crate::text::Work),
+    ClassWork(u8),
     /// A compound write may ask a real to retain its point.
     Pointed,
     Adorn(char),
@@ -45,6 +49,16 @@ pub enum Prim {
     Iterate,
     NextOne,
     FormatValue,
+    MakeHeir,
+    CallResult,
+    CopyWorth,
+    LoadModule,
+    IsInstance,
+    WriteMember,
+    ReadMember,
+    ProgramNames,
+    BringModule,
+    SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.
@@ -616,6 +630,8 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub doc: Option<String>,
+    pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.
     pub local_defaults: Vec<usize>,
     pub generator: bool,

@@ -1,0 +1,4 @@
+new
+init
+AttributeError: 'C' object has no attribute 'z'
+2 2

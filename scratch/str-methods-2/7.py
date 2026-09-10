@@ -1,0 +1,6 @@
+print("héabcabc".count("ab", 2, -1), "héabcabc".rfind("c", 0, 7), "abc".index("b"), "abcabc".rindex("a", 1))
+print("abc".find("", 4), "abc".count("", 4), "abc".startswith(("z", "b"), 1), "abc".endswith(("z", "b"), 0, 2))
+print("aXaXa".replace("a", "é", 2), "abc_suffix".removesuffix("_suffix"))
+print("-".join(str(n) for n in range(3)))
+print("axb".translate(str.maketrans({"a": None, "b": "123"})), "abcd".translate(str.maketrans("abc", "xyz", "d")))
+print("{name}: {n:04d} {{yes}}".format_map({"name": "é", "n": 7}))

@@ -53,6 +53,7 @@ impl Layout<'_> {
                     Ok(letter.to_string())
                 }).collect::<Result<String, String>>()?
             }
+            Value::Octets { .. } => item.render(self.names),
             Value::Dict(entries) => {
                 let rendered = entries.iter().map(|(a, b)| {
                     Ok(format!("{}: {}", self.quote(a, escaped)?, self.quote(b, escaped)?))
