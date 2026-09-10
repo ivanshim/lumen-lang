@@ -81,7 +81,7 @@ system.kind.array:L system.kind.null:L \
 
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
-const EXT_TAGS: &str = "\
+const EXT_TAGS: &str = "ext.builtin.bytes:L ext.builtin.bytearray:L ext.builtin.bytes.encode:L ext.builtin.bytes.decode:L ext.builtin.bytes.hex:L ext.builtin.bytes.fromhex:L ext.builtin.bytes.upper:L ext.builtin.bytes.lower:L ext.builtin.bytes.split:L ext.builtin.bytes.join:L ext.builtin.bytes.startswith:L ext.builtin.bytes.replace:L ext.builtin.bytes.strip:L ext.builtin.bytes.find:L ext.builtin.bytes.from_int:L ext.builtin.bytes.to_int:L ext.builtin.isinstance:L ext.builtin.hash:L ext.system.bytes.repr:L ext.system.bytes.type:L ext.system.bytes.encodings:L ext.system.bytes.order:L ext.system.bytes.unready:L ext.system.bytes.arguments:L ext.system.bytes.range:L ext.system.bytes.negative:L ext.system.bytes.index:L ext.system.bytes.immutable:L ext.system.bytes.unhashable:L ext.system.bytes.separator:L ext.system.bytes.hex:L ext.system.bytes.overflow:L ext.system.bytes.unsigned:L ext.system.bytes.bad_order:L ext.system.bytes.decode:L ext.system.bytes.encode:L ext.lexical.string.bytes.ascii:L ext.lexical.string.bytes.mixed:L \
 ext.lexical.string.long:L ext.op.lambda:L ext.op.tuple:L ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.stmt.class.unready:L ext.stmt.del:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unrun:L ext.system.scope.unready:L ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L ext.op.await:L ext.stmt.async:L ext.stmt.loop.else:B ext.stmt.del.unrun:L ext.stmt.binding.unrun:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
@@ -144,7 +144,26 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 90] = [
+    ("ext.builtin.bytes", Prim::Octets(0)),
+    ("ext.builtin.bytearray", Prim::Octets(1)),
+    ("ext.builtin.bytes.encode", Prim::Octets(2)),
+    ("ext.builtin.bytes.decode", Prim::Octets(3)),
+    ("ext.builtin.bytes.hex", Prim::Octets(4)),
+    ("ext.builtin.bytes.fromhex", Prim::Octets(5)),
+    ("ext.builtin.bytes.upper", Prim::Octets(6)),
+    ("ext.builtin.bytes.lower", Prim::Octets(7)),
+    ("ext.builtin.bytes.split", Prim::Octets(8)),
+    ("ext.builtin.bytes.join", Prim::Octets(9)),
+    ("ext.builtin.bytes.startswith", Prim::Octets(10)),
+    ("ext.builtin.bytes.replace", Prim::Octets(11)),
+    ("ext.builtin.bytes.strip", Prim::Octets(12)),
+    ("ext.builtin.bytes.find", Prim::Octets(13)),
+    ("ext.builtin.bytes.from_int", Prim::Octets(14)),
+    ("ext.builtin.bytes.to_int", Prim::Octets(15)),
+    ("ext.builtin.isinstance", Prim::Octets(16)),
+    ("ext.builtin.hash", Prim::Octets(17)),
+
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),

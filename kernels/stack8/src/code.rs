@@ -414,6 +414,7 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Bytes(u8),
     Sum,
     List,
     Any,

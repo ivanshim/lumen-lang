@@ -4944,6 +4944,10 @@ impl<'a> Builder<'a> {
 
     fn quotation(&mut self) -> Res<Form> {
         let start = self.advance();
+        if start.shape == Shape::ByteQuote {
+            return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
+                lead: Rc::from(self.table.strings("ext.system.bytes.repr")[0].as_str()) }));
+        }
         if start.shape == Shape::Quote { return Ok(constant(Value::text(&start.lexeme))); }
         if start.shape == Shape::Unheld { return Ok(prim_call(Prim::UnheldText, vec![constant(Value::text(&start.lexeme))])); }
         if start.shape != Shape::Woven {
@@ -5085,11 +5089,14 @@ impl<'a> Builder<'a> {
                 self.advance();
                 constant(numeral(&t.lexeme, table)?)
             }
-            Shape::Quote | Shape::Woven | Shape::Unheld => {
+            Shape::ByteQuote | Shape::Quote | Shape::Woven | Shape::Unheld => {
                 let mut text = self.quotation()?;
                 if table.flag("ext.lexical.string.adjacent") {
-                    while matches!(self.look().shape, Shape::Quote | Shape::Woven | Shape::Unheld) {
-                        text = prim_call(Prim::Join, vec![text, self.quotation()?]);
+                    while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::Woven | Shape::Unheld) {
+                        if (t.shape == Shape::ByteQuote) != (self.look().shape == Shape::ByteQuote) {
+                            return Err(table.single("ext.lexical.string.bytes.mixed").unwrap_or("").to_owned());
+                        }
+                        text = prim_call(if t.shape == Shape::ByteQuote { Prim::Plus } else { Prim::Join }, vec![text, self.quotation()?]);
                     }
                 }
                 text
@@ -5146,6 +5153,11 @@ impl<'a> Builder<'a> {
                     constant(Value::Channel(1))
                 } else if table.spells("ext.builtin.print.file.error", &t.lexeme) {
                     constant(Value::Channel(2))
+                } else if matches!(table.prims.get(&t.lexeme), Some(Prim::Octets(0 | 1)))
+                    && !table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
+                    let words = table.strings("ext.system.bytes.type");
+                    constant(Value::OctetKind { changeable: table.prims.get(&t.lexeme) == Some(&Prim::Octets(1)),
+                        shown: Rc::from(format!("{}{}{}", words[0], t.lexeme, words[1])) })
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
                     && table.single("syntax.call.open").map_or(false, |o| self.sign(o))
                 {

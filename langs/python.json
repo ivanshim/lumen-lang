@@ -336,6 +336,60 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.bytearray": [
+    "bytearray"
+  ],
+  "ext.builtin.bytes": [
+    "bytes"
+  ],
+  "ext.builtin.bytes.decode": [
+    "decode"
+  ],
+  "ext.builtin.bytes.encode": [
+    "encode"
+  ],
+  "ext.builtin.bytes.find": [
+    "find"
+  ],
+  "ext.builtin.bytes.from_int": [
+    "to_bytes"
+  ],
+  "ext.builtin.bytes.fromhex": [
+    "bytes.fromhex"
+  ],
+  "ext.builtin.bytes.hex": [
+    "hex"
+  ],
+  "ext.builtin.bytes.join": [
+    "join"
+  ],
+  "ext.builtin.bytes.lower": [
+    "lower"
+  ],
+  "ext.builtin.bytes.replace": [
+    "replace"
+  ],
+  "ext.builtin.bytes.split": [
+    "split"
+  ],
+  "ext.builtin.bytes.startswith": [
+    "startswith"
+  ],
+  "ext.builtin.bytes.strip": [
+    "strip"
+  ],
+  "ext.builtin.bytes.to_int": [
+    "int.from_bytes"
+  ],
+  "ext.builtin.bytes.upper": [
+    "upper"
+  ],
+  "ext.builtin.hash": [
+    "hash"
+  ],
+  "ext.builtin.isinstance": [
+    "isinstance"
+  ],
   "ext.builtin.list": [
     "list"
   ],
@@ -495,6 +549,12 @@
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
     "invalid string literal"
+  ],
+  "ext.lexical.string.bytes.ascii": [
+    "SyntaxError: bytes can only contain ASCII literal characters"
+  ],
+  "ext.lexical.string.bytes.mixed": [
+    "SyntaxError: cannot mix bytes and nonbytes literals"
   ],
   "ext.lexical.string.long": [
     "\"\"\"",
@@ -897,6 +957,66 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.bytes.arguments": [
+    "TypeError: invalid bytes arguments"
+  ],
+  "ext.system.bytes.bad_order": [
+    "ValueError: byteorder must be either 'little' or 'big'"
+  ],
+  "ext.system.bytes.decode": [
+    "UnicodeDecodeError: "
+  ],
+  "ext.system.bytes.encode": [
+    "UnicodeEncodeError: "
+  ],
+  "ext.system.bytes.encodings": [
+    "utf-8",
+    "utf8",
+    "ascii",
+    "us-ascii"
+  ],
+  "ext.system.bytes.hex": [
+    "ValueError: non-hexadecimal number found in fromhex() arg at position "
+  ],
+  "ext.system.bytes.immutable": [
+    "TypeError: 'bytes' object does not support item assignment"
+  ],
+  "ext.system.bytes.index": [
+    "IndexError: index out of range"
+  ],
+  "ext.system.bytes.negative": [
+    "ValueError: negative count"
+  ],
+  "ext.system.bytes.order": [
+    "big",
+    "little"
+  ],
+  "ext.system.bytes.overflow": [
+    "OverflowError: int too big to convert"
+  ],
+  "ext.system.bytes.range": [
+    "ValueError: bytes must be in range(0, 256)"
+  ],
+  "ext.system.bytes.repr": [
+    "b",
+    "bytearray(b"
+  ],
+  "ext.system.bytes.separator": [
+    "ValueError: empty separator"
+  ],
+  "ext.system.bytes.type": [
+    "<class '",
+    "'>"
+  ],
+  "ext.system.bytes.unhashable": [
+    "TypeError: unhashable type: 'bytearray'"
+  ],
+  "ext.system.bytes.unready": [
+    "NotImplementedError: this bytes operation is not supported"
+  ],
+  "ext.system.bytes.unsigned": [
+    "OverflowError: can't convert negative int to unsigned"
+  ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
   ],

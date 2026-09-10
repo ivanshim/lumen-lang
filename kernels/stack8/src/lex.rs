@@ -12,6 +12,7 @@ pub enum Shape {
     Quoted,
     Numeral,
     Quote,
+    Bytes,
     StringBegin,
     StringEnd,
     StringField,
@@ -512,6 +513,9 @@ impl<'a> Cursor<'a> {
                 break;
             }
             let Some(c) = self.look(0) else { return Err(self.string_words()); };
+            if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
+                return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
+            }
             if c == '\n' && mark.chars().count() == 1 { return Err(self.string_words()); }
             if format && (c == '{' || c == '}') {
                 if self.look(1) == Some(c) {
@@ -524,7 +528,8 @@ impl<'a> Cursor<'a> {
                 self.rich_escape(raw, format, bytes, &mut text, &mut fault)?;
             } else { text.push(self.step()); }
         }
-        self.string_text(&mut text, &mut fault, line, col);
+        if bytes { self.push(Shape::Bytes, text, 0, line, col); }
+        else { self.string_text(&mut text, &mut fault, line, col); }
         if format { self.push(Shape::StringEnd, String::new(), 0, line, col); }
         Ok(())
     }

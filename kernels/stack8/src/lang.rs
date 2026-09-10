@@ -54,6 +54,7 @@ pub struct Lang {
     pub yield_from: Vec<String>,
     pub member_pipes: bool,
     pub tuple_unready: Vec<String>,
+    pub byte_words: HashMap<String, Vec<String>>,
     pub bytes_unready: Vec<String>,
     pub format_unready: Vec<String>,
     pub identity_unready: Vec<String>,
@@ -812,7 +813,7 @@ b system.flag.counts
 
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
-const EXT_LABELS: &str = "
+const EXT_LABELS: &str = "w ext.builtin.bytes | w ext.builtin.bytearray | w ext.builtin.bytes.encode | w ext.builtin.bytes.decode | w ext.builtin.bytes.hex | w ext.builtin.bytes.fromhex | w ext.builtin.bytes.upper | w ext.builtin.bytes.lower | w ext.builtin.bytes.split | w ext.builtin.bytes.join | w ext.builtin.bytes.startswith | w ext.builtin.bytes.replace | w ext.builtin.bytes.strip | w ext.builtin.bytes.find | w ext.builtin.bytes.from_int | w ext.builtin.bytes.to_int | w ext.builtin.isinstance | w ext.builtin.hash | w ext.system.bytes.repr | w ext.system.bytes.type | w ext.system.bytes.encodings | w ext.system.bytes.order | w ext.system.bytes.unready | w ext.system.bytes.arguments | w ext.system.bytes.range | w ext.system.bytes.negative | w ext.system.bytes.index | w ext.system.bytes.immutable | w ext.system.bytes.unhashable | w ext.system.bytes.separator | w ext.system.bytes.hex | w ext.system.bytes.overflow | w ext.system.bytes.unsigned | w ext.system.bytes.bad_order | w ext.system.bytes.decode | w ext.system.bytes.encode | w ext.lexical.string.bytes.ascii | w ext.lexical.string.bytes.mixed |
 w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
@@ -1310,6 +1311,25 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.bytes", Builtin::Bytes(0)),
+            ("ext.builtin.bytearray", Builtin::Bytes(1)),
+            ("ext.builtin.bytes.encode", Builtin::Bytes(2)),
+            ("ext.builtin.bytes.decode", Builtin::Bytes(3)),
+            ("ext.builtin.bytes.hex", Builtin::Bytes(4)),
+            ("ext.builtin.bytes.fromhex", Builtin::Bytes(5)),
+            ("ext.builtin.bytes.upper", Builtin::Bytes(6)),
+            ("ext.builtin.bytes.lower", Builtin::Bytes(7)),
+            ("ext.builtin.bytes.split", Builtin::Bytes(8)),
+            ("ext.builtin.bytes.join", Builtin::Bytes(9)),
+            ("ext.builtin.bytes.startswith", Builtin::Bytes(10)),
+            ("ext.builtin.bytes.replace", Builtin::Bytes(11)),
+            ("ext.builtin.bytes.strip", Builtin::Bytes(12)),
+            ("ext.builtin.bytes.find", Builtin::Bytes(13)),
+            ("ext.builtin.bytes.from_int", Builtin::Bytes(14)),
+            ("ext.builtin.bytes.to_int", Builtin::Bytes(15)),
+            ("ext.builtin.isinstance", Builtin::Bytes(16)),
+            ("ext.builtin.hash", Builtin::Bytes(17)),
+
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
@@ -1408,6 +1428,7 @@ impl Lang {
             yield_from: r.strings("ext.stmt.yield.from")?,
             member_pipes: r.flag("ext.op.member.pipes")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
+            byte_words: ["ext.builtin.bytes", "ext.builtin.bytearray", "ext.builtin.bytes.encode", "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower", "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace", "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.from_int", "ext.builtin.bytes.to_int", "ext.builtin.isinstance", "ext.builtin.hash", "ext.system.bytes.repr", "ext.system.bytes.type", "ext.system.bytes.encodings", "ext.system.bytes.order", "ext.system.bytes.unready", "ext.system.bytes.arguments", "ext.system.bytes.range", "ext.system.bytes.negative", "ext.system.bytes.index", "ext.system.bytes.immutable", "ext.system.bytes.unhashable", "ext.system.bytes.separator", "ext.system.bytes.hex", "ext.system.bytes.overflow", "ext.system.bytes.unsigned", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"].iter().map(|key| Ok((key.to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
             format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
             identity_unready: r.strings("ext.op.identical.unsupported")?,

@@ -5250,6 +5250,8 @@ impl<'a> Compiler<'a> {
     fn string_piece(&mut self) -> Res<()> {
         let token = self.take();
         match token.shape {
+            Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
+                Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),
             Shape::StringFault => {
                 self.constant(Value::text(&token.lexeme));
@@ -5406,11 +5408,15 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+            Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+                let bytes = tok.shape == Shape::Bytes;
                 self.string_piece()?;
-                while lang.adjacent_strings && matches!(self.look().shape, Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                while lang.adjacent_strings && matches!(self.look().shape, Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                    if bytes != (self.look().shape == Shape::Bytes) {
+                        return Err(lang.byte_words["ext.lexical.string.bytes.mixed"][0].clone());
+                    }
                     self.string_piece()?;
-                    self.act(Action::Join, 2);
+                    self.act(if bytes { Action::Add } else { Action::Join }, 2);
                 }
             }
             Shape::Instr if Lang::spells(&lang.new_words, &tok.lexeme) => {
@@ -5472,6 +5478,11 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Stream(true));
                 } else if Lang::spells(&lang.print_file_output, &tok.lexeme) {
                     self.constant(Value::Stream(false));
+                } else if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::Bytes(0 | 1)))
+                    && !lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)) {
+                    let mutable = lang.builtins.get(&tok.lexeme) == Some(&Builtin::Bytes(1));
+                    let words = &lang.byte_words["ext.system.bytes.type"];
+                    self.constant(Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], tok.lexeme, words[1]))));
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
                     && lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open))
                 {
