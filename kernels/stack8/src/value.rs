@@ -64,6 +64,9 @@ pub struct Real {
     /// the minus, since a real of a width has two noughts and a language
     /// holding reals to a width writes them apart.
     pub below: bool,
+    /// A real read by the newer number forms keeps its point when
+    /// printed whole. Older forms keep the spelling they had before.
+    pub point: bool,
 }
 
 impl Real {
@@ -90,15 +93,43 @@ impl Real {
     }
 }
 
+/// A counted walk keeps its bounds rather than all its places.
+#[derive(Debug, Clone)]
+pub struct Counted {
+    pub start: BigInt,
+    pub stop: BigInt,
+    pub step: BigInt,
+    pub name: String,
+}
+
+impl Counted {
+    pub fn length(&self) -> BigInt {
+        let distance = if self.step.is_positive() { &self.stop - &self.start } else { &self.start - &self.stop };
+        if distance <= BigInt::zero() { BigInt::zero() }
+        else { (distance - 1) / self.step.abs() + 1 }
+    }
+
+    pub fn at(&self, mut index: BigInt) -> Option<Value> {
+        let length = self.length();
+        if index.is_negative() { index += &length; }
+        (index >= BigInt::zero() && index < length).then(|| Value::of_big(&self.start + index * &self.step))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
+    Stream(bool),
+    Counted(Rc<Counted>),
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Frac>),
     Real(Rc<Real>),
+    /// An imaginary literal and the words for working with it too soon.
+    Imaginary(f64, Rc<str>),
     Text(Rc<str>),
     Flag(bool),
     Null,
+    Ellipsis,
     Array(Rc<Vec<Value>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
@@ -114,6 +145,7 @@ pub enum Value {
     /// gathered into a map.
     Tie(Rc<(Value, Value)>),
     Routine(Rc<Routine>),
+    Method(Rc<Instance>, Rc<Routine>),
     SortOf(Sort),
     /// A slot nothing was stored in.
     Blank,
@@ -147,6 +179,23 @@ pub struct Wording<'a> {
 }
 
 impl Value {
+    pub fn keeps_point(&self) -> bool {
+        match self {
+            Value::Real(r) => r.point,
+            Value::Bond(cell) => cell.borrow().keeps_point(),
+            _ => false,
+        }
+    }
+
+    pub fn with_point(mut self, keep: bool) -> Self {
+        if keep {
+            if let Value::Real(r) = &mut self {
+                Rc::make_mut(r).point = true;
+            }
+        }
+        self
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -198,6 +247,9 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Imaginary(n, _) => *n != 0.0,
+            Value::Stream(_) => true,
+            Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
@@ -206,9 +258,9 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::SortOf(_) => true,
+            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Slice(_) => true,
+            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -216,6 +268,7 @@ impl Value {
     /// text is parsed, the rest refuse.
     pub fn as_big(&self) -> Result<BigInt, String> {
         match self {
+            Value::Imaginary(_, words) => Err(words.to_string()),
             Value::Small(n) => Ok(BigInt::from(*n)),
             Value::Huge(n) => Ok((**n).clone()),
             // What stands outside the numbers has no whole part; such
@@ -229,7 +282,9 @@ impl Value {
             Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -242,11 +297,19 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
+            (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
+            (Value::Stream(a), Value::Stream(b)) => a == b,
+            (Value::Counted(a), Value::Counted(b)) => {
+                let length = a.length();
+                length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
+            }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Null, Value::Null) => true,
+            (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
+            (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -328,9 +391,103 @@ impl Value {
         }
     }
 
+    /// A field is rendered after its specification has itself been
+    /// worked out. The small common formats are honoured here; the
+    /// rest say that the run has no rule for them.
+    pub fn string_field(&self, words: &Wording, spec: &str, conversion: &str) -> Option<String> {
+        if !matches!(self, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Text(_) | Value::Flag(_) | Value::Null) { return None; }
+        if !spec.is_empty() && conversion.is_empty() && matches!(self, Value::Flag(_) | Value::Null) { return None; }
+        let mut shown = self.display(words);
+        if let Value::Real(real) = self {
+            let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
+            shown = format!("{number:?}").to_ascii_lowercase();
+            if let Some((mantissa, exponent)) = shown.split_once('e') {
+                let power = exponent.parse::<i32>().ok()?;
+                shown = format!("{mantissa}e{power:+03}");
+            }
+        }
+        if let Value::Text(text) = self {
+            if conversion == "r" || conversion == "a" {
+                let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                shown = String::from(quote);
+                for c in text.chars() {
+                    match c {
+                        '\\' => shown.push_str("\\\\"),
+                        '\n' => shown.push_str("\\n"), '\r' => shown.push_str("\\r"), '\t' => shown.push_str("\\t"),
+                        c if c == quote => { shown.push('\\'); shown.push(c); }
+                        c if c.is_control() || conversion == "a" && !c.is_ascii() => {
+                            let n = c as u32;
+                            if n <= 255 { shown.push_str(&format!("\\x{n:02x}")); }
+                            else if n <= 65535 { shown.push_str(&format!("\\u{n:04x}")); }
+                            else { shown.push_str(&format!("\\U{n:08x}")); }
+                        }
+                        c => shown.push(c),
+                    }
+                }
+                shown.push(quote);
+            }
+        }
+        if conversion.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            let (radix, prefix) = match spec {
+                "x" | "X" => (16, ""), "#x" => (16, "0x"), "#X" => (16, "0X"),
+                "o" => (8, ""), "#o" => (8, "0o"), "b" => (2, ""), "#b" => (2, "0b"),
+                _ => (0, ""),
+            };
+            if radix != 0 {
+                let mut digits = self.as_big().ok()?.to_str_radix(radix);
+                if spec.ends_with('X') { digits.make_ascii_uppercase(); }
+                return Some(match digits.strip_prefix('-') {
+                    Some(body) => format!("-{prefix}{body}"),
+                    None => format!("{prefix}{digits}"),
+                });
+            }
+        }
+        if conversion.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            if let Some(digits) = spec.strip_suffix('d') {
+                if digits.chars().all(|c| c.is_ascii_digit()) {
+                    let width = if digits.is_empty() { Some(0) } else { digits.parse::<usize>().ok() };
+                    if let Some(width) = width.filter(|n| *n <= 100000) {
+                        let padding = width.saturating_sub(shown.len());
+                        if digits.starts_with('0') {
+                            return Some(if let Some(body) = shown.strip_prefix('-') { format!("-{}{body}", "0".repeat(padding)) }
+                                else { format!("{}{shown}", "0".repeat(padding)) });
+                        }
+                        return Some(format!("{}{shown}", " ".repeat(padding)));
+                    }
+                }
+            }
+        }
+        if conversion.is_empty() && !matches!(self, Value::Text(_)) {
+            if let Some(places) = spec.strip_prefix('.').and_then(|s| s.strip_suffix('f')).and_then(|s| s.parse::<usize>().ok()).filter(|n| *n <= 1000) {
+                if let Ok(number) = shown.parse::<f64>() { return Some(format!("{number:.places$}")); }
+            }
+        }
+        if spec.is_empty() { return Some(shown); }
+        let letters: Vec<char> = spec.chars().collect();
+        let (fill, align, offset) = if letters.len() > 1 && matches!(letters[1], '<' | '>' | '^') {
+            (letters[0], letters[1], 2)
+        } else if letters.first().map_or(false, |c| matches!(c, '<' | '>' | '^')) { (' ', letters[0], 1) }
+        else if letters.iter().all(char::is_ascii_digit) && letters.first() != Some(&'0') {
+            (' ', if conversion.is_empty() && !matches!(self, Value::Text(_)) { '>' } else { '<' }, 0)
+        } else { return None; };
+        let width = if offset == letters.len() { Some(0) } else { letters[offset..].iter().collect::<String>().parse::<usize>().ok().filter(|n| *n <= 100000) };
+        {
+            let width = width?;
+            let spaces = width.saturating_sub(shown.chars().count());
+            let left = match align { '>' => spaces, '^' => spaces / 2, _ => 0 };
+            shown = format!("{}{}{}", fill.to_string().repeat(left), shown, fill.to_string().repeat(spaces - left));
+        }
+        Some(shown)
+    }
+
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
+            Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
+            Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
+                else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
+            Value::Ellipsis => "Ellipsis".to_string(),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
@@ -348,7 +505,7 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
-            Value::Routine(p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
@@ -385,6 +542,9 @@ impl Value {
                 pair.0.memo_key(into);
                 pair.1.memo_key(into);
                 into.push(')');
+            }
+            Value::Method(o, p) => {
+                let _ = write!(into, "m{:p}:{:p}", Rc::as_ptr(o), Rc::as_ptr(p));
             }
             Value::Routine(p) => {
                 let _ = write!(into, "p{:p}", Rc::as_ptr(p));
@@ -670,7 +830,7 @@ pub fn outside_number(x: f64, places: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false }))
+    Value::Real(Rc::new(Real { p, q: BigInt::zero(), places, below: false, point: false }))
 }
 
 /// A real brought to the nearest one of a width of bits, held exactly.
@@ -687,7 +847,7 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize) -> Value {
     };
     match from_binary(as_binary(&p, &q)) {
         // A nought below nought keeps its minus at any width.
-        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below),
+        Some((p, q)) => crate::arith::shape_signed(p, q, Some(places), below).with_point(v.keeps_point()),
         None => v,
     }
 }
@@ -800,3 +960,16 @@ fn laid_flat(figures: &str, power: i32) -> String {
     format!("{}.{}", &figures[..point], &figures[point..])
 }
 
+
+/// Write an imaginary coefficient in the fewest figures, with a sign
+/// and two places at least for the power of ten.
+fn shortest_real(x: f64) -> String {
+    if !x.is_finite() { return x.to_string().to_ascii_lowercase(); }
+    let scientific = format!("{:e}", x);
+    let (mantissa, exponent) = scientific.split_once('e').expect("a power follows");
+    let power: i32 = exponent.parse().expect("a whole power");
+    if x != 0.0 && !(-4..16).contains(&power) {
+        return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
+    }
+    x.to_string()
+}
