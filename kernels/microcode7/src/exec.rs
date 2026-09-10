@@ -483,6 +483,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
+                            Value::Octets { cell, .. } => cell.borrow().len(),
                             Value::Vector(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
@@ -535,7 +536,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::Octets { .. } | Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -3642,12 +3643,12 @@ impl<'a> Machine<'a> {
                 let mut pending = None;
                 let mut content = Vec::new();
                 for (position, ch) in source.chars().enumerate() {
-                    if pending.is_none() && ch.is_ascii_whitespace() { continue; }
+                    if pending.is_none() && (ch.is_ascii_whitespace() || ch == '\x0b') { continue; }
                     let digit = ch.to_digit(16).filter(|_| ch.is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), position))? as u8;
                     if let Some((high, _)) = pending.take() { content.push(high * 16 + digit); }
                     else { pending = Some((digit, position)); }
                 }
-                if let Some((_, position)) = pending { return Err(format!("{}{}", self.octet_error("hex"), position)); }
+                if pending.is_some() { return Err(format!("{}{}", self.octet_error("hex"), source.chars().count())); }
                 return Ok(self.octets(content, false));
             }
             14 | 15 => {
@@ -3709,12 +3710,12 @@ impl<'a> Machine<'a> {
                 let mut chunks = Vec::new();
                 if args.first().map_or(true, |v| matches!(v, Value::Nil)) {
                     let mut rest = content.as_slice();
-                    while !rest.is_empty() && rest[0].is_ascii_whitespace() { rest = &rest[1..]; }
+                    while !rest.is_empty() && (rest[0].is_ascii_whitespace() || rest[0] == 11) { rest = &rest[1..]; }
                     while !rest.is_empty() {
                         if chunks.len() == maximum { chunks.push(rest.to_vec()); break; }
-                        let end = rest.iter().position(u8::is_ascii_whitespace).unwrap_or(rest.len());
+                        let end = rest.iter().position(|n| n.is_ascii_whitespace() || *n == 11).unwrap_or(rest.len());
                         chunks.push(rest[..end].to_vec()); rest = &rest[end..];
-                        while !rest.is_empty() && rest[0].is_ascii_whitespace() { rest = &rest[1..]; }
+                        while !rest.is_empty() && (rest[0].is_ascii_whitespace() || rest[0] == 11) { rest = &rest[1..]; }
                     }
                 } else {
                     let separator = self.octet_contents(&args[0], false)?;
@@ -3847,6 +3848,16 @@ impl<'a> Machine<'a> {
             });
         }
         Ok(match op {
+            Prim::OctetAssign(times) => {
+                let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
+                match (&v[0], &changed) {
+                    (Value::Octets { cell, changeable: true, .. }, Value::Octets { cell: content, .. }) => {
+                        cell.replace(content.borrow().to_vec());
+                        v[0].clone()
+                    }
+                    _ => changed,
+                }
+            }
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
@@ -5685,6 +5696,7 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
+            Value::Octets { cell, .. } => cell.borrow().iter().copied().map(|n| Value::Small(i64::from(n))).collect(),
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),

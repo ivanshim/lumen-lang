@@ -316,7 +316,8 @@ only. The extension labels so far, all from PHP:
   row; a whole number makes that many nought bytes; a walk of whole
   numbers supplies the bytes. Text with an encoding is encoded. A mutable
   row shares its places when bound under another name; copying and slicing
-  make a fresh row. Byte prefixes make the immutable value, whose places
+  make a fresh row. Compound joining and repetition write through the
+  mutable row, so its other names see the change. Byte prefixes make the immutable value, whose places
   hold whole numbers. Rows admit joining, repetition, ordering, membership
   and equality; a byte row and text are never equal.
 - `ext.builtin.bytes.encode` and `.decode`: the methods taking text to
@@ -331,7 +332,7 @@ only. The extension labels so far, all from PHP:
   letters in the seven-bit alphabet. All other bytes stand unchanged.
 - `ext.builtin.bytes.split` and `.join`: methods parting a row at a byte
   separator, or at white space when none is given, and joining rows with
-  the receiver between them. A second split argument bounds the parts.
+  the receiver between them. A second split argument bounds the cuts.
 - `ext.builtin.bytes.startswith`, `.replace`, `.strip` and `.find`: methods
   testing a beginning, replacing a byte sequence, trimming bytes from both
   ends, and finding a sequence's first place. Replacement may be bounded
@@ -367,7 +368,8 @@ only. The extension labels so far, all from PHP:
   conversion complaints; the encoding, offending characters or bytes,
   their positions and the cause follow in the run's account.
 - `ext.system.bytes.unready`: the plain complaint for a byte operation
-  read whole whose running cannot yet be honoured.
+  read whole whose running cannot yet be honoured. Taking a builtin byte
+  method as a value, without calling it, is such a form at present.
 
 - `ext.lexical.string.long`: the quote marks that enclose text over
   lines. The whole mark ends the string; a shorter run and the other

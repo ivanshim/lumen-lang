@@ -992,7 +992,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Bytes(..) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2057,6 +2057,14 @@ impl<'a> Engine<'a> {
                     }).collect())),
                 }
             }
+            Action::ByteAssign(repeat) => {
+                let operands = self.drop_many(2)?;
+                let result = self.dyadic(if *repeat { &Action::Mul } else { &Action::Add }, &operands[0], &operands[1])?;
+                if let (Value::Bytes(target, true, _), Value::Bytes(source, ..)) = (&operands[0], &result) {
+                    *target.borrow_mut() = source.borrow().clone();
+                    operands[0].clone()
+                } else { result }
+            }
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::Not => {
                 let held = self.drop_top()?;
@@ -3079,6 +3087,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
+                            Value::Bytes(row, ..) => row.borrow().len(),
                             Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -4463,10 +4472,10 @@ impl<'a> Engine<'a> {
             let chars: Vec<char> = text.chars().collect();
             let (mut at, mut row) = (0, Vec::new());
             while at < chars.len() {
-                if chars[at].is_ascii_whitespace() { at += 1; continue; }
+                if chars[at].is_ascii_whitespace() || chars[at] == '\u{b}' { at += 1; continue; }
                 let high = chars[at].to_digit(16).filter(|_| chars[at].is_ascii()).ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at))?;
                 let low = chars.get(at + 1).and_then(|c| c.to_digit(16)).filter(|_| chars.get(at + 1).map_or(false, char::is_ascii))
-                    .ok_or_else(|| format!("{}{}", self.byte_fault("hex"), if at + 1 == chars.len() { at } else { at + 1 }))?;
+                    .ok_or_else(|| format!("{}{}", self.byte_fault("hex"), at + 1))?;
                 row.push((high * 16 + low) as u8); at += 2;
             }
             return Ok(self.byte_make(row, false));
@@ -4515,13 +4524,13 @@ impl<'a> Engine<'a> {
                 let mut parts = Vec::new();
                 if given.first().map_or(true, |v| matches!(v, Value::Null)) {
                     let mut pos = 0;
-                    while pos < row.len() && row[pos].is_ascii_whitespace() { pos += 1; }
+                    while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
                     while pos < row.len() {
                         if parts.len() == limit { parts.push(self.byte_make(row[pos..].to_vec(), *mutable)); break; }
                         let start = pos;
-                        while pos < row.len() && !row[pos].is_ascii_whitespace() { pos += 1; }
+                        while pos < row.len() && !(row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
                         parts.push(self.byte_make(row[start..pos].to_vec(), *mutable));
-                        while pos < row.len() && row[pos].is_ascii_whitespace() { pos += 1; }
+                        while pos < row.len() && (row[pos].is_ascii_whitespace() || row[pos] == 11) { pos += 1; }
                     }
                 } else {
                     let sep = bytes(&given[0])?;

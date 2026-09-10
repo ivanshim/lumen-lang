@@ -3618,6 +3618,9 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
+        if bound && matches!(self.table.prims.get(&name), Some(Prim::Octets(_))) {
+            self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
+        }
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
@@ -4240,6 +4243,10 @@ impl<'a> Builder<'a> {
     }
 
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
+        let compound = compound.map(|op| {
+            if self.table.has_any("ext.builtin.bytes") && matches!(op, Prim::Plus | Prim::Times) { Prim::OctetAssign(op == Prim::Times) }
+            else { op }
+        });
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
         if let Form::Silenced(inner) = expr {
@@ -5890,6 +5897,10 @@ impl<'a> Builder<'a> {
                     if calling {
                         r.advance();
                         args.extend(r.args("syntax.call.close", "syntax.call.separator")?);
+                    }
+                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
+                        args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
+                        return Ok(sequence(args));
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {

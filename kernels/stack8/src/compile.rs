@@ -3717,6 +3717,9 @@ impl<'a> Compiler<'a> {
     }
 
     fn function(&mut self, name: String, gives_cell: bool) -> Res<()> {
+        if matches!(self.lang.builtins.get(&name), Some(Builtin::Bytes(_))) {
+            self.arg_names.entry(name.clone()).or_default();
+        }
         self.giving_cells.push(gives_cell);
         let built = self.function_body(name);
         self.giving_cells.pop();
@@ -4399,6 +4402,9 @@ impl<'a> Compiler<'a> {
     /// The newer compound forms keep a real's point; a plain working
     /// keeps the spelling it had before these forms were read.
     fn compound_act(&mut self, op: Action) {
+        let op = if !self.lang.byte_prefixes.is_empty() && matches!(op, Action::Add | Action::Mul) {
+            Action::ByteAssign(matches!(op, Action::Mul))
+        } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
@@ -6477,6 +6483,10 @@ impl<'a> Compiler<'a> {
                         self.read(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
+                } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
+                    self.discard();
+                    self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
+                    self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;
