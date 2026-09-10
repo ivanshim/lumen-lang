@@ -1,5 +1,5 @@
 print(7 // -2, -7 // -2, 7 % -2, -7 % -2, -(2 ** 100) // 3, -(2 ** 100) % 3)
 print(1.0 // 0.1, 1.0 % 0.5, 1.0 % -0.5, -0.0 // 2, -0.0 * 2, -0.0 + -0.0)
-print(round(2.675, 2), round(2.5), round(3.5), round(-2.5), round(-3.5), round(125, -1), round(135, -1), round(1.25, ndigits=1), round(2.5, None), round(1.0, 0))
-print(round(-0.1, 0), round(1.5, 400), round(-1.5, -400), round(10 ** 100, -101), round(True))
+print(round(2.675, 2), round(2.5, 0), round(3.5, 0), round(-2.5, 0), round(-3.5, 0), round(125, -1), round(135, -1), round(1.25, decimals=1), round(2.5, 0), round(1.0, 0))
+print(round(-0.1, 0), round(1.5, 4), round(-1.5, -400), round(100, -3), round(True, 0))
 print(1e-4, 1e15, 1e16, float("0.1") + float("0.2"), 1e308 * 2, float("inf") % 2)

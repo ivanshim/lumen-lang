@@ -586,9 +586,14 @@ only. The extension labels so far, all from PHP:
   one in arithmetic, numeric comparison and conversion to a real.
   Identity keeps the kinds apart, and bit operations keep their own
   rule for two flags.
-- `ext.op.quot.floor`: a switch making quotient round downward and
-  remainder take the divisor's sign. Real operands use binary arithmetic,
-  retaining signed zero and the quotient correction near an integer.
+- Python keeps the shared arithmetic at this stage: `//` truncates toward
+  zero and `%` is `a - b * (a // b)`. Thus `-17 // 5` is `-3` and
+  `-17 % 5` is `-2`, unlike CPython's `-4` and `3`. The shared library's
+  `round(x, decimals)` rounds halfway away from zero: `round(2.5, 0)`
+  is `3`, unlike CPython's ties-to-even result `2`. Both arguments are
+  required; negative decimal counts act like zero, and CPython's omitted
+  or null places and `ndigits` keyword are not provided. The examples
+  require these shared rules across all six kernels.
   Python retains 64-bit real arithmetic but uses the existing kernel
   rendering, not CPython's shortest round-trip spelling: whole reals
   omit `.0`, powers of ten remain expanded, and negative zero is `-0`.
@@ -597,10 +602,6 @@ only. The extension labels so far, all from PHP:
   For example, the kernels show `0.3`, `10000000000000000`,
   `1`, `0.00001`, `-0`, `INF` and `NAN` where CPython shows
   `0.30000000000000004`, `1e+16`, `1.0`, `1e-05`, `-0.0`, `inf` and `nan`.
-- `ext.builtin.round`: nearest rounding with ties to even. Omitting the
-  places, or passing null, returns an integer; explicit places retain the
-  input's numeric kind. `ext.builtin.round.digits` names the places keyword.
-  Decimal rounding uses the exact binary ratio to avoid rounding twice.
 - `ext.op.pow.real_exponent`: a switch; a real operand or an exponent
   below nought makes a real power. Whole nonnegative powers stay exact.
   `ext.op.pow.overflow`, `.zero` and `.nonreal` give plain complaints
@@ -2031,8 +2032,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
 | `ext.builtin.room.used` | - | - | - | - | `__room_used` | - | - | - | - | - |
-| `ext.builtin.round` | - | - | `round` | - | - | - | - | - | - | - |
-| `ext.builtin.round.digits` | - | - | `ndigits` | - | - | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
@@ -2167,7 +2166,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.pow.overflow` | - | - | `OverflowError: numerical result out of range` | - | - | - | - | - | - | - |
 | `ext.op.pow.real_exponent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.pow.zero` | - | - | `ZeroDivisionError: 0.0 cannot be raised to a negative power` | - | - | - | - | - | - | - |
-| `ext.op.quot.floor` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.quot.real_zero` | - | - | `ZeroDivisionError: float floor division by zero` | - | - | - | - | - | - | - |
 | `ext.op.quot.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |

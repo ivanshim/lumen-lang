@@ -264,25 +264,12 @@ pub fn worked_takes(named: &str) -> usize {
     }
 }
 
-/// A quotient below the exact ratio, with its divisor-signed remainder.
-/// Real inputs are worked at binary width, including signed zeroes.
-pub fn floor_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Value, String>> {
+/// Ordinary real operations use binary operands at the configured width.
+/// Quotient and remainder continue through the common truncating path.
+pub fn binary_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Value, String>> {
     let a = ratio_of(first)?;
     let b = ratio_of(second)?;
-    if a.places.or(b.places).is_none() {
-        if op != Calc::IntDiv && op != Calc::Remainder { return None; }
-        if b.above.is_zero() { return Some(Err(String::from("Division by zero"))); }
-        let numerator = &a.above * &b.beneath;
-        let denominator = &a.beneath * &b.above;
-        let (truncated, remainder) = numerator.div_rem(&denominator);
-        let below = !remainder.is_zero() && remainder.is_negative() != denominator.is_negative();
-        let integer = truncated - BigInt::from(u8::from(below));
-        let answer = match op {
-            Calc::IntDiv => Value::from_big(integer),
-            _ => make_number(numerator - integer * denominator, a.beneath * b.beneath, None),
-        };
-        return Some(Ok(answer));
-    }
+    if a.places.or(b.places).is_none() { return None; }
     let read = |r: &Ratio| if r.under && r.above.is_zero() { -0.0 }
         else { crate::data::nearest_binary(&r.above, &r.beneath) };
     let one = read(&a);
@@ -292,64 +279,7 @@ pub fn floor_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Valu
         Calc::Minus => one - two,
         Calc::Times => one * two,
         Calc::Over | Calc::OverReal => one / two,
-        Calc::Remainder | Calc::IntDiv => {
-            let leftover = one % two;
-            let adjust = leftover != 0.0 && (leftover < 0.0) != (two < 0.0);
-            if op == Calc::Remainder {
-                if leftover == 0.0 { 0.0f64.copysign(two) }
-                else if adjust { leftover + two } else { leftover }
-            } else {
-                let divided = (one - leftover) / two - if adjust { 1.0 } else { 0.0 };
-                if divided == 0.0 { 0.0f64.copysign(one / two) }
-                else {
-                    let down = divided.floor();
-                    if divided - down > 0.5 { down + 1.0 } else { down }
-                }
-            }
-        }
-        Calc::Power => return None,
+        Calc::Remainder | Calc::IntDiv | Calc::Power => return None,
     };
     Some(Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)))
-}
-
-/// Select the nearest decimal multiple using integer division, so an
-/// intermediate binary multiplication cannot turn a near tie into a tie.
-pub fn nearest_even(input: &Value, places: Option<&Value>) -> Result<Value, String> {
-    let number = if let Value::Flag(b) = input { Value::Small(i64::from(*b)) } else { input.clone() };
-    let mut ratio = ratio_of(&number).ok_or_else(|| String::from("Rounding requires a number"))?;
-    let places = places.filter(|v| !matches!(v, Value::Nil));
-    let decimal = match places {
-        Some(Value::Flag(b)) => BigInt::from(u8::from(*b)),
-        Some(Value::Small(n)) => BigInt::from(*n),
-        Some(Value::Huge(n)) => n.as_ref().clone(),
-        None => BigInt::zero(),
-        _ => return Err(String::from("Rounding places must be an integer")),
-    };
-    let float_result = ratio.places.is_some() && places.is_some();
-    if ratio.past_numbers() {
-        return if places.is_none() { Err(String::from("Cannot round a nonfinite number to an integer")) } else { Ok(number) };
-    }
-    if ratio.places.is_none() && decimal >= BigInt::zero() { return Ok(number); }
-    let limit = if ratio.places.is_some() { 308 } else { ratio.above.to_str_radix(10).len() };
-    if decimal < -BigInt::from(limit) {
-        return Ok(made_number(BigInt::zero(), BigInt::one(), if float_result { Some(DEFAULT_PLACES) } else { None }, ratio.under || ratio.above.is_negative()));
-    }
-    if ratio.places.is_some() && decimal > BigInt::from(323) { return Ok(number); }
-    let shift = decimal.to_i64().ok_or_else(|| String::from("Rounding places too large"))?;
-    let ten = BigInt::from(10).pow(shift.unsigned_abs() as u32);
-    let sign = ratio.under || ratio.above.is_negative();
-    if shift < 0 { ratio.beneath *= &ten; } else { ratio.above *= &ten; }
-    let (mut rounded, left) = ratio.above.abs().div_rem(&ratio.beneath);
-    let twice = left << 1usize;
-    if twice > ratio.beneath || (twice == ratio.beneath && rounded.is_odd()) { rounded += 1; }
-    if sign { rounded = -rounded; }
-    if !float_result {
-        return Ok(Value::from_big(if shift < 0 { rounded * ten } else { rounded }));
-    }
-    let result = if shift < 0 { make_number(rounded * ten, BigInt::one(), Some(DEFAULT_PLACES)) }
-        else { make_number(rounded, ten, Some(DEFAULT_PLACES)) };
-    let r = ratio_of(&result).expect("a rounded number");
-    let binary = crate::data::nearest_binary(&r.above, &r.beneath);
-    if binary.is_infinite() { return Err(String::from("Rounded value is too large")); }
-    Ok(crate::data::worth_of_binary(if binary == 0.0 && sign { -0.0 } else { binary }, DEFAULT_PLACES))
 }

@@ -1995,8 +1995,8 @@ impl<'a> Engine<'a> {
                             Action::Ge => Some(Value::Flag(x >= y)),
                             Action::Eq => Some(Value::Flag(x == y)),
                             Action::Ne => Some(Value::Flag(x != y)),
-                            Action::Mod if *y != 0 && !self.lang.quotient_floor => x.checked_rem(*y).map(Value::Small),
-                            Action::IntDiv if *y != 0 && !self.lang.quotient_floor => x.checked_div(*y).map(Value::Small),
+                            Action::Mod if *y != 0 => x.checked_rem(*y).map(Value::Small),
+                            Action::IntDiv if *y != 0 => x.checked_div(*y).map(Value::Small),
                             _ => None,
                         },
                         _ => None,
@@ -3604,7 +3604,7 @@ impl<'a> Engine<'a> {
                     Action::Mod => Operation::Remainder,
                     _ => Operation::Raise,
                 };
-                let result = if self.lang.quotient_floor { arith::downward(calc, a, b) } else { None };
+                let result = if self.lang.real_bits.is_some() { arith::binary_work(calc, a, b) } else { None };
                 match result.or_else(|| arith::calculate(calc, a, b)) {
                     // A language may tell taking the remainder by
                     // nought apart from dividing by it, and word the
@@ -4130,9 +4130,7 @@ impl<'a> Engine<'a> {
             return Ok(Value::Null);
         }
         for (key, value) in named {
-            let place = if builtin == Builtin::RoundEven && Lang::spells(&self.lang.round_digits, &key) {
-                1
-            } else if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
+            let place = if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
                 1
             } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_object, &key) {
                 0
@@ -4198,11 +4196,6 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
-            Builtin::RoundEven => {
-                if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
-                let number = self.at_real_width(args[0].clone());
-                arith::round_even(&number, args.get(1))?
-            }
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };

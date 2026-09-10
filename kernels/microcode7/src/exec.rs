@@ -1645,8 +1645,8 @@ impl<'a> Machine<'a> {
                         Prim::Ge => Some(Value::Flag(x >= y)),
                         Prim::Eq => Some(Value::Flag(x == y)),
                         Prim::Ne => Some(Value::Flag(x != y)),
-                        Prim::Mod if *y != 0 && !self.table.flag("ext.op.quot.floor") => x.checked_rem(*y).map(Value::Small),
-                        Prim::IntDiv if *y != 0 && !self.table.flag("ext.op.quot.floor") => x.checked_div(*y).map(Value::Small),
+                        Prim::Mod if *y != 0 => x.checked_rem(*y).map(Value::Small),
+                        Prim::IntDiv if *y != 0 => x.checked_div(*y).map(Value::Small),
                         _ => None,
                     },
                     _ => None,
@@ -2763,7 +2763,6 @@ impl<'a> Machine<'a> {
         }
         for (key, value) in keywords {
             let index = match op {
-                Prim::NearestEven if table.spells("ext.builtin.round.digits", &key) => 1,
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
                 Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
                 Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
@@ -3498,10 +3497,6 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
-            Prim::NearestEven => {
-                if !(1..=2).contains(&v.len()) { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
-                math::nearest_even(&self.at_width(v[0].clone()), v.get(1))?
-            }
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -4692,8 +4687,8 @@ impl<'a> Machine<'a> {
                     true => (self.at_width(self.as_wide_real(&v[0])), self.at_width(self.as_wide_real(&v[1]))),
                     false => (v[0].clone(), v[1].clone()),
                 };
-                let floored = if self.table.flag("ext.op.quot.floor") { math::floor_work(sum, &left, &right) } else { None };
-                let worked = match floored.or_else(|| math::compute(sum, &left, &right)) {
+                let binary = if self.table.count("ext.system.real.bits").is_some() { math::binary_work(sum, &left, &right) } else { None };
+                let worked = match binary.or_else(|| math::compute(sum, &left, &right)) {
                     // A language may tell the remainder by nought apart
                     // from the division by it and word that its own
                     // way. The kind of fault is the same for both, so
