@@ -1602,6 +1602,11 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.math.floating`: a switch; results of the real-math
   builtin retain floating-point spelling, including a decimal point on
   a whole-valued result. Other exact reals retain their former spelling.
+- `ext.builtin.class.derive`: a builtin making a fresh class from a name,
+  one parent class and a map of shared members. The new class inherits
+  its parent's methods. This lets a library make named records without
+  writing a class body afresh; the kernel chooses none of their names.
+
 - `ext.builtin.call.outcome`: a builtin calling the routine it is given
   without arguments and returning three values: whether it returned, its
   answer or raised value, and the complaint's text. A library can thus
@@ -2105,6 +2110,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
+| `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |

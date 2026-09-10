@@ -57,7 +57,7 @@ def product(*iterables, repeat=1):
     result = [[]]
     for times in range(repeat):
         for iterable in iterables:
-            result = [prefix + [item] for prefix in result for item in iterable]
+            result = [[*prefix, item] for prefix in result for item in iterable]
     return result
 
 def permutations(iterable, r=None):
@@ -66,7 +66,7 @@ def permutations(iterable, r=None):
         r = len(values)
     paths = [[]]
     for step in range(r):
-        paths = [path + [i] for path in paths for i in range(len(values)) if i not in path]
+        paths = [[*path, i] for path in paths for i in range(len(values)) if i not in path]
     return [[values[i] for i in path] for path in paths]
 
 def combinations(iterable, r):
@@ -79,7 +79,7 @@ def combinations(iterable, r):
             if len(path) != 0:
                 start = path[-1] + 1
             for i in range(start, len(values)):
-                fresh.append(path + [i])
+                fresh.append([*path, i])
         paths = fresh
     return [[values[i] for i in path] for path in paths]
 

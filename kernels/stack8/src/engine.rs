@@ -4551,6 +4551,22 @@ impl<'a> Engine<'a> {
                     Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
                 }
             }
+            Builtin::DeriveClass => {
+                arity(3)?;
+                let (Value::Text(title), Value::Class(parent), Value::Map(entries)) = (&args[0], &args[1], &args[2]) else {
+                    return Err("class making wants a name, a parent class and a map".into());
+                };
+                let mut shared = Vec::new();
+                for (key, value) in entries.iter() {
+                    let Value::Text(word) = key else { return Err("class member names must be strings".into()); };
+                    shared.push((word.to_string(), value.clone()));
+                }
+                Value::Class(Rc::new(Class {
+                    name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
+                    fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                    constants: Vec::new(), shared: RefCell::new(shared),
+                }))
+            }
             Builtin::CopyValue => {
                 arity(2)?;
                 duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
@@ -5846,7 +5862,7 @@ impl Engine<'_> {
         let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?;
         let program = crate::compile::compile(&tokens, self.lang, &mut local, 0)?;
         let names: Vec<String> = local.idents[offset..].to_vec();
-        for name in &names { self.registry.slot(&format!("\0module:{path}:{name}")); }
+        for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
@@ -5871,7 +5887,12 @@ impl Engine<'_> {
         if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
-                parent.fields.borrow_mut().push((name.to_string(), module.clone()));
+                let mut fields = parent.fields.borrow_mut();
+                match fields.iter_mut().find(|(word, _)| word == name) {
+                    Some((_, Value::Bond(place))) => *place.borrow_mut() = module.clone(),
+                    Some((_, place)) => *place = module.clone(),
+                    None => fields.push((name.to_string(), module.clone())),
+                }
             }
         }
         self.refresh_module_cache();

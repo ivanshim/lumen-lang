@@ -143,23 +143,14 @@ class TestCase:
     def assertRaises(self, expected, *args, **keywords):
         if len(args) == 0:
             return _Raises(expected)
-        caught = False
-        try:
+        with _Raises(expected):
             args[0](*args[1:], **keywords)
-        except expected:
-            caught = True
-        self._check(caught, 'exception not raised')
 
     def assertRaisesRegex(self, expected, phrase, *args, **keywords):
         if len(args) == 0:
             return _Raises(expected, phrase)
-        caught = False
-        try:
+        with _Raises(expected, phrase):
             args[0](*args[1:], **keywords)
-        except expected as error:
-            caught = True
-            self.assertIn(phrase, getattr(error, 'message', str(error)))
-        self._check(caught, 'exception not raised')
 
     def subTest(self, msg=None, **params):
         # Stub: the body shares the surrounding test's result.
@@ -185,15 +176,15 @@ class TestCase:
         error = outcome[1]
         entry = [self._method, getattr(error, 'message', outcome[2])]
         if isinstance(error, AssertionError):
-            result.failures = result.failures + [entry]
+            result.failures = [*result.failures, entry]
         elif isinstance(error, SkipTest):
-            result.skipped = result.skipped + [entry]
+            result.skipped = [*result.skipped, entry]
         elif isinstance(error, _Expected):
-            result.expectedFailures = result.expectedFailures + [entry]
+            result.expectedFailures = [*result.expectedFailures, entry]
         elif isinstance(error, _Unexpected):
-            result.unexpectedSuccesses = result.unexpectedSuccesses + [entry]
+            result.unexpectedSuccesses = [*result.unexpectedSuccesses, entry]
         else:
-            result.errors = result.errors + [entry]
+            result.errors = [*result.errors, entry]
         return result
 
 class _Skip:
@@ -251,7 +242,7 @@ class TestSuite:
             self.tests = list(tests)
 
     def addTest(self, test):
-        self.tests = self.tests + [test]
+        self.tests = [*self.tests, test]
 
     def addTests(self, tests):
         for test in tests:

@@ -3725,6 +3725,24 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::MakeHeir => {
+                n(3)?;
+                let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err("a class title must be text".into()) };
+                let ancestor = match &v[1] { Value::Blueprint(old) => old.clone(), _ => return Err("a class must stand upon another class".into()) };
+                let members = match &v[2] { Value::Dict(pairs) => pairs, _ => return Err("class members need a dictionary".into()) };
+                let mut holdings = Vec::with_capacity(members.len());
+                for pair in members.iter() {
+                    match &pair.0 {
+                        Value::Text(key) => holdings.push((key.to_string(), pair.1.clone())),
+                        _ => return Err("a member needs a string name".into()),
+                    }
+                }
+                let heir = Blueprint {
+                    under: Some(ancestor), name: title, shared: RefCell::new(holdings),
+                    methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![],
+                };
+                Value::Blueprint(Rc::new(heir))
+            }
             Prim::CopyWorth => {
                 n(2)?;
                 let deep = matches!(v[1], Value::Flag(true));
@@ -6109,7 +6127,11 @@ impl Machine<'_> {
         }
         if let Some((owner, name)) = split {
             if let Some(Value::Thing(parent)) = self.imported.get(owner) {
-                parent.holds.borrow_mut().push((name.into(), value.clone()));
+                let mut holdings = parent.holds.borrow_mut();
+                if let Some(at) = holdings.iter().position(|entry| entry.0 == name) {
+                    if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = value.clone(); }
+                    else { holdings[at].1 = value.clone(); }
+                } else { holdings.push((name.into(), value.clone())); }
             }
         }
         self.refresh_import_table();

@@ -28,19 +28,20 @@ def namedtuple(typename, field_names, rename=False, defaults=None, module=None):
                 word += letter
     else:
         names = list(field_names)
-    class Record:
-        def __init__(self, *values):
-            if len(values) != len(self._fields):
-                raise 'TypeError: wrong number of namedtuple fields'
-            for i in range(len(values)):
-                setattr(self, self._fields[i], values[i])
-    Record._fields = names
-    Record.__name__ = typename
-    return Record
+    return __derive_class(typename, _Record, {'_fields': names, '__name__': typename})
+
+# Named records bear fields of their own. Tuple indexing, immutability
+# and the remaining tuple methods await the object protocol.
+class _Record:
+    def __init__(self, *values):
+        if len(values) != len(self._fields):
+            raise 'TypeError: wrong number of namedtuple fields'
+        for i in range(len(values)):
+            setattr(self, self._fields[i], values[i])
 
 class deque:
-    def __init__(self, iterable=(), maxlen=None):
-        self.data = list(iterable)
+    def __init__(self, iterable=None, maxlen=None):
+        self.data = [] if iterable is None else list(iterable)
         self.maxlen = maxlen
         if maxlen is not None:
             if maxlen < 0:
@@ -48,12 +49,12 @@ class deque:
             self.data = self.data[len(self.data) - maxlen:] if maxlen else []
 
     def append(self, value):
-        self.data = self.data + [value]
+        self.data = [*self.data, value]
         if self.maxlen is not None and len(self.data) > self.maxlen:
             self.data = self.data[1:]
 
     def appendleft(self, value):
-        self.data = [value] + self.data
+        self.data = [value, *self.data]
         if self.maxlen is not None and len(self.data) > self.maxlen:
             self.data = self.data[:-1]
 
@@ -85,7 +86,7 @@ class deque:
     def rotate(self, n=1):
         if len(self.data) != 0:
             n %= len(self.data)
-            self.data = self.data[-n:] + self.data[:-n]
+            self.data = [*self.data[-n:], *self.data[:-n]]
 
     def count(self, value):
         return sum([1 for held in self.data if held == value])
