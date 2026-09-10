@@ -1665,7 +1665,7 @@ impl<'a> Engine<'a> {
                 return ending.map(|end| match end { Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after), other => other });
             }
             let args = match &ending {
-                Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), Value::Null],
+                Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), Value::Trace(Rc::from(self.lang.special_unready.first().map_or("", String::as_str)))],
                 _ => vec![Value::Null, Value::Null, Value::Null],
             };
             let method = self.special_method(&object, 34).ok_or_else(|| self.special_fault())?;
@@ -2040,7 +2040,7 @@ impl<'a> Engine<'a> {
                     // read and written the long way.
                     if self.shares_cell(slot, frame) {
                         let held = self.load_cell(slot, frame)?;
-                        let sum = self.dyadic(&Action::Add, &held, by)?;
+                        let sum = self.special_dyad(&Action::Add, &held, by)?;
                         self.store_cell(slot, frame, sum)?;
                         pc += 1;
                         continue;
@@ -2054,7 +2054,7 @@ impl<'a> Engine<'a> {
                         Some(sum) => *cell = Value::Small(sum),
                         None => {
                             let v = cell.clone();
-                            let r = self.dyadic(&Action::Add, &v, by)?;
+                            let r = self.special_dyad(&Action::Add, &v, by)?;
                             self.store_cell(slot, frame, r)?;
                         }
                     }
@@ -2112,6 +2112,13 @@ impl<'a> Engine<'a> {
     }
 
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        if place == 3 && self.special_value(value, place).is_none() {
+            return match self.special_call(value, 2, args)? {
+                Some(v @ Value::Declined(_)) => Ok(Some(v)),
+                Some(v) => Ok(Some(Value::Flag(!self.special_truth(&v)?))),
+                None => Ok(None),
+            };
+        }
         let method = match self.special_value(value, place) {
             None => return Ok(None), Some(Value::Routine(routine)) => routine,
             _ => return Err(self.special_fault()),
@@ -2130,7 +2137,7 @@ impl<'a> Engine<'a> {
 
     fn holds_object(value: &Value) -> bool {
         match value {
-            Value::Hashed(_) | Value::Fields(_) | Value::Object(_) => true,
+            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) => true,
             Value::Array(items) => items.iter().any(Self::holds_object),
             Value::Map(items) => items.iter().any(|(k, v)| Self::holds_object(k) || Self::holds_object(v)),
             _ => false,
@@ -2138,6 +2145,7 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if let Value::Trace(words) = value { return Err(words.to_string()); }
         if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(value.display(&self.wording())); }
         if let Value::Object(object) = value {
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
@@ -2226,10 +2234,7 @@ impl<'a> Engine<'a> {
             if !first_right && (direct < 8 || !same_class) {
                 if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
             }
-            if matches!(op, Action::Ne) && self.special_method(a, 2).is_some() {
-                let equal = self.special_call(a, 2, vec![b.clone()])?.unwrap();
-                if !matches!(equal, Value::Declined(_)) { return Ok(Value::Flag(!self.special_truth(&equal)?)); }
-            }
+
         }
         if matches!(op, Action::Contains | Action::Lacks) {
             if let Value::Map(entries) = b {
@@ -2979,6 +2984,7 @@ impl<'a> Engine<'a> {
                 Value::Flag(field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Trace(words) => return Err(words.to_string().into()),
                 Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
                 Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class.clone()),
                 Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {

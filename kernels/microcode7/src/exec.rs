@@ -2035,7 +2035,7 @@ impl<'a> Machine<'a> {
                     if !matches!(&manager, Value::Thing(_)) { return body_result; }
                     let arguments = if let Err(Escape::Thrown(v)) = &body_result {
                         let kind = match v { Value::Thing(t) => Value::Blueprint(t.of.clone()), _ => Value::Nil };
-                        vec![kind, v.clone(), Value::Nil]
+                        vec![kind, v.clone(), Value::Backtrace(Rc::from(self.table.single("ext.stmt.class.special.unready").unwrap_or_default()))]
                     } else { vec![Value::Nil; 3] };
                     let answer = self.ask_special(&manager, 34, &arguments)?.ok_or_else(|| self.bad_answer())?;
                     return match body_result {
@@ -3595,6 +3595,13 @@ impl<'a> Machine<'a> {
     }
 
     fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+        if index == 3 && self.appointment(subject, index).is_none() {
+            return match self.ask_special(subject, 2, tail)? {
+                None => Ok(None),
+                Some(v @ Value::Refusal(_)) => Ok(Some(v)),
+                Some(v) => self.object_truth(&v).map(|b| Some(Value::Flag(!b))),
+            };
+        }
         match self.appointment(subject, index) {
             None => Ok(None),
             Some(Value::Routine(body) | Value::Bound(body, _)) => {
@@ -3615,7 +3622,7 @@ impl<'a> Machine<'a> {
 
     fn carries_instance(value: &Value) -> bool {
         match value {
-            Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) => true,
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) => true,
             Value::Vector(v) => v.iter().any(Self::carries_instance),
             Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(Self::carries_instance),
             _ => false,
@@ -3623,6 +3630,7 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
         if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(subject.render(self.wording())); }
         match subject {
             Value::Keyed(value, _) => self.object_words(value, quoted),
@@ -3744,13 +3752,10 @@ impl<'a> Machine<'a> {
                     if !matches!(result, Value::Refusal(_)) { return Ok(Some(result)); }
                 }
             }
-            if operation == Prim::Ne {
-                if let Some(equal) = self.ask_special(left, 2, std::slice::from_ref(right))? {
-                    if !matches!(equal, Value::Refusal(_)) { return Ok(Some(Value::Flag(!self.object_truth(&equal)?))); }
-                }
-            }
+
         }
         let value = match (operation, operands) {
+            (Prim::Of | Prim::HasMember, [Value::Backtrace(words), _]) => return Err(words.to_string()),
             (Prim::StartContext, [manager]) => {
                 if matches!(manager, Value::Thing(_)) {
                     if self.appointment(manager, 34).is_none() { return Err(self.bad_answer()); }

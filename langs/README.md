@@ -656,7 +656,9 @@ only. The extension labels so far, all from PHP:
   method declines an operation, leaving the other operand to answer.
   `ext.stmt.class.special.stop` names the fault which ends a walk.
   `ext.stmt.class.special.unready` gives the words for a special operation
-  whose meaning the run cannot yet honour.
+  whose meaning the run cannot yet honour. A fault handed to a with
+  exit carries an opaque traceback; looking within it stops with these
+  words. Replacing the class or attribute map as a whole likewise stops.
 - `ext.builtin.repr`, `ext.builtin.hash`, `ext.builtin.bool`,
   `ext.builtin.sorted`, `ext.builtin.iter`, `ext.builtin.next` and
   `ext.builtin.isinstance`: lists naming representation, hashing, truth,

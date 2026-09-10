@@ -115,6 +115,7 @@ impl Counted {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Trace(Rc<str>),
     Hashed(Rc<(Value, Value)>),
     Fields(Rc<Instance>),
     Walking(Rc<RefCell<(Value, Option<Value>)>>),
@@ -229,7 +230,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
-            Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::Stream(_) => true,
+            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -263,7 +264,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -438,7 +439,8 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
-            Value::Hashed(pair) => pair.0.display(sp),
+            Value::Trace(words) => words.to_string(),
+            Value::Hashed(pair) => pair.0.plain(),
             Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),

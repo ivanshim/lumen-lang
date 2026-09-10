@@ -25,7 +25,7 @@ class Context:
         print("enter")
         return self
     def __exit__(self, kind, value, trace):
-        print("exit", kind is None)
+        print("exit", kind is None, trace is None)
         return True
 with Context():
     raise StopIteration()
