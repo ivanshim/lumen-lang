@@ -91,6 +91,20 @@ fn drop_comments(source: &str, table: &Table) -> String {
             let reach = folded(ahead, table).map_or(ahead.len(), |(_, _, far)| far);
             kept.push_str(&ahead[..reach]);
             ahead = &ahead[reach..];
+        } else if let Some(delimiter) = table.strings("ext.lexical.string.long").iter().find(|d| ahead.starts_with(d.as_str())) {
+            let mut end = delimiter.len();
+            let mut shield = false;
+            for (offset, ch) in ahead[end..].char_indices() {
+                let at = delimiter.len() + offset;
+                if !shield && ahead[at..].starts_with(delimiter.as_str()) {
+                    end = at + delimiter.len();
+                    break;
+                }
+                end = at + ch.len_utf8();
+                shield = !shield && ch == '\\';
+            }
+            kept.push_str(&ahead[..end]);
+            ahead = &ahead[end..];
         } else if quotes.contains(&c) {
             inside = Some(c);
             kept.push(c);
@@ -101,6 +115,12 @@ fn drop_comments(source: &str, table: &Table) -> String {
             kept.extend(after[..stop].chars().filter(|c| *c == '\n'));
             ahead = &after[stop..];
         } else if lines.iter().any(|m| ahead.starts_with(m.as_str())) {
+            for ending in table.strings("ext.lexical.line_continuation") {
+                if kept.ends_with(ending.as_str()) {
+                    kept.push(' ');
+                    break;
+                }
+            }
             ahead = ahead.find('\n').map_or("", |p| &ahead[p..]);
         } else {
             kept.push(c);
@@ -583,10 +603,7 @@ impl Quotation<'_> {
             }
         }
         self.forward(end.len());
-        match self.table.single("ext.lexical.string.bytes.unavailable") {
-            Some(words) if bytes => self.token(Shape::Unheld, words.to_owned()),
-            _ => self.flush(&mut saved, &mut missing),
-        }
+        self.flush(&mut saved, &mut missing);
         if fields { self.token(Shape::WovenEnd, String::new()); }
         Ok(())
     }
@@ -824,7 +841,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
-            if src[k..line_end].iter().all(|c| c.is_whitespace()) {
+            if src[k..line_end].iter().all(|c| c.is_whitespace())
+                || table.strings("lexical.comment_line").iter().any(|mark| src[k..].starts_with(&mark.chars().collect::<Vec<_>>())) {
                 if line_end < src.len() {
                     row += 1;
                 }
@@ -848,21 +866,31 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 tokens.extend(quote.made);
                 continue;
             }
-        }
-        let carried = table.strings("ext.lexical.line_continuation").iter().find_map(|mark| {
-            let letters: Vec<char> = mark.chars().collect();
-            if !src[pos..].starts_with(&letters) { return None; }
-            let tail = &src[pos + letters.len()..];
-            if tail.starts_with(&['\r', '\n']) { Some(letters.len() + 2) }
-            else if tail.first() == Some(&'\n') { Some(letters.len() + 1) }
-            else { None }
-        });
-        if let Some(length) = carried {
-            row += 1;
-            pos += length;
-            continue;
+            if table.flag("ext.lexical.string.adjacent") && src[pos] == '\\' && src.get(pos + 1) == Some(&'\n') {
+                pos += 2;
+                row += 1;
+                continue;
+            }
         }
         let c = src[pos];
+        let mut carried = false;
+        for mark in table.strings("ext.lexical.line_continuation") {
+            if written_at(&src, pos, mark) {
+                let mut end = pos + mark.chars().count();
+                if src.get(end) == Some(&'\r') {
+                    end += 1;
+                }
+                if src.get(end) == Some(&'\n') {
+                    pos = end + 1;
+                    row += 1;
+                    carried = true;
+                    break;
+                }
+            }
+        }
+        if carried {
+            continue;
+        }
         if c == '\n' {
             tokens.push(tok(Shape::LineEnd, "\n".into(), row));
             row += 1;
@@ -875,6 +903,12 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             continue;
         }
         if quotes.contains(&c) {
+            let delimiter = table.strings("ext.lexical.string.long").iter().find(|word| {
+                let letters: Vec<char> = word.chars().collect();
+                letters.iter().all(|letter| *letter == c)
+                    && src.get(pos..pos + letters.len()) == Some(letters.as_slice())
+            });
+            let length = delimiter.map_or(1, |word| word.chars().count());
             let is_raw = raw.contains(&c);
             let woven = weaving.contains(&c);
             let slash = Backslash {
@@ -892,18 +926,28 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             };
             // Positions in s that were escaped, so never open a variable.
             let mut plain: Vec<usize> = Vec::new();
-            let (mut s, mut k, mut closed) = (String::new(), pos + 1, false);
+            let (mut s, mut k, mut closed) = (String::new(), pos + length, false);
             while k < src.len() {
                 let d = src[k];
                 if d == '\\' && k + 1 < src.len() {
+                    if !is_raw && table.spells("ext.lexical.line_continuation", "\\") {
+                        let end = k + 1 + usize::from(src[k + 1] == '\r');
+                        if src.get(end) == Some(&'\n') {
+                            row += 1;
+                            k = end + 1;
+                            continue;
+                        }
+                    }
                     k = slash.reads(&src, k, &mut s, &mut plain)?;
                     continue;
                 }
-                k += 1;
-                if d == c {
+                let ends_here = src.get(k..k + length).map_or(false, |tail| tail.iter().all(|letter| *letter == c));
+                if ends_here {
+                    k += length;
                     closed = true;
                     break;
                 }
+                k += 1;
                 if d == '\n' {
                     row += 1;
                 }
@@ -920,7 +964,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() {
+        if c.is_ascii_digit() || (table.flag("ext.lexical.number.point.bare")
+            && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit))
+        {
             let mut k = pos;
             while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                 k += 1;
@@ -928,7 +974,11 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             let at = |k: usize| src.get(k).copied();
             let opened = in_base
                 .iter()
-                .find(|(d, l, radix)| k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(k + 1).map_or(false, |x| x.is_digit(*radix)))
+                .find(|(d, l, radix)| {
+                    let first = k + 1 + usize::from(table.flag("ext.lexical.number.separator.after_prefix")
+                        && at(k + 1).map_or(false, |x| apart.contains(&x)));
+                    k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && at(first).map_or(false, |x| x.is_digit(*radix))
+                })
                 .copied();
             if let Some((_, _, radix)) = opened {
                 k += 1;
@@ -946,7 +996,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && at(k + 1).map_or(false, |x| x.is_ascii_digit()) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.bare") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
@@ -956,7 +1006,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                 let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
                 if at(k).map_or(false, |c| powers.contains(&c)) && at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit()) {
                     k += 1 + sign_len;
-                    while k < src.len() && src[k].is_ascii_digit() {
+                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;
                     }
                 }
@@ -1038,7 +1088,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             let mut s: String = src[if led { pos + 1 } else { pos }..k].iter().collect();
             let mut longest = 0;
-            for name in table.prims.keys() {
+            for name in table.prims.keys().chain(table.strings("ext.builtin.print.file.output").iter()).chain(table.strings("ext.builtin.print.file.error").iter()) {
                 if name.len() > s.len() && name.starts_with(s.as_str()) {
                     let tail: Vec<char> = name[s.len()..].chars().collect();
                     let same = tail.iter().enumerate().all(|(n, t)| src.get(k + n) == Some(t));
