@@ -92,7 +92,7 @@ class _CacheDecorator:
         return _Cache(function, self.maxsize, self.typed)
 
 def lru_cache(maxsize=128, typed=False):
-    if maxsize is None or type(maxsize) == type(1):
+    if maxsize is None or isinstance(maxsize, type(1)):
         if maxsize is not None and maxsize < 0:
             maxsize = 0
         return _CacheDecorator(maxsize, typed)

@@ -2229,7 +2229,7 @@ impl<'a> Machine<'a> {
                 let stands = self.what_it_spells(found);
                 if let Value::Thing(thing) = &stands {
                     let callable = self.table.strings("ext.op.object.protocol").get(7)
-                        .and_then(|word| thing.of.method(word)).is_some();
+                        .and_then(|word| thing.of.program(word)).is_some();
                     if callable {
                         let supplied = self.value_list(args, frame)?;
                         return Ok(self.protocol_value(&stands, 7, &supplied)?.expect("the call was found"));
@@ -2850,7 +2850,7 @@ impl<'a> Machine<'a> {
                 let stands = self.what_it_spells(found);
                 if let Value::Thing(thing) = &stands {
                     let callable = self.table.strings("ext.op.object.protocol").get(7)
-                        .and_then(|word| thing.of.method(word)).is_some();
+                        .and_then(|word| thing.of.program(word)).is_some();
                     if callable {
                         let supplied = self.value_list(args, frame)?;
                         return Ok(Next::Value(self.protocol_value(&stands, 7, &supplied)?.expect("the call was found")));
