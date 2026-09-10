@@ -21,7 +21,7 @@ use num_traits::ToPrimitive;
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
-use crate::data::{IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
+use crate::data::{Adornment, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
 /// command spelled out instead of a file holding one.
@@ -2444,6 +2444,10 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Adorned(adornment) = &stands {
+                    let given = self.value_list(args, frame)?;
+                    return self.call_adornment(adornment, given, frame);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2645,7 +2649,8 @@ impl<'a> Machine<'a> {
                         return Err(self.generator_words(fault).into());
                     }
                     if self.table.flag("ext.op.member.pipes") {
-                        if let Some(target) = self.attribute(&subject, &called) {
+                        let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
+                        if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
                             let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
                             let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), expressions);
                             return self.value_of(&call, frame);
@@ -2846,7 +2851,44 @@ impl<'a> Machine<'a> {
     /// takes the write of one with, run in the property's stead.
     /// Nothing where the thing holds the property already, or where the
     /// language names no such method and the class is written without.
+    fn call_adornment(&mut self, member: &Adornment, mut given: Vec<Value>, frame: &Rc<Env>) -> Res<Value> {
+        match member.manner {
+            's' => (),
+            'b' => given.insert(0, member.extra.clone().expect("a receiver")),
+            _ => return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string().into()),
+        }
+        let expressions = given.into_iter().map(Form::Const).collect();
+        let apply = Form::Apply(Callee::Code(Box::new(Form::Const(member.target.clone()))), expressions);
+        self.value_of(&apply, frame)
+    }
+
+    fn property_member(&self, subject: &Value, called: &str) -> Option<Rc<Adornment>> {
+        if let Value::Thing(thing) = subject {
+            let owner = thing.of.keeper(called)?;
+            for (name, value) in owner.shared.borrow().iter() {
+                if name == called {
+                    if let Value::Adorned(member) = value {
+                        if member.manner == 'p' { return Some(member.clone()); }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn stands_for_property(&mut self, op: Prim, values: &[Value]) -> Res<Option<Value>> {
+        if matches!((op, values.len()), (Prim::Of, 2) | (Prim::Onto, 3)) {
+            if let Some(member) = self.property_member(&values[0], &values[1].bare()) {
+                let target = if op == Prim::Of { member.target.clone() } else {
+                    member.extra.clone().ok_or_else(|| self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string())?
+                };
+                let mut args = vec![Form::Const(values[0].clone())];
+                if op == Prim::Onto { args.push(Form::Const(values[2].clone())); }
+                let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), args);
+                let answer = self.value_of(&call, &self.outermost.clone())?;
+                return Ok(Some(if op == Prim::Of { answer } else { Value::Nil }));
+            }
+        }
         let key = match op {
             Prim::Of if values.len() == 2 => "ext.stmt.class.reader",
             Prim::Onto if values.len() == 3 => "ext.stmt.class.writer",
@@ -2980,7 +3022,16 @@ impl<'a> Machine<'a> {
         if let Some(keeper) = class.keeper(name) {
             return keeper.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, x)| {
                 match (value, x) {
-                    (Value::Thing(object), Value::Routine(body) | Value::Bound(body, _)) => Value::Method(body.clone(), object.clone()),
+                    (_, Value::Adorned(member)) => match member.manner {
+                        's' => member.target.clone(),
+                        'c' => Value::Adorned(Rc::new(Adornment {
+                            manner: 'b', target: member.target.clone(), extra: Some(Value::Blueprint(class.clone())),
+                        })),
+                        _ => x.clone(),
+                    },
+                    (Value::Thing(object), Value::Routine(_) | Value::Bound(..)) => Value::Adorned(Rc::new(Adornment {
+                        manner: 'b', target: x.clone(), extra: Some(Value::Thing(object.clone())),
+                    })),
                     _ => x.clone(),
                 }
             });
@@ -3054,6 +3105,10 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Adorned(adornment) = &stands {
+                    let given = self.value_list(args, frame)?;
+                    return self.call_adornment(adornment, given, frame).map(Next::Value);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -4286,6 +4341,21 @@ impl<'a> Machine<'a> {
                     }
                     _ => Value::Flag(true),
                 }
+            }
+            Prim::Adorn(manner) => {
+                let member = if manner == 'w' {
+                    n(2)?;
+                    match &v[0] {
+                        Value::Adorned(old) if old.manner == 'p' => Adornment {
+                            manner: 'p', target: old.target.clone(), extra: Some(v[1].clone()),
+                        },
+                        _ => return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_string()),
+                    }
+                } else {
+                    n(1)?;
+                    Adornment { manner, target: v[0].clone(), extra: None }
+                };
+                Value::Adorned(Rc::new(member))
             }
             Prim::HasMember => {
                 n(2)?;

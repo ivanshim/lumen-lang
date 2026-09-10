@@ -168,6 +168,7 @@ pub enum Action {
     Suspend,
     Delegate,
     MakeTuple,
+    Adorn(u8),
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.

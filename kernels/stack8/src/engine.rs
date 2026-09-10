@@ -12,7 +12,7 @@ use num_traits::ToPrimitive;
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Class, Instance, Reach, Sort, Value, Wording, Generator, CursorState, CursorSource};
+use crate::value::{Descriptor, Class, Instance, Reach, Sort, Value, Wording, Generator, CursorState, CursorSource};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -2220,6 +2220,44 @@ impl<'a> Engine<'a> {
         Ok(Passage::Along(pc))
     }
 
+    fn descriptor_of(&self, subject: &Value, name: &str) -> Option<Rc<Descriptor>> {
+        let class = match subject {
+            Value::Class(c) => c,
+            Value::Object(o) => &o.class,
+            _ => return None,
+        };
+        let owner = class.holder(name)?;
+        let held = owner.shared.borrow();
+        held.iter().find_map(|(n, v)| match v {
+            Value::Descriptor(d) if n == name => {
+                if !matches!(d.as_ref(), Descriptor::Property(..)) {
+                    if let Value::Object(o) = subject {
+                        if self.member_at(&o.fields.borrow(), name).is_some() { return None; }
+                    }
+                }
+                Some(d.clone())
+            },
+            _ => None,
+        })
+    }
+
+    fn descriptor_read(&mut self, d: &Rc<Descriptor>, subject: Value) -> Flow<Value> {
+        match d.as_ref() {
+            Descriptor::Static(f) => Ok(f.clone()),
+            Descriptor::Class(f) => {
+                let class = match subject { Value::Object(o) => Value::Class(o.class.clone()), other => other };
+                Ok(Value::Descriptor(Rc::new(Descriptor::Bound(f.clone(), class))))
+            }
+            Descriptor::Property(get, _) if matches!(subject, Value::Object(_)) => {
+                self.data.push(subject);
+                self.data.push(get.clone());
+                self.perform(&Action::Invoke(Rc::from("property")), 2)?;
+                Ok(self.drop_top()?)
+            }
+            _ => Ok(Value::Descriptor(d.clone())),
+        }
+    }
+
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         if self.lang.bind_names && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
             | Action::WalkFrom | Action::WalkAlone | Action::WalkMore | Action::WalkThis
@@ -2503,6 +2541,25 @@ impl<'a> Engine<'a> {
                     _ => self.within_width(turned),
                 }
             }
+            Action::Adorn(kind) => {
+                let descriptor = match kind {
+                    1 => Descriptor::Static(self.drop_top()?),
+                    2 => Descriptor::Class(self.drop_top()?),
+                    3 => Descriptor::Property(self.drop_top()?, None),
+                    _ => {
+                        let previous = self.drop_top()?;
+                        let setter = self.drop_top()?;
+                        match previous {
+                            Value::Descriptor(d) => match d.as_ref() {
+                                Descriptor::Property(get, _) => Descriptor::Property(get.clone(), Some(setter)),
+                                _ => return Err(self.lang.class_unready[0].clone().into()),
+                            },
+                            _ => return Err(self.lang.class_unready[0].clone().into()),
+                        }
+                    }
+                };
+                Value::Descriptor(Rc::new(descriptor))
+            }
             Action::Invoke(name) => {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
@@ -2523,6 +2580,18 @@ impl<'a> Engine<'a> {
                         let answer = self.builtin_call(b, &word, items)?;
                         self.data.push(answer);
                         Ok(())
+                    }
+                    Value::Descriptor(d) => {
+                        let mut args = self.drop_many(argc - 1)?;
+                        let target = match d.as_ref() {
+                            Descriptor::Static(f) => f.clone(),
+                            Descriptor::Bound(f, receiver) => { args.insert(0, receiver.clone()); f.clone() }
+                            _ => return Err(self.lang.class_unready[0].clone().into()),
+                        };
+                        let count = args.len() + 1;
+                        self.data.extend(args);
+                        self.data.push(target);
+                        self.perform(&Action::Invoke(name.clone()), count)
                     }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
@@ -2837,6 +2906,10 @@ impl<'a> Engine<'a> {
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
+                subject if self.descriptor_of(&subject, name).is_some() => {
+                    let d = self.descriptor_of(&subject, name).expect("the descriptor");
+                    self.descriptor_read(&d, subject)?
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -2944,6 +3017,15 @@ impl<'a> Engine<'a> {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
                 match pair.pop().expect("the object") {
+                    Value::Object(o) if self.descriptor_of(&Value::Object(o.clone()), name).map_or(false, |d| matches!(d.as_ref(), Descriptor::Property(..))) => {
+                        let d = self.descriptor_of(&Value::Object(o.clone()), name).expect("the property");
+                        if let Descriptor::Property(_, Some(set)) = d.as_ref() {
+                            self.data.extend([Value::Object(o), value, set.clone()]);
+                            self.perform(&Action::Invoke(name.clone()), 3)?;
+                            self.drop_top()?;
+                            Value::Null
+                        } else { return Err(self.lang.class_unready[0].clone().into()); }
+                    }
                     Value::Class(c) if self.lang.member_pipes => {
                         let mut fields = c.shared.borrow_mut();
                         if let Some((_, old)) = fields.iter_mut().find(|(n, _)| n == name.as_ref()) {

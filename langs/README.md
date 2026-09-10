@@ -706,6 +706,9 @@ only. The extension labels so far, all from PHP:
   says `ext.stmt.class.unready`, since making the class is still owed.
   Methods, named arguments, and carried arguments keep the ordinary
   function and call readings; no part of a decorated body is passed over.
+  A class may follow as well, and its value is passed through the kept
+  decorators in the same order. Inside a class, a decorated method is
+  bound in that class's namespace after its decorators have answered.
 - `ext.stmt.static.read_in`: a switch; a `static` written at the top of
   text read in while the run was already going — text handed to the word
   that reads text, or a file asked for part way through — is a plain
@@ -1049,6 +1052,19 @@ only. The extension labels so far, all from PHP:
   Calling a class makes its object without a word for making; assignments
   in its body belong to the class, and the parent word is called before
   reaching a parent's method. Classes bind as ordinary names.
+- `ext.stmt.class.static`: words after a decorator mark which keep the
+  decorated value from taking an object when reached through an instance.
+- `ext.stmt.class.classmethod`: words after a decorator mark which give
+  the class as the first argument, through a class or through its object.
+- `ext.stmt.class.property`: words after a decorator mark which make an
+  instance's read call the getter with that instance. The class itself
+  keeps the property value without calling it.
+- `ext.stmt.class.property.setter`: words after a property's name and
+  member mark which give that property a writer. A write calls it with
+  the instance and the new value. A property without a writer, or a
+  descriptor used in a way not yet provided, gives `ext.stmt.class.unready`.
+  Decorated constructors are read but give that complaint as well; their
+  call through the making of an object is not yet provided.
 - `ext.op.member.pipes`: a switch; a mark shared by the pipe and member
   signs reads a member when the object or class holds that name, and pipes
   otherwise. A method takes its object before the written arguments; a
@@ -3378,6 +3394,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
+| `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
 | `ext.stmt.class.destructor` | - | - | - | - | `__destruct` | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
@@ -3388,9 +3405,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
+| `ext.stmt.class.property` | - | - | `property` | - | - | - | - | - | - | - |
+| `ext.stmt.class.property.setter` | - | - | `setter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
+| `ext.stmt.class.static` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.this.explicit` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.class.trait` | - | - | - | - | `trait` | - | - | - | - | - |

@@ -1250,11 +1250,23 @@
   "ext.stmt.class.bases.open": [
     "("
   ],
+  "ext.stmt.class.classmethod": [
+    "classmethod"
+  ],
   "ext.stmt.class.constructor": [
     "__init__"
   ],
   "ext.stmt.class.parent": [
     "super"
+  ],
+  "ext.stmt.class.property": [
+    "property"
+  ],
+  "ext.stmt.class.property.setter": [
+    "setter"
+  ],
+  "ext.stmt.class.static": [
+    "staticmethod"
   ],
   "ext.stmt.class.this.explicit": true,
   "ext.stmt.class.unready": [
