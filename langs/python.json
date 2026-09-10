@@ -325,6 +325,8 @@
   "system.args": [],
   "system.memoization": [],
   "system.real_default_precision": [],
+  "system.real.render": "shortest",
+  "ext.system.real.bits": 64,
   "system.entry": [],
   "system.kind.integer": [],
   "system.kind.rational": [],

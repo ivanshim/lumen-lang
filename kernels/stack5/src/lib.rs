@@ -10,6 +10,7 @@ pub mod assemble;
 pub mod language;
 pub mod machine;
 pub mod numbers;
+mod binary;
 pub mod scan;
 pub mod shape;
 pub mod values;
@@ -55,6 +56,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String]) -
 }
 
 fn go(def: &Def, source: &str, program_args: &[String]) -> Result<(), String> {
+    binary::policy(def.shortest);
     go_inner(def, source, program_args).map_err(|e| format!("{}: {}", def.prefix, e))
 }
 

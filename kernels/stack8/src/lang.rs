@@ -173,6 +173,7 @@ pub struct Lang {
     /// are binary numbers rather than exact ones, and how many
     /// significant digits one shows when simply written out.
     pub real_bits: Option<usize>,
+    pub shortest_reals: bool,
     pub real_digits: Option<usize>,
     /// The names the run keeps its counts of figures under: how many a
     /// real written plainly carries, and how many one shown with its
@@ -874,7 +875,7 @@ w builtin.char_at | w builtin.ord | w builtin.chr | w builtin.typeof
 w builtin.error | w builtin.extern | w builtin.range | w builtin.real
 w builtin.num | w builtin.den | w builtin.push | w builtin.get
 w builtin.put | w builtin.precision | w builtin.to_string | w builtin.to_int
-w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision
+w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision | s system.real.render
 w system.entry | w system.kind.integer | w system.kind.rational | w system.kind.real
 w system.kind.string | w system.kind.boolean | w system.kind.array | w system.kind.null
 b system.flag.counts
@@ -1628,6 +1629,7 @@ impl Lang {
             digit_separators: r.letters("ext.lexical.number.separator")?,
             integer_bits: r.count("ext.system.integer.bits")?,
             real_bits: r.count("ext.system.real.bits")?,
+            shortest_reals: r.text("system.real.render")? == "shortest",
             real_digits: r.count("ext.system.real.digits")?,
             figures_binding: r.head("ext.system.real.figures")?,
             figures_shown_binding: r.head("ext.system.real.figures.shown")?,

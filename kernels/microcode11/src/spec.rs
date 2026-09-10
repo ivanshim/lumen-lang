@@ -60,7 +60,7 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("builtin.real", Words), ("builtin.num", Words), ("builtin.den", Words), ("builtin.push", Words),
     ("builtin.get", Words), ("builtin.put", Words), ("builtin.precision", Words),
     ("builtin.to_string", Words), ("builtin.to_int", Words), ("builtin.to_real", Words),
-    ("system.args", Words), ("system.memoization", Words), ("system.real_default_precision", Words), ("system.entry", Words),
+    ("system.args", Words), ("system.memoization", Words), ("system.real_default_precision", Words), ("system.real.render", Text), ("system.entry", Words),
     ("system.kind.integer", Words), ("system.kind.rational", Words), ("system.kind.real", Words),
     ("system.kind.string", Words), ("system.kind.boolean", Words), ("system.kind.array", Words), ("system.kind.null", Words),
 ];

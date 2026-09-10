@@ -285,6 +285,10 @@ impl LumenReal {
     /// Create a real from a numerator and denominator with specified precision
     /// Precision specifies significant digits (default 15)
     pub fn new(num: BigInt, denom: BigInt, precision: usize) -> Self {
+        if super::real_decimal::enabled() {
+            let (numerator, denominator) = super::real_decimal::exact(super::real_decimal::nearest(&num, &denom));
+            return Self { numerator, denominator, precision };
+        }
         // Handle zero denominator
         if denom == BigInt::from(0) {
             panic!("Denominator cannot be zero");
@@ -323,6 +327,9 @@ impl LumenReal {
     /// Get string representation with the stored precision
     /// This renders the decimal with significant figures truncated/rounded
     pub fn as_decimal_string(&self) -> String {
+        if super::real_decimal::enabled() {
+            return super::real_decimal::spelling(super::real_decimal::nearest(&self.numerator, &self.denominator));
+        }
         // Simple approach: compute as fixed-point and format
         // For true significant digit handling, we'd need more sophisticated rounding
         // For now, we'll compute the result and show it with reasonable precision

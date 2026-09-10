@@ -46,6 +46,10 @@ impl Frac {
 /// A value from p/q: reduced; an integer when it divides out and nothing
 /// was real; a real at the given precision otherwise.
 pub fn form(p: BigInt, q: BigInt, places: Option<usize>) -> Value {
+    if let Some(places) = places.filter(|_| crate::binary::short()) {
+        let (p, q) = crate::binary::as_ratio(crate::binary::from_ratio(&p, &q));
+        return Value::Real(Rc::new(Real { p, q, places }));
+    }
     if p.is_zero() {
         return match places {
             Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places })),
@@ -101,6 +105,19 @@ pub fn compute(calc: Calc, a: &Value, b: &Value) -> Option<Result<Value, String>
 
 fn exact(calc: Calc, a: &Frac, b: &Frac) -> Result<Value, String> {
     let places = a.places.or(b.places);
+    if crate::binary::short() && (places.is_some() || calc == Calc::RealDiv) {
+        let (x, y) = (crate::binary::from_ratio(&a.p, &a.q), crate::binary::from_ratio(&b.p, &b.q));
+        let worth = match calc {
+            Calc::Add => x + y, Calc::Sub => x - y, Calc::Mul => x * y,
+            Calc::Pow => x.powf(y.trunc()),
+            _ => {
+                if y == 0.0 { return Err("Division by zero".to_owned()); }
+                match calc { Calc::Quot => (x / y).trunc(), Calc::Rem => x - y * (x / y).trunc(), _ => x / y }
+            }
+        };
+        let (p, q) = crate::binary::as_ratio(worth);
+        return Ok(Value::Real(Rc::new(Real { p, q, places: places.unwrap_or(PLACES) })));
+    }
     let cross = |sign: i32| &a.p * &b.q + sign * (&b.p * &a.q);
     if a.integral() && b.integral() {
         match calc {
@@ -150,7 +167,12 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     if let (Value::Int(x), Value::Int(y)) = (a, b) {
         return Some(x.cmp(y));
     }
-    Some(Frac::of(a)?.order(&Frac::of(b)?))
+    let first = Frac::of(a)?;
+    let second = Frac::of(b)?;
+    if crate::binary::short() && first.places.or(second.places).is_some() {
+        return crate::binary::from_ratio(&first.p, &first.q).partial_cmp(&crate::binary::from_ratio(&second.p, &second.q));
+    }
+    Some(first.order(&second))
 }
 
 /// Numerator and denominator; an integer is over one.

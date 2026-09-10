@@ -29,7 +29,7 @@ impl Value {
         }.to_string()
     }
 
-    pub fn core_repr(&self) -> String {
+    pub fn core_repr(&self, shortest: bool) -> String {
         match self {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
@@ -49,17 +49,18 @@ impl Value {
                 out.push(quote);
                 out
             }
-            Value::Array(a) => format!("[{}]", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", ")),
-            Value::Tuple(a) => format!("({}{})", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" }),
+            Value::Array(a) => format!("[{}]", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(a) => format!("({}{})", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" }),
             Value::Set(a) if a.is_empty() => "set()".into(),
-            Value::Set(a) => format!("{{{}}}", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", ")),
-            Value::Map(a) => format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(), v.core_repr())).collect::<Vec<_>>().join(", ")),
+            Value::Set(a) => format!("{{{}}}", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", ")),
+            Value::Map(a) => format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(shortest), v.core_repr(shortest))).collect::<Vec<_>>().join(", ")),
             Value::Null => "None".into(),
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
-            Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(),
+            Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(shortest),
             Value::Real(r) => {
                 if r.below && r.p == BigInt::from(0) { return "-0.0".into(); }
                 let number = crate::value::as_binary(&r.p, &r.q);
+                if shortest { return crate::value::real_roundtrip(number); }
                 if number.is_nan() { "nan".into() } else if number == f64::INFINITY { "inf".into() }
                 else if number == f64::NEG_INFINITY { "-inf".into() } else { format!("{:?}", number) }
             }

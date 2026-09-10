@@ -1142,6 +1142,7 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            shortest_reals: self.lang.shortest_reals,
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
             hidden_word: self.lang.hidden_words.first().map(String::as_str),
@@ -6560,7 +6561,7 @@ impl Engine<'_> {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
-            Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr()) }
+            Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr(self.lang.shortest_reals)) }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
             Builtin::Identity => {
                 arity(1, 1)?;
@@ -6752,6 +6753,17 @@ impl Engine<'_> {
                 let x = number(&args[0]);
                 let (p, q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 if q.is_zero() { return Err(self.core_fault("core.unready", name)); }
+                if self.lang.shortest_reals && matches!(x, Value::Real(_)) {
+                    let scale = BigInt::from(10).pow(places);
+                    let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow((-digits).min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
+                    let (mut whole, remainder) = top.div_rem(&bottom);
+                    if remainder * 2 >= bottom { whole += 1; }
+                    if p.is_negative() { whole = -whole; }
+                    if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
+                    let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow((-digits).min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
+                    let result = crate::value::as_binary(&above, &beneath);
+                    return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
+                }
                 // Keep the library's scale, signed half, and truncating quotient.
                 let scale = Value::of_big(BigInt::from(10).pow(places));
                 let y = self.dyadic_numbers(&Action::Mul, &x, &scale)?;

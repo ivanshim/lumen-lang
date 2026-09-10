@@ -178,6 +178,7 @@ impl Value {
             Value::Int(n) => n.to_string(),
             Value::Big(n) => n.to_string(),
             Value::Ratio(r) => format!("{}/{}", r.p, r.q),
+            Value::Real(r) if crate::binary::short() => crate::binary::display(crate::binary::from_ratio(&r.p, &r.q)),
             Value::Real(r) => decimal_text(&r.p, &r.q, r.places),
             Value::Str(s) => s.to_string(),
             Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),

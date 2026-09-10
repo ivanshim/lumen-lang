@@ -288,6 +288,7 @@
   "system.args": [],
   "system.memoization": [],
   "system.real_default_precision": [],
+  "system.real.render": "library",
   "system.entry": [
     "main"
   ],

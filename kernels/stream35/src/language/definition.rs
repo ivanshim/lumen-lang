@@ -60,7 +60,7 @@ const LABELS: &[&str] = &[
     "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
     "builtin.real", "builtin.num", "builtin.den", "builtin.push", "builtin.get", "builtin.put",
     "builtin.precision", "builtin.to_string", "builtin.to_int", "builtin.to_real",
-    "system.args", "system.memoization", "system.real_default_precision", "system.entry",
+    "system.args", "system.memoization", "system.real_default_precision", "system.real.render", "system.entry",
     "system.kind.integer", "system.kind.rational", "system.kind.real", "system.kind.string",
     "system.kind.boolean", "system.kind.array", "system.kind.null",
 ];
@@ -88,6 +88,7 @@ pub struct Definition {
     /// Whether a flag becomes text as the number it counts for: one
     /// holding true becomes `1`, one holding false nothing at all.
     pub flag_counts: bool,
+    pub shortest_reals: bool,
     /// The binding words are type names placed first (C's `int x = 1;`),
     /// and a name followed by the call bracket defines a function.
     pub type_first: bool,
@@ -173,6 +174,7 @@ impl Definition {
             identifiers_case_insensitive: false,
             nothing_silent: false,
             flag_counts: false,
+            shortest_reals: false,
             keywords_case_insensitive: false,
             type_first: false,
             div_real: false,
@@ -213,6 +215,7 @@ impl Definition {
                 ("op.index.strings", Json::Bool(flag)) => definition.index_strings = *flag,
                 ("literal.null.silent", Json::Bool(flag)) => definition.nothing_silent = *flag,
                 ("system.flag.counts", Json::Bool(flag)) => definition.flag_counts = *flag,
+                ("system.real.render", Json::String(mode)) => definition.shortest_reals = mode == "shortest",
                 ("op.mod.whole", Json::Bool(flag)) => definition.rem_whole = *flag,
                 ("stmt.function.result_by_name", Json::Bool(flag)) => definition.result_by_name = *flag,
                 ("op.div.result", Json::String(result)) => {

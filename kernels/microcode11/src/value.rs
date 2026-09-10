@@ -125,6 +125,9 @@ impl Value {
 
     pub fn equals(&self, other: &Value) -> bool {
         if let (Some(a), Some(b)) = (crate::numeric::ratio(self), crate::numeric::ratio(other)) {
+            if crate::decimal::active() && (a.digits.is_some() || b.digits.is_some()) {
+                return crate::decimal::binary(&a.num, &a.den) == crate::decimal::binary(&b.num, &b.den);
+            }
             return a.num * b.den == b.num * a.den;
         }
         match (self, other) {
@@ -153,6 +156,7 @@ impl Value {
             Value::Small(n) => n.to_string(),
             Value::Large(n) => n.to_string(),
             Value::Fraction(f) => match f.digits {
+                Some(_) if crate::decimal::active() => crate::decimal::text(crate::decimal::binary(&f.num, &f.den)),
                 Some(d) => real_text(&f.num, &f.den, d),
                 None => format!("{}/{}", f.num, f.den),
             },

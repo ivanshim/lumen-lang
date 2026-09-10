@@ -140,6 +140,10 @@ impl Value {
 
     pub fn same(&self, other: &Value) -> bool {
         if let (Some(a), Some(b)) = (crate::arith::exact(self), crate::arith::exact(other)) {
+            if crate::real::chosen() && a.digits.or(b.digits).is_some() {
+                let left = crate::real::read(&a.num, &a.den);
+                return left == crate::real::read(&b.num, &b.den);
+            }
             return a.num * b.den == b.num * a.den;
         }
         match (self, other) {
@@ -170,6 +174,7 @@ impl Value {
             Value::Int(n) => n.to_string(),
             Value::Big(n) => n.to_string(),
             Value::Exact(e) => match e.digits {
+                Some(_) if crate::real::chosen() => crate::real::write(crate::real::read(&e.num, &e.den)),
                 Some(d) => decimal_digits(&e.num, &e.den, d),
                 None => format!("{}/{}", e.num, e.den),
             },

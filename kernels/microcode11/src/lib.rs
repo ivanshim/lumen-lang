@@ -12,6 +12,7 @@ pub mod emit;
 pub mod execute;
 pub mod ingest;
 pub mod numeric;
+mod decimal;
 pub mod reduce;
 pub mod spec;
 pub mod structure;
@@ -56,6 +57,7 @@ pub fn run(language: &str, source: &str, program_args: &[String]) -> Result<(), 
 
 pub fn run_definition(definition: &str, source: &str, program_args: &[String]) -> Result<(), String> {
     let spec = Spec::read(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    decimal::select(spec.text("system.real.render") == Some("shortest"));
     let prefix = spec.error_prefix();
     let (program, globals) = build(&spec, source).map_err(|e| format!("{}: {}", prefix, e))?;
     execute_program(&spec, &program, globals, program_args).map_err(|e| format!("{}: {}", prefix, e))

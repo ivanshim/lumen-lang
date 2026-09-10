@@ -230,6 +230,7 @@ pub struct Wording<'a> {
     /// how many significant digits one shows when simply written out.
     /// Where it says nothing, a real is shown to its own precision.
     pub real_digits: Option<usize>,
+    pub shortest_reals: bool,
     /// The words for a member the class shares only with those standing
     /// on it, and for one it keeps to itself, as they are marked beside
     /// the name where a thing is shown.
@@ -483,6 +484,7 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
+            Value::Set(_) if sp.shortest_reals => self.core_repr(true),
             Value::Tuple(items) => {
                 let shown = items.iter().map(|v| v.string_field(sp, "", "r").unwrap_or_else(|| v.plain())).collect::<Vec<_>>().join(", ");
                 format!("({}{})", shown, if items.len() == 1 { "," } else { "" })
@@ -498,6 +500,7 @@ impl Value {
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
+            Value::Real(r) if sp.shortest_reals => real_roundtrip(if r.below && r.p.is_zero() && !r.outside() { -0.0 } else { as_binary(&r.p, &r.q) }),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             // A language whose reals are binary numbers writes one out
             // to its own count of significant figures.
@@ -515,12 +518,14 @@ impl Value {
         if !spec.is_empty() && conversion.is_empty() && matches!(self, Value::Flag(_) | Value::Null) { return None; }
         let mut shown = self.display(words);
         if let Value::Real(real) = self {
+            if !words.shortest_reals {
             let number = if real.below && real.p.is_zero() { -0.0 } else { as_binary(&real.p, &real.q) };
             shown = format!("{number:?}").to_ascii_lowercase();
             if let Some((mantissa, exponent)) = shown.split_once('e') {
                 let power = exponent.parse::<i32>().ok()?;
                 shown = format!("{mantissa}e{power:+03}");
             }
+        }
         }
         if let Value::Text(text) = self {
             if conversion == "r" || conversion == "a" {
@@ -605,7 +610,7 @@ impl Value {
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Cursor(_) => "<iterator>".to_string(),
-            Value::Set(_) => self.core_repr(),
+            Value::Set(_) => self.core_repr(false),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -1098,4 +1103,28 @@ fn shortest_real(x: f64) -> String {
         return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
     }
     x.to_string()
+}
+
+/// Try each count of figures until the nearest decimal returns to this
+/// binary worth. Rounding the last figure takes the even one at a tie.
+pub(crate) fn real_roundtrip(x: f64) -> String {
+    if x.is_nan() { return "nan".into(); }
+    if x.is_infinite() { return if x.is_sign_negative() { "-inf" } else { "inf" }.into(); }
+    let mut written = String::new();
+    for places in 0..17 {
+        written = format!("{x:.places$e}");
+        if written.parse::<f64>().is_ok_and(|back| back.to_bits() == x.to_bits()) { break; }
+    }
+    let (head, tail) = written.split_once('e').expect("a decimal exponent");
+    let power: i32 = tail.parse().expect("an exponent is whole");
+    let head = if head.contains('.') { head.trim_end_matches('0').trim_end_matches('.') } else { head };
+    if !(-4..16).contains(&power) {
+        return format!("{head}e{power:+03}");
+    }
+    let minus = head.starts_with('-');
+    let digits = head.trim_start_matches('-').replace('.', "");
+    let mut body = laid_flat(&digits, power);
+    if !body.contains('.') { body.push_str(".0"); }
+    if minus { body.insert(0, '-'); }
+    body
 }

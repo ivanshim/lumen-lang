@@ -33,6 +33,10 @@ fn lowest_terms(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
 
 /// A value from a ratio, integer when it can be and no real was involved.
 pub fn value(num: BigInt, den: BigInt, digits: Option<usize>) -> Value {
+    if digits.is_some() && crate::decimal::active() {
+        let (num, den) = crate::decimal::ratio(crate::decimal::binary(&num, &den));
+        return Value::Fraction(Rc::new(Ratio { num, den, digits }));
+    }
     if num.is_zero() {
         return match digits {
             Some(d) => Value::Fraction(Rc::new(Ratio { num, den: BigInt::one(), digits: Some(d) })),
@@ -87,6 +91,18 @@ pub fn compute(kind: Kind, a: &Value, b: &Value) -> Option<Result<Value, String>
 
 fn exact(kind: Kind, a: &Ratio, b: &Ratio) -> Result<Value, String> {
     let digits = a.digits.or(b.digits);
+    if crate::decimal::active() && (digits.is_some() || kind == Kind::DivReal) {
+        let x = crate::decimal::binary(&a.num, &a.den);
+        let y = crate::decimal::binary(&b.num, &b.den);
+        if y == 0.0 && matches!(kind, Kind::Div | Kind::DivReal | Kind::Quot | Kind::Rem) { return Err("Division by zero".into()); }
+        let result = match kind {
+            Kind::Add => x + y, Kind::Sub => x - y, Kind::Mul => x * y,
+            Kind::Div | Kind::DivReal => x / y, Kind::Quot => (x / y).trunc(),
+            Kind::Rem => x - y * (x / y).trunc(), Kind::Pow => x.powf(y.trunc()),
+        };
+        let (num, den) = crate::decimal::ratio(result);
+        return Ok(Value::Fraction(Rc::new(Ratio { num, den, digits: Some(digits.unwrap_or(DEFAULT_DIGITS)) })));
+    }
     let whole = a.den.is_one() && b.den.is_one() && digits.is_none();
     let by_zero = || Err("Division by zero".to_string());
     match kind {
@@ -133,5 +149,8 @@ pub fn below(a: &Value, b: &Value) -> Option<bool> {
         return Some(x < y);
     }
     let (a, b) = (ratio(a)?, ratio(b)?);
+    if crate::decimal::active() && (a.digits.is_some() || b.digits.is_some()) {
+        return Some(crate::decimal::binary(&a.num, &a.den) < crate::decimal::binary(&b.num, &b.den));
+    }
     Some((&a.num * &b.den).cmp(&(&b.num * &a.den)) == Ordering::Less)
 }

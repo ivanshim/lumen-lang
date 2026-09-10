@@ -208,6 +208,7 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
+    pub brief_reals: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -451,6 +452,7 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
+            Value::Set(_) if w.brief_reals => self.quoted(true),
             Value::Tuple(parts) => {
                 let inside = parts.iter().map(|part| part.in_field(w, "", "r").unwrap_or_else(|| part.bare())).collect::<Vec<_>>().join(", ");
                 format!("({}{})", inside, if parts.len() == 1 { "," } else { "" })
@@ -462,6 +464,7 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
+            Value::Frac(e) if w.brief_reals && e.places.is_some() => decimal_roundtrip(if e.under && e.above.is_zero() && !e.past_numbers() { -0.0 } else { nearest_binary(&e.above, &e.beneath) }),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -482,7 +485,7 @@ impl Value {
         }
         let mut result = self.render(names);
         if let Self::Frac(ratio) = self {
-            if ratio.places.is_some() {
+            if ratio.places.is_some() && !names.brief_reals {
                 let mut worth = nearest_binary(&ratio.above, &ratio.beneath);
                 if ratio.under && worth == 0.0 { worth = -0.0; }
                 let raw = format!("{:?}", worth).to_lowercase();
@@ -583,7 +586,7 @@ impl Value {
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
-            Value::Set(_) => self.quoted(),
+            Value::Set(_) => self.quoted(false),
             Value::Intrinsic(name) => format!("<built-in function {}>", name),
             Value::Iterator(_) => String::from("<iterator>"),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
@@ -1040,4 +1043,37 @@ fn brief_decimal(number: f64) -> String {
             format!("{}e{}", &written[..split], signed)
         }
     }
+}
+
+/// A decimal keeps only the figures needed to name its binary worth.
+pub(crate) fn decimal_roundtrip(worth: f64) -> String {
+    match (worth.is_nan(), worth.is_infinite(), worth.is_sign_negative()) {
+        (true, _, _) => return String::from("nan"),
+        (_, true, true) => return String::from("-inf"),
+        (_, true, false) => return String::from("inf"),
+        _ => (),
+    }
+    let chosen = (1..=17).map(|count| format!("{:.*e}", count - 1, worth))
+        .find(|candidate| candidate.parse::<f64>().map(f64::to_bits).ok() == Some(worth.to_bits()))
+        .expect("seventeen figures name every binary real");
+    let cut = chosen.find('e').unwrap();
+    let order = chosen[cut + 1..].parse::<i32>().unwrap();
+    let mut coefficient = chosen[..cut].to_owned();
+    if coefficient.contains('.') {
+        while coefficient.ends_with('0') { coefficient.pop(); }
+        if coefficient.ends_with('.') { coefficient.pop(); }
+    }
+    if order < -4 || order >= 16 { return format!("{coefficient}e{order:+03}"); }
+    let sign = if coefficient.starts_with('-') { "-" } else { "" };
+    let mut figures = coefficient.trim_start_matches('-').replace('.', "");
+    let split = order + 1;
+    if split <= 0 {
+        figures = format!("0.{}{figures}", "0".repeat((-split) as usize));
+    } else if (split as usize) < figures.len() {
+        figures.insert(split as usize, '.');
+    } else {
+        figures.push_str(&"0".repeat(split as usize - figures.len()));
+        figures.push_str(".0");
+    }
+    format!("{sign}{figures}")
 }
