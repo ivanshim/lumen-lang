@@ -10,12 +10,14 @@ def _values(data):
         raise 'StatisticsError: data must not be empty'
     return values
 
+def _divide(total, count):
+    if type(total) == type(1) and total % count == 0:
+        return total // count
+    return __math('fdiv', total, count)
+
 def mean(data):
     values = _values(data)
-    total = sum(values)
-    if type(total) == type(1) and total % len(values) == 0:
-        return total // len(values)
-    return total / len(values)
+    return _divide(sum(values), len(values))
 
 def fmean(data, weights=None):
     values = _values(data)
@@ -34,7 +36,7 @@ def median(data):
     middle = len(values) // 2
     if len(values) % 2:
         return values[middle]
-    return (values[middle - 1] + values[middle]) / 2
+    return __math('fdiv', values[middle - 1] + values[middle], 2)
 
 def median_low(data):
     values = _ordered(_values(data))
@@ -49,6 +51,8 @@ def mode(data):
     best = values[0]
     most = 0
     for value in values:
+        if type(value) == type([]) or __is_mapping(value):
+            raise 'TypeError: unhashable data item'
         count = sum([1 for item in values if item == value])
         if count > most:
             best, most = value, count
@@ -60,13 +64,13 @@ def variance(data, xbar=None):
         raise 'StatisticsError: variance requires at least two data points'
     if xbar is None:
         xbar = mean(values)
-    return sum([(x - xbar) ** 2 for x in values]) / (len(values) - 1)
+    return _divide(sum([(x - xbar) ** 2 for x in values]), len(values) - 1)
 
 def pvariance(data, mu=None):
     values = _values(data)
     if mu is None:
         mu = mean(values)
-    return sum([(x - mu) ** 2 for x in values]) / len(values)
+    return _divide(sum([(x - mu) ** 2 for x in values]), len(values))
 
 def stdev(data, xbar=None):
     return math.sqrt(variance(data, xbar))

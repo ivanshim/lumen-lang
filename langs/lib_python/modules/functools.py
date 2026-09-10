@@ -92,10 +92,14 @@ class _CacheDecorator:
         return _Cache(function, self.maxsize, self.typed)
 
 def lru_cache(maxsize=128, typed=False):
-    if maxsize is None or isinstance(maxsize, type(1)):
-        if maxsize is not None and maxsize < 0:
-            maxsize = 0
+    if maxsize is None or isinstance(maxsize, type(1)) or isinstance(maxsize, type(True)):
+        if maxsize is not None:
+            maxsize = int(maxsize)
+            if maxsize < 0:
+                maxsize = 0
         return _CacheDecorator(maxsize, typed)
+    if isinstance(maxsize, type('')) or isinstance(maxsize, type(0.0)):
+        raise 'TypeError: first argument must be an integer, a callable, or None'
     return _Cache(maxsize, 128, typed)
 
 def cache(user_function):

@@ -283,9 +283,28 @@ def ulp(x):
     return __math('ulp', x)
 
 def remainder(x, y):
-    raise 'NotImplementedError: remainder needs nearest-even binary division'
+    if isnan(x) or isnan(y):
+        return nan
+    if isinf(x) or y == 0:
+        raise 'ValueError: math domain error'
+    if isinf(y):
+        return __math('fdiv', x, 1.0)
+    magnitude = fabs(y)
+    residue = fmod(fabs(x), magnitude)
+    other = magnitude - residue
+    if residue > other:
+        residue -= magnitude
+    elif residue == other and fmod(fabs(x), 2 * magnitude) >= magnitude:
+        residue -= magnitude
+    if x < 0:
+        residue = -residue
+    if residue == 0:
+        return copysign(0.0, x)
+    return __math('fdiv', residue, 1.0)
 
 def fmod(x, y):
+    if isnan(x) or isnan(y):
+        return nan
     if isinf(x) or y == 0:
         raise 'ValueError: math domain error'
     return __math('fmod', x, y)

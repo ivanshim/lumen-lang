@@ -237,7 +237,7 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
             match (one, two) {
                 (a, b) if a.is_nan() || b.is_nan() => f64::NAN,
                 (a, b) if a == b => b,
-                (0.0, b) => f64::from_bits(1 | (b.to_bits() & (1_u64 << 63))),
+                (a, b) if a == 0.0 => f64::from_bits(1 | (b.to_bits() & (1_u64 << 63))),
                 (a, b) => {
                     let upwards = (a < b) != a.is_sign_negative();
                     let encoding = a.to_bits();

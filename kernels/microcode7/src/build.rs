@@ -3507,11 +3507,13 @@ impl<'a> Builder<'a> {
         let mut gather = None;
         let mut named_only = false;
         let mut cannot_call = false;
+        let mut by_position = 0;
         loop {
             if self.sign(colon) { self.advance(); break; }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().lexeme) {
                 self.advance();
+                by_position = names.len();
             } else {
                 let many = table.spells("op.mul", &self.look().lexeme);
                 let mapping = table.spells("op.pow", &self.look().lexeme);
@@ -3563,7 +3565,16 @@ impl<'a> Builder<'a> {
         })?;
         self.outside_lambda = prior;
         if let Form::Const(Value::Routine(routine)) = &mut function {
-            Rc::get_mut(routine).expect("new lambda").gather_from = gather;
+            let body = Rc::get_mut(routine).expect("new lambda");
+            body.gather_from = gather;
+            if !cannot_call && table.flag("ext.syntax.call.bind_names") {
+                body.taking = Some((0..parameters.len()).map(|slot| {
+                    if Some(slot) == gather { 'v' }
+                    else if slot < by_position { 'p' }
+                    else { 'b' }
+                }).collect());
+                body.gather_from = None;
+            }
         }
         if !spares.is_empty() {
             let mut carrying = vec![function];

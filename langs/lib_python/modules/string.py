@@ -104,5 +104,50 @@ class Formatter:
         return self.vformat(format_string, args, kwargs)
 
     def vformat(self, format_string, args, kwargs):
-        # The text formatter itself owns conversion and format clauses.
-        return format_string.format(*args, **kwargs)
+        result = ''
+        i = 0
+        automatic = 0
+        numbering = ''
+        while i < len(format_string):
+            ch = format_string[i]
+            if ch not in '{}':
+                result += ch
+                i += 1
+                continue
+            if i + 1 < len(format_string) and format_string[i + 1] == ch:
+                result += ch
+                i += 2
+                continue
+            if ch == '}':
+                raise "ValueError: single '}' encountered in format string"
+            i += 1
+            name = ''
+            while i < len(format_string) and format_string[i] != '}':
+                name += format_string[i]
+                i += 1
+            if i == len(format_string):
+                raise "ValueError: expected '}' before end of string"
+            i += 1
+            if name == '':
+                if numbering == 'manual':
+                    raise 'ValueError: cannot switch from manual to automatic numbering'
+                numbering = 'automatic'
+                if automatic >= len(args):
+                    raise 'IndexError: replacement index out of range'
+                result += str(args[automatic])
+                automatic += 1
+            elif name in kwargs:
+                result += str(kwargs[name])
+            else:
+                if numbering == 'automatic':
+                    raise 'ValueError: cannot switch from automatic to manual numbering'
+                numbering = 'manual'
+                number = 0
+                for letter in name:
+                    if letter not in digits:
+                        raise 'NotImplementedError: Formatter supports only plain replacement fields'
+                    number = number * 10 + ord(letter) - 48
+                if number >= len(args):
+                    raise 'IndexError: replacement index out of range'
+                result += str(args[number])
+        return result

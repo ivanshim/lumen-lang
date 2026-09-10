@@ -3595,11 +3595,13 @@ impl<'a> Compiler<'a> {
         let mut defaults = Vec::new();
         let mut rest = None;
         let mut keywords = false;
+        let mut positional = 0;
         let mut unsupported = false;
         while !self.at_symbol(&mark) {
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Div | Action::DivReal)) {
                 self.take();
+                positional = formals.len();
             } else {
                 let star = self.look().lexeme.clone();
                 let spread = lang.dyadic.get(&star).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
@@ -3655,7 +3657,15 @@ impl<'a> Compiler<'a> {
             Ok(())
         })?;
         self.uncarried = surrounding;
-        Rc::get_mut(&mut program).expect("a fresh lambda").rest_at = rest;
+        let lambda = Rc::get_mut(&mut program).expect("a fresh lambda");
+        if lang.bind_names && !unsupported {
+            let mut rules = vec![0; given.len()];
+            for rule in rules.iter_mut().take(positional) { *rule = 1; }
+            if let Some(at) = rest { rules[at] = 3; }
+            lambda.parameter_rules = Some(rules);
+        } else {
+            lambda.rest_at = rest;
+        }
         for (_, named) in &defaults { self.read(named); }
         self.constant(Value::Routine(program));
         if !defaults.is_empty() { self.act(Action::Close, defaults.len() + 1); }

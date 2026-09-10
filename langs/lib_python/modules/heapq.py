@@ -25,7 +25,37 @@ def nlargest(n, iterable, key=None):
     return _ordered(iterable, key=key, reverse=True)[:n]
 
 def merge(*iterables, key=None, reverse=False):
-    return _ordered([value for row in iterables for value in row], key=key, reverse=reverse)
+    rows = [list(row) for row in iterables]
+    places = [0 for row in rows]
+    heads = []
+    for row in rows:
+        value = None
+        if len(row):
+            value = row[0] if key is None else key(row[0])
+        heads.append(value)
+    result = []
+    while True:
+        chosen = -1
+        active = 0
+        for i in range(len(rows)):
+            if places[i] >= len(rows[i]):
+                continue
+            active += 1
+            earlier = chosen == -1
+            if not earlier:
+                earlier = heads[i] < heads[chosen] if not reverse else heads[chosen] < heads[i]
+            if earlier:
+                chosen = i
+        if chosen == -1:
+            break
+        if active == 1:
+            return [*result, *rows[chosen][places[chosen]:]]
+        result.append(rows[chosen][places[chosen]])
+        places[chosen] += 1
+        if places[chosen] < len(rows[chosen]):
+            item = rows[chosen][places[chosen]]
+            heads[chosen] = item if key is None else key(item)
+    return result
 
 def heapify(x):
     raise 'NotImplementedError: heapify needs shared mutable list storage'
