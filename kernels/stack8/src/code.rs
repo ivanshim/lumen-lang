@@ -168,6 +168,7 @@ pub enum Action {
     Suspend,
     Delegate,
     MakeTuple,
+    Adorn(u8),
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -430,6 +431,7 @@ pub enum Builtin {
     Tuple,
     ValueMethod,
     Sorted,
+    InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
     Sum,
     List,
     Any,

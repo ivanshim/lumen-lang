@@ -38,6 +38,7 @@ pub enum Callee {
 pub enum Prim {
     /// A compound write may ask a real to retain its point.
     Pointed,
+    Adorn(char),
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.
@@ -53,6 +54,7 @@ pub enum Prim {
     ValueMethod,
     BindValueMethod,
     SortedValues,
+    Belongs, Tupling, Uniques, Ordered, Backwards, Numbered, Zipped, Mapped, Filtered, EveryTrue, Least, Greatest, Magnitude, Rounded, QuotRem, Powered, Hexadecimal, Octal, Binary, Quoted, Truthful, CallableValue, IdentityOf, Hashed, NextItem, HasAttribute, GetMember, SetMember, DropMember, MembersOf,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

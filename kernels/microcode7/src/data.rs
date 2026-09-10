@@ -120,12 +120,32 @@ impl Progression {
     }
 }
 
+/// A walk may keep a member aside while a loop asks whether it has more.
+#[derive(Clone)]
+pub struct IteratorState {
+    pub kind: IteratorKind,
+    pub peek: Option<Value>,
+    pub done: bool,
+}
+
+#[derive(Clone)]
+pub enum IteratorKind {
+    Stored(std::collections::VecDeque<Value>),
+    Count(Value, BigInt),
+    Parallel { inputs: Vec<Value>, mapper: Option<Value> },
+    Select(Value, Value),
+    Busy,
+}
+
 #[derive(Clone)]
 pub enum Value {
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
+    Intrinsic(Rc<str>),
+    Set(Rc<Vec<Value>>),
+    Iterator(Rc<RefCell<IteratorState>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -156,10 +176,18 @@ pub enum Value {
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
     Method(Rc<Routine>, Rc<Thing>),
+    Adorned(Rc<Adornment>),
     /// A program bound to the frame it was made in.
     Bound(Rc<Routine>, Rc<Env>),
     KindOf(Kind),
     Unset,
+}
+
+/// A member keeps its callable and, where needed, its writer or receiver.
+pub struct Adornment {
+    pub manner: char,
+    pub target: Value,
+    pub extra: Option<Value>,
 }
 
 impl std::fmt::Debug for Value {
@@ -263,14 +291,14 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
+            Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
             Value::Member(..) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -280,6 +308,7 @@ impl Value {
             Value::Mutable(cell, _) => cell.borrow().is_true(),
             Value::Row(items) => !items.is_empty(),
             Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
+            Value::Set(items) => !items.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -307,13 +336,13 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
+            Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -342,6 +371,8 @@ impl Value {
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
+            (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
+            (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -354,18 +385,19 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
+            (Value::Tuple(a), Value::Tuple(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
             (Value::Couple(a), Value::Couple(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
+            (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
-            (Value::Tuple(x), Value::Tuple(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| a.equals(b)),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -551,6 +583,9 @@ impl Value {
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Set(_) => self.quoted(),
+            Value::Intrinsic(name) => format!("<built-in function {}>", name),
+            Value::Iterator(_) => String::from("<iterator>"),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
@@ -574,6 +609,7 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Generator(_) => "<generator>".into(),
             Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
+            Value::Adorned(_) => String::from("<descriptor>"),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
@@ -605,6 +641,7 @@ impl Value {
                 e.1.memo_key(out);
                 out.push(')');
             }
+            Value::Adorned(a) => out.push_str(&format!("d{:p}", Rc::as_ptr(a))),
             Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),

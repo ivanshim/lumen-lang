@@ -29,7 +29,7 @@ fn shown(value: &Value, words: &Wording) -> String {
 fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
     if depth > 100 { return true; }
     match value {
-        Value::Native(held, _) => Rc::ptr_eq(held,cell) || reaches(&held.borrow(),cell,depth+1),
+        Value::Collection(held, _) => Rc::ptr_eq(held,cell) || reaches(&held.borrow(),cell,depth+1),
         Value::Array(row) | Value::Tuple(row) => row.iter().any(|v|reaches(v,cell,depth+1)),
         Value::Map(entries) => entries.iter().any(|(k,v)|reaches(k,cell,depth+1)||reaches(v,cell,depth+1)),
         Value::View(view) => reaches(&view.0,cell,depth+1),
@@ -81,7 +81,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     let arity = |lo, hi| if a.len() >= lo && a.len() <= hi { Ok(()) } else { Err(fault("arguments")) };
     let held = receiver.contents();
     let store = |v: Value| -> Answer {
-        if let Value::Native(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
+        if let Value::Collection(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
     match &held {
         Value::Text(s) => {
