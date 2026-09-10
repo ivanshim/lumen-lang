@@ -74,7 +74,7 @@ fn run_table(mut table: Table, source: &str, program_args: &[String], request: &
         if table.has_any("ext.system.exception.classes") && e.starts_with("Uncaught ") {
             return e["Uncaught ".len()..].to_owned();
         }
-        if ["ext.stmt.throw.empty", "ext.system.recursion.exceeded"].iter().any(|key| table.single(key) == Some(e.as_str())) {
+        if ["ext.stmt.throw.empty", "ext.system.recursion.exceeded", "ext.stmt.with.invalid", "ext.system.exception.arguments.unsupported"].iter().any(|key| table.single(key) == Some(e.as_str())) {
             return e;
         }
         match table.strings("ext.syntax.call.amiss.builtin") {

@@ -42,7 +42,11 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
-            return run_definition(text, source, program_args, request);
+            let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
+            if lang.recursion_limit.is_some() { return run_definition(text, source, program_args, request); }
+            settle_brief(&mut lang, request);
+            settle_markup(&mut lang, request);
+            return go(&lang, source, program_args, request);
         }
     }
     Err(format!("Error: Unknown language '{}'", language))
@@ -134,7 +138,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
         }
         let words = &lang.call_builtin_amiss;
         if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
-        else if lang.throw_empty.as_deref() == Some(e.as_str()) || lang.recursion_exceeded.as_deref() == Some(e.as_str()) { e }
+        else if [&lang.throw_empty, &lang.recursion_exceeded, &lang.with_invalid, &lang.exception_arguments_unsupported].iter().any(|words| words.as_deref() == Some(e.as_str())) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }
