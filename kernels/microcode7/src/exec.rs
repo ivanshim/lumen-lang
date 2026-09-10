@@ -4896,6 +4896,7 @@ impl<'a> Machine<'a> {
                 let identical = match (&v[0], &v[1]) {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Text(a), Value::Text(b)) if Rc::ptr_eq(a, b) => true,
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -6454,15 +6455,23 @@ impl Machine<'_> {
         match value {
             Value::Shared(cell) => self.copy_worth(&cell.borrow(), descend, known),
             Value::Vector(items) if descend => {
-                let items = items.iter().map(|item| self.copy_worth(item, true, known)).collect();
-                Value::Vector(Rc::new(items))
+                let address = Rc::as_ptr(items) as usize;
+                if let Some(entry) = known.iter().find(|entry| entry.0 == address) { return entry.1.clone(); }
+                let children = items.iter().map(|item| self.copy_worth(item, true, known)).collect();
+                let result = Value::Vector(Rc::new(children));
+                known.push((address, result.clone()));
+                result
             }
             Value::Dict(pairs) if descend => {
+                let address = Rc::as_ptr(pairs) as usize;
+                if let Some(entry) = known.iter().find(|entry| entry.0 == address) { return entry.1.clone(); }
                 let mut copied = Vec::with_capacity(pairs.len());
                 for (key, item) in pairs.iter() {
                     copied.push((self.copy_worth(key, true, known), self.copy_worth(item, true, known)));
                 }
-                Value::Dict(Rc::new(copied))
+                let result = Value::Dict(Rc::new(copied));
+                known.push((address, result.clone()));
+                result
             }
             _ => value.clone(),
         }
@@ -6492,7 +6501,7 @@ impl Machine<'_> {
     }
 
     fn state_answer(&mut self, thing: &Rc<Thing>, word: &str, values: Vec<Value>) -> Result<Option<Value>, String> {
-        if let Some(routine) = thing.of.method(word).cloned() {
+        if let Some(routine) = thing.of.program(word).cloned() {
             let call = Form::Apply(Callee::Code(Box::new(Form::Const(Value::Method(routine, thing.clone())))), values.into_iter().map(Form::Const).collect());
             let frame = Rc::clone(&self.outermost);
             return match self.value_of(&call, &frame) {
@@ -6558,7 +6567,7 @@ impl Machine<'_> {
                 });
                 if origin.is_none() && !self.outermost.cells.borrow().iter().any(agrees) { return Err(self.keeping_fault(0)); }
                 let methods = self.table.strings("ext.builtin.pickle.hooks");
-                if methods.len() > 2 && instance.of.method(&methods[2]).is_some() { return Err(self.keeping_fault(0)); }
+                if methods.len() > 2 && instance.of.program(&methods[2]).is_some() { return Err(self.keeping_fault(0)); }
                 let alternate = if methods.is_empty() { None } else { self.state_answer(instance, &methods[0], Vec::new())? };
                 let changed = alternate.is_some();
                 let state = match alternate {

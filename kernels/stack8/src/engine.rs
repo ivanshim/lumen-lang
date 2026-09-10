@@ -6197,8 +6197,20 @@ fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, 
             *copy.fields.borrow_mut() = fields;
             result
         }
-        Value::Array(items) if deep => Value::array(items.iter().map(|v| duplicate_value(v, true, seen, made)).collect()),
-        Value::Map(items) if deep => Value::Map(Rc::new(items.iter().map(|(key, value)| (duplicate_value(key, true, seen, made), duplicate_value(value, true, seen, made))).collect())),
+        Value::Array(items) if deep => {
+            let identity = Rc::as_ptr(items) as usize;
+            if let Some(copy) = seen.get(&identity) { return copy.clone(); }
+            let copy = Value::array(items.iter().map(|v| duplicate_value(v, true, seen, made)).collect());
+            seen.insert(identity, copy.clone());
+            copy
+        }
+        Value::Map(items) if deep => {
+            let identity = Rc::as_ptr(items) as usize;
+            if let Some(copy) = seen.get(&identity) { return copy.clone(); }
+            let copy = Value::Map(Rc::new(items.iter().map(|(key, value)| (duplicate_value(key, true, seen, made), duplicate_value(value, true, seen, made))).collect()));
+            seen.insert(identity, copy.clone());
+            copy
+        }
         Value::Bond(cell) => duplicate_value(&cell.borrow(), deep, seen, made),
         _ => value.clone(),
     }
