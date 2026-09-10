@@ -808,6 +808,7 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.builtin.repr | w ext.builtin.class.name
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
@@ -1345,6 +1346,8 @@ impl Lang {
             ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
+            ("ext.builtin.repr", Builtin::ReprValue),
+            ("ext.builtin.class.name", Builtin::ClassName),
             ("ext.builtin.class.derive", Builtin::DeriveClass),
             ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),

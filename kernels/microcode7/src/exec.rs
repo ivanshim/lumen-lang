@@ -3725,6 +3725,19 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::QuotedWorth => {
+                n(1)?;
+                Value::text(&self.quote_worth(&v[0]))
+            }
+            Prim::ClassTitle => {
+                n(1)?;
+                let title = match &v[0] {
+                    Value::Thing(thing) => Some(thing.of.name.as_str()),
+                    Value::Blueprint(plan) => Some(plan.name.as_str()),
+                    _ => None,
+                };
+                Value::text(title.ok_or_else(|| self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string())?)
+            }
             Prim::MakeHeir => {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
@@ -6173,6 +6186,41 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 }
 
 impl Machine<'_> {
+    fn quote_worth(&self, worth: &Value) -> String {
+        if let Value::Text(letters) = worth {
+            let delimiter = if letters.contains('\'') && !letters.contains('"') { '"' } else { '\'' };
+            let mut body = String::new();
+            for ch in letters.chars() {
+                let piece = if ch == delimiter || ch == '\\' {
+                    format!("\\{ch}")
+                } else {
+                    match ch {
+                        '\t' => "\\t".to_owned(),
+                        '\r' => "\\r".to_owned(),
+                        '\n' => "\\n".to_owned(),
+                        other if other.is_control() => format!("\\x{:02x}", other as u32),
+                        other => other.to_string(),
+                    }
+                };
+                body.push_str(&piece);
+            }
+            return format!("{delimiter}{body}{delimiter}");
+        }
+        let (opening, closing, members) = match worth {
+            Value::Vector(values) => ("[", "]", values.iter().map(|one| self.quote_worth(one)).collect::<Vec<_>>()),
+            Value::Dict(entries) => {
+                let members = entries.iter().map(|entry| {
+                    let key = self.quote_worth(&entry.0);
+                    let item = self.quote_worth(&entry.1);
+                    format!("{key}: {item}")
+                }).collect();
+                ("{", "}", members)
+            }
+            _ => return worth.render(self.wording()),
+        };
+        format!("{}{}{}", opening, members.join(", "), closing)
+    }
+
     fn copy_worth(&mut self, value: &Value, descend: bool, known: &mut Vec<(usize, Value)>) -> Value {
         if let Value::Thing(original) = value {
             let key = Rc::as_ptr(original) as usize;

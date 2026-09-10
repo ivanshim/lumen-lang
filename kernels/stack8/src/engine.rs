@@ -4551,6 +4551,18 @@ impl<'a> Engine<'a> {
                     Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
                 }
             }
+            Builtin::ReprValue => {
+                arity(1)?;
+                Value::text(&literal_view(&args[0], &sp))
+            }
+            Builtin::ClassName => {
+                arity(1)?;
+                match &args[0] {
+                    Value::Class(class) => Value::text(&class.name),
+                    Value::Object(object) => Value::text(&object.class.name),
+                    _ => return Err(self.lang.module_helper_amiss.clone()),
+                }
+            }
             Builtin::DeriveClass => {
                 arity(3)?;
                 let (Value::Text(title), Value::Class(parent), Value::Map(entries)) = (&args[0], &args[1], &args[2]) else {
@@ -5962,5 +5974,33 @@ impl Engine<'_> {
         if let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) {
             match place { Value::Bond(cell) => *cell.borrow_mut() = map, _ => *place = map }
         }
+    }
+}
+
+
+/// Quotes keep text distinct from the surrounding collection's marks.
+fn literal_view(value: &Value, words: &Wording) -> String {
+    match value {
+        Value::Text(text) => {
+            let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+            let mut shown = String::from(quote);
+            for letter in text.chars() {
+                match letter {
+                    '\n' => shown.push_str("\\n"),
+                    '\r' => shown.push_str("\\r"),
+                    '\t' => shown.push_str("\\t"),
+                    '\\' => shown.push_str("\\\\"),
+                    c if c == quote => { shown.push('\\'); shown.push(c); }
+                    c if c.is_control() => shown.push_str(&format!("\\x{:02x}", c as u32)),
+                    c => shown.push(c),
+                }
+            }
+            shown.push(quote);
+            shown
+        }
+        Value::Array(items) => format!("[{}]", items.iter().map(|v| literal_view(v, words)).collect::<Vec<_>>().join(", ")),
+        Value::Map(pairs) => format!("{{{}}}", pairs.iter().map(|(k, v)| format!("{}: {}", literal_view(k, words), literal_view(v, words))).collect::<Vec<_>>().join(", ")),
+        Value::Bond(cell) => literal_view(&cell.borrow(), words),
+        _ => value.display(words),
     }
 }

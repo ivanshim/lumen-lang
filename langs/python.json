@@ -908,5 +908,14 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.builtin.repr": [
+    "repr"
+  ],
+  "ext.builtin.class.name": [
+    "__class_name"
+  ],
+  "ext.builtin.clock": [
+    "__clock"
+  ]
 }

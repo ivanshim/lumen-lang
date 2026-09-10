@@ -1,12 +1,20 @@
-# A small runner. Subtests keep their surrounding test's result. Regex
-# assertions seek a substring; they do not interpret regular expressions.
+# Assertions and the test lifecycle live beside the modules they serve.
+# In the absence of a regular-expression module, phrases are literal.
 class AssertionError:
     def __init__(self, message):
         self.message = message
+        self.args = (message,)
+
+    def __str__(self):
+        return self.message
 
 class SkipTest:
     def __init__(self, message):
         self.message = message
+        self.args = (message,)
+
+    def __str__(self):
+        return self.message
 
 class _Context:
     def __enter__(self):
@@ -30,7 +38,7 @@ class _Raises:
         if not isinstance(value, self.expected):
             return False
         self.exception = value
-        if self.phrase is not None and self.phrase not in getattr(value, 'message', str(value)):
+        if self.phrase is not None and not _matches(self.phrase, _message(value)):
             raise AssertionError('exception message does not contain ' + self.phrase)
         return True
 
@@ -49,9 +57,13 @@ class TestResult:
 class TestCase:
     _test_case = True
     failureException = AssertionError
+    maxDiff = 640
+    longMessage = True
 
     def __init__(self, methodName='runTest'):
         self._method = methodName
+        self._cleanups = []
+        self._result = None
 
     def setUp(self):
         pass
@@ -67,11 +79,42 @@ class TestCase:
     def _check(self, condition, message, msg=None):
         if not condition:
             if msg is not None:
-                message = str(msg)
+                if self.longMessage:
+                    message += ' : ' + str(msg)
+                else:
+                    message = str(msg)
             self.fail(message)
 
     def assertEqual(self, a, b, msg=None):
-        self._check(a == b, str(a) + ' != ' + str(b), msg)
+        if a == b:
+            return None
+        left = _representation(a)
+        right = _representation(b)
+        message = left + ' != ' + right
+        if left[:1] == '[' and right[:1] == '[':
+            message = 'Lists differ: ' + message
+            limit = len(a)
+            if len(b) < limit:
+                limit = len(b)
+            for index in range(limit):
+                if a[index] != b[index]:
+                    message += '\n\nFirst differing element ' + str(index) + ':\n' + _representation(a[index]) + '\n' + _representation(b[index])
+                    break
+            diff = '\n\n- ' + left + '\n+ ' + right
+            message = self._with_diff(message, diff)
+        elif type(a) == type('') and ('\n' in a or '\n' in b):
+            message = self._with_diff(message, '\n' + _line_diff(a, b))
+        elif left[:1] == '{' and right[:1] == '{':
+            message = self._with_diff(message, '\n- ' + left + '\n+ ' + right)
+        self._check(False, message, msg)
+
+    def _with_diff(self, message, diff):
+        if self.maxDiff is not None and len(diff) > self.maxDiff:
+            return message + '\nDiff is ' + str(len(diff)) + ' characters long. Set self.maxDiff to None to see it.'
+        return message + diff
+
+    def id(self):
+        return getattr(self, '_test_module', '__main__') + '.' + __class_name(self) + '.' + self._method
 
     def assertNotEqual(self, a, b, msg=None):
         self._check(a != b, str(a) + ' == ' + str(b), msg)
@@ -153,11 +196,108 @@ class TestCase:
             args[0](*args[1:], **keywords)
 
     def subTest(self, msg=None, **params):
-        # Stub: the body shares the surrounding test's result.
-        return _Context()
+        return _SubTest(self, msg, params)
 
     def skipTest(self, reason):
         raise SkipTest(reason)
+
+    def addCleanup(self, function, *args, **kwargs):
+        self._cleanups = [*self._cleanups, [function, args, kwargs]]
+
+    def doCleanups(self):
+        successful = True
+        while len(self._cleanups) > 0:
+            cleanup = self._cleanups[-1]
+            self._cleanups = self._cleanups[:-1]
+            outcome = __call_outcome(_Call(cleanup[0], cleanup[1], cleanup[2]).invoke)
+            if not outcome[0]:
+                successful = False
+                if self._result is None:
+                    raise outcome[1]
+                self._result.errors = [*self._result.errors, [self._method, _message(outcome[1], outcome[2])]]
+        return successful
+
+    def shortDescription(self):
+        return None
+
+    def assertNotIsInstance(self, value, kind, msg=None):
+        self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
+
+    def assertNotAlmostEqual(self, a, b, places=7, msg=None, delta=None):
+        difference = a - b
+        if difference < 0:
+            difference = -difference
+        if delta is not None:
+            close = difference <= delta
+        else:
+            close = difference < 0.5 * 10 ** (-places)
+        self._check(not (a == b or close), _representation(a) + ' == ' + _representation(b) + ' within tolerance', msg)
+
+    def assertSequenceEqual(self, first, second, msg=None, seq_type=None):
+        if seq_type is not None:
+            self.assertIsInstance(first, seq_type, msg)
+            self.assertIsInstance(second, seq_type, msg)
+        left = list(first)
+        right = list(second)
+        self.assertEqual(left, right, msg)
+
+    def assertListEqual(self, first, second, msg=None):
+        self.assertSequenceEqual(first, second, msg)
+
+    def assertTupleEqual(self, first, second, msg=None):
+        self.assertSequenceEqual(first, second, msg)
+
+    def assertDictEqual(self, first, second, msg=None):
+        self.assertEqual(first, second, msg)
+
+    def assertSetEqual(self, first, second, msg=None):
+        for item in first:
+            self.assertIn(item, second, msg)
+        for item in second:
+            self.assertIn(item, first, msg)
+
+    def assertMultiLineEqual(self, first, second, msg=None):
+        self.assertEqual(first, second, msg)
+
+    def assertRegex(self, text, pattern, msg=None):
+        self._check(_matches(pattern, text), "Regex didn't match: " + _representation(pattern) + ' not found in ' + _representation(text), msg)
+
+    def assertNotRegex(self, text, pattern, msg=None):
+        self._check(not _matches(pattern, text), 'Regex matched: ' + _representation(pattern) + ' matches ' + _representation(text), msg)
+
+    def assertWarns(self, expected, *args, **kwargs):
+        context = _Warns(expected)
+        if len(args) == 0:
+            return context
+        with context:
+            args[0](*args[1:], **kwargs)
+
+    def assertWarnsRegex(self, expected, pattern, *args, **kwargs):
+        context = _Warns(expected, pattern)
+        if len(args) == 0:
+            return context
+        with context:
+            args[0](*args[1:], **kwargs)
+
+    def assertLogs(self, logger=None, level=None):
+        raise 'NotImplementedError: log capture is not supported'
+
+    def assertHasAttr(self, obj, name, msg=None):
+        marker = _Context()
+        self._check(getattr(obj, name, marker) is not marker, 'attribute ' + _representation(name) + ' is missing', msg)
+
+    def assertNotHasAttr(self, obj, name, msg=None):
+        marker = _Context()
+        self._check(getattr(obj, name, marker) is marker, 'attribute ' + _representation(name) + ' is present', msg)
+
+    def assertStartsWith(self, text, prefix, msg=None):
+        self._check(text[:len(prefix)] == prefix, _representation(text) + ' does not start with ' + _representation(prefix), msg)
+
+    def assertNotStartsWith(self, text, prefix, msg=None):
+        self._check(text[:len(prefix)] != prefix, _representation(text) + ' starts with ' + _representation(prefix), msg)
+
+    def assertEndsWith(self, text, suffix, msg=None):
+        self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
     def _run_test(self):
         if getattr(self, '__unittest_skip__', False):
@@ -166,11 +306,15 @@ class TestCase:
         try:
             getattr(self, self._method)()
         finally:
-            self.tearDown()
+            try:
+                self.tearDown()
+            finally:
+                self.doCleanups()
 
     def run(self, result=None):
         if result is None:
             result = TestResult()
+        self._result = result
         result.testsRun += 1
         outcome = __call_outcome(self._run_test)
         if outcome[0]:
@@ -233,10 +377,18 @@ class _ExpectedFailure:
 class _Expected:
     def __init__(self, message):
         self.message = message
+        self.args = (message,)
+
+    def __str__(self):
+        return self.message
 
 class _Unexpected:
     def __init__(self, message):
         self.message = message
+        self.args = (message,)
+
+    def __str__(self):
+        return self.message
 
 def expectedFailure(function):
     return _ExpectedFailure(function).call
@@ -290,3 +442,123 @@ def main(module=None, exit=True, verbosity=1):
         print('FAILED (failures=' + str(len(result.failures)) + ', errors=' + str(len(result.errors)) + ')')
     # The scratch runner asks for the summary on stdout and a normal exit.
     return result
+
+
+class _Call:
+    def __init__(self, function, args, kwargs):
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+
+    def invoke(self):
+        return self.function(*self.args, **self.kwargs)
+
+
+def _message(value, fallback=''):
+    return getattr(value, 'message', str(value))
+
+
+def _representation(value):
+    return repr(value)
+
+
+def _matches(pattern, text):
+    # A loaded expression module supplies the full search. Until then,
+    # the phrase is sought as written, without interpreting its marks.
+    try:
+        module = __load_module('re')
+    except:
+        return pattern in text
+    return module.search(pattern, text) is not None
+
+
+class _SubTest:
+    def __init__(self, case, message, parameters):
+        self.case = case
+        self.message = message
+        self.parameters = parameters
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, kind, value, traceback):
+        if kind is None or self.case._result is None:
+            return False
+        detail = self.case._method
+        if self.message is not None:
+            detail += ' [' + str(self.message) + ']'
+        words = ''
+        for name in self.parameters:
+            if words != '':
+                words += ', '
+            words += name + '=' + _representation(self.parameters[name])
+        if words != '':
+            detail += ' (' + words + ')'
+        entry = [detail, _message(value)]
+        result = self.case._result
+        if isinstance(value, SkipTest):
+            result.skipped = [*result.skipped, entry]
+        elif isinstance(value, self.case.failureException):
+            result.failures = [*result.failures, entry]
+        else:
+            result.errors = [*result.errors, entry]
+        return True
+
+
+class _Warns:
+    def __init__(self, expected, pattern=None):
+        self.expected = expected
+        self.pattern = pattern
+        self.warning = None
+        self.filename = None
+        self.lineno = None
+
+    def __enter__(self):
+        import warnings
+        self.manager = warnings.catch_warnings(record=True)
+        self.records = self.manager.__enter__()
+        warnings.simplefilter('always', self.expected)
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.manager.__exit__(kind, value, traceback)
+        if kind is not None:
+            return False
+        for record in self.manager.records:
+            if isinstance(record.message, self.expected):
+                if self.pattern is None or _matches(self.pattern, _message(record.message)):
+                    self.warning = record.message
+                    self.filename = record.filename
+                    self.lineno = record.lineno
+                    return False
+        raise AssertionError('warning not triggered')
+
+
+def _lines(text):
+    lines = []
+    current = ''
+    for character in text:
+        current += character
+        if character == '\n':
+            lines = [*lines, current]
+            current = ''
+    if current != '':
+        lines = [*lines, current]
+    return lines
+
+
+def _line_diff(first, second):
+    left = _lines(first)
+    right = _lines(second)
+    text = ''
+    index = 0
+    while index < len(left) or index < len(right):
+        if index < len(left) and index < len(right) and left[index] == right[index]:
+            text += '  ' + left[index]
+        else:
+            if index < len(left):
+                text += '- ' + left[index]
+            if index < len(right):
+                text += '+ ' + right[index]
+        index += 1
+    return text

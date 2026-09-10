@@ -1606,6 +1606,14 @@ only. The extension labels so far, all from PHP:
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.
 
+- `ext.builtin.repr`: a builtin yielding quoted text for a value. Text
+  escapes its quotes and control marks; lists and maps show their members
+  in the same fashion. Tuples and sets still share the list's vessel at
+  this stage and therefore share its rendering.
+- `ext.builtin.class.name`: a builtin yielding the name of a class, or of
+  the class an object belongs to. A value of another kind is refused with
+  the module helper's complaint.
+
 - `ext.builtin.class.derive`: a builtin making a fresh class from a name,
   one parent class and a map of shared members. The new class inherits
   its parent's methods. This lets a library make named records without
@@ -2116,9 +2124,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
+| `ext.builtin.class.name` | - | - | `__class_name` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
-| `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
@@ -2170,6 +2179,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
