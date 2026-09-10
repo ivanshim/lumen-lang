@@ -18,6 +18,7 @@ use crate::value::Value;
 /// them in that routine leaves their bindings and outward leaps whole.
 #[derive(Debug, Clone)]
 pub struct Attempt {
+    pub context: Option<Cell>,
     pub body: (usize, usize),
     pub clauses: Vec<Taking>,
     pub otherwise: Option<(usize, usize)>,
@@ -169,6 +170,8 @@ pub enum Action {
     Delegate,
     MakeTuple,
     Adorn(u8),
+    ContextEnter,
+    SettleObjects,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.

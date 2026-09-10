@@ -1047,6 +1047,31 @@ only. The extension labels so far, all from PHP:
   marks enclosing the classes a declaration stands on. The first base is
   its parent; further bases are read and set aside, without running them.
   A header may name a base by an expression, and may end with a separator.
+- `ext.stmt.class.special`: a list naming, in order, the methods for
+  text, representation, equal, unequal, less, less or equal, greater,
+  greater or equal, hashing, truth, length, reading a place, writing a
+  place, deleting a place, membership, beginning a walk, stepping a walk,
+  calling, addition, subtraction, multiplication, division, whole division,
+  remainder, power, negation, the seven reflected arithmetic operations,
+  entering and leaving a with block for objects (other values keep the
+  earlier binding-only rule), and the class, attribute map and class
+  name members. An absent list leaves ordinary operations as they stood.
+  `ext.stmt.class.special.amiss` gives the words for a method answering
+  with a value of the wrong kind. An object with neither text method is
+  shown as `<C object>`, where C is its class name.
+- `ext.stmt.class.special.declined` names the single value with which a
+  method declines an operation, leaving the other operand to answer.
+  `ext.stmt.class.special.stop` names the fault which ends a walk.
+  `ext.stmt.class.special.unready` gives the words for a special operation
+  whose meaning the run cannot yet honour. A fault handed to a with
+  exit carries an opaque traceback; looking within it stops with these
+  words. Replacing the class or attribute map as a whole likewise stops.
+- `ext.builtin.repr`, `ext.builtin.hash`, `ext.builtin.bool`,
+  `ext.builtin.sorted`, `ext.builtin.iter`, `ext.builtin.next` and
+  `ext.builtin.isinstance`: lists naming representation, hashing, truth,
+  ordering a collection, beginning and stepping a walk, and asking whether
+  a thing belongs to a class or one beneath it. These honour the special
+  methods named by the class list.
 - `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
   for its object first, rather than having an unwritten parameter put there.
   Calling a class makes its object without a word for making; assignments
@@ -1074,6 +1099,10 @@ only. The extension labels so far, all from PHP:
   or statements in a class body beyond methods, assignments, annotations,
   nested classes, plain strings and pass.
   A parent call outside a method, or one given explicit arguments, also
+  cannot yet run: header keywords or unpacking, annotations, classes inside
+  functions, or statements in a class
+  body beyond methods, assignments, nested classes, plain strings and pass.
+  A parent word used as a value, a call outside a method, or one given explicit arguments, also
   stops with these words. A pipe that changes an unnamed array also stops
   here. Nothing in such a form is silently carried out.
 - `ext.op.instanceof`: whether a value is an object of a class or of one
@@ -3487,9 +3516,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |
 | `ext.stmt.class.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.stmt.class.property.setter` | - | - | `setter` | - | - | - | - | - | - | - |
-| `ext.stmt.class.reader` | - | - | - | - | `__get` | - | - | - | - | - |
+| `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special.unready` | - | - | `NotImplementedError: this special operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.stmt.class.static` | - | - | `staticmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.this` | - | - | - | - | `$this` | - | - | - | - | - |
 | `ext.stmt.class.this.explicit` | - | - | `true` | - | - | - | - | - | - | - |

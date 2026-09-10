@@ -1361,8 +1361,18 @@ impl<'a> Compiler<'a> {
             }
         }
         if bracketed { self.take(); }
+        let mut watchers = Vec::new();
         loop {
             self.expr(0)?;
+            if lang.class_special.get(33).is_some() {
+                let manager = self.gensym("context");
+                self.write(&manager);
+                self.read(&manager);
+                self.act(Action::ContextEnter, 1);
+                let cell = self.cell_to_write(&manager);
+                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
+                watchers.push(mark);
+            }
             if self.on_keyword(&lang.with_as_words) {
                 self.take();
                 let held = self.gensym("with");
@@ -1376,7 +1386,15 @@ impl<'a> Compiler<'a> {
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
-        self.body()
+        self.body()?;
+        let end = self.mark();
+        for mark in watchers {
+            if let Instr::Attempt(plan) = &mut self.piece().instrs[mark] {
+                plan.body = (mark + 1, end);
+                plan.after = end;
+            }
+        }
+        Ok(())
     }
 
     fn target_count(&self, enclosed: bool) -> (usize, bool, bool) {
@@ -1514,6 +1532,26 @@ impl<'a> Compiler<'a> {
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
+                if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
+                    let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
+                    self.slice_part(&pair.close, comma.as_deref())?;
+                    let mut several = false;
+                    while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
+                        self.take();
+                        several = true;
+                        if self.at_symbol(&pair.close) { break; }
+                        self.slice_part(&pair.close, comma.as_deref())?;
+                    }
+                    self.want_sign(&pair.close, "after the index")?;
+                    if several {
+                        self.awkward_place = true;
+                        self.piece().instrs.truncate(at);
+                        self.constant(Value::Small(0));
+                    }
+                    keyed.push(at);
+                    self.act(Action::At, 2);
+                    continue;
+                }
                 let mut parts = 0;
                 let mut sliced = false;
                 loop {
@@ -3063,7 +3101,7 @@ impl<'a> Compiler<'a> {
     fn indented_attempt(&mut self) -> Res<()> {
         self.take();
         let mark = self.put(Instr::Attempt(Box::new(Attempt {
-            body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+            context: None, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
         })));
         let body = self.attempt_body()?;
         let mut clauses = Vec::new();
@@ -3120,7 +3158,7 @@ impl<'a> Compiler<'a> {
             return Err("A try needs a catch or a last part".to_string());
         }
         let after = self.mark();
-        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { body, clauses, otherwise, last, after }));
+        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, body, clauses, otherwise, last, after }));
         Ok(())
     }
 
@@ -4579,6 +4617,14 @@ impl<'a> Compiler<'a> {
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;
+        if !self.lang.class_special.is_empty() && self.on_writing()
+            && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.lexeme)) {
+            let end = self.pos;
+            self.piece().instrs.truncate(from);
+            self.pos = target_at;
+            self.block_place()?;
+            self.pos = end;
+        }
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
             && self.look_ahead(2).shape == Shape::Sign
@@ -5722,6 +5768,17 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
+        if Lang::spells(&lang.special_declined, &tok.lexeme) {
+            self.take();
+            self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
+            return self.indexing(from);
+        }
+        if Lang::spells(&lang.special_stop, &tok.lexeme) {
+            self.take();
+            let class = crate::value::Class { name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
+            self.constant(Value::Class(Rc::new(class)));
+            return self.indexing(from);
+        }
         if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
@@ -5847,6 +5904,10 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
                 let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
+                if !self.at_symbol(&call.open) {
+                    self.class_cannot_run();
+                    return self.indexing(from);
+                }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
                 for _ in 0..extra { self.discard(); }
@@ -7071,7 +7132,9 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &pair.between { self.want_sign(sep, "between literal items")?; }
             else { return Err("Expected a literal separator".to_string()); }
         }
-        self.want_sign(&pair.close, "after a literal")
+        self.want_sign(&pair.close, "after a literal")?;
+        if braces && !map && !self.lang.class_special.is_empty() { self.act(Action::SettleObjects, 1); }
+        Ok(())
     }
 
     fn lazy_comprehension(&mut self, pair: &Brackets, clause: usize) -> Res<()> {
