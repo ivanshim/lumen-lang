@@ -16,6 +16,7 @@ impl Value {
             Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
             Self::Nil => "NoneType", Self::Progression(_) => "range", Self::Iterator(_) => "iterator",
+            Self::Span(_) => "slice", Self::Ellipsis => "ellipsis",
             Self::Blueprint(_) | Self::KindOf(_) => "type", Self::Intrinsic(_) => "builtin_function_or_method",
             Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
         };
@@ -81,6 +82,18 @@ impl Value {
                 state.finish() as i64
             }
             Self::Nil => 0x9e3779b9,
+            Self::Ellipsis => 0x9e3779ba,
+            // The bounds folded one after another, as a tuple's parts are,
+            // with no length folded in after them.
+            Self::Span(bounds) => {
+                let mut accum: u64 = 2_870_177_450_012_600_261;
+                for bound in bounds.iter() {
+                    let lane = bound.hash_number()? as u64;
+                    accum = accum.wrapping_add(lane.wrapping_mul(14_029_467_366_897_019_727)).rotate_left(31);
+                    accum = accum.wrapping_mul(11_400_714_785_074_694_791);
+                }
+                return Some(if accum == u64::MAX { 1_546_275_796 } else { accum as i64 });
+            }
             Self::Frac(parts) if parts.places.is_some() => {
                 if parts.beneath == BigInt::from(0) {
                     return Some(if parts.above == BigInt::from(0) { (std::rc::Rc::as_ptr(parts) as usize / 16) as i64 } else if parts.above.is_negative() { -314159 } else { 314159 });

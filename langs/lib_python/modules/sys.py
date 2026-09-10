@@ -80,14 +80,18 @@ def setrecursionlimit(limit):
 
 class _Output:
     def write(self, *args, **keywords):
-        return __stream_write(*args, False, **keywords)
+        if keywords:
+            raise TypeError("write() takes no keyword arguments")
+        return __stream_write(*args, False)
 
     def flush(self):
         pass
 
 class _Error:
     def write(self, *args, **keywords):
-        return __stream_write(*args, True, **keywords)
+        if keywords:
+            raise TypeError("write() takes no keyword arguments")
+        return __stream_write(*args, True)
 
     def flush(self):
         pass

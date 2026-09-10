@@ -435,6 +435,8 @@ pub enum Action {
 pub enum Builtin {
     /// Ask the reader the definition routes to for a line of input.
     Ask,
+    /// Make a slice value of one to three bounds.
+    MakeSlice,
     /// Put text straight out on the ordinary or the error stream.
     StreamPut,
     /// Take text straight from the input stream, so many characters or

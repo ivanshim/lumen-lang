@@ -230,7 +230,7 @@ impl<'a> Engine<'a> {
                             _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
                         };
                         let mut fields = o.fields.borrow_mut();
-                        for key in [name, "\0arguments"] { let _ = Self::write_members(&mut fields, key, Some(items.clone())); }
+                        for key in [name, "\0arguments"] { let _ = Self::write_members(&mut fields, key, Some(items.clone()), false); }
                         return Ok(Value::Null);
                     }
                 }
@@ -248,11 +248,15 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
                 if value.is_some() && !self.slots_allow(&o.class,name) {return Err(absent);}
-                Self::write_members(&mut o.fields.borrow_mut(),name,value).map_err(|_|absent)?;
+                // A module's members are its own bindings, written through
+                // so that its routines see the new value; a thing's member
+                // is simply written over.
+                let module=self.modules.values().any(|held|matches!(held,Value::Object(space) if Rc::ptr_eq(space,o)));
+                Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
                 if ["name","qualified","kind","bases","mro","namespace","order"].iter().any(|key|name==self.class_word(key)){return Err(self.class_refusal());}
-                Self::write_members(&mut c.shared.borrow_mut(),name,value).map_err(|_|absent)?;
+                Self::write_members(&mut c.shared.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
             Value::Routine(_) => {
                 if name == self.class_word("namespace") {
@@ -261,19 +265,22 @@ impl<'a> Engine<'a> {
                 }
                 if ["defaults","code","namespace"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_refusal());}
                 let at=self.function_storage(&subject);
-                Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value).map_err(|_|absent)?;
+                Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
             _ => return Err(absent),
         }
         Ok(Value::Null)
     }
-    fn write_members(members:&mut Vec<(String,Value)>,name:&str,value:Option<Value>)->Result<(),()> {
+    fn write_members(members:&mut Vec<(String,Value)>,name:&str,value:Option<Value>,through:bool)->Result<(),()> {
         let at=members.iter().position(|(n,_)|n==name);
-        // A member held in a shared cell -- a module's own binding, or a
-        // property something else stands for -- is written through the
-        // cell, so that every holder of it sees the new value.
+        // A member held in a shared cell is written through the cell where
+        // the holder asks it -- a module's own binding, which its routines
+        // read -- unless the cell itself is what was handed back.
         match (at,value) {
-            (Some(i),Some(v))=>match &members[i].1 { Value::Bond(cell)=>{*cell.borrow_mut()=v;} _=>members[i].1=v },
+            (Some(i),Some(v))=>match (&members[i].1,&v) {
+                (Value::Bond(cell),Value::Bond(given)) if Rc::ptr_eq(cell,given)=>{},
+                (Value::Bond(cell),_) if through=>{*cell.borrow_mut()=v;},
+                _=>members[i].1=v },
             (None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
@@ -327,7 +334,7 @@ impl<'a> Engine<'a> {
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
             2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
-            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{v}),Err(Fault::Note(s)) if s.starts_with(self.class_word("attribute.amiss"))=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{Err(s.into())},Err(e)=>Err(e)}},
+            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(Fault::Note(s)) if s.starts_with(self.class_word("attribute.amiss"))=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{Err(s.into())},Err(e)=>Err(e)}},
             4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.class_refusal());};self.class_write(one,n,args.get(2).cloned(),false)},
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{

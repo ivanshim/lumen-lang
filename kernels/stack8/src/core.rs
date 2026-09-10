@@ -20,6 +20,8 @@ impl Value {
             Value::Set(_) => "set",
             Value::Map(_) => "dict",
             Value::Counted(_) => "range",
+            Value::Slice(_) => "slice",
+            Value::Ellipsis => "ellipsis",
             Value::Cursor(_) => "iterator",
             Value::Native(..) => "builtin_function_or_method",
             Value::Routine(_) => "function",
@@ -91,6 +93,17 @@ impl Value {
                 Some(finish(h.finish() as i64))
             }
             Value::Null => Some(0x9e3779b9),
+            Value::Ellipsis => Some(0x9e3779ba),
+            // The three bounds, folded as a tuple's items are, without a
+            // length mixed in at the end.
+            Value::Slice(parts) => {
+                let mut h = 2870177450012600261u64;
+                for bound in parts.iter() {
+                    h = h.wrapping_add((bound.core_hash()? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
+            }
             Value::Real(r) => {
                 if r.q == BigInt::from(0) { return if r.p == BigInt::from(0) { Some((std::rc::Rc::as_ptr(r) as usize >> 4) as i64) } else { Some(if r.p.is_negative() { -314159 } else { 314159 }) }; }
                 let modulus = BigInt::from((1u64 << 61)-1);

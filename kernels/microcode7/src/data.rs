@@ -509,6 +509,7 @@ impl Value {
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         match (self, other) {
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
+            (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
                 return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
             }
@@ -637,7 +638,10 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
-            Value::Frac(e) if e.float_style => {
+            // A real a working gave is written as any real is where the
+            // table asks the shortest spelling, and in the library's own
+            // spelling elsewhere.
+            Value::Frac(e) if e.float_style && !w.brief_reals => {
                 let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
                 format!("{number:?}").to_lowercase()
             }
@@ -811,7 +815,7 @@ impl Value {
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
             Value::Thing(t) => format!("<object {}>", t.of.name),
-            Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
     }

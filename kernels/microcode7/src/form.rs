@@ -38,6 +38,8 @@ pub enum Callee {
 pub enum Prim {
     /// A line asked of the reader the table routes input through.
     Inquire,
+    /// A span made of one to three bounds.
+    SpanOf,
     /// Text poured straight onto the ordinary or the error channel.
     PourOut,
     /// Text drawn straight from the input channel, by count or by line.

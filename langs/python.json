@@ -50,6 +50,36 @@
   "ext.builtin.method.conjugate": [
     "conjugate"
   ],
+  "ext.builtin.method.indices": [
+    "indices"
+  ],
+  "ext.builtin.method.slice_hash": [
+    "__hash__"
+  ],
+  "ext.builtin.slice": [
+    "slice"
+  ],
+  "ext.builtin.slice.arity": [
+    "TypeError: slice expected 1 to 3 arguments"
+  ],
+  "ext.builtin.slice.length": [
+    "ValueError: length should not be negative"
+  ],
+  "ext.builtin.slice.start": [
+    "start"
+  ],
+  "ext.builtin.slice.step": [
+    "step"
+  ],
+  "ext.builtin.slice.stop": [
+    "stop"
+  ],
+  "ext.op.index.integer": [
+    "__index__"
+  ],
+  "ext.op.index.slice.amiss": [
+    "SyntaxError: invalid syntax"
+  ],
   "ext.op.order.text": true,
   "ext.stmt.class.annotations": [
     "__annotations__"
@@ -1773,10 +1803,10 @@
     ":"
   ],
   "ext.op.index.slice.assign": [
-    "can only assign an iterable"
+    "TypeError: can only assign an iterable"
   ],
   "ext.op.index.slice.bounds": [
-    "slice indices must be integers or None or have an __index__ method"
+    "TypeError: slice indices must be integers or None or have an __index__ method"
   ],
   "ext.op.index.slice.detached": [
     "assignment through a slice is not supported"
@@ -1785,14 +1815,14 @@
     "..."
   ],
   "ext.op.index.slice.length": [
-    "attempt to assign sequence of size",
+    "ValueError: attempt to assign sequence of size",
     "to extended slice of size"
   ],
   "ext.op.index.slice.unsupported": [
     "this slice operation is not supported"
   ],
   "ext.op.index.slice.zero": [
-    "slice step cannot be zero"
+    "ValueError: slice step cannot be zero"
   ],
   "ext.op.index.spread.unsupported": [
     "NotImplementedError: starred subscripts are not supported"

@@ -567,6 +567,7 @@ impl Value {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Native(a,_), Value::Native(b,_)) => a == b,
+            (Value::Slice(a), Value::Slice(b)) => a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a,b),
             (Value::Set(a), Value::Set(b)) => {
                 let (a, b) = (a.borrow(), b.borrow());
@@ -826,7 +827,7 @@ impl Value {
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
-            Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].plain(), parts[1].plain(), parts[2].plain()),
+            Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
     }
 

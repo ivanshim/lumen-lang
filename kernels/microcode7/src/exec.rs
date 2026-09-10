@@ -2136,7 +2136,13 @@ impl<'a> Machine<'a> {
                 };
                 match fast {
                     Some(v) => Ok(v),
-                    None => Ok(self.prim(*op, name, &[av, bv])?),
+                    None => {
+                        let made = self.prim(*op, name, &[av, bv]);
+                        // What a thing's own method raised on the way
+                        // is raised on, not the words that stood in.
+                        if let Some(away) = self.got_away.take() { return Err(away); }
+                        Ok(made?)
+                    }
                 }
             }
             Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
@@ -2388,15 +2394,33 @@ impl<'a> Machine<'a> {
                     return Err(self.bad_answer().into());
                 }
                 if self.appointed(&target, 13).is_some() {
-                    self.ask_special(&target, 13, &[named])?;
+                    let asked = self.ask_special(&target, 13, &[named]);
+                    if let Some(away) = self.got_away.take() { return Err(away); }
+                    asked?;
                     return Ok(Value::Nil);
                 }
+                let named = match &named {
+                    Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
+                        let settled = self.span_settled(bounds);
+                        if let Some(away) = self.got_away.take() { return Err(away); }
+                        Value::Span(Rc::new(settled?))
+                    }
+                    _ => named,
+                };
                 let at = self.as_key_spoken(&named);
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    // Whatever a span picks out goes, and the rest
+                    // closes up in the order it stood.
+                    Value::Vector(items) if matches!(at, Value::Span(_)) && self.table.has_any("ext.builtin.slice") => {
+                        let Value::Span(bounds) = &at else { unreachable!() };
+                        let (_, picked, _) = self.span_selection(bounds, items.len())?;
+                        let retained = items.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &at { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
@@ -3360,6 +3384,9 @@ impl<'a> Machine<'a> {
     /// A class in the first place names a method of the class itself.
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
         let names = self.table.strings("ext.stmt.class.special");
+        if let Value::Span(bounds) = value {
+            return self.span_bound_named(name).map(|i| bounds[i].clone());
+        }
         match value {
             Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => return Some(Value::Blueprint(t.of.clone())),
             Value::Thing(t) if names.get(36).map_or(false, |s| s == name) => return Some(Value::Attributes(t.clone())),
@@ -3581,6 +3608,18 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Span(bounds) = receiver.settled() {
+            if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            return match (name, arguments.len()) {
+                ("indices", 1) => {
+                    let clipped = self.span_clipped(&bounds, &arguments[0]);
+                    if let Some(away) = self.got_away.take() { return Err(away); }
+                    Ok(Value::Tuple(Rc::new(clipped?.into_iter().map(Value::from_big).collect())))
+                }
+                ("slice_hash", 0) => self.span_hashed(&receiver.settled()).map_err(Escape::from),
+                _ => Err(self.method_fault("arguments").into()),
+            };
+        }
         let actual = receiver.settled();
         if name == "encode" && matches!(&actual, Value::Text(_)) {
             let mut options = arguments;
@@ -3701,6 +3740,77 @@ impl<'a> Machine<'a> {
             sorted.insert(at, pair);
         }
         Ok(sorted.into_iter().map(|entry| entry.1).collect())
+    }
+
+    /// Which bound a name reads, where the table names the three.
+    fn span_bound_named(&self, name: &str) -> Option<usize> {
+        ["ext.builtin.slice.start", "ext.builtin.slice.stop", "ext.builtin.slice.step"].iter()
+            .position(|label| self.table.single(label).map_or(false, |word| !word.is_empty() && word == name))
+    }
+
+    /// The whole number a bound stands for. A thing is asked through the
+    /// method the table names; what is not a thing must be whole already.
+    fn span_whole(&mut self, bound: &Value) -> Result<BigInt, String> {
+        let told = match bound {
+            Value::Thing(thing) => match self.table.single("ext.op.index.integer").and_then(|word| self.inherited_entry(&thing.of, word)) {
+                Some(method) => self.apply_within(method, vec![bound.clone()])?,
+                None => bound.clone(),
+            },
+            other => other.settled(),
+        };
+        match told {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => told.as_big(),
+            _ => Err(self.span_complaint("bounds")),
+        }
+    }
+
+    /// The bounds with every thing among them settled to the whole
+    /// number it stands for; a bound not given stays not given, and a
+    /// number stays for the row to judge.
+    fn span_settled(&mut self, bounds: &[Value]) -> Result<Vec<Value>, String> {
+        let mut told = Vec::with_capacity(bounds.len());
+        for bound in bounds {
+            told.push(match bound {
+                Value::Thing(_) => Value::from_big(self.span_whole(bound)?),
+                other => other.clone(),
+            });
+        }
+        Ok(told)
+    }
+
+    /// The bounds clipped to a length, as the indices method tells them:
+    /// no step of nought, and a bound not given falls to the end the step
+    /// sets out from.
+    fn span_clipped(&mut self, bounds: &[Value], length: &Value) -> Result<Vec<BigInt>, String> {
+        use num_traits::Signed;
+        let extent = self.span_whole(length)?;
+        if extent.is_negative() { return Err(self.table.single("ext.builtin.slice.length").unwrap_or_default().to_owned()); }
+        let stride = match bounds.get(2) { Some(Value::Nil) | None => BigInt::from(1), Some(bound) => self.span_whole(bound)? };
+        if stride.is_zero() { return Err(self.span_complaint("zero")); }
+        let backward = stride.is_negative();
+        let (floor, ceiling): (BigInt, BigInt) = if backward { (BigInt::from(-1), &extent - 1) } else { (BigInt::from(0), extent.clone()) };
+        let mut told = Vec::with_capacity(3);
+        for (i, bound) in bounds.iter().take(2).enumerate() {
+            let end = if matches!(bound, Value::Nil) {
+                if (i == 0) == backward { ceiling.clone() } else { floor.clone() }
+            } else {
+                let mut n = self.span_whole(bound)?;
+                if n.is_negative() { n += &extent; }
+                n.max(floor.clone()).min(ceiling.clone())
+            };
+            told.push(end);
+        }
+        told.push(stride);
+        Ok(told)
+    }
+
+    /// A span hashes as its bounds do, or not at all where one cannot.
+    fn span_hashed(&self, span: &Value) -> Result<Value, String> {
+        let Value::Span(bounds) = span else { return Err(self.span_complaint("unsupported")) };
+        if let Some(bound) = bounds.iter().find(|bound| bound.hash_number().is_none()) {
+            return Err(self.core_complaint("core.unhashable", &bound.kind_word()));
+        }
+        Ok(Value::Small(span.hash_number().expect("the bounds hash")))
     }
 
     /// The namespace a builtin is routed through, loaded if it is not yet.
@@ -5267,6 +5377,41 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        // Two spans are alike when their bounds are, a pair of things
+        // asked as the program asks; a span is always alike to itself.
+        if let ([Value::Span(left), Value::Span(right)], true) = (v, matches!(op, Prim::Eq | Prim::Ne)) {
+            let mut alike = Rc::ptr_eq(left, right);
+            if !alike {
+                alike = true;
+                for (a, b) in left.iter().zip(right.iter()) {
+                    let same = if a.equals(b) { true } else {
+                        let answer = self.prim(Prim::Eq, name, &[a.clone(), b.clone()])?;
+                        self.stands_true(&answer)
+                    };
+                    if !same { alike = false; break; }
+                }
+            }
+            return Ok(Value::Flag(alike == (op == Prim::Eq)));
+        }
+        // A span reaching into a row has each thing among its bounds
+        // asked for the whole number it stands for before the row is
+        // read; a progression sliced is a progression over the places
+        // the bounds pick out.
+        if let (Prim::At, [target, Value::Span(bounds)], true) = (op, v, self.table.has_any("ext.builtin.slice")) {
+            let target = target.settled();
+            if !matches!(target, Value::Thing(_) | Value::Dict(_)) {
+                if bounds.iter().any(|bound| matches!(bound, Value::Thing(_))) {
+                    let bounds = self.span_settled(bounds)?;
+                    return self.prim(op, name, &[target, Value::Span(Rc::new(bounds))]);
+                }
+                if let Value::Progression(walk) = &target {
+                    let clipped = self.span_clipped(bounds, &Value::from_big(walk.count()))?;
+                    let [from, to, by] = <[BigInt; 3]>::try_from(clipped).expect("three bounds");
+                    let picked = crate::data::Progression { first: &walk.first + &from * &walk.stride, limit: &walk.first + &to * &walk.stride, stride: &walk.stride * by, word: walk.word.clone() };
+                    return Ok(Value::Progression(Rc::new(picked)));
+                }
+            }
+        }
         // A key handed out with its hash is, for ordering and arithmetic,
         // the key itself.
         if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power)
@@ -5283,7 +5428,7 @@ impl<'a> Machine<'a> {
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds) {
                 self.prim_values(op, name, v)?
             } else {
                 let unwrapped: Vec<Value> = v.iter().map(collection_read).collect();
@@ -5869,6 +6014,7 @@ impl<'a> Machine<'a> {
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
                     Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
+                    Value::Span(_) => (None, self.span_bound_named(&word).is_some()),
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
@@ -6637,6 +6783,15 @@ impl<'a> Machine<'a> {
             Prim::Erase => {
                 n(2)?;
                 match &v[0] {
+                    // A span names several places at once, and the rest
+                    // close up in the order they stood.
+                    Value::Vector(items) if matches!(&v[1], Value::Span(_)) && self.table.has_any("ext.builtin.slice") => {
+                        let Value::Span(bounds) = &v[1] else { unreachable!() };
+                        let bounds = self.span_settled(bounds)?;
+                        let (_, picked, _) = self.span_selection(&bounds, items.len())?;
+                        let retained = items.iter().enumerate().filter(|(at, _)| !picked.contains(at)).map(|(_, x)| x.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
@@ -7149,6 +7304,14 @@ impl<'a> Machine<'a> {
             // The line comes from the reader the table names, so a
             // program that has put another source in the reader's place
             // is answered from that source.
+            // One bound stops; two or three start, stop and step; what
+            // is not given stands for nothing.
+            Prim::SpanOf => {
+                if v.is_empty() || v.len() > 3 { return Err(self.table.single("ext.builtin.slice.arity").unwrap_or_default().to_owned()); }
+                let mut bounds = vec![Value::Nil; 3];
+                match v.len() { 1 => bounds[1] = v[0].clone(), count => bounds[..count].clone_from_slice(v) }
+                Value::Span(Rc::new(bounds))
+            }
             Prim::Inquire => {
                 let words = self.table.strings("ext.builtin.input.reader").to_vec();
                 if words.len() != 2 { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); }
@@ -7763,6 +7926,7 @@ impl<'a> Machine<'a> {
         let (span, picked, unit) = self.span_selection(bounds, row.len())?;
         let coming: Vec<Value> = match handed {
             Value::Set(contents) => contents.borrow().values(),
+            Value::Progression(walk) => (0..).map_while(|place| walk.item(&BigInt::from(place))).collect(),
             Value::Text(letters) => letters.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
             Value::Vector(values) | Value::Tuple(values) => values.iter().cloned().collect(),

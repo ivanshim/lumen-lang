@@ -2613,6 +2613,19 @@ impl<'a> Engine<'a> {
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if matches!(a, Value::Collection(..) | Value::Bond(_)) || matches!(b, Value::Collection(..) | Value::Bond(_)) { return self.special_dyad(op, &a.contents(), &b.contents()); }
+        // Two slices are alike when their bounds are, each pair asked
+        // as the program would ask it; a slice is always its own equal.
+        if let ((Value::Slice(x), Value::Slice(y)), true) = ((a, b), matches!(op, Action::Eq | Action::Ne)) {
+            let mut alike = Rc::ptr_eq(x, y);
+            if !alike {
+                alike = true;
+                for (left, right) in x.iter().zip(y.iter()) {
+                    let same = if left.equals(right) { true } else { let told = self.special_dyad(&Action::Eq, left, right)?; self.truth(&told) };
+                    if !same { alike = false; break; }
+                }
+            }
+            return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
+        }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
         if let Value::Fields(o) = a {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
@@ -2669,6 +2682,21 @@ impl<'a> Engine<'a> {
             let wanted = self.special_key(b)?;
             for (key, value) in entries.iter() {
                 if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
+            }
+        }
+        // A slice reaching into a row has its bounds settled first, a
+        // thing among them asked for the whole number it stands for;
+        // a counted row sliced is a counted row still, over the places
+        // the bounds pick out of it.
+        if let (Action::At, Value::Slice(bounds), true) = (op, b, self.lang.slice_values()) {
+            if !matches!(a, Value::Object(_) | Value::Map(_)) {
+                let settled = self.slice_settled(bounds)?;
+                if let Value::Counted(row) = a {
+                    let [from, to, by] = self.slice_clipped(&settled, &Value::of_big(row.length()))?;
+                    let picked = crate::value::Counted { start: &row.start + &from * &row.step, stop: &row.start + &to * &row.step, step: &row.step * &by, name: row.name.clone() };
+                    return Ok(Value::Counted(Rc::new(picked)));
+                }
+                return self.dyadic(op, a, &Value::Slice(Rc::new(settled)));
             }
         }
         self.dyadic(op, a, b)
@@ -3030,10 +3058,16 @@ impl<'a> Engine<'a> {
                 }
                 if self.special_method(&target, 13).is_some() {
                     self.drop_top()?;
-                    self.special_call(&target, 13, vec![named])?;
+                    let told = self.special_call(&target, 13, vec![named]);
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    told?;
                     self.data.push(Value::Null);
                     return Ok(());
                 }
+                let named = match &named {
+                    Value::Slice(bounds) if self.lang.slice_values() => Value::Slice(Rc::new(self.slice_settled(bounds)?)),
+                    _ => named,
+                };
                 let at = self.key_quietly(&named);
                 let holder = self.drop_top()?;
                 let Value::Bond(cell) = holder else {
@@ -3043,6 +3077,17 @@ impl<'a> Engine<'a> {
                 let cell = nested.unwrap_or(cell);
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
+                    // The places a slice picks out are taken away from
+                    // the last to the first, so each stays where it was
+                    // counted.
+                    Value::Array(items) if matches!(at, Value::Slice(_)) && self.lang.slice_values() => {
+                        let Value::Slice(bounds) = &at else { unreachable!() };
+                        let (_, _, _, mut picked) = self.slice_places(bounds, items.len())?;
+                        picked.sort_unstable();
+                        let mut kept = items.as_ref().clone();
+                        for place in picked.into_iter().rev() { kept.remove(place); }
+                        Value::array(kept)
+                    }
                     Value::Array(items) if !self.lang.del_words.is_empty() => {
                         let raw = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None }).ok_or_else(|| self.lang.del_unrun.clone())?;
                         let i = if raw < 0 { items.len() as i64 + raw } else { raw };
@@ -3202,8 +3247,9 @@ impl<'a> Engine<'a> {
                         let mut positional = Vec::new();
                         let mut named = Vec::new();
                         for (key, value) in items { if let Some(key) = key { named.push((key, value)); } else { positional.push(value); } }
-                        let result = self.value_method(&method.0, &method.1, positional, named)?;
-                        self.data.push(result);
+                        let result = self.value_method(&method.0, &method.1, positional, named);
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        self.data.push(result?);
                         return Ok(());
                     }
                     Value::Native(b, word) => {
@@ -3635,6 +3681,7 @@ impl<'a> Engine<'a> {
                 let field = match &held {
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
+                    Value::Slice(_) => self.slice_bound_named(name).is_some(),
                     _ => false,
                 };
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
@@ -3642,6 +3689,7 @@ impl<'a> Engine<'a> {
             }
             // A member is read of what a module's cell holds, not of the cell.
             Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
+                Value::Slice(bounds) if self.slice_bound_named(name).is_some() => bounds[self.slice_bound_named(name).expect("the bound")].clone(),
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
@@ -4420,7 +4468,11 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.special_dyad(dyadic, &a, &b)?
+                let told = self.special_dyad(dyadic, &a, &b);
+                // What a method of a thing raised on the way out is
+                // raised on, not the words that stood in for it.
+                if let Some(fled) = self.carried.take() { return Err(fled); }
+                told?
             }
         };
         self.data.push(self.keep_collection(result));
@@ -5534,6 +5586,12 @@ impl<'a> Engine<'a> {
             Value::Array(values) | Value::Tuple(values) => values.as_ref().clone(),
             Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
+            Value::Counted(row) => {
+                let mut places = Vec::new();
+                let mut place = BigInt::from(0);
+                while let Some(held) = row.at(place.clone()) { places.push(held); place += 1; }
+                places
+            }
             _ => return Err(self.lang.slice_assign.clone().unwrap_or_default()),
         };
         if step == 1 {
@@ -5871,6 +5929,80 @@ impl<'a> Engine<'a> {
 
     /// Builtins take the same opened arguments as a declared routine,
     /// but each names its own few places, where the definition spells them.
+    fn slice_word(&self, label: &str) -> String {
+        self.lang.slice_parts.get(label).cloned().unwrap_or_default()
+    }
+
+    /// Which bound a name reads, where the definition names them.
+    fn slice_bound_named(&self, name: &str) -> Option<usize> {
+        ["ext.builtin.slice.start", "ext.builtin.slice.stop", "ext.builtin.slice.step"].iter()
+            .position(|label| { let word = self.slice_word(label); !word.is_empty() && word == name })
+    }
+
+    /// The whole number a bound stands for: a thing is asked through the
+    /// method the definition names, and anything else must be whole.
+    fn slice_whole(&mut self, bound: &Value) -> Res<BigInt> {
+        let asked = match bound {
+            Value::Object(o) => {
+                let word = self.slice_word("ext.op.index.integer");
+                match (!word.is_empty()).then(|| self.class_value(&o.class, &word)).flatten() {
+                    Some(method) => match self.class_apply(method, vec![bound.clone()]) {
+                        Ok(answer) => answer,
+                        Err(Fault::Note(words)) => return Err(words),
+                        Err(fled) => { self.carried = Some(fled); return Err(self.lang.slice_bounds.clone().unwrap_or_default()); }
+                    },
+                    None => bound.clone(),
+                }
+            }
+            other => other.contents(),
+        };
+        match asked {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => asked.as_big(),
+            _ => Err(self.lang.slice_bounds.clone().unwrap_or_default()),
+        }
+    }
+
+    /// The bounds with each thing among them settled to the whole
+    /// number it stands for; a missing bound stays missing, and a
+    /// number stays as it was, for the row to judge.
+    fn slice_settled(&mut self, bounds: &[Value; 3]) -> Res<[Value; 3]> {
+        let mut settled = bounds.clone();
+        for bound in settled.iter_mut() {
+            if matches!(bound, Value::Object(_)) { *bound = Value::of_big(self.slice_whole(bound)?); }
+        }
+        Ok(settled)
+    }
+
+    /// The bounds as whole numbers within a length, as CPython's indices
+    /// method clips them: a step of nought is refused, a missing bound
+    /// falls to the end the step runs from.
+    fn slice_clipped(&mut self, bounds: &[Value; 3], length: &Value) -> Res<[BigInt; 3]> {
+        let extent = self.slice_whole(length)?;
+        if extent.is_negative() { return Err(self.slice_word("ext.builtin.slice.length")); }
+        let step = if matches!(bounds[2], Value::Null) { BigInt::from(1) } else { self.slice_whole(&bounds[2])? };
+        if step.is_zero() { return Err(self.lang.slice_zero.clone().unwrap_or_default()); }
+        let backwards = step.is_negative();
+        let (low, high) = if backwards { (BigInt::from(-1), &extent - 1) } else { (BigInt::from(0), extent.clone()) };
+        let mut ends = [if backwards { high.clone() } else { low.clone() }, if backwards { low.clone() } else { high.clone() }];
+        for (i, end) in ends.iter_mut().enumerate() {
+            if matches!(bounds[i], Value::Null) { continue; }
+            let mut n = self.slice_whole(&bounds[i])?;
+            if n.is_negative() { n += &extent; }
+            *end = n.max(low.clone()).min(high.clone());
+        }
+        Ok([ends[0].clone(), ends[1].clone(), step])
+    }
+
+    /// A slice hashes as its bounds do, and cannot where one of them cannot.
+    fn slice_hashed(&self, slice: &Value) -> Res<Value> {
+        if let Value::Slice(bounds) = slice {
+            for bound in bounds.iter() {
+                if bound.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &bound.core_kind())); }
+            }
+        }
+        slice.core_hash().map(Value::Small).ok_or_else(|| self.core_fault("core.unhashable", &slice.core_kind()))
+    }
+
     /// A module the definition routes a builtin through, read in if it
     /// has not been. A fault in the reading that is not plain words is
     /// kept aside to be raised once the builtin has given way.
@@ -6040,6 +6172,17 @@ impl<'a> Engine<'a> {
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         let contents = receiver.contents();
+        if let Value::Slice(bounds) = &contents {
+            if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            match (operation, args.len()) {
+                ("indices", 1) => {
+                    let clipped = self.slice_clipped(bounds, &args[0])?;
+                    return Ok(Value::Tuple(Rc::new(clipped.into_iter().map(Value::of_big).collect())));
+                }
+                ("slice_hash", 0) => return self.slice_hashed(&contents),
+                _ => return Err(self.lang.method_errors["arguments"].clone()),
+            }
+        }
         if operation == "encode" && matches!(&contents, Value::Text(_)) {
             let mut supplied = args;
             for (key, value) in named {
@@ -6479,8 +6622,10 @@ impl<'a> Engine<'a> {
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
         let last = args.len().saturating_sub(1);
+        // A slice holds its bounds as they were handed over, cells and
+        // all, so that a bound that is a list stays the very list.
         for (at, value) in args.iter_mut().enumerate() {
-            if writes && at + 1 == last { continue; }
+            if writes && at + 1 == last || builtin == Builtin::MakeSlice { continue; }
             if let Value::Bond(cell) = value {
                 let held = cell.borrow().clone();
                 *value = held;
@@ -6512,7 +6657,7 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice) { for value in args.iter_mut() { *value = value.contents(); } }
         if let Some(answer) = self.special_builtin(builtin, args)? { return Ok(answer); }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
@@ -6546,6 +6691,15 @@ impl<'a> Engine<'a> {
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 self.utter(s);
                 Value::Null
+            }
+            // One bound is the stop; two or three are start, stop and
+            // step, the rest standing for nothing.
+            Builtin::MakeSlice => {
+                if args.is_empty() || args.len() > 3 { return Err(self.slice_word("ext.builtin.slice.arity")); }
+                let mut bounds = [Value::Null, Value::Null, Value::Null];
+                if args.len() == 1 { bounds[1] = args[0].clone(); }
+                else { for (i, bound) in args.iter().enumerate() { bounds[i] = bound.clone(); } }
+                Value::Slice(Rc::new(bounds))
             }
             // The reader the definition routes to does the asking, so
             // that a program which puts another stream in its place is
@@ -7140,7 +7294,18 @@ impl<'a> Engine<'a> {
                     // is the whole of why it is asked for here.
                     "fdiv" => x / y,
                     "fmod" => x % y,
-                    "ldexp" => x * 2f64.powi(y as i32),
+                    // Scaled a thousand powers at a time, so that a result
+                    // down among the smallest reals is reached rather than
+                    // lost against a power that was nought on its own.
+                    "ldexp" => {
+                        let (mut held, mut by) = (x, y as i64);
+                        if held != 0.0 && held.is_finite() {
+                            while by > 1000 && held.is_finite() { held *= 2f64.powi(1000); by -= 1000; }
+                            while by < -1000 && held != 0.0 { held *= 2f64.powi(-1000); by += 1000; }
+                            held *= 2f64.powi(by.clamp(-1100, 1100) as i32);
+                        }
+                        held
+                    }
                     // The next real after the first, towards the second.
                     "nextafter" => if x.is_nan() || y.is_nan() { f64::NAN } else if x == y { y }
                         else if x == 0.0 { f64::from_bits(1).copysign(y) }
@@ -8727,7 +8892,10 @@ impl Engine<'_> {
                 match b {
                     Builtin::SetAttr => { if args.len() != 3 { return Err(self.core_fault("core.arity", name)); } if let Some(at) = at { fields[at].1 = args[2].clone(); } else { fields.push((attr.to_string(),args[2].clone())); } Value::Null }
                     Builtin::HasAttr => Value::Flag(at.is_some() || o.class.method(attr).is_some()),
-                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else { fields[at].1.clone() } }
+                    // A member read by name reads through the cell a
+                    // module keeps it in, as a member read in the
+                    // program does.
+                    _ => if let Some(at) = at { if b == Builtin::DelAttr { fields.remove(at); Value::Null } else { match &fields[at].1 { Value::Bond(cell) => cell.borrow().clone(), held => held.clone() } } }
                         else if b == Builtin::GetAttr && args.len() == 3 { args[2].clone() }
                         else { let words = &self.lang.core_words["core.attribute"]; return Err(format!("{}{}{}{}{}", words[0], o.class.name, words[1], attr, words[2])); },
                 }

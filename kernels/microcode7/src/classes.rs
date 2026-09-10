@@ -330,7 +330,9 @@ impl<'a> Machine<'a> {
             let read = self.read_class_member(values[0].clone(),key,false);
             self.asking_presence = false;
             return match read {
-                Ok(v)=>Ok(if op==6{Value::Flag(true)}else{v}),
+                // A member read by name reads through the cell a namespace
+                // keeps it in, as the program's own member read does.
+                Ok(v)=>Ok(if op==6{Value::Flag(true)}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(Escape::Error(words)) if words.starts_with(self.detail("attribute.amiss"))=>{
                     if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(words.into())}
                 }

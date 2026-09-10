@@ -2113,13 +2113,38 @@ only. The extension labels so far, all from PHP:
   `ext.op.index.slice.detached` refuses a write through a slice along
   the way: the slice is a new array, and writing it back would change
   the array it came from without warrant. `ext.op.index.slice.ellipsis`
-  spells an ellipsis among the places in brackets. Several places
-  separated by the call separator, an ellipsis, and a compound slice
-  write are read whole but stop with `.unsupported`: their running
-  is still wanting. Index brackets may follow a piped member or method
-  call as well as a bare value, so a member's slice stays with its base. A
-  bare member with no builtin meaning raises `ext.system.scope.unready`
-  where object attributes are still owed.
+  spells an ellipsis among the places in brackets; where the language
+  has `ext.literal.ellipsis` it is read as that value, and elsewhere
+  it stops with `.unsupported`. Several places separated by the call
+  separator are one key holding them all, a tuple, where the language
+  has `ext.builtin.slice`, and a trailing separator makes a key of one;
+  elsewhere they stop with `.unsupported`, as a compound slice write
+  still does. `ext.op.index.slice.amiss` gives the words a reading
+  stops with when a fourth part follows the third. Index brackets may
+  follow a piped member or method call as well as a bare value, so a
+  member's slice stays with its base. A bare member with no builtin
+  meaning raises `ext.system.scope.unready` where object attributes are
+  still owed.
+- `ext.builtin.slice`: a builtin making a slice as a value of its own,
+  from one bound (the stop), two, or three, with `.arity` giving the
+  words for any other count. The bounds are kept as they were handed
+  over, cells and all, and `ext.builtin.slice.start`, `.stop` and
+  `.step` name the members that read them back. A slice value is a key
+  like any other: a class's index methods receive it whole, a row of
+  values reads the span it names, a counted range read through one is
+  a counted range still, and a dictionary may hold one as a key where
+  each bound can be hashed. Two slices are equal when their bounds
+  are, each pair asked as the program would ask it. A language with
+  slice values works out the value written before any key of the
+  place it is written to, and a slice among the places deleted takes
+  every place it names away. `ext.op.index.integer` names the method a
+  thing among the bounds is asked for the whole number it stands for,
+  before a row is read, written or shortened through them.
+  `ext.builtin.method.indices` names the method that brings the bounds
+  within a length without reading any row, with `ext.builtin.slice.length`
+  the words for a length below nought; `ext.builtin.method.slice_hash`
+  names the method giving the hash. A slice's own complaints are told
+  under the class each opens with.
 - `ext.op.index.text`: a switch; a piece of text is a row of places,
   each holding one letter. Such a place takes a letter as well as
   giving one: only the first letter of what is written there is put
@@ -3651,6 +3676,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
+| `ext.builtin.method.indices` | - | - | `indices` | - | - | - | - | - | - | - |
 | `ext.builtin.method.insert` | - | - | `insert` | - | - | - | - | - | - | - |
 | `ext.builtin.method.is_integer` | - | - | `is_integer` | - | - | - | - | - | - | - |
 | `ext.builtin.method.isalnum` | - | - | `isalnum` | - | - | - | - | - | - | - |
@@ -3674,6 +3700,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.rsplit` | - | - | `rsplit` | - | - | - | - | - | - | - |
 | `ext.builtin.method.rstrip` | - | - | `rstrip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
+| `ext.builtin.method.slice_hash` | - | - | `__hash__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.key` | - | - | `key` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
@@ -3768,6 +3795,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
+| `ext.builtin.slice` | - | - | `slice` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.arity` | - | - | `TypeError: slice expected 1 to 3 arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.length` | - | - | `ValueError: length should not be negative` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.start` | - | - | `start` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.step` | - | - | `step` | - | - | - | - | - | - | - |
+| `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
@@ -3995,18 +4028,20 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.append` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.index.integer` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.op.index.makes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.nothing` | - | - | - | - | `Using null as an array offset is deprecated, use an empty string instead` | - | - | - | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.scalar` | - | - | - | - | `Cannot use a scalar value as an array` | - | - | - | - | - |
 | `ext.op.index.slice` | - | - | `:` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.assign` | - | - | `can only assign an iterable` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.bounds` | - | - | `slice indices must be integers or None or have an __index__ method` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.amiss` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.assign` | - | - | `TypeError: can only assign an iterable` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.bounds` | - | - | `TypeError: slice indices must be integers or None or have an __index__ method` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.detached` | - | - | `assignment through a slice is not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.length` | - | - | `attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.length` | - | - | `ValueError: attempt to assign sequence of size` `to extended slice of size` | - | - | - | - | - | - | - |
 | `ext.op.index.slice.unsupported` | - | - | `this slice operation is not supported` | - | - | - | - | - | - | - |
-| `ext.op.index.slice.zero` | - | - | `slice step cannot be zero` | - | - | - | - | - | - | - |
+| `ext.op.index.slice.zero` | - | - | `ValueError: slice step cannot be zero` | - | - | - | - | - | - | - |
 | `ext.op.index.spread.unsupported` | - | - | `NotImplementedError: starred subscripts are not supported` | - | - | - | - | - | - | - |
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |

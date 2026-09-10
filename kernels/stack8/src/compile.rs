@@ -1541,15 +1541,22 @@ impl<'a> Compiler<'a> {
                 if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
                     let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
                     self.slice_part(&pair.close, comma.as_deref())?;
+                    let mut parts = 1;
                     let mut several = false;
                     while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
                         self.take();
                         several = true;
                         if self.at_symbol(&pair.close) { break; }
                         self.slice_part(&pair.close, comma.as_deref())?;
+                        parts += 1;
                     }
                     self.want_sign(&pair.close, "after the index")?;
-                    if several {
+                    // Several places in one bracket are one key made of
+                    // them all, where the language has slice values;
+                    // a trailing comma makes a key of one.
+                    if several && self.lang.slice_values() {
+                        self.act(Action::MakeTuple, parts);
+                    } else if several {
                         self.awkward_place = true;
                         self.piece().instrs.truncate(at);
                         self.constant(Value::Small(0));
@@ -3536,8 +3543,9 @@ impl<'a> Compiler<'a> {
             self.class_cannot_run();
             self.discard();
         }
-        // The names annotated in the body, as the class carries them.
-        if let Some(word) = lang.class_annotations.first() {
+        // The names annotated in the body, as the class carries them;
+        // a class that annotated nothing carries nothing.
+        if let (Some(word), false) = (lang.class_annotations.first(), annotated.is_empty()) {
             let slot = self.gensym("annotations");
             self.constant(Value::Map(Rc::new(annotated)));
             self.write(&slot);
@@ -4919,7 +4927,10 @@ impl<'a> Compiler<'a> {
         if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
             self.act(Action::SliceUnavailable, 0);
         }
-        if compound.is_none() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
+        // A language with slice values works the value out before any
+        // key, as it does for a slice.
+        let keyed_place = matches!(target.last(), Some(Instr::Act(Action::At, 2)) | Some(Instr::Act(Action::AtEnd, 1)));
+        if compound.is_none() && (keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) || (keyed_place && !keys.is_empty() && self.lang.slice_values())) {
             let value = self.gensym("slice_value");
             self.value_written(None)?;
             self.write(&value);
@@ -6882,7 +6893,9 @@ impl<'a> Compiler<'a> {
         }
         let marks = self.lang.slice_marks.clone();
         let ellipsis = self.lang.slice_ellipsis.clone();
-        if ellipsis.iter().any(|word| self.at_symbol(word)) {
+        // The mark of an elided place is read as any value where the
+        // language has a value for it, and refused where it has none.
+        if self.lang.ellipsis_words.is_empty() && ellipsis.iter().any(|word| self.at_symbol(word)) {
             self.take();
             self.act(Action::SliceUnavailable, 0);
             return Ok(());
@@ -6909,6 +6922,12 @@ impl<'a> Compiler<'a> {
             }
         } else {
             self.constant(Value::Null);
+        }
+        // A slice has three parts and no more; a language that names
+        // the complaint for a fourth stops the reading with it.
+        if marks.iter().any(|m| self.at_symbol(m)) {
+            let amiss = self.lang.slice_parts.get("ext.op.index.slice.amiss").cloned().unwrap_or_default();
+            if !amiss.is_empty() { return Err(amiss); }
         }
         self.act(Action::Slice, 3);
         Ok(())
@@ -7114,7 +7133,7 @@ impl<'a> Compiler<'a> {
                     self.slice_part(&index.close, separator.as_deref())?;
                     many += 1;
                 }
-                self.act(Action::SliceUnavailable, many);
+                self.act(if self.lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, many);
             }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);

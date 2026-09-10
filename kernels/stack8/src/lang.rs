@@ -845,6 +845,10 @@ pub struct Lang {
     pub class_called: Option<String>,
     /// Whether two texts are ordered letter by letter, by code point.
     pub text_ordered: bool,
+    /// The words of the slice value: its three bounds' names, the complaints
+    /// for the wrong count of bounds, a negative length and a bound written
+    /// amiss, and the method a bound is asked for its whole number by.
+    pub slice_parts: HashMap<String, String>,
     pub class_walked: Option<String>,
     pub writer: Option<String>,
     /// The method a class answers a call it does not have with, given
@@ -1052,7 +1056,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1264,6 +1268,23 @@ fn name_like(s: &str, unicode: bool, prefix: Option<char>) -> bool {
 }
 
 impl Lang {
+    /// Whether the definition has slice values of its own: a builtin
+    /// that makes one, and so keys of several places and a slice's
+    /// complaints told under the classes the definition gave them.
+    pub fn slice_values(&self) -> bool {
+        self.slice_parts.get("ext.builtin.slice").map_or(false, |word| !word.is_empty())
+    }
+
+    /// Whether these words are a slice's own complaint, already told
+    /// under its class where the definition has slice values.
+    pub fn slice_named(&self, said: &str) -> bool {
+        if !self.slice_values() { return false; }
+        [&self.slice_zero, &self.slice_bounds, &self.slice_assign].iter().any(|words| words.as_deref() == Some(said))
+            || ["ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"].iter()
+                .any(|label| self.slice_parts.get(*label).map_or(false, |words| !words.is_empty() && words == said))
+            || self.slice_length.first().map_or(false, |opening| !opening.is_empty() && said.starts_with(opening.as_str()))
+    }
+
     pub fn parse(text: &str) -> Result<Lang, String> {
         let map = top_object(text)?;
         let shapes = number_shapes();
@@ -1500,7 +1521,7 @@ impl Lang {
         let mut natives = HashMap::new();
         for (tag, native) in [
             ("ext.builtin.complex", Builtin::Complex),
-            ("ext.builtin.method.conjugate", Builtin::ValueMethod),
+            ("ext.builtin.method.conjugate", Builtin::ValueMethod), ("ext.builtin.method.indices", Builtin::ValueMethod), ("ext.builtin.method.slice_hash", Builtin::ValueMethod),
             ("ext.builtin.isinstance", Builtin::InstanceOf),
             ("ext.builtin.tuple", Builtin::Tuple),
             ("ext.builtin.set", Builtin::Set),
@@ -1674,7 +1695,7 @@ impl Lang {
             ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase), ("ext.builtin.array.front", Builtin::Lead),
             ("ext.builtin.isset", Builtin::Held), ("ext.builtin.empty", Builtin::Hollow),
             ("ext.builtin.exit", Builtin::Leave),
-            ("ext.builtin.input", Builtin::Ask), ("ext.builtin.stream.write", Builtin::StreamPut), ("ext.builtin.stream.read", Builtin::StreamTake),
+            ("ext.builtin.input", Builtin::Ask), ("ext.builtin.slice", Builtin::MakeSlice), ("ext.builtin.stream.write", Builtin::StreamPut), ("ext.builtin.stream.read", Builtin::StreamTake),
             ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
             ("ext.builtin.args.at", Builtin::GivenAt), ("ext.builtin.time_limit", Builtin::TimeLimit),
             ("ext.builtin.eval", Builtin::Eval), ("ext.builtin.include", Builtin::Include), ("ext.builtin.include.once", Builtin::IncludeOnce),
@@ -1968,7 +1989,7 @@ impl Lang {
             dyadic: binary,
             monadic: unary,
             method_keywords: [("ext.builtin.method.sort.key", "key"), ("ext.builtin.method.sort.reverse", "reverse"), ("ext.builtin.method.split.sep", "sep"), ("ext.builtin.method.split.maxsplit", "maxsplit")].into_iter().map(|(label, purpose)| Ok((purpose, r.strings(label)?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(purpose, words)| words.into_iter().map(move |word| (word, purpose.to_string()))).collect(),
-            value_methods: ["conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
+            value_methods: ["indices", "slice_hash", "conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
             method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "attribute", "key", "missing", "mixed", "fill"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             pipe_words: pipes,
             range_marks: ranges,
@@ -2314,6 +2335,7 @@ impl Lang {
             class_annotations: r.strings("ext.stmt.class.annotations")?,
             class_called: r.head("ext.stmt.class.called")?,
             text_ordered: r.flag("ext.op.order.text")?,
+            slice_parts: ["ext.builtin.slice", "ext.builtin.slice.start", "ext.builtin.slice.stop", "ext.builtin.slice.step", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.integer", "ext.op.index.slice.amiss"].into_iter().map(|k| Ok((k.to_string(), r.head(k)?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             class_walked: r.head("ext.stmt.class.walked")?,
             writer: r.head("ext.stmt.class.writer")?,
             caller: r.head("ext.stmt.class.caller")?,

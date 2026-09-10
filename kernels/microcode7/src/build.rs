@@ -1879,14 +1879,24 @@ impl<'a> Builder<'a> {
                 if self.table.has_any("ext.stmt.class.special") && self.table.has_any("ext.op.index.slice") {
                     let end = self.table.single("op.index.close").unwrap().to_owned();
                     let separator = self.table.single("syntax.call.separator").map(str::to_owned);
-                    let key = self.bracket_part(&end, separator.as_deref())?;
+                    let mut keys = vec![self.bracket_part(&end, separator.as_deref())?];
+                    let mut several = false;
                     while separator.as_ref().map_or(false, |word| self.sign(word)) {
-                        self.unsupported_place = true;
+                        several = true;
                         self.advance();
                         if self.sign(&end) { break; }
-                        self.bracket_part(&end, separator.as_deref())?;
+                        keys.push(self.bracket_part(&end, separator.as_deref())?);
                     }
                     self.need_sign(&end, "after the index")?;
+                    // Places written with commas between are one key
+                    // holding them all, where the table has slice
+                    // values; elsewhere no such place can be written to.
+                    let key = if several && self.table.has_any("ext.builtin.slice") {
+                        prim_call(Prim::MakeTuple, keys)
+                    } else {
+                        if several { self.unsupported_place = true; }
+                        keys.swap_remove(0)
+                    };
                     place = prim_call(Prim::At, vec![place, key]);
                     continue;
                 }
@@ -2457,8 +2467,9 @@ impl<'a> Builder<'a> {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
         }
-        // What the body annotated, carried by the class under the table's word.
-        if let Some(word) = table.strings("ext.stmt.class.annotations").first() {
+        // What the body annotated, carried by the class under the table's
+        // word; a body that annotated nothing leaves the class without it.
+        if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
             attributes.push(word.clone());
             values.push(constant(Value::Dict(Rc::new(annotated_names))));
         }
@@ -4752,7 +4763,8 @@ impl<'a> Builder<'a> {
             (None, None, None) => if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? },
         };
         // The value comes before the bounds of a slice assignment.
-        let before_bounds = if plain && slice_target(&expr) {
+        let keyed_write = matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) && self.table.has_any("ext.builtin.slice");
+        let before_bounds = if plain && (slice_target(&expr) || keyed_write) {
             self.gensyms += 1;
             let saved = format!("#slice_value{}", self.gensyms);
             let first = self.write(&saved, value);
@@ -6483,7 +6495,9 @@ impl<'a> Builder<'a> {
             self.expr(0)?;
             return Ok(self.scope_unrun("ext.op.index.spread.unsupported"));
         }
-        if self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
+        // The elision mark is read as the value the table gives it,
+        // where it gives one, and refused where it gives none.
+        if !self.table.has_any("ext.literal.ellipsis") && self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
             self.advance();
             return Ok(prim_call(Prim::SliceRefused, Vec::new()));
         }
@@ -6497,6 +6511,13 @@ impl<'a> Builder<'a> {
             if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) { break; }
             spanning = true;
             self.advance();
+        }
+        // A fourth part is no slice at all, and the table may say how
+        // the reading stops over it.
+        if spanning && parts.len() == 3 && separators.iter().any(|word| self.sign(word)) {
+            if let Some(amiss) = self.table.single("ext.op.index.slice.amiss").filter(|word| !word.is_empty()) {
+                return Err(amiss.to_owned());
+            }
         }
         Ok(if spanning {
             parts.resize_with(3, || constant(Value::Nil));
@@ -6530,7 +6551,11 @@ impl<'a> Builder<'a> {
                     keys.push(self.bracket_part(close, separator)?);
                 }
             }
-            let key = if several { prim_call(Prim::SliceRefused, keys) } else { keys.pop().expect("one key") };
+            let key = match (several, self.table.has_any("ext.builtin.slice")) {
+                (true, true) => prim_call(Prim::MakeTuple, keys),
+                (true, false) => prim_call(Prim::SliceRefused, keys),
+                _ => keys.pop().expect("one key"),
+            };
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
             // What a look comes to may itself be called.
