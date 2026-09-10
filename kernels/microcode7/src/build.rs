@@ -5629,7 +5629,7 @@ impl<'a> Builder<'a> {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
-                let test = prim_call(Prim::HasMember, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
+                let test = prim_call(Prim::ResolvesMember, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
                 let begin = self.pos;
                 let yes = self.limb(Traps::Naught, |r| {
                     let member = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]);

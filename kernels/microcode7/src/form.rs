@@ -43,11 +43,17 @@ pub enum Prim {
     IsInstance,
     WriteMember,
     ReadMember,
+    IsDictionary,
+    LinesOfText,
+    FaultHeld,
+    HostFacts,
+    FileSort,
     ProgramNames,
     BringModule,
     SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
+    ResolvesMember,
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.

@@ -127,6 +127,7 @@ pub struct Machine<'a> {
     /// was raised on.
     row: u32,
     holding_fault: Vec<Value>,
+    fault_roots: HashMap<String, Value>,
     raised_on: u32,
     written_in: Rc<str>,
     /// Where the language keeps its own pages, as the run was
@@ -246,12 +247,24 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
 impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let mut fault_roots = HashMap::new();
+        let words = table.strings("ext.system.fault.bases");
+        let mut at = 0;
+        while at + 1 < words.len() {
+            let under = if let Some(Value::Blueprint(parent)) = fault_roots.get(&words[at + 1]) { Some(Rc::clone(parent)) } else { None };
+            let name = words[at].clone();
+            let shape = Blueprint {
+                shared: RefCell::new(vec![("__name__".to_string(), Value::text(&name))]),
+                constants: vec![], methods: vec![], reaches: vec![], fields: vec![], answers: vec![],
+                under, name: name.clone(),
+            };
+            fault_roots.insert(name, Value::Blueprint(Rc::new(shape)));
+            at += 2;
+        }
         let outermost = Env::make(idents.len(), None);
-        if let Some(name) = table.single("ext.system.fault.class.key") {
-            if let Some(at) = idents.iter().position(|word| word == name) {
-                let class = Blueprint { name: name.to_string(), under: None, answers: Vec::new(),
-                    fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
-                outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(class));
+        for (position, word) in idents.iter().enumerate() {
+            if let Some(value) = fault_roots.get(word.trim_end_matches(crate::form::OF_A_CLASS)) {
+                outermost.cells.borrow_mut()[position] = value.clone();
             }
         }
         Machine {
@@ -260,6 +273,7 @@ impl<'a> Machine<'a> {
             in_output_method: false,
             table,
             outermost,
+            fault_roots,
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
@@ -717,6 +731,7 @@ impl<'a> Machine<'a> {
     /// the names are written, a name nothing stands under is asked for
     /// again with its letters written small.
     fn class_bound(&self, name: &str) -> Option<Value> {
+        if self.fault_roots.contains_key(name) { return self.fault_roots.get(name).cloned(); }
         let filed = format!("{}{}", name, crate::form::OF_A_CLASS);
         if let found @ Some(_) = self.lookup(&filed) {
             return found;
@@ -1130,6 +1145,9 @@ impl<'a> Machine<'a> {
     /// its own faults are of which kind, being the one that words them.
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
+        for name in self.fault_roots.keys() {
+            if told.starts_with(&format!("{name}: ")) { return Some(name.clone()); }
+        }
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
             _ if told.starts_with("Undefined array key ") => Some("ext.system.fault.class.key"),
@@ -1190,7 +1208,7 @@ impl<'a> Machine<'a> {
         // A fault of the kernel's own carries the words said and the
         // place in the program they were said of.
         let carried = [
-            ("message", Value::text(told)),
+            ("message", Value::text(match told { "Division by zero" => self.table.single("ext.system.fault.division").unwrap_or(told), _ => told })),
             ("file", Value::text(&self.written_in)),
             ("line", Value::Small(self.row as i64)),
         ];
@@ -2379,7 +2397,9 @@ impl<'a> Machine<'a> {
                     let subject = values.remove(0);
                     let called = values.remove(0).bare();
                     if self.table.flag("ext.op.member.pipes") {
-                        if let Some(target) = self.attribute(&subject, &called) {
+                        let target = self.attribute(&subject, &called);
+                        let target = match target { Some(held) => Some(held), None => self.ask_namespace(&subject, &called)? };
+                        if let Some(target) = target {
                             let expressions: Vec<Form> = values.into_iter().map(Form::Const).collect();
                             let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), expressions);
                             return self.value_of(&call, frame);
@@ -3833,6 +3853,41 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::FaultHeld => {
+                if v.len() > 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
+                let pair = if let Some(value) = v.first().or_else(|| self.holding_fault.last()) {
+                    if let Value::Thing(thing) = value {
+                        let holds = thing.holds.borrow();
+                        let said = holds.iter().find_map(|(key, held)| (key == "message").then(|| held.clone())).unwrap_or(Value::Nil);
+                        vec![Value::text(&thing.of.name), said]
+                    } else { vec![Value::Nil, value.clone()] }
+                } else { vec![Value::Nil; 2] };
+                Value::Vector(Rc::new(pair))
+            }
+            Prim::HostFacts => {
+                n(0)?;
+                let mut facts = vec![];
+                facts.push(match std::env::current_dir() {
+                    Err(_) => Value::Nil,
+                    Ok(directory) => Value::text(&directory.to_string_lossy()),
+                });
+                facts.extend([Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH)]);
+                let mut variables = Vec::new();
+                for (key, value) in std::env::vars_os() {
+                    variables.push((Value::text(&key.to_string_lossy()), Value::text(&value.to_string_lossy())));
+                }
+                facts.push(Value::Dict(Rc::new(variables)));
+                Value::Vector(Rc::new(facts))
+            }
+            Prim::FileSort => {
+                n(1)?;
+                let metadata = std::fs::metadata(v[0].render(w));
+                Value::Small(match metadata {
+                    Ok(details) if details.is_dir() => 2,
+                    Ok(details) if details.is_file() => 1,
+                    _ => 0,
+                })
+            }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
             Prim::MakeHeir => {
                 n(3)?;
@@ -3888,7 +3943,9 @@ impl<'a> Machine<'a> {
             Prim::ReadMember => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                 let word = v[1].bare();
-                self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()).ok_or_else(|| {
+                let found = self.attribute(&v[0], &word);
+                let found = if found.is_none() { self.ask_namespace(&v[0], &word)? } else { found };
+                found.or_else(|| v.get(2).cloned()).ok_or_else(|| {
                     let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
                     format!("{opening}{word}{ending}")
                 })?
@@ -3910,7 +3967,29 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
-            Prim::HasMember => {
+            Prim::LinesOfText => {
+                if v.len() != 1 && v.len() != 2 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into()); }
+                let text = match &v[0] { Value::Text(chars) => chars, _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().into()) };
+                let with_endings = v.get(1).map_or(false, |flag| flag.is_true());
+                let chars: Vec<char> = text.chars().collect();
+                let mut result = Vec::new();
+                let (mut begin, mut cursor) = (0, 0);
+                while cursor < chars.len() {
+                    let stops = [10, 13, 11, 12, 28, 29, 30, 133, 8232, 8233].contains(&u32::from(chars[cursor]));
+                    if stops {
+                        let end = cursor;
+                        cursor += 1;
+                        if chars[end] == '\r' && chars.get(cursor) == Some(&'\n') { cursor += 1; }
+                        let bound = if with_endings { cursor } else { end };
+                        result.push(Value::text(&chars[begin..bound].iter().collect::<String>()));
+                        begin = cursor;
+                    } else { cursor += 1; }
+                }
+                if begin != chars.len() { result.push(Value::text(&chars[begin..].iter().collect::<String>())); }
+                Value::Vector(Rc::new(result))
+            }
+            Prim::IsDictionary => { n(1)?; Value::Flag(if let Value::Dict(_) = &v[0] { true } else { false }) }
+            Prim::HasMember | Prim::ResolvesMember => {
                 n(2)?;
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
@@ -3918,13 +3997,14 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag(own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(own || (matches!(op, Prim::ResolvesMember) && self.namespace_answers(&v[0])) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
+                    if let Some(answer) = self.ask_namespace(&v[0], &called)? { return Ok(answer); }
                 }
                 match &v[0] {
                     Value::Thing(thing) => {
@@ -5340,6 +5420,16 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        match (self.table.flag("ext.op.index.from_end"), target, at) {
+            (true, Value::Vector(values), Value::Small(n)) if *n < 0 && n.unsigned_abs() <= values.len() as u64 => {
+                return self.element(target, &Value::Small(values.len() as i64 + n), how);
+            }
+            (true, Value::Text(chars), Value::Small(n)) if *n < 0 => {
+                let count = chars.chars().count() as i64;
+                if count + n >= 0 { return self.element(target, &Value::Small(count + n), how); }
+            }
+            _ => (),
+        }
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
@@ -6231,7 +6321,7 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => Value::Unset,
+                    true => Value::text(path), false => self.fault_roots.get(name.trim_end_matches(crate::form::OF_A_CLASS)).cloned().unwrap_or(Value::Unset),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));
@@ -6267,6 +6357,31 @@ impl Machine<'_> {
         Ok(value)
     }
 
+    fn namespace_answers(&self, value: &Value) -> bool {
+        let Value::Thing(space) = value else { return false };
+        self.table.single("ext.system.module.getattr").and_then(|name| self.attribute(value, name)).is_some()
+            && self.imported.values().any(|other| matches!(other, Value::Thing(held) if Rc::ptr_eq(space, held)))
+    }
+
+    fn ask_namespace(&mut self, value: &Value, missing: &str) -> Result<Option<Value>, String> {
+        let Some(named) = self.table.single("ext.system.module.getattr") else { return Ok(None) };
+        let Value::Thing(space) = value else { return Ok(None) };
+        let belongs = self.imported.values().any(|stored| match stored {
+            Value::Thing(other) => Rc::ptr_eq(space, other), _ => false,
+        });
+        if !belongs { return Ok(None); }
+        let Some(answer) = self.attribute(value, named) else { return Ok(None) };
+        let (routine, scope) = match answer {
+            Value::Bound(body, scope) => (body, scope),
+            _ => return Ok(None),
+        };
+        match self.invoke(routine, scope, vec![Value::text(missing)]) {
+            Ok(value) => Ok(Some(value)),
+            Err(Escape::Error(words)) => Err(words),
+            Err(escape) => { self.got_away = Some(escape); Err("module member did not finish".into()) }
+        }
+    }
+
     fn namespace_item(&mut self, value: &Value, path: &str, wanted: &str) -> Result<Value, String> {
         if let Value::Thing(space) = value {
             for (name, cell) in space.holds.borrow().iter() {
@@ -6277,6 +6392,7 @@ impl Machine<'_> {
         }
         let full = format!("{path}.{wanted}");
         if self.library_sources.contains_key(&full) { return self.load_namespace(&full); }
+        if let Some(answer) = self.ask_namespace(value, wanted)? { return Ok(answer); }
         let (head, tail) = self.table.around("ext.stmt.import.member.missing").unwrap_or(("", ""));
         Err(format!("{head}{wanted}{tail}"))
     }

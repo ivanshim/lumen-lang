@@ -1636,6 +1636,34 @@ only. The extension labels so far, all from PHP:
   answer or raised value, and the complaint's text. A library can thus
   count failures and errors itself. An ending of the run or exhaustion
   of its allotted time or room is carried onward, never counted as a test.
+- `ext.op.index.from_end`: a switch; a negative index reading a list or
+  text counts back from its end. Map keys retain their signs. This switch
+  does not yet extend writing or removal through negative indices.
+- `ext.builtin.text.lines`: a builtin dividing text at line endings,
+  taking a carriage return followed by a line feed as one ending. A true
+  second value keeps the endings. An ending at the end adds no empty line.
+- `ext.builtin.map.test`: a builtin asking whether its value holds keys
+  with their values, rather than a list of values alone.
+- `ext.system.module.getattr`: the routine a module may declare to answer
+  an absent member. Direct reading, calls, and from-imports consult it.
+- `ext.builtin.member.has`: a builtin asking whether a named member is
+  present, without invoking a module's absent-member routine.
+- `ext.system.fault.division`: the message a division by nought carries
+  when made into a fault value.
+- `ext.system.fault.bases`: pairs of class names, each followed by its
+  parent, a dash in place of the parent beginning a root. They provide the fault classes
+  before source runs. A complaint beginning with one of these names and
+  a colon belongs to that class, so a guarded import may take it.
+- `ext.builtin.fault.current`: a builtin returning the innermost fault
+  being handled as its class name and message, or two empty values when
+  no clause is handling a fault. Given one value, it describes that
+  value instead of the fault being handled.
+- `ext.builtin.host.info`: a builtin returning the working directory,
+  operating system, machine architecture and environment, in that order.
+  A directory which cannot be read is an empty value.
+- `ext.builtin.file.kind`: a builtin returning one for an ordinary file,
+  two for a directory, and nought for anything else or an absent path.
+
 - `ext.builtin.module.load`: a builtin fetching the module named by its
   text argument, through the same source store and cache as an import.
 - `ext.builtin.copy`: a builtin copying a value; its second argument says
@@ -2150,10 +2178,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
-| `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
+| `ext.builtin.fault.current` | - | - | `__current_fault` | - | - | - | - | - | - | - |
+| `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
+| `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
-| `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
+| `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.host.info` | - | - | `__host_info` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
@@ -2161,10 +2192,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.map.test` | - | - | `__is_mapping` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.member.has` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
@@ -2203,6 +2236,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
+| `ext.builtin.text.lines` | - | - | `splitlines` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
@@ -2296,6 +2330,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.append` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.index.from_end` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.index.makes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.nothing` | - | - | - | - | `Using null as an array offset is deprecated, use an empty string instead` | - | - | - | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2482,14 +2517,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
+| `ext.system.fault.bases` | - | - | `BaseException` `-` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` `KeyError` `Exception` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
-| `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
+| `ext.system.fault.class.division` | - | - | `ZeroDivisionError` | - | `DivisionByZeroError` | - | - | - | - | - |
 | `ext.system.fault.class.key` | - | - | `KeyError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
+| `ext.system.fault.division` | - | - | `division by zero` | - | - | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | - | - | `Bit shift by negative number` | - | - | - | - | - |
@@ -2500,6 +2537,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.module.cache` | - | - | `sys` `modules` | - | - | - | - | - | - | - |
+| `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |

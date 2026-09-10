@@ -347,11 +347,29 @@
   "ext.builtin.copy": [
     "__copy_value"
   ],
+  "ext.builtin.fault.current": [
+    "__current_fault"
+  ],
+  "ext.builtin.file.exists": [
+    "__file_exists"
+  ],
+  "ext.builtin.file.kind": [
+    "__file_kind"
+  ],
+  "ext.builtin.file.remove": [
+    "__remove_file"
+  ],
+  "ext.builtin.host.info": [
+    "__host_info"
+  ],
   "ext.builtin.instance": [
     "isinstance"
   ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.map.test": [
+    "__is_mapping"
   ],
   "ext.builtin.math": [
     "__math"
@@ -363,6 +381,9 @@
   ],
   "ext.builtin.member.get": [
     "getattr"
+  ],
+  "ext.builtin.member.has": [
+    "hasattr"
   ],
   "ext.builtin.member.set": [
     "setattr"
@@ -438,6 +459,9 @@
   ],
   "ext.builtin.sum.non_number": [
     "TypeError: sum needs numbers"
+  ],
+  "ext.builtin.text.lines": [
+    "splitlines"
   ],
   "ext.builtin.to_int.base": [
     "base"
@@ -614,6 +638,7 @@
   "ext.op.in.unsupported": [
     "Membership requires an array, string or map"
   ],
+  "ext.op.index.from_end": true,
   "ext.op.index.slice": [
     ":"
   ],
@@ -923,12 +948,47 @@
   "ext.system.args.list": [
     "__program_argv"
   ],
+  "ext.system.fault.bases": [
+    "BaseException",
+    "-",
+    "Exception",
+    "BaseException",
+    "ArithmeticError",
+    "Exception",
+    "ZeroDivisionError",
+    "ArithmeticError",
+    "ImportError",
+    "Exception",
+    "ModuleNotFoundError",
+    "ImportError",
+    "ValueError",
+    "Exception",
+    "TypeError",
+    "Exception",
+    "AttributeError",
+    "Exception",
+    "NotImplementedError",
+    "Exception",
+    "OSError",
+    "Exception",
+    "KeyError",
+    "Exception"
+  ],
+  "ext.system.fault.class.division": [
+    "ZeroDivisionError"
+  ],
   "ext.system.fault.class.key": [
     "KeyError"
+  ],
+  "ext.system.fault.division": [
+    "division by zero"
   ],
   "ext.system.module.cache": [
     "sys",
     "modules"
+  ],
+  "ext.system.module.getattr": [
+    "__getattr__"
   ],
   "ext.system.module.name": [
     "__name__"
