@@ -1475,7 +1475,7 @@ impl Lang {
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
-            ("builtin.precision", Builtin::Places), ("ext.builtin.iter", Builtin::Iter), ("ext.builtin.next", Builtin::Next), ("ext.builtin.repr", Builtin::Repr), ("builtin.to_string", Builtin::ToText),
+            ("builtin.precision", Builtin::Places), ("builtin.to_string", Builtin::ToText),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),

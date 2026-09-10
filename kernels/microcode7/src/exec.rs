@@ -550,7 +550,7 @@ impl<'a> Machine<'a> {
             return self.walking(op, name, &items);
         }
         if v.iter().any(|item| matches!(item, Value::Mutable(..) | Value::Window(..))) {
-            let settled: Vec<Value> = v.iter().map(Value::settled).collect();
+            let settled: Vec<Value> = v.iter().map(|worth| if matches!(worth, Value::Thing(_)) { worth.clone() } else { worth.settled() }).collect();
             return self.walking(op, name, &settled);
         }
         let n = |want: usize| match v.len() == want {

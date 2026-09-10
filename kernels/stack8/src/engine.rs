@@ -3910,7 +3910,7 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
-        if a.builtin_value().is_some() || b.builtin_value().is_some() { return self.dyadic(op, &a.contents(), &b.contents()); }
+        if !matches!(op, Action::Same | Action::Unsame) && (a.builtin_value().is_some() || b.builtin_value().is_some()) { return self.dyadic(op, &a.contents(), &b.contents()); }
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
