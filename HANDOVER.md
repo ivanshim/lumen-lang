@@ -1,95 +1,115 @@
 # Handover — read this and begin
 
-You are coordinating work on `lumen-lang`. This document is your whole
-briefing: read it and start. Nothing else is coming.
+You are picking up `lumen-lang` after the session of 2026-09-10. This
+document is the whole briefing. It says where the work stands, what is
+waiting on branches, how it is verified, and what went wrong so that it is
+not done twice.
 
-**Branch:** `claude/codebase-familiarization-t6vjhi` **Head:** `fd90d29`
-
----
-
-## 1. Your role: you orchestrate, you do not code
-
-**Every change to every tracked file is made by Codex.** You decide what to do,
-split it so the pieces do not collide, brief each piece precisely, verify what
-comes back, and commit and push.
-
-Yours: reading files, running builds and tests, git, judgement, briefs.
-Not yours: editing a tracked file. Not a one-line fix. Not a typo. Not a `sed`.
-Writing a commit message is yours; changing a line of code is not.
-
-The moment you catch yourself about to make a small edit "since it is quicker"
-— that is a Codex call. This rule has no exceptions, and it is the one that
-decays first if you let it.
-
-### Calling Codex
-
-The model is **GPT-6 Astra**. Codex is already installed and connected on this
-machine, so you are not setting it up from nothing.
-
-Before any real work, prove the path end to end:
-
-1. Run `codex --help` (and `codex exec --help` if present) and read it.
-2. Confirm the switch that selects the model, and set it to **GPT-6 Astra**.
-3. Confirm how to run it non-interactively against this working directory, and
-   how its output and its edits come back to you.
-4. Send it something trivial — a comment reworded in a file you then revert —
-   and watch the edit actually land.
-5. **Write the exact working invocation into the block below and commit it**, so
-   it never has to be rediscovered.
-
-```
-# The Codex invocation actually used:
-#
-#   codex exec -C /Users/ivanshim/repos/lumen-lang -m gpt-6-astra \
-#       -s workspace-write --color never -o <last-message-file> - < <brief-file>
-#
-#   The brief is read from stdin (`-`), redirected from a file. Stdin must be
-#   a file or /dev/null: left as an open pipe, codex waits for it to close
-#   and never begins. `-m gpt-6-astra` selects the model; the transcript's
-#   first lines print `model: gpt-6-astra`, which is the check that it took.
-#   Edits land directly in the working tree; read them with `git diff`.
-#   The run asks no approvals, so the brief must say everything.
-#
-# Verified working on: 2026-09-10, codex-cli 0.153.4, macOS 26.6.2 arm64
-```
-
-Do not begin implementation until step 4 has succeeded. A coordinator that
-cannot reliably deliver an edit has nothing to coordinate.
+**Branch:** `main` **Head:** `10eb5ef` (merge of batch #486)
 
 ---
 
-## 2. Where things stand
+## 1. Where things stand
 
-PHP is finished against its reference suite:
+The Python reader is nearly done and the run-time work has begun.
 
-```
-| all | 422 | pass 399, differs 0, error 0, skipped 23 |
-```
+- **PHP** is unchanged: `pass 399, differs 0, error 0, skipped 23` on both
+  full kernels, and every change below was refused unless that row held.
+- **Python, the reader (stage 1).** Of the 50 CPython files in
+  `tests/python/`, 46 read end to end on stack8 and 48 on microcode7 at
+  `main`. The four that still stop in the reader — `test_decorators.py`,
+  `test_set.py`, `test_with.py`, `test_str.py` — are handled by branches not
+  yet in `main` (`reader-tail`, `builtin-subclassing`, below).
+- **Python, running (stage 2).** The reference row at `main` is
+  `pass 0, differs 9, error 41` on both kernels: nine files now run to the
+  end and print something; the rest stop at run time. Their first stops
+  are concentrated: `TestCase` and the rest of `unittest` (the `modules`
+  branch landed a minimal one; `unittest-2` on a branch has the full
+  surface), `sys.maxsize`/`float_info`/`MAX_Py_ssize_t`/`sentinel`/
+  `CommonTest` from CPython's own test package (`test-support-modules`),
+  `complex`, `Fraction`, `globals`/`exec`.
+- **Stage 3** (what "pass" means for a `unittest` module, and whether the
+  harness should learn to run one) is still the owner's decision and has
+  not been taken.
 
-399 of 399 runnable tests pass on both full kernels — zero differences, zero
-errors. The 23 passed over are honest: ten want a 32-bit machine, eight want
-Windows, two want a `php-cgi` binary, three want a locale this machine lacks.
-The reference declines every one of them here in the same words. **None can be
-won back by writing code**; do not spend time on them.
+Landed in `main` during the session, each verified with the sequence in
+§3 before merging: decorators, annotations, imports, parameters, slices,
+exceptions, strings, blocks, tuples, class, expressions, lexical,
+comprehensions, match, numbers, defaults, syntax-modern, builtin-kwargs,
+builtins-core, decorators-class, annotated-members, closures,
+generators-run, str-methods, str-methods-2, sets, dunder-methods,
+numeric-semantics, exceptions-classes, format-spec, modules, bytes,
+class-advanced, and the file-driven pieces for scope, syntax, strings,
+exceptions, builtin, int, grammar, iter, generators, dict, list, str,
+misc, float, decorators, class. Pull requests #408–#486.
 
-That suite went from 363 to 399 in one session, with no test ever regressing.
+## 2. What is waiting on branches
 
----
+Twenty-five pull requests are open, every one green on its own branch
+(build, 3006 examples, scratch programs, PHP unchanged) and every one in
+conflict with `main`, because each was cut from an older `main` and they
+touch the same rosters and, worse, the same kernel dispatch. They are
+listed oldest first with the base they were cut from. `79eefce` is the
+head of the `modules` branch, now in `main`; branches cut from it apply
+more cleanly than the rest.
 
-## 3. Read these before touching anything
+| PR | branch | base | carries |
+|---|---|---|---|
+| #455 | `py-sequence-ops` | e0e816d | `+`, `*`, lexicographic comparison on sequences, tuple immutability errors. Deferred twice: it treats sets as immutable vectors where `main`'s sets are mutable hash storage. |
+| #457 | `py-range-object` | 94155bd | `range` as a lazy value. Conflicts with `builtins-core` on `main`: both implement `min`/`max`/`repr`/`reversed`/`tuple`/`set` as different enum variants in both kernels (`Greatest/Least/Represent/Backward` vs `Maximum/Minimum/Repr/Reversed`, `Highest/Lowest/…` vs `Prim::Greatest/Least/…`). Resolve by keeping `main`'s variants and routing range's cases through them. |
+| #459 | `py-dict-semantics` | 94155bd | insertion order, views, `\|`, `fromkeys`, `popitem`, mutation-during-iteration. |
+| #460 | `py-control-flow-edges` | 94155bd | `finally`/`return`/`break` interplay, `__exit__` arguments, exception chaining, recursion limit. |
+| #461 | `py-reader-tail` | 8d6ad85 | the last reader stops (fstring, print, grammar, set, listcomps, funcattrs, opcodes, with, decorators). |
+| #462 | `py-lazy-iterators` | 94155bd | iterator protocol; lazy `map`/`filter`/`zip`/`enumerate`. |
+| #463 | `py-test-support-modules` | 79eefce | `test.support`, `test.seq_tests`, `test.list_tests`, `sys` extras, `fractions`. |
+| #464 | `py-stdlib-2` | 79eefce | `io.StringIO`, `contextlib`, `abc`, `enum`, `dataclasses`, `typing`, a small `re`, `textwrap`, `string`, `time`. |
+| #466 | `py-builtins-2` | 8d6ad85 | `globals`, `locals`, `exec`, `eval`, `compile`, `dir`, `__name__`. |
+| #468 | `py-modules-3` | 79eefce | `json`, `os` (minimal), `traceback`, `platform`, `locale`, `unicodedata`, guarded C-module stubs. |
+| #469 | `py-stdout-redirect` | 79eefce | `print` follows `sys.stdout`; `captured_stdout`. |
+| #470 | `py-dunder-2` | 2026e6b | `__index__`, unary and in-place operators, `@`, `__format__`, `__missing__`. |
+| #471 | `py-exceptions-2` | d7871f3 | `ExceptionGroup`/`except*`, notes, `sys.exc_info`, `SystemExit`. |
+| #472 | `py-unittest-2` | 79eefce | the full `assert*` surface, runner output as CPython's, loader, skips, `subTest`, cleanups. |
+| #473 | `py-perf` | d7871f3 | speed trials under `scratch/perf/`; the kernels were already fast. |
+| #474 | `py-builtin-subclassing` | 25f6848 | `class X(str)`, `(int)`, `(list)`, `(dict)`, `(tuple)`, `(float)`, `(set)`. |
+| #476 | `py-complex-type` | 25f6848 | `complex` as a value. |
+| #477 | `py-hash-eq-identity` | 25f6848 | `is`, `id`, `hash`, `==` and the singletons, as CPython. |
+| #478 | `py-warnings-module` | 79eefce | `warnings`: warn, filters, `catch_warnings`, warnings as errors. |
+| #479 | `py-float-repr-all-kernels` | 25f6848 | CPython's shortest round-trip rendering of reals behind a **core** label `system.real.render`, implemented in all six kernels; the examples agree 3006/3006. |
+| #480 | `py-descriptors` | 25f6848 | the `__get__`/`__set__` protocol behind properties and bound methods. |
+| #481 | `py-slice-object` | 25f6848 | slice values, `Ellipsis` and tuple keys to `__getitem__`. |
+| #482 | `py-stdlib-3` | 79eefce | `bisect`, `heapq`, `statistics`, `string`, `pprint`, `itertools`/`math`/`functools`/`operator` completeness. |
+| #483 | `py-int-methods` | 25f6848 | `bit_length`, `to_bytes`/`from_bytes`, `int()` in every base with CPython's errors, `float.hex`. |
+| #485 | `py-sorting-semantics` | f0503a4 | stability, `key`, mixed-type errors, `min`/`max`. Its last run was **red**; treat as unfinished. |
 
-- `docs/REFERENCE_SUITE_WORK.md` — what must be run, the five places a label has
-  to be written down, and the mistakes that are quiet rather than loud. Written
-  from mistakes actually made, not imagined. **Non-optional.**
-- `langs/README.md` — the definition format and every label, ten languages side
-  by side.
-- `README.md` — the architecture: one host, six independent kernels.
+Three more branches hold unfinished work with no pull request and a red
+last run: `py-copy-pickle`, `py-bytes-2`, `py-unicode-text` (the last was
+merged into `main` as #484 before it was verified and taken back again in
+`a521d8f`).
 
----
+### Bringing a branch in
 
-## 4. The verification sequence
+Merge one branch at a time into a clone of `main`, resolve by hand, verify
+with the full sequence, then merge. Batching five per verification worked
+(PRs #456, #458, #465, #467, #475, #486 each carried five) while the
+conflicts were rosters; the branches that remain conflict in kernel code,
+so expect one branch per verification. Rosters resolve as unions —
+`langs/python.json` keys (never one twice; a repeated key parses and the
+last wins, silently), the long list lines in `kernels/stack8/src/lang.rs`
+and `kernels/microcode7/src/table.rs` (`BUILTIN_LABELS` carries its length
+in its type), `langs/README.md` prose kept from both sides and its table
+regenerated by `python3 scripts/lang_table.py`. Code resolves by reading
+both sides and writing the one function that does what both meant, in
+each kernel's own words: `scripts/kernel_independence.py` refuses twelve
+identical significant lines between any two kernels.
 
-Nothing is finished until all of this has run and each line says what it should:
+Suggested order: the branches cut from `79eefce` (they mostly add module
+sources under `langs/lib_python/modules/`), then `25f6848`, then
+`94155bd`, then #457, #455 and #485 last.
+
+## 3. The verification sequence
+
+Nothing is merged until all of this has run and each line says what it
+should. Run it in a codespace or on a machine with Rust and `php`:
 
 ```
 RUSTFLAGS="-D warnings" cargo build
@@ -97,166 +117,51 @@ python3 scripts/kernel_independence.py           # must say 0 problem(s)
 python3 scripts/port_examples.py
 python3 scripts/lang_table.py
 touch src/main.rs && cargo build --release
+for f in scratch/*/*.py; do …run on stack8 and microcode7, compare with the .out or .err beside it… done
 TEST_QUIET=1 ./test.sh --lang all                # must be 3006 of 3006
 git checkout tests/REPORT.md && python3 scripts/reference_tests.py
 grep -c "Kernel disagreements" tests/REPORT.md   # must be 0
 git diff tests/REPORT.md | grep -E "^-.*\| pass \| pass \|"   # must print nothing
 ```
 
-The last line is the regression check. It is absolute: no test that passed on
-both kernels may stop passing, for any reason, ever.
+GitHub Actions runs the same three ways on every push (`build-and-test`,
+`reference`, `scratch` in `.github/workflows/ci.yml`); the `reference`
+job writes the `| all |` and Python rows and the reasons table into the
+run summary. `scratch/` holds each piece's programs with the exact output
+(`.out`) or first stderr line (`.err`) both full kernels must give; the
+`scratch` job runs them all. `test.sh` needs bash 4 or later.
 
-**Never write `>/dev/null 2>&1` on the reference run.** If it stops before it
-begins — a moved path, a definition that will not parse — it writes no report,
-the comparison after it is empty, and *an empty comparison is exactly what
-success looks like*. Two changes were called verified here when nothing at all
-had run. Let it speak and read its last lines.
+## 4. What went wrong, so it is not done twice
 
----
+- **The six kernels must print alike.** `test.sh` compares every kernel
+  against stream35 on 3006 examples, and the four reference kernels read
+  past every `ext.*` label. Five pieces in a row tried to print reals or
+  strings-in-containers as CPython does behind an `ext.*` label and broke
+  the examples on the two full kernels only. The way through is a **core**
+  label all six kernels honour — #479 does exactly that for reals.
+  Container rendering (`[1, hello]`, not `[1, 'hello']`) still follows the
+  examples.
+- **Floor division and rounding stay as the language floor says**:
+  `//` truncates and `round` rounds half away from zero for every language,
+  the examples depend on it, and CPython's flooring/half-to-even is
+  documented as a divergence in `langs/README.md`.
+- **A scratch fixture from an earlier piece may encode a refusal a later
+  piece rightly removes** (`.err` expecting "not supported"). Updating it
+  is right, with the reason written down; a fixture whose old expectation
+  CPython would still agree with is a sign the change is wrong.
+- **Merging an unverified branch into `main` directly** cost a fix cycle
+  each time (#418, #484). Nothing goes into `main` without the sequence.
+- **Two pieces implementing the same builtin** (see #457) is the
+  integration problem now; assign builtins to one piece at a time.
+- **Every roster line is a single long line**; merges take one side whole
+  and the other side's labels vanish with no conflict raised.
 
-## 5. The work: Python on stack8 and microcode7
+## 5. Working with the codespaces
 
-### What already exists
-
-- `langs/python.json` — a full definition, **compiled into all six kernels**
-  (`include_str!` in each kernel's `lib.rs`), unlike PHP's which is read from
-  disk.
-- `langs/lib_python/` — the library as Python spells it; 70 of the 136 shared
-  functions carried.
-- 58 example programs under `examples/python/`, passing on all six kernels as
-  part of the 3006 example runs.
-
-### What does not
-
-`tests/python/` holds 50 core-language files taken from CPython's `Lib/test`.
-**All 50 fail on both kernels, every one in the reader, before a line runs:**
-
-| count | what the reader stops at |
-|---|---|
-| 16 | `@` — decorators |
-| 10 | `:` — slices and annotations |
-| 9 | `\` — a line carried to the next |
-| 4 | `~` |
-| 3 | `&` |
-| 2 | `,` where the reader expects none |
-| 1 | `*` before a parameter name |
-| 1 | `?` |
-| 1 | indentation the reader will not have |
-| 1 | an expression wanted and not found |
-
-### Scope this honestly — it is not the job PHP was
-
-PHP's tests are `.phpt` files carrying an `--EXPECT--` section: match the output
-and you are done. **The Python files are `unittest` modules with no expected
-output at all.** `scripts/reference_tests.py` currently runs one and, if it
-exits cleanly, records `ran to the end without asserting anything`.
-
-So "make the 50 pass" quietly means: the whole reader, most of the language,
-`unittest`, and a large part of the standard library. Anyone planning this as
-"PHP took a session, so Python will" is going to be wrong by a wide margin.
-
-**Three stages. Say which one you are working on, always:**
-
-1. **The reader.** All 50 files read without a reader complaint — decorators,
-   slices, continuations, the missing operators, starred parameters. The table
-   above should empty. This is measurable and it is real progress.
-2. **Running.** They run far enough to fail on something that is not the reader.
-   Expect a long tail of missing builtins and syntax.
-3. **Asserting.** Decide what "pass" even means for a `unittest` module here, and
-   whether the harness should learn to run one. **That decision belongs to the
-   repository's owner, not to you.** Bring it to them; do not settle it yourself.
-
-**Work stage 1 only until it is done.** Do not report progress as though tests
-were passing. They will not be, and that is expected.
-
----
-
-## 6. Rules for delegating
-
-1. **Divide by file, never by test.** Two pieces touching one file cost more in
-   merging than they save in running at once. Most fought over:
-   `kernels/stack8/src/lang.rs`, `kernels/microcode7/src/table.rs`, the
-   definition JSON, `langs/README.md` — because nearly every change needs a
-   label — then `engine.rs` and `exec.rs`. **State in every brief which files
-   that piece owns and which it must not touch.**
-
-2. **Give Codex the constraints every time. It cannot infer them:**
-   - Ten languages share these kernels. Behaviour belonging to one goes behind a
-     label in that language's definition, **never** a test of which language is
-     running.
-   - A new label must be written in **five** places (see
-     `docs/REFERENCE_SUITE_WORK.md`). Missing one fails **silently**, as a label
-     that reads as empty.
-   - `scripts/kernel_independence.py` refuses twelve or more identical
-     significant lines between any two kernels. The same idea must be written
-     twice, in its own shape and words each time. Not negotiable.
-   - Prose style: plain, slightly archaic English, matching the surrounding
-     comments.
-   - **Never name any AI model, agent, or tool in code, comments, or commit
-     messages.** Chat only.
-
-3. **Make each piece prove its base.** In the session that finished PHP, *every
-   single* delegated piece began from the wrong commit despite being told the
-   right one, and several then reported baseline numbers that were simply wrong
-   — including a "correction" sent back to the coordinator that was itself
-   mistaken. Require each piece to print its base commit and reproduce the
-   current `| all |` row on an untouched tree **before** changing anything.
-
-4. **Verify everything yourself.** Never take a report's word for a number. Run
-   the sequence. Read what the reference run actually printed.
-
-5. **Merging a roster is not merging two lists.** The label rosters are long
-   single lines. Where two pieces both changed one, the merge takes one side
-   entire and the other's labels vanish — no conflict raised, no failure until
-   something that worked stops. Resolve by hand, then check a label you know was
-   there still is.
-
-6. **Definition files are JSON, and a merge can leave a key in twice.** It parses,
-   the last wins, nothing fails. Check for repeated keys after every merge.
-
-7. **Report honestly.** If something cannot be reached, say so and say what it
-   would take. An honest "not reachable without X" is worth more than a hack —
-   and far more than a number improved by reclassifying a failure as a skip.
-
----
-
-## 7. A trap specific to Python here
-
-`langs/python.json` is **compiled into every kernel**, not read from disk like
-PHP's. Two consequences:
-
-- A change to it needs a rebuild to take effect.
-- It is read by all six kernels — and the four reference kernels (stream35,
-  microcode11, microcode4, stack5) **read past `ext.*` labels entirely**.
-
-So anything put behind an `ext.*` label is honoured by stack8 and microcode7 and
-ignored by the other four. That is what an extension label means, but it means
-the six can disagree on output if a change is not thought through — and
-`./test.sh --lang all` compares all six against each other. That exact mistake
-broke 12 of the 3006 example runs during the PHP work.
-
----
-
-## 8. Your first moves
-
-1. Reproduce the baseline yourself. Run the full verification sequence on an
-   untouched tree. Confirm PHP reads `pass 399, differs 0, error 0, skipped 23`
-   and Python shows 50 errors on both kernels. **Do not proceed until you have
-   seen it with your own eyes.**
-2. Prove the Codex path end to end (§1) and record the invocation.
-3. Group the 50 Python failures **by cause, not by file**. A few causes account
-   for most of them; each cause is one piece of work.
-4. Take the largest cause — decorators, 16 files — **on its own, end to end**:
-   brief, verify, commit, push. Learn what a good Codex brief looks like on one
-   piece before betting several on it.
-5. Only then fan out, and only along boundaries that share no file.
-
----
-
-## 9. How to report
-
-Each time: what was attempted, **what the verification actually printed**, what
-landed, what did not and why. Name the stage you are working in. If something is
-out of reach, say so plainly and say what it would take.
-
-Do not report a number you have not seen yourself.
+Two 4-core codespaces exist on the repository (`lumen-a`, `lumen-b`), with
+Rust installed under `$HOME/.cargo` and `php` present. Everything is driven
+from a shell with `gh codespace ssh -c <name> -- 'bash -lc "…"'`. A
+codespace shuts down after four idle hours; ssh-ing to it wakes it. One
+release build at a time: a second build started while one runs will be
+killed or crawl. Each run of the reference suite takes several minutes
+now that the Python files run further.
