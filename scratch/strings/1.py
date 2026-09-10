@@ -1,0 +1,7 @@
+print(r"a\nb")
+print(b"x")
+print(u"y")
+print(f"{1+1}")
+print(rb"\d")
+print(R"a\nb", B"x", U"y", F"{2+2}", Br"\d", rB"\d", bR"\d", RB"\d", BR"\d")
+print(fr"\n{2}", rf"\n{3}", Fr"\n{4}", fR"\n{5}", FR"\n{6}", Rf"\n{7}", rF"\n{8}", RF"\n{9}")

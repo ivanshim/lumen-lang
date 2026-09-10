@@ -1,0 +1,5 @@
+print("%d %s %r %f %.2f %x %%" % [4, "ok", "a", 2.5, 2.5, 31])
+print("%d %x %f" % [True, False, True])
+print("%s" % [["a", 2]])
+print(7 % 3)
+print("%r %s" % [{"a": 1}, 2.0])

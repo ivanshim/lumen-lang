@@ -67,6 +67,9 @@ pub struct Ratio {
     /// on to the minus: a real of a width has two noughts, and a
     /// language holding reals to a width writes each its own way.
     pub under: bool,
+    /// Whether this real came through a form which writes the point
+    /// even when no figures follow it but nought.
+    pub pointed: bool,
 }
 
 impl Ratio {
@@ -91,8 +94,36 @@ impl Ratio {
     }
 }
 
+/// Three numbers suffice for a walk, however far its end stands.
+#[derive(Clone)]
+pub struct Progression {
+    pub first: BigInt,
+    pub limit: BigInt,
+    pub stride: BigInt,
+    pub word: String,
+}
+
+impl Progression {
+    pub fn count(&self) -> BigInt {
+        let forward = self.stride > BigInt::zero();
+        if (forward && self.first >= self.limit) || (!forward && self.first <= self.limit) {
+            return BigInt::zero();
+        }
+        ((&self.limit - &self.first).abs() - BigInt::one()) / self.stride.abs() + BigInt::one()
+    }
+
+    pub fn item(&self, position: &BigInt) -> Option<Value> {
+        let count = self.count();
+        let offset = if position < &BigInt::zero() { position + &count } else { position.clone() };
+        if offset < BigInt::zero() || offset >= count { return None; }
+        Some(Value::from_big(&self.first + &self.stride * offset))
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
+    Channel(u8),
+    Progression(Rc<Progression>),
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Ratio>),
@@ -101,6 +132,7 @@ pub enum Value {
     Text(Rc<str>),
     Flag(bool),
     Nil,
+    Ellipsis,
     Vector(Rc<Vec<Value>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
@@ -116,6 +148,7 @@ pub enum Value {
     Thing(Rc<Thing>),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
+    Method(Rc<Routine>, Rc<Thing>),
     /// A program bound to the frame it was made in.
     Bound(Rc<Routine>, Rc<Env>),
     KindOf(Kind),
@@ -152,6 +185,22 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn point_kept(&self) -> bool {
+        match self {
+            Self::Frac(e) => e.pointed,
+            Self::Shared(held) => held.borrow().point_kept(),
+            _ => false,
+        }
+    }
+
+    pub fn keeping_point(mut self, wanted: bool) -> Value {
+        match &mut self {
+            Self::Frac(e) if wanted && e.places.is_some() => Rc::make_mut(e).pointed = true,
+            _ => {}
+        }
+        self
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -173,13 +222,14 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Imaginary { .. } => return None,
+            Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
+            Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
             Value::Huge(n) => !n.is_zero(),
@@ -208,7 +258,9 @@ impl Value {
             Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
         })
@@ -234,9 +286,18 @@ impl Value {
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
+            (Value::Channel(left), Value::Channel(right)) => left == right,
+            (Value::Progression(left), Value::Progression(right)) => {
+                if left.count() != right.count() { return false; }
+                match left.count().to_u8() {
+                    Some(0) => true,
+                    Some(1) => left.first == right.first,
+                    _ => left.first == right.first && left.stride == right.stride,
+                }
+            }
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
-            (Value::Nil, Value::Nil) => true,
+            (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -244,6 +305,7 @@ impl Value {
             (Value::Couple(a), Value::Couple(b)) => a.0.equals(&b.0) && a.1.equals(&b.1),
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
+            (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
@@ -312,9 +374,119 @@ impl Value {
         }
     }
 
+    /// Common field presentations, with the ordinary spelling kept for
+    /// those whose further rules the machine does not yet know.
+    pub fn in_field(&self, names: Names, pattern: &str, manner: &str) -> Option<String> {
+        match self {
+            Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) => {},
+            Value::Flag(_) | Value::Nil if pattern.is_empty() || !manner.is_empty() => {},
+            _ => return None,
+        }
+        let mut result = self.render(names);
+        if let Self::Frac(ratio) = self {
+            if ratio.places.is_some() {
+                let mut worth = nearest_binary(&ratio.above, &ratio.beneath);
+                if ratio.under && worth == 0.0 { worth = -0.0; }
+                let raw = format!("{:?}", worth).to_lowercase();
+                result = match raw.find('e') {
+                    None => raw,
+                    Some(cut) => {
+                        let power: i32 = raw[cut + 1..].parse().ok()?;
+                        format!("{}e{:+03}", &raw[..cut], power)
+                    },
+                };
+            }
+        }
+        if matches!(manner, "a" | "r") {
+            if let Value::Text(chars) = self {
+                let delimiter = match (chars.contains('\''), chars.contains('"')) { (true, false) => '"', _ => '\'' };
+                let mut body = String::new();
+                for letter in chars.chars() {
+                    if letter == delimiter || letter == '\\' { body.push('\\'); body.push(letter); continue; }
+                    let escaped = match letter { '\n' => Some("\\n"), '\t' => Some("\\t"), '\r' => Some("\\r"), _ => None };
+                    if let Some(escape) = escaped { body.push_str(escape); continue; }
+                    if letter.is_control() || manner == "a" && !letter.is_ascii() {
+                        let ordinal = u32::from(letter);
+                        body.push_str(&match ordinal {
+                            0..=0xff => format!("\\x{:02x}", ordinal),
+                            0x100..=0xffff => format!("\\u{:04x}", ordinal),
+                            _ => format!("\\U{:08x}", ordinal),
+                        });
+                    } else { body.push(letter); }
+                }
+                result = format!("{delimiter}{body}{delimiter}");
+            }
+        }
+        if manner.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            let alternative = pattern.starts_with('#');
+            let kind = pattern.strip_prefix('#').unwrap_or(pattern);
+            let radix = match kind { "b" => 2, "o" => 8, "x" | "X" => 16, _ => 0 };
+            if radix > 0 {
+                let rendered = self.as_big().ok()?.to_str_radix(radix);
+                let negative = rendered.starts_with('-');
+                let magnitude = rendered.trim_start_matches('-');
+                let digits = if kind == "X" { magnitude.to_ascii_uppercase() } else { magnitude.to_string() };
+                let sign = if negative { "-" } else { "" };
+                let header = if alternative { format!("0{kind}") } else { String::new() };
+                return Some(format!("{sign}{header}{digits}"));
+            }
+        }
+        if matches!(self, Value::Small(_) | Value::Huge(_)) && manner.is_empty() {
+            let decimal_width = pattern.strip_suffix('d').filter(|text| text.bytes().all(|byte| byte.is_ascii_digit()));
+            if let Some(field) = decimal_width {
+                let size = if field.is_empty() { Ok(0) } else { field.parse::<usize>() };
+                if let Ok(size) = size {
+                    if size <= 100000 {
+                        let extra = size.saturating_sub(result.len());
+                        if field.starts_with('0') {
+                            let minus = result.starts_with('-');
+                            let head = if minus { "-" } else { "" };
+                            let body = if minus { &result[1..] } else { &result };
+                            return Some(format!("{head}{}{body}", "0".repeat(extra)));
+                        }
+                        return Some(" ".repeat(extra) + &result);
+                    }
+                }
+            }
+        }
+        if manner.is_empty() && !matches!(self, Value::Text(_)) && pattern.starts_with('.') && pattern.ends_with('f') {
+            let precision = pattern[1..pattern.len() - 1].parse::<usize>();
+            if let (Ok(digits), Ok(number)) = (precision, result.parse::<f64>()) {
+                if digits <= 1000 { return Some(format!("{:.*}", digits, number)); }
+            }
+        }
+        let mut marks = pattern.chars();
+        let Some(first) = marks.next() else { return Some(result); };
+        let (padding, direction, rest) = if ['<', '^', '>'].contains(&first) {
+            (' ', first, marks.as_str())
+        } else {
+            match marks.next() {
+                Some(second @ ('<' | '^' | '>')) => (first, second, marks.as_str()),
+                _ if first != '0' && pattern.chars().all(|c| c.is_ascii_digit()) => {
+                    (' ', if manner.is_empty() && !matches!(self, Value::Text(_)) { '>' } else { '<' }, pattern)
+                },
+                _ => return None,
+            }
+        };
+        let target = if rest.is_empty() { 0 } else { rest.parse::<usize>().ok()? };
+        if target > 100000 { return None; }
+        let extra = target.saturating_sub(result.chars().count());
+        let before = if direction == '<' { 0 } else if direction == '^' { extra / 2 } else { extra };
+        let mut padded = padding.to_string().repeat(before);
+        padded.push_str(&result);
+        padded.push_str(&padding.to_string().repeat(extra - before));
+        Some(padded)
+    }
+
     pub fn bare(&self) -> String {
         match self {
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
+            Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
+            Value::Progression(p) => {
+                let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
+                format!("{}({}, {}{})", p.word, p.first, p.limit, tail)
+            }
+            Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
@@ -330,7 +502,7 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
-            Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
@@ -361,6 +533,7 @@ impl Value {
                 e.1.memo_key(out);
                 out.push(')');
             }
+            Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),
@@ -603,7 +776,7 @@ pub fn past_the_numbers(x: f64, figures: usize) -> Value {
         (_, true) => -BigInt::one(),
         _ => BigInt::one(),
     };
-    Value::Frac(Rc::new(Ratio { above, beneath: BigInt::zero(), places: Some(figures), under: false }))
+    Value::Frac(Rc::new(Ratio { above, beneath: BigInt::zero(), places: Some(figures), under: false, pointed: false }))
 }
 
 /// What a binary real is worth, held as a ratio: so many halves,
@@ -646,7 +819,7 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
     let Value::Frac(e) = &v else { return v };
     match binary_worth(nearest_binary(&e.above, &e.beneath)) {
         // A nought under nought holds its minus at any width.
-        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under),
+        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under).keeping_point(e.pointed),
         None => v,
     }
 }
