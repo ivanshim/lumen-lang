@@ -3271,7 +3271,20 @@ impl<'a> Engine<'a> {
     }
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
-        if let Value::Bond(cell) = value { return self.rem_repr(&cell.borrow()); }
+        self.nested_repr(value, &mut Vec::new())
+    }
+
+    fn nested_repr(&self, value: &Value, path: &mut Vec<usize>) -> Res<String> {
+        if let Value::Bond(cell) = value {
+            let identity = Rc::as_ptr(cell) as usize;
+            if path.contains(&identity) {
+                return Ok(if matches!(*cell.borrow(), Value::Map(_)) { "{...}" } else { "[...]" }.to_string());
+            }
+            path.push(identity);
+            let shown = self.nested_repr(&cell.borrow(), path);
+            path.pop();
+            return shown;
+        }
         Ok(match value {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
@@ -3291,17 +3304,21 @@ impl<'a> Engine<'a> {
                 out
             }
             Value::Tuple(items) => {
-                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                let parts = items.iter().map(|v| self.nested_repr(v, path)).collect::<Res<Vec<_>>>()?;
                 format!("({}{})", parts.join(", "), if parts.len() == 1 { "," } else { "" })
             }
-            Value::MapView(view) => format!("{}({})", view.2, self.rem_repr(&Value::array(view.0.map_projection(view.1)))?),
+            Value::MapView(view) if view.1 == 4 => {
+                let pieces = view.0.map_projection(4).iter().map(|item| self.nested_repr(item, path)).collect::<Res<Vec<_>>>()?;
+                if pieces.is_empty() { view.2.clone() } else { format!("{{{}}}", pieces.join(", ")) }
+            }
+            Value::MapView(view) => format!("{}({})", view.2, self.nested_repr(&Value::array(view.0.map_projection(view.1)), path)?),
             Value::Array(items) => {
-                let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+                let parts = items.iter().map(|v| self.nested_repr(v, path)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
             }
             Value::Map(entries) => {
                 let mut parts = Vec::new();
-                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
+                for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.nested_repr(key, path)?, self.nested_repr(worth, path)?)); }
                 format!("{{{}}}", parts.join(", "))
             }
             Value::Real(real) => {
@@ -3386,6 +3403,19 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn order_before(&self, a: &Value, b: &Value) -> Res<bool> {
+        match (collection_contents(a), collection_contents(b)) {
+            (Value::Text(left), Value::Text(right)) => Ok(left < right),
+            (Value::Tuple(left), Value::Tuple(right)) => {
+                for (first, second) in left.iter().zip(right.iter()) {
+                    if !self.map_equal(first, second) { return self.order_before(first, second); }
+                }
+                Ok(left.len() < right.len())
+            }
+            (left, right) => self.dyadic(&Action::Lt, &left, &right).map(|answer| self.truth(&answer)),
+        }
+    }
+
     fn ordered(&mut self, greatest: bool, args: &[Value], named: &[(String, Value)]) -> Res<Value> {
         let mut key = Value::Null;
         let mut reverse = false;
@@ -3400,15 +3430,15 @@ impl<'a> Engine<'a> {
         for value in values {
             let score = self.order_key(&key, &value)?;
             if greatest {
-                if ranked.is_empty() || self.truth(&self.dyadic(&Action::Lt, &ranked[0].0, &score)?) {
+                if ranked.is_empty() || self.order_before(&ranked[0].0, &score)? {
                     ranked.clear(); ranked.push((score, value));
                 }
             } else {
                 let mut at = ranked.len();
                 while at > 0 {
-                    let before = if reverse { self.dyadic(&Action::Lt, &ranked[at - 1].0, &score)? }
-                        else { self.dyadic(&Action::Lt, &score, &ranked[at - 1].0)? };
-                    if !self.truth(&before) { break; }
+                    let before = if reverse { self.order_before(&ranked[at - 1].0, &score)? }
+                        else { self.order_before(&score, &ranked[at - 1].0)? };
+                    if !before { break; }
                     at -= 1;
                 }
                 ranked.insert(at, (score, value));
@@ -3523,8 +3553,9 @@ impl<'a> Engine<'a> {
             Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_)
                 | Value::Flag(_) | Value::Text(_) | Value::Null => Ok(()),
             Value::Tuple(items) => { for item in items.iter() { self.map_key(item)?; } Ok(()) }
-            Value::Array(_) => Err(Self::named_fault(&self.lang.map_unhashable, "list")),
-            Value::Map(_) => Err(Self::named_fault(&self.lang.map_unhashable, "dict")),
+            Value::MapView(view) => Err(Self::named_fault(&self.lang.map_unhashable, view.2.trim_end_matches("()"))),
+            Value::Array(_) => Err(Self::named_fault(&self.lang.map_unhashable, self.lang.map_list_kind.first().map_or("", String::as_str))),
+            Value::Map(_) => Err(Self::named_fault(&self.lang.map_unhashable, self.lang.map_new.first().map_or("", String::as_str))),
             _ => Err(self.lang.map_key_unready.first().cloned().unwrap_or_default()),
         }
     }
@@ -3536,6 +3567,8 @@ impl<'a> Engine<'a> {
             (Value::Flag(x), Value::Small(y)) | (Value::Small(y), Value::Flag(x)) => i64::from(*x) == *y,
             (Value::Flag(x), Value::Real(_) | Value::Huge(_) | Value::Frac(_)) => Value::Small(i64::from(*x)).equals(&b),
             (Value::Real(_) | Value::Huge(_) | Value::Frac(_), Value::Flag(y)) => a.equals(&Value::Small(i64::from(*y))),
+            (Value::Map(x), Value::Map(y)) if Rc::ptr_eq(x, y) => true,
+            (Value::Tuple(x), Value::Tuple(y)) | (Value::Array(x), Value::Array(y)) if Rc::ptr_eq(x, y) => true,
             (Value::Map(x), Value::Map(y)) => x.len() == y.len() && x.iter().all(|(k, v)|
                 y.iter().any(|(j, w)| self.map_equal(k, j) && self.map_equal(v, w))),
             (Value::Tuple(x), Value::Tuple(y)) | (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| self.map_equal(v, w)),
@@ -3572,6 +3605,20 @@ impl<'a> Engine<'a> {
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
+        }
+        if self.lang.map_value_keys {
+            let set_view = |value: &Value| matches!(value, Value::MapView(view) if matches!(view.1, 1 | 2 | 4));
+            if (set_view(a) || set_view(b)) && matches!(op, Action::BitBoth | Action::BitEither) {
+                let left = self.comprehension_items(a)?;
+                let right = self.comprehension_items(b)?;
+                let mut members: Vec<(Value, Value)> = Vec::new();
+                for item in left.iter().chain(if matches!(op, Action::BitEither) { right.iter() } else { [].iter() }) {
+                    if matches!(op, Action::BitBoth) && !right.iter().any(|other| self.map_equal(item, other)) { continue; }
+                    self.map_key(item)?;
+                    if !members.iter().any(|entry| self.map_equal(&entry.0, item)) { members.push((item.clone(), Value::Null)); }
+                }
+                return Ok(Value::MapView(Rc::new((Value::Map(Rc::new(members)), 4, self.lang.map_set_empty.first().cloned().unwrap_or_default()))));
+            }
         }
         if self.lang.map_value_keys {
             if matches!(op, Action::Eq | Action::Ne) && (matches!(a, Value::Map(_)) || matches!(b, Value::Map(_))) {

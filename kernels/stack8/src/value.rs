@@ -207,7 +207,7 @@ impl Value {
         match self {
             Value::Bond(cell) => cell.borrow().map_projection(keys),
             Value::Map(entries) => {
-                let mut items: Vec<Value> = entries.iter().map(|(k, v)| match keys { 1 | 3 => k.clone(), 0 => v.clone(), _ => Value::Tuple(Rc::new(vec![k.clone(), v.clone()])) }).collect();
+                let mut items: Vec<Value> = entries.iter().map(|(k, v)| match keys { 1 | 3 | 4 => k.clone(), 0 => v.clone(), _ => Value::Tuple(Rc::new(vec![k.clone(), v.clone()])) }).collect();
                 if keys == 3 { items.reverse(); }
                 items
             }

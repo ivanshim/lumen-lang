@@ -1023,6 +1023,23 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn ordered_before(&mut self, left: &Value, right: &Value) -> Result<bool, String> {
+        let first = collection_read(left);
+        let second = collection_read(right);
+        match (&first, &second) {
+            (Value::Text(a), Value::Text(b)) => return Ok(a < b),
+            (Value::Record(a), Value::Record(b)) => {
+                for (one, other) in a.iter().zip(b.iter()) {
+                    if !Self::equal_contents(one, other) { return self.ordered_before(one, other); }
+                }
+                return Ok(a.len() < b.len());
+            }
+            _ => {}
+        }
+        let answer = self.prim(Prim::Lt, "", &[first, second])?;
+        Ok(self.stands_true(&answer))
+    }
+
     fn ordering(&mut self, largest: bool, arguments: &[Value], keywords: &[(String, Value)]) -> Result<Value, String> {
         let mut function = Value::Nil;
         let mut backwards = false;
@@ -1039,16 +1056,16 @@ impl<'a> Machine<'a> {
             let mut slot = held.len();
             if largest {
                 if let Some(previous) = held.first() {
-                    let greater = self.prim(Prim::Lt, "", &[previous.0.clone(), key.clone()])?;
-                    if !self.stands_true(&greater) { continue; }
+                    let greater = self.ordered_before(&previous.0, &key)?;
+                    if !greater { continue; }
                 }
                 held.clear(); slot = 0;
             } else {
                 while slot > 0 {
                     let adjacent = held[slot - 1].0.clone();
                     let operands = if backwards { [adjacent, key.clone()] } else { [key.clone(), adjacent] };
-                    let earlier = self.prim(Prim::Lt, "", &operands)?;
-                    if !self.stands_true(&earlier) { break; }
+                    let earlier = self.ordered_before(&operands[0], &operands[1])?;
+                    if !earlier { break; }
                     slot -= 1;
                 }
             }
@@ -1155,13 +1172,16 @@ impl<'a> Machine<'a> {
     fn admits_key(&self, item: &Value) -> Result<(), String> {
         if self.table.flag("ext.syntax.map.value_keys") {
             let value = collection_read(item);
+            if let Value::Projection(_, _, title) = &value {
+                return Err(self.argument_fault("ext.syntax.map.unhashable", Some(title.trim_end_matches("()"))));
+            }
             let kind = match value {
                 Value::Record(parts) => {
                     for part in parts.iter() { self.admits_key(part)?; }
                     None
                 }
-                Value::Vector(_) => Some("list"),
-                Value::Dict(_) => Some("dict"),
+                Value::Vector(_) => self.table.single("ext.builtin.list"),
+                Value::Dict(_) => self.table.single("ext.builtin.map.new"),
                 Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Nil | Value::Flag(_) => None,
                 _ => return Err(self.argument_fault("ext.syntax.map.key.unready", None)),
             };
@@ -1174,11 +1194,13 @@ impl<'a> Machine<'a> {
         let one = collection_read(left);
         let other = collection_read(right);
         if let (Value::Dict(a), Value::Dict(b)) = (&one, &other) {
+            if Rc::ptr_eq(a, b) { return true; }
             if a.len() != b.len() { return false; }
             return a.iter().all(|entry| b.iter().find(|candidate| Self::equal_contents(&entry.0, &candidate.0))
                 .map_or(false, |candidate| Self::equal_contents(&entry.1, &candidate.1)));
         }
         if let (Value::Vector(a), Value::Vector(b)) | (Value::Record(a), Value::Record(b)) = (&one, &other) {
+            if Rc::ptr_eq(a, b) { return true; }
             return a.len() == b.len() && (0..a.len()).all(|i| Self::equal_contents(&a[i], &b[i]));
         }
         let number = |v: &Value| match v { Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }), _ => v.clone() };
@@ -1199,30 +1221,48 @@ impl<'a> Machine<'a> {
     }
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
+        self.shown_within(item, &mut Vec::new())
+    }
+
+    fn shown_within(&self, item: &Value, earlier: &mut Vec<*const RefCell<Value>>) -> Result<String, String> {
         if let Value::Shared(held) = item {
-            return self.quoted_remainder(&held.borrow());
+            let address = Rc::as_ptr(held);
+            let contents = held.borrow();
+            if earlier.iter().any(|prior| *prior == address) {
+                let mark = match &*contents { Value::Dict(_) => "{...}", _ => "[...]" };
+                return Ok(mark.to_string());
+            }
+            earlier.push(address);
+            let answer = self.shown_within(&contents, earlier);
+            earlier.truncate(earlier.len() - 1);
+            return answer;
         }
         match item {
             Value::Record(items) => {
                 let mut rendered = Vec::new();
-                for part in items.iter() { rendered.push(self.quoted_remainder(part)?); }
+                for part in items.iter() { rendered.push(self.shown_within(part, earlier)?); }
                 let tail = if items.len() == 1 { ",)" } else { ")" };
                 return Ok("(".to_string() + &rendered.join(", ") + tail);
             }
+            Value::Projection(source, 4, title) => {
+                let mut parts = Vec::new();
+                for member in source.projected(4) { parts.push(self.shown_within(&member, earlier)?); }
+                return Ok(if parts.is_empty() { title.to_string() } else { format!("{{{}}}", parts.join(", ")) });
+            }
             Value::Projection(source, keys, title) => {
                 let row = Value::Vector(Rc::new(source.projected(*keys)));
-                return Ok(format!("{title}({})", self.quoted_remainder(&row)?));
+                return Ok(format!("{title}({})", self.shown_within(&row, earlier)?));
             }
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
-                for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
+                for element in elements.iter() { shown.push(self.shown_within(element, earlier)?); }
                 return Ok(format!("[{}]", shown.join(", ")));
             }
             Value::Dict(entries) => {
                 let mut shown = Vec::new();
                 for (key, value) in entries.iter() {
-                    let key = self.quoted_remainder(key)?;
-                    let value = self.quoted_remainder(value)?;
+                    let key = self.shown_within(key, earlier)?;
+                    let value = self.shown_within(value, earlier)?;
                     shown.push(format!("{}: {}", key, value));
                 }
                 return Ok(format!("{{{}}}", shown.join(", ")));
@@ -2960,6 +3000,13 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::MapBound(receiver, code) = &stands {
+                    let mut supplied = self.value_list(args, frame)?;
+                    supplied.insert(0, receiver.as_ref().clone());
+                    let (positional, named) = self.open_arguments(supplied)?;
+                    let answer = self.map_call(*code, "", &positional, &named)?;
+                    return Ok(Next::Value(answer));
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -3777,6 +3824,20 @@ impl<'a> Machine<'a> {
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if self.table.flag("ext.syntax.map.value_keys") && v.len() == 2 {
+            let eligible = |item: &Value| matches!(item, Value::Projection(_, 1 | 2 | 4, _));
+            if matches!(op, Prim::BitsBoth | Prim::BitsEither) && v.iter().any(eligible) {
+                let first = self.gathered_members(&v[0])?;
+                let second = self.gathered_members(&v[1])?;
+                let candidates = if op == Prim::BitsEither { [first, second].concat() }
+                    else { first.into_iter().filter(|item| second.iter().any(|other| Self::equal_contents(item, other))).collect() };
+                let mut unique: Vec<(Value, Value)> = Vec::new();
+                for item in candidates {
+                    self.admits_key(&item)?;
+                    if unique.iter().all(|entry| !Self::equal_contents(&entry.0, &item)) { unique.push((item, Value::Nil)); }
+                }
+                let title = self.table.single("ext.builtin.map.set.empty").unwrap_or_default();
+                return Ok(Value::Projection(Rc::new(Value::Dict(Rc::new(unique))), 4, Rc::from(title)));
+            }
             let maps = matches!(v[0], Value::Dict(_)) || matches!(v[1], Value::Dict(_));
             if maps && matches!(op, Prim::Eq | Prim::Ne) {
                 return Ok(Value::Flag(Self::equal_contents(&v[0], &v[1]) != (op == Prim::Ne)));

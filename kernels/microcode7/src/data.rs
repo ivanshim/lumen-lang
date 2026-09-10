@@ -212,7 +212,7 @@ impl Value {
             _ => return Vec::new(),
         };
         let mut result = Vec::with_capacity(entries.len());
-        for pair in entries.iter() { result.push(match want_keys { 0 => pair.1.clone(), 1 | 3 => pair.0.clone(), _ => Value::Record(Rc::new(vec![pair.0.clone(), pair.1.clone()])) }); }
+        for pair in entries.iter() { result.push(match want_keys { 0 => pair.1.clone(), 1 | 3 | 4 => pair.0.clone(), _ => Value::Record(Rc::new(vec![pair.0.clone(), pair.1.clone()])) }); }
         if want_keys == 3 { result.reverse(); }
         result
     }

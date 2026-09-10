@@ -925,6 +925,9 @@ only. The extension labels so far, all from PHP:
   the map's keys, values and pairs. Their `.view` labels name the views when shown.
   A view keeps its map, so a later write is seen by its length,
   membership, gathering and walks; a walk guards the map's length.
+  Keys and items join or meet by the bitwise union and intersection
+  signs, yielding distinct members; `ext.builtin.map.set.empty` gives
+  the spelling of their empty result.
 - `ext.syntax.map.value_keys`: a switch; maps compare their keys by value,
   whole numbers and equal flags naming the same place. Their equality
   disregards insertion order, and the bitwise union sign joins maps,
@@ -2273,6 +2276,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.pop` | - | - | `pop` | - | - | - | - | - | - | - |
 | `ext.builtin.map.popitem` | - | - | `popitem` | - | - | - | - | - | - | - |
 | `ext.builtin.map.popitem.empty` | - | - | `KeyError: 'popitem(): dictionary is empty'` | - | - | - | - | - | - | - |
+| `ext.builtin.map.set.empty` | - | - | `set()` | - | - | - | - | - | - | - |
 | `ext.builtin.map.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
 | `ext.builtin.map.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.map.values` | - | - | `values` | - | - | - | - | - | - | - |

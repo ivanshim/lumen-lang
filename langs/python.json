@@ -379,6 +379,9 @@
   "ext.builtin.map.popitem.empty": [
     "KeyError: 'popitem(): dictionary is empty'"
   ],
+  "ext.builtin.map.set.empty": [
+    "set()"
+  ],
   "ext.builtin.map.setdefault": [
     "setdefault"
   ],
