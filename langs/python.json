@@ -973,7 +973,9 @@
     "OSError",
     "Exception",
     "KeyError",
-    "Exception"
+    "Exception",
+    "OverflowError",
+    "ArithmeticError"
   ],
   "ext.system.fault.class.division": [
     "ZeroDivisionError"

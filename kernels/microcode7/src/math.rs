@@ -226,6 +226,20 @@ pub fn whole_part(v: &Value) -> Option<BigInt> {
 /// what it gives, or nothing at all where no working goes by that name.
 pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
     Some(match named {
+        "ldexp" => {
+            let mut power = two as i64;
+            let mut scaled = one;
+            let stride = if power < 0 { -969 } else { 1023 };
+            let factor = f64::from_bits(((1023 + stride) as u64) << 52);
+            let mut remaining = 2;
+            while remaining != 0 && !(-1022..=1023).contains(&power) {
+                scaled *= factor;
+                power -= stride;
+                remaining -= 1;
+            }
+            let bounded = power.max(-1022).min(1023);
+            scaled * f64::from_bits(((bounded + 1023) as u64) << 52)
+        }
         "ulp" if one.is_nan() || one.is_infinite() => one.abs(),
         "ulp" => {
             let positive = one.abs();
@@ -279,7 +293,7 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
 /// How many worths a working is handed after its name.
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "atan2" | "hypot" | "pow" | "fdiv" | "nextafter" | "fmod" => 2,
+        "atan2" | "hypot" | "pow" | "fdiv" | "nextafter" | "fmod" | "ldexp" => 2,
         _ => 1,
     }
 }

@@ -556,10 +556,13 @@ only. The extension labels so far, all from PHP:
   is given is the name of the working and the rest are what it works on:
   `sqrt`, `exp`, `expm1`, `log`, `log1p`, `log10`, `log2`, `sin`, `cos`,
   `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `asinh`,
-  `acosh`, `atanh` take one; `ulp` takes one; `atan2`, `hypot`, `pow`, `fdiv`, `fmod` and
-  `nextafter` take two. The last gives the adjacent binary real toward
-  its second value, and `ulp` gives the gap above the magnitude, or
-  below it at the greatest finite real.
+  `acosh`, `atanh` and `ulp` take one; `atan2`, `hypot`, `pow`, `fdiv`,
+  `fmod`, `nextafter` and `ldexp` take two. `ldexp` scales its first
+  value by two raised to the whole-number power of its second, keeping
+  the final rounding even below the least ordinary binary real.
+  `nextafter` gives the adjacent binary real toward its second value,
+  and `ulp` gives the gap above the magnitude, or below it at the
+  greatest finite real.
   One label covers them all because the one power being lent is the
   working at the width itself, which a definition has no way of spelling
   and a kernel holding numbers exactly has no other cause to do. None of
@@ -2521,7 +2524,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
-| `ext.system.fault.bases` | - | - | `BaseException` `-` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` `KeyError` `Exception` | - | - | - | - | - | - | - |
+| `ext.system.fault.bases` | - | - | `BaseException` `-` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` `KeyError` `Exception` `OverflowError` `ArithmeticError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | `ZeroDivisionError` | - | `DivisionByZeroError` | - | - | - | - | - |

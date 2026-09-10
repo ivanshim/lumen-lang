@@ -318,9 +318,10 @@ def frexp(x):
 def ldexp(x, i):
     if type(i) != type(1) and type(i) != type(True):
         raise 'TypeError: ldexp exponent must be an integer'
-    if i < -1023 or i > 1023:
-        raise 'NotImplementedError: ldexp exponent is outside the supported range'
-    return __math('fdiv', x * __math('pow', 2.0, i), 1.0)
+    result = __math('ldexp', x, i)
+    if isinf(result) and isfinite(x):
+        raise 'OverflowError: math range error'
+    return result
 
 
 def exp2(x):
