@@ -6612,7 +6612,7 @@ impl Machine<'_> {
                 let encoded = self.keep_worth(&state, numbered, living, level + 1)?;
                 json!(["object", ordinal, origin.unwrap_or_default(), instance.of.name, changed, encoded])
             }
-            Value::Bound(code, _) | Value::Routine(code) if code.name == "{closure}" => return Err(self.keeping_fault(3)),
+            Value::Bound(code, _) | Value::Routine(code) if code.ident == "{closure}" => return Err(self.keeping_fault(3)),
             Value::Bound(_, _) | Value::Routine(_) | Value::Blueprint(_) => {
                 match self.kept_name(worth) {
                     Some((scope, word)) => json!(["global", scope, word]),
@@ -6725,7 +6725,7 @@ impl Machine<'_> {
     fn kept_name(&self, value: &Value) -> Option<(String, String)> {
         let (title, program, shape) = match value {
             Value::Blueprint(shape) => (shape.name.as_str(), None, Some(shape)),
-            Value::Routine(code) | Value::Bound(code, _) => (code.name.as_str(), Some(code), None),
+            Value::Routine(code) | Value::Bound(code, _) => (code.ident.as_str(), Some(code), None),
             _ => return None,
         };
         let accepts = |item: &Value| match item {

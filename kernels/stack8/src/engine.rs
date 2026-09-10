@@ -6226,7 +6226,7 @@ impl Engine<'_> {
                 } else { Value::array(copied) }
             }
             Value::Array(items) if !self.is_tuple(items) => Value::array(items.as_ref().clone()),
-            Value::Map(items) => Value::Map(Rc::new(items.as_ref().clone())),
+            Value::Map(items) if !deep => Value::Map(Rc::new(items.as_ref().clone())),
             Value::Map(items) if deep => {
                 let mut pairs = Vec::with_capacity(items.len());
                 for (key, item) in items.iter() {
@@ -6338,7 +6338,7 @@ impl Engine<'_> {
                 let state = custom.unwrap_or_else(|| Value::Map(Rc::new(object.fields.borrow().iter().map(|(k, v)| (Value::text(k), v.clone())).collect())));
                 json!(["object", index, module.unwrap_or_default(), object.class.name, uses_hook, self.pack_value(&state, known, retained, depth + 1)?])
             }
-            Value::Routine(program) if program.name == "{closure}" => return Err(self.pickle_note(3)),
+            Value::Routine(program) if program.ident == "{closure}" => return Err(self.pickle_note(3)),
             Value::Routine(_) | Value::Class(_) => {
                 let (module, name) = self.pickle_global(value).ok_or_else(|| self.pickle_note(2))?;
                 json!(["global", module, name])
@@ -6467,7 +6467,7 @@ impl Engine<'_> {
     }
 
     fn pickle_global(&self, value: &Value) -> Option<(String, String)> {
-        let title = match value { Value::Class(c) => &c.name, Value::Routine(p) => &p.name, _ => return None };
+        let title = match value { Value::Class(c) => &c.name, Value::Routine(p) => &p.ident, _ => return None };
         let same = |candidate: &Value| match (candidate, value) {
             (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
