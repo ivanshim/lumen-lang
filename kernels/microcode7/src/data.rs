@@ -30,6 +30,7 @@ pub enum Kind {
     Chars,
     Truth,
     Vector,
+    Set,
     Nothing,
 }
 
@@ -42,6 +43,7 @@ impl Kind {
             Kind::Chars => "STRING",
             Kind::Truth => "BOOLEAN",
             Kind::Vector => "ARRAY",
+            Kind::Set => "SET",
             Kind::Nothing => "NULL",
         }
     }
@@ -144,7 +146,6 @@ pub enum Value {
     Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
     Intrinsic(Rc<str>),
-    Set(Rc<Vec<Value>>),
     Iterator(Rc<RefCell<IteratorState>>),
     Channel(u8),
     Progression(Rc<Progression>),
@@ -160,6 +161,8 @@ pub enum Value {
     Vector(Rc<Vec<Value>>),
     Tuple(Rc<Vec<Value>>),
     Generator(Rc<RefCell<crate::exec::Suspension>>),
+    Set(Rc<RefCell<SetStore>>),
+    SetCursor { source: Rc<RefCell<SetStore>>, count: usize },
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -188,6 +191,55 @@ pub struct Adornment {
     pub manner: char,
     pub target: Value,
     pub extra: Option<Value>,
+}
+
+/// Members keep both their hash address and their place in the telling.
+#[derive(Clone, Debug)]
+pub struct SetStore {
+    pub entries: Vec<(String, Value)>,
+    pub keys: std::collections::HashSet<String>,
+    pub spelling: String,
+}
+
+impl SetStore {
+    pub fn new(spelling: &str) -> SetStore {
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into() }
+    }
+
+    pub fn put(&mut self, address: String, item: Value) {
+        if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
+    }
+
+    pub fn take(&mut self, address: &str) -> Option<Value> {
+        if !self.keys.remove(address) { return None; }
+        let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
+        Some(self.entries.remove(place).1)
+    }
+
+    pub fn values(&self) -> Vec<Value> {
+        self.entries.iter().map(|(_, v)| v.clone()).collect()
+    }
+
+    pub fn merge(&self, rhs: &SetStore, rule: u8) -> SetStore {
+        let mut answer = SetStore::new(&self.spelling);
+        for (key, item) in self.entries.iter().chain(rhs.entries.iter()) {
+            let left = self.keys.contains(key);
+            let right = rhs.keys.contains(key);
+            let keep = match rule { 0 => left || right, 1 => left && right, 2 => left && !right, _ => left != right };
+            if keep { answer.put(key.clone(), item.clone()); }
+        }
+        answer
+    }
+
+    pub fn written(&self, item_text: impl Fn(&Value) -> String) -> String {
+        match self.entries.len() {
+            0 => self.spelling.clone() + "()",
+            _ => {
+                let words = self.entries.iter().map(|(_, item)| item_text(item)).collect::<Vec<_>>();
+                "{".to_owned() + &words.join(", ") + "}"
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for Value {
@@ -274,6 +326,37 @@ impl Value {
         }
     }
 
+    pub fn set_member_spelling(&self, names: Names) -> String {
+        let shown = self.in_field(names, "", "r").unwrap_or_else(|| self.render(names));
+        match self {
+            Value::Frac(r) if r.places.is_some() && !r.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'E' | 'e')) => shown + ".0",
+            _ => shown,
+        }
+    }
+
+    pub fn hash_address(&self) -> Result<String, &'static str> {
+        match self {
+            Value::Tuple(items) | Value::Row(items) => {
+                let parts = items.iter().map(Value::hash_address).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("row:{parts:?}"))
+            }
+            Value::Shared(slot) | Value::Mutable(slot, _) => slot.borrow().hash_address(),
+            Value::Vector(_) => Err("list"),
+            Value::Dict(_) => Err("dict"),
+            Value::Set(_) => Err("set"),
+            Value::Text(word) => Ok(format!("text:{word}")),
+            Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
+            Value::Nil => Ok("nothing".to_owned()),
+            Value::Ellipsis => Ok("ellipsis".to_owned()),
+            value => {
+                let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
+                if ratio.beneath.is_zero() { return Err(""); }
+                let divisor = ratio.above.gcd(&ratio.beneath);
+                Ok(format!("number:{}:{}", ratio.above / &divisor, ratio.beneath / divisor))
+            }
+        }
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -291,14 +374,15 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
+            Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
             Value::Member(..) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Set(_) => Kind::Set,
         })
     }
 
@@ -308,7 +392,7 @@ impl Value {
             Value::Mutable(cell, _) => cell.borrow().is_true(),
             Value::Row(items) => !items.is_empty(),
             Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
-            Value::Set(items) => !items.is_empty(),
+            Value::Set(items) => !items.borrow().keys.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -342,7 +426,7 @@ impl Value {
             Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -373,6 +457,7 @@ impl Value {
             }
             (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
+            (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -385,7 +470,6 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Tuple(a), Value::Tuple(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -446,6 +530,8 @@ impl Value {
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
+            Value::Set(items) => items.borrow().written(|item| item.set_member_spelling(w)),
+
             Value::Flag(true) if w.flag_counted => "1".to_string(),
             Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
@@ -583,9 +669,10 @@ impl Value {
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
-            Value::Set(_) => self.quoted(),
             Value::Intrinsic(name) => format!("<built-in function {}>", name),
             Value::Iterator(_) => String::from("<iterator>"),
+            Value::SetCursor { .. } => String::from("<set walk>"),
+            Value::Set(items) => items.borrow().written(Value::bare),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };

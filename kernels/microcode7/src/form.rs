@@ -55,6 +55,7 @@ pub enum Prim {
     BindValueMethod,
     SortedValues,
     Belongs, Tupling, Uniques, Ordered, Backwards, Numbered, Zipped, Mapped, Filtered, EveryTrue, Least, Greatest, Magnitude, Rounded, QuotRem, Powered, Hexadecimal, Octal, Binary, Quoted, Truthful, CallableValue, IdentityOf, Hashed, NextItem, HasAttribute, GetMember, SetMember, DropMember, MembersOf,
+    SetCall(u8),
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.
@@ -379,6 +380,8 @@ pub enum Prim {
     /// place to write, so it is turned down as a write to one is.
     Toward,
     MakeArray,
+    EmptySet,
+    SetAssign(u8),
     /// The growing literal and the next part of it.
     ExtendLiteral(bool, bool),
     Iterated,

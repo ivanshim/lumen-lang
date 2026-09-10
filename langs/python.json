@@ -805,7 +805,90 @@
     "number"
   ],
   "ext.builtin.set": [
-    "set"
+    "set",
+    "frozenset"
+  ],
+  "ext.builtin.set.add": [
+    "add"
+  ],
+  "ext.builtin.set.arguments": [
+    "TypeError: invalid arguments to set operation"
+  ],
+  "ext.builtin.set.changed": [
+    "RuntimeError: Set changed size during iteration"
+  ],
+  "ext.builtin.set.clear": [
+    "clear"
+  ],
+  "ext.builtin.set.copy": [
+    "copy"
+  ],
+  "ext.builtin.set.difference": [
+    "difference"
+  ],
+  "ext.builtin.set.difference_update": [
+    "difference_update"
+  ],
+  "ext.builtin.set.discard": [
+    "discard"
+  ],
+  "ext.builtin.set.empty": [
+    "KeyError: 'pop from an empty set'"
+  ],
+  "ext.builtin.set.intersection": [
+    "intersection"
+  ],
+  "ext.builtin.set.intersection_update": [
+    "intersection_update"
+  ],
+  "ext.builtin.set.isdisjoint": [
+    "isdisjoint"
+  ],
+  "ext.builtin.set.issubset": [
+    "issubset"
+  ],
+  "ext.builtin.set.issuperset": [
+    "issuperset"
+  ],
+  "ext.builtin.set.method.unavailable": [
+    "NotImplementedError: bound set methods are not provided"
+  ],
+  "ext.builtin.set.missing": [
+    "KeyError: "
+  ],
+  "ext.builtin.set.operands": [
+    "TypeError: set operands must be sets"
+  ],
+  "ext.builtin.set.pop": [
+    "pop"
+  ],
+  "ext.builtin.set.remove": [
+    "remove"
+  ],
+  "ext.builtin.set.sorted": [
+    "sorted"
+  ],
+  "ext.builtin.set.symmetric_difference": [
+    "symmetric_difference"
+  ],
+  "ext.builtin.set.symmetric_difference_update": [
+    "symmetric_difference_update"
+  ],
+  "ext.builtin.set.unhashable": [
+    "TypeError: unhashable type: '",
+    "'"
+  ],
+  "ext.builtin.set.union": [
+    "union"
+  ],
+  "ext.builtin.set.unsortable": [
+    "TypeError: set members cannot be ordered"
+  ],
+  "ext.builtin.set.unsupported": [
+    "NotImplementedError: hashing this value is not provided"
+  ],
+  "ext.builtin.set.update": [
+    "update"
   ],
   "ext.builtin.setattr": [
     "setattr"
@@ -1198,6 +1281,9 @@
   ],
   "ext.stmt.annotation.amiss": [
     "invalid syntax"
+  ],
+  "ext.stmt.annotation.target.unready": [
+    "NotImplementedError: annotated attribute targets are not supported"
   ],
   "ext.stmt.assert": [
     "assert"

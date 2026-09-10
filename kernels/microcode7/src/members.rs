@@ -22,7 +22,8 @@ pub fn gather(source: &Value, bad: &dyn Fn(&str)->String) -> Result<Vec<Value>,S
     let mut result=Vec::new();
     match source {
         Value::Text(t) => result.extend(t.chars().map(|ch|Value::text(&String::from(ch)))),
-        Value::Vector(v) | Value::Row(v) => result.extend(v.iter().cloned()),
+        Value::Set(items) => result.extend(items.borrow().values()),
+        Value::Vector(v) | Value::Tuple(v) | Value::Row(v) => result.extend(v.iter().cloned()),
         Value::Dict(d) => result.extend(d.iter().map(|entry|entry.0.clone())),
         Value::Progression(p) => {let mut at=BigInt::from(0);while at<p.count(){result.push(Value::from_big(&p.first+&p.stride*&at));at+=1;}},
         _ => return Err(bad("arguments")),

@@ -215,6 +215,8 @@ pub enum Action {
     Execute,
     /// The arguments as an array.
     MakeArray,
+    MakeSet,
+    SetWrite(u8),
     /// A literal grows by one item, or by all the items of a spread.
     GatherItem { map: bool, spread: bool },
     /// The values walked by a comprehension, with maps handing out keys.
@@ -432,6 +434,26 @@ pub enum Builtin {
     ValueMethod,
     Sorted,
     InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
+    SetMake,
+    SetAdd,
+    SetRemove,
+    SetDiscard,
+    SetPop,
+    SetClear,
+    SetCopy,
+    SetUpdate,
+    SetUnion,
+    SetIntersection,
+    SetDifference,
+    SetSymmetric,
+    SetSubset,
+    SetSuperset,
+    SetDisjoint,
+    SetMeetUpdate,
+    SetLessUpdate,
+    SetXorUpdate,
+    SetSorted,
+
     Sum,
     List,
     Any,
@@ -693,6 +715,12 @@ pub enum Instr {
     /// A comparison of two operands and a jump when it fails: the test of
     /// a loop or a branch in one word.
     SkipCmp { op: Action, a: Operand, b: Operand, to: usize },
+}
+
+impl Builtin {
+    pub fn set_method(self) -> bool {
+        matches!(self, Self::SetAdd | Self::SetRemove | Self::SetDiscard | Self::SetPop | Self::SetClear | Self::SetCopy | Self::SetUpdate | Self::SetUnion | Self::SetIntersection | Self::SetDifference | Self::SetSymmetric | Self::SetSubset | Self::SetSuperset | Self::SetDisjoint | Self::SetMeetUpdate | Self::SetLessUpdate | Self::SetXorUpdate)
+    }
 }
 
 /// A compiled program.

@@ -4752,6 +4752,9 @@ impl<'a> Compiler<'a> {
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
+        let compound = compound.map(|op| if self.lang.set_literals {
+            match op { Action::BitEither => Action::SetWrite(0), Action::BitBoth => Action::SetWrite(1), Action::Sub => Action::SetWrite(2), Action::BitOne => Action::SetWrite(3), other => other }
+        } else { op });
         let assign = self.take().lexeme;
         let words = self.lang.scope_unready.first().cloned();
         if matches!(&self.piece().instrs[from..],
@@ -5566,14 +5569,26 @@ impl<'a> Compiler<'a> {
             return self.mutation(&name, &target, argc + 1);
         }
         let mut argc = 1;
+        let mut called = false;
         if let Some(call) = self.lang.calling.clone() {
             if self.at_symbol(&call.open) {
                 self.take();
+                called = true;
                 argc += self.arguments(&call)?;
             }
         }
         if self.lang.yield_suspends && [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, &name)) {
             self.act(Action::Send(Rc::from(name)), argc);
+            return Ok(());
+        }
+        if let Some(method) = native.filter(|b| b.set_method()) {
+            if !called {
+                let words = self.lang.set_words["ext.builtin.set.method.unavailable"].first().cloned().unwrap_or_default();
+                self.constant(Value::text(&words));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from(name.as_str())), 1);
+                return Ok(());
+            }
+            self.act(Action::Builtin(method, Rc::from(name.as_str())), argc);
             Ok(())
         } else { self.call(&name, argc) }
     }
@@ -6893,6 +6908,9 @@ impl<'a> Compiler<'a> {
                     } else { self.class_cannot_run(); }
                 } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
                     self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
+                } else if let Some(method) = native.filter(|b| b.set_method()) {
+                    if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }
+                    else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;
@@ -7037,7 +7055,7 @@ impl<'a> Compiler<'a> {
         if let Some(clause) = self.comprehension_ahead() {
             return self.comprehension(pair, clause, map);
         }
-        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         while !self.at_symbol(&pair.close) {
             let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
             if spread { self.take(); }
@@ -7103,7 +7121,7 @@ impl<'a> Compiler<'a> {
         let head = self.pos;
         let bindings = self.comprehension_names.len();
         let result = self.gensym("comprehension");
-        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         self.write(&result);
         self.pos = clause;
         self.comprehension_clause(head, &result, map)?;
@@ -7365,7 +7383,7 @@ impl<'a> Compiler<'a> {
     /// A call by name, the arguments already on the stack: a builtin of
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
-        match self.lang.builtins.get(name).copied() {
+        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method()) {
             Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }

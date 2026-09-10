@@ -4505,6 +4505,9 @@ impl<'a> Builder<'a> {
     /// in a cell of its own and given back once the writing is done.
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
+        let compound = if self.table.flag("ext.syntax.set") {
+            compound.map(|p| match p { Prim::BitsBoth => Prim::SetAssign(1), Prim::Minus => Prim::SetAssign(2), Prim::BitsEither => Prim::SetAssign(0), Prim::BitsOne => Prim::SetAssign(3), p => p })
+        } else { compound };
         let assign = self.advance();
         let refused_tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), parts)
             if matches!(parts.as_slice(), [Form::Const(Value::Text(words))]
@@ -5126,15 +5129,27 @@ impl<'a> Builder<'a> {
                     continue;
                 }
                 let mut args = vec![left];
+                let mut invoked = false;
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
                         self.advance();
+                        invoked = true;
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
                 if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|label| table.spells(label, &name)) {
                     args.insert(1, constant(Value::text(&name)));
                     left = prim_call(Prim::Ask, args);
+                } else if matches!(table.prims.get(&name), Some(Prim::SetCall(1..=17))) {
+                left = match table.prims.get(&name).copied() {
+                    Some(Prim::SetCall(1..=17)) if !invoked => {
+                        let words = table.single("ext.builtin.set.method.unavailable").unwrap_or_default();
+                        args.push(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+                        sequence(args)
+                    }
+                    Some(op @ Prim::SetCall(1..=17)) => Form::Apply(Callee::Prim(op, Rc::from(name.as_str())), args),
+                    _ => self.named_call(&name, args)?,
+                };
                 } else {
                 let mutation = matches!(table.prims.get(&name), Some(Prim::Append) | Some(Prim::Replace));
                 left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
@@ -6262,6 +6277,10 @@ impl<'a> Builder<'a> {
                         args.insert(1, constant(Value::text(&named)));
                         return Ok(prim_call(Prim::Ask, args));
                     }
+                    if let Some(op @ Prim::SetCall(1..=17)) = table.prims.get(&named).copied() {
+                        return Ok(if calling { Form::Apply(Callee::Prim(op, Rc::from(named.as_str())), args) }
+                            else { prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]) });
+                    }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {
@@ -6434,7 +6453,7 @@ impl<'a> Builder<'a> {
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else { Prim::MakeArray }, vec![]);
+        let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spreading { self.advance(); }
@@ -6490,7 +6509,7 @@ impl<'a> Builder<'a> {
         self.pos = first_for;
         let old_names = self.gather_names.len();
         let name = self.gather_name("gathered");
-        let empty = prim_call(if dictionary { Prim::MakeMap } else { Prim::MakeArray }, Vec::new());
+        let empty = prim_call(if dictionary { Prim::MakeMap } else if self.table.flag("ext.syntax.set") && self.table.spells("syntax.map.close", end) { Prim::EmptySet } else { Prim::MakeArray }, Vec::new());
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
@@ -6718,7 +6737,7 @@ impl<'a> Builder<'a> {
     }
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
-        match self.table.prims.get(name).copied() {
+        match self.table.prims.get(name).copied().filter(|op| !matches!(op, Prim::SetCall(1..=17))) {
             // What is put in front of may be a name standing for a
             // shared cell, since the library of a language may spell it
             // as a routine taking one, so the place it names is looked

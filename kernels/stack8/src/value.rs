@@ -20,6 +20,7 @@ pub enum Sort {
     Text,
     Boolean,
     Array,
+    Set,
     Null,
 }
 
@@ -32,6 +33,7 @@ impl Sort {
             Sort::Text => "STRING",
             Sort::Boolean => "BOOLEAN",
             Sort::Array => "ARRAY",
+            Sort::Set => "SET",
             Sort::Null => "NULL",
         }
     }
@@ -165,7 +167,6 @@ pub enum Value {
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
     Native(crate::code::Builtin, Rc<str>),
-    Set(Rc<Vec<Value>>),
     Cursor(Rc<RefCell<CursorState>>),
     Stream(bool),
     Counted(Rc<Counted>),
@@ -182,6 +183,8 @@ pub enum Value {
     Array(Rc<Vec<Value>>),
     Tuple(Rc<Vec<Value>>),
     Generator(Rc<RefCell<Generator>>),
+    Set(Rc<RefCell<Members>>),
+    SetWalk(Rc<RefCell<Members>>, usize),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -216,6 +219,62 @@ pub enum Descriptor {
     Class(Value),
     Property(Value, Option<Value>),
     Bound(Value, Value),
+}
+
+/// The hash finds a member; the row remembers when it first came.
+#[derive(Debug, Clone)]
+pub struct Members {
+    pub row: Vec<String>,
+    pub held: std::collections::HashMap<String, Value>,
+    pub word: String,
+}
+
+impl Members {
+    pub fn empty(word: String) -> Self {
+        Self { row: Vec::new(), held: std::collections::HashMap::new(), word }
+    }
+
+    pub fn insert(&mut self, key: String, value: Value) {
+        if !self.held.contains_key(&key) {
+            self.row.push(key.clone());
+            self.held.insert(key, value);
+        }
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        let found = self.held.remove(key);
+        if found.is_some() { self.row.retain(|k| k != key); }
+        found
+    }
+
+    pub fn items(&self) -> Vec<Value> {
+        self.row.iter().map(|k| self.held[k].clone()).collect()
+    }
+
+    pub fn beneath(&self, other: &Self) -> bool {
+        self.held.keys().all(|k| other.held.contains_key(k))
+    }
+
+    pub fn combine(&self, other: &Self, how: u8) -> Self {
+        let mut result = Self::empty(self.word.clone());
+        for key in &self.row {
+            let shared = other.held.contains_key(key);
+            if how == 0 || (how == 1 && shared) || (how >= 2 && !shared) {
+                result.insert(key.clone(), self.held[key].clone());
+            }
+        }
+        if how == 0 || how == 3 {
+            for key in &other.row {
+                if !self.held.contains_key(key) { result.insert(key.clone(), other.held[key].clone()); }
+            }
+        }
+        result
+    }
+
+    pub fn show(&self, shown: impl Fn(&Value) -> String) -> String {
+        if self.row.is_empty() { return format!("{}()", self.word); }
+        format!("{{{}}}", self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", "))
+    }
 }
 
 /// How a language spells the literal values when printing.
@@ -291,6 +350,36 @@ impl Value {
         Value::Text(Rc::from(s))
     }
 
+    pub fn member_text(&self, words: &Wording) -> String {
+        let mut text = self.string_field(words, "", "r").unwrap_or_else(|| self.display(words));
+        if matches!(self, Value::Real(r) if !r.outside()) && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
+        text
+    }
+
+    pub fn member_key(&self) -> Result<String, &'static str> {
+        if let Value::Tuple(items) = self {
+            let keys = items.iter().map(Value::member_key).collect::<Result<Vec<_>, _>>()?;
+            return Ok(format!("tuple:{keys:?}"));
+        }
+        if let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = self { return cell.borrow().member_key(); }
+        if let Some((p, q)) = crate::arith::parts(self) {
+            if q.is_zero() { return Err(""); }
+            let common = p.gcd(&q);
+            return Ok(format!("n{}/{}", p / &common, q / common));
+        }
+        match self {
+            Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
+            Value::Text(s) => Ok(format!("s{}", s)),
+            Value::Null => Ok("nil".into()),
+            Value::Ellipsis => Ok("dots".into()),
+            Value::Array(_) => Err("list"),
+            Value::Map(_) => Err("dict"),
+            Value::Set(_) => Err("set"),
+            Value::Bond(cell) => cell.borrow().member_key(),
+            _ => Err(""),
+        }
+    }
+
     pub fn of_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -309,10 +398,11 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Set(_) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
+            Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
             Value::View(_) => Sort::Array,
             Value::Bond(shared) | Value::Binding(shared) => return shared.borrow().sort(),
+            Value::Set(_) => Sort::Set,
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
             _ => return None,
@@ -345,8 +435,8 @@ impl Value {
             Value::ValueMethod(_) => true,
             Value::View(_) => if let Value::Array(row) = self.contents() { !row.is_empty() } else { false },
             Value::Native(..) | Value::Cursor(_) => true,
-            Value::Set(v) => !v.is_empty(),
-            Value::Stream(_) => true,
+            Value::Set(s) => !s.borrow().held.is_empty(),
+            Value::SetWalk(..) | Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -384,7 +474,7 @@ impl Value {
             Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
-            Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -404,6 +494,10 @@ impl Value {
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Native(a,_), Value::Native(b,_)) => a == b,
             (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a,b),
+            (Value::Set(a), Value::Set(b)) => {
+                let (a, b) = (a.borrow(), b.borrow());
+                a.held.len() == b.held.len() && a.beneath(&b)
+            }
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -419,7 +513,6 @@ impl Value {
             (Value::Descriptor(a), Value::Descriptor(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
-            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }
@@ -447,7 +540,6 @@ impl Value {
             return self.identical(&held);
         }
         match (self, other) {
-            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Tuple(a), Value::Tuple(b)) | (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.identical(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.identical(k) && x.identical(y))
@@ -474,6 +566,8 @@ impl Value {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().display(sp),
+            Value::Set(s) => s.borrow().show(|v| v.member_text(sp)),
+
             Value::Flag(true) => match sp.flag_counts {
                 true => "1".to_string(),
                 false => sp.true_word.to_string(),
@@ -605,7 +699,8 @@ impl Value {
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Cursor(_) => "<iterator>".to_string(),
-            Value::Set(_) => self.core_repr(),
+            Value::SetWalk(..) => "<set walk>".into(),
+            Value::Set(s) => s.borrow().show(Value::plain),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
