@@ -905,7 +905,10 @@ impl<'a> Engine<'a> {
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let found = self.class_named(&named).or_else(|| {
+            if self.slice_word("ext.builtin.slice").is_empty() { None } else { self.lookup(&named) }
+        });
+        let Some(Value::Class(class)) = found.cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
@@ -5005,6 +5008,7 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::MakeSlice { return self.builtin_values(builtin, name, args); }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };

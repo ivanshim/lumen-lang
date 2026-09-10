@@ -10,3 +10,9 @@ s = slice(l)
 print(s.stop is l)
 l.append(3)
 print(s.stop)
+class G:
+    def __getitem__(self, key):
+        return key
+s = G()[l:]
+l.append(4)
+print(s.start)
