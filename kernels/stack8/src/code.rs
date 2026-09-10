@@ -609,6 +609,8 @@ pub struct Routine {
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.
     pub parameter_rules: Option<Vec<u8>>,
+    /// Parameter places filled by the body before it does its work.
+    pub entry_defaults: Vec<usize>,
     /// The class each parameter is declared to take, where one was
     /// written and it names a class. Nothing for a parameter written
     /// without one, or with a kind that is not a class.

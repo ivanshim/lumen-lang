@@ -3574,6 +3574,7 @@ impl<'a> Builder<'a> {
                     else { 'b' }
                 }).collect());
                 body.gather_from = None;
+                body.local_defaults = spares.iter().map(|(at, _)| body.formal_slots[*at]).collect();
             }
         }
         if !spares.is_empty() {

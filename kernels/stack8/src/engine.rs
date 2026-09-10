@@ -1475,7 +1475,7 @@ impl<'a> Engine<'a> {
         if let Some(i) = rest { frame[i] = Value::array(tail); }
         if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords)); }
         for (i, value) in frame.iter().enumerate() {
-            if matches!(value, Value::Blank) && !program.carried.contains(&i) {
+            if matches!(value, Value::Blank) && !program.carried.contains(&i) && !program.entry_defaults.contains(&i) {
                 return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
             }
         }

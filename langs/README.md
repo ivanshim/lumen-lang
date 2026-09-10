@@ -1774,7 +1774,9 @@ only. The extension labels so far, all from PHP:
   one expression, parted by `block.intro`. The value is a routine;
   its defaults are worked out where it is made and kept for later
   calls. A multiplication sign before a parameter gathers the remaining
-  arguments into an array. A division sign parts positional parameters;
+  arguments into an array. Where `ext.syntax.call.bind_names` is set,
+  supported forms use the ordinary call binder, including spread
+  arguments and the places filled by defaults. A division sign parts positional parameters;
   a power sign before a parameter and parameters after a bare
   multiplication sign are read as keyword parameters. Such parameters
   cannot yet be called: `ext.op.lambda.unsupported` gives the words said
