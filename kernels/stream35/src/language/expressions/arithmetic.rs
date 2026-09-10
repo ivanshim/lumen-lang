@@ -117,7 +117,7 @@ pub fn apply(op: Arith, l: Value, r: Value) -> LumenResult<Value> {
     // A real operand makes the result real, as does division in a
     // language whose `/` yields a real (op.div.result).
     let mut result_is_real = left_is_real || right_is_real || (op == Arith::Div && def().div_real);
-    if def().shortest_reals && result_is_real {
+    if def().shortest_reals && (left_is_real || right_is_real) {
         let (a, b) = exact_parts(l.as_ref(), "Left operand must be a number")?;
         let (c, d) = exact_parts(r.as_ref(), "Right operand must be a number")?;
         let first = crate::language::real_decimal::nearest(&a, &b);
@@ -129,7 +129,7 @@ pub fn apply(op: Arith, l: Value, r: Value) -> LumenResult<Value> {
             Arith::Mul => first * second,
             Arith::Div => first / second,
             Arith::Quot => (first / second).trunc(),
-            Arith::Rem => first - second * (first / second).trunc(),
+            Arith::Rem => first % second,
             Arith::Pow => first.powf(second.trunc()),
             Arith::Concat => unreachable!(),
         };

@@ -5636,6 +5636,9 @@ impl<'a> Machine<'a> {
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
                 if let Some(Value::Text(chars)) = v.first() {
                     if let Ok(binary) = chars.trim().to_ascii_lowercase().parse::<f64>() {
+                        if self.table.lone("system.real.render") == Some("shortest") {
+                            return Ok(crate::data::worth_of_binary(binary, math::DEFAULT_PLACES));
+                        }
                         if !binary.is_finite() { return Ok(crate::data::past_the_numbers(binary, math::DEFAULT_PLACES)); }
                     }
                 }

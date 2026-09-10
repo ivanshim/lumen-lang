@@ -80,7 +80,7 @@ pub fn apply(op: Sum, a: &Value, b: &Value) -> Option<Result<Value, String>> {
 
 fn slow(op: Sum, a: &Exact, b: &Exact) -> Result<Value, String> {
     let digits = a.digits.or(b.digits);
-    if crate::real::chosen() && (digits.is_some() || op == Sum::DivReal) {
+    if crate::real::chosen() && digits.is_some() {
         let left = crate::real::read(&a.num, &a.den);
         let right = crate::real::read(&b.num, &b.den);
         let quotient = matches!(op, Sum::Div | Sum::DivReal | Sum::Quot | Sum::Rem);
@@ -91,7 +91,7 @@ fn slow(op: Sum, a: &Exact, b: &Exact) -> Result<Value, String> {
             Sum::Mul => left * right,
             Sum::Div | Sum::DivReal => left / right,
             Sum::Quot => (left / right).trunc(),
-            Sum::Rem => left - right * (left / right).trunc(),
+            Sum::Rem => left % right,
             Sum::Pow => left.powf(right.trunc()),
         };
         let (num, den) = crate::real::keep(answer);

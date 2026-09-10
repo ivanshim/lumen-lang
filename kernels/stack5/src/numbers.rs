@@ -105,14 +105,14 @@ pub fn compute(calc: Calc, a: &Value, b: &Value) -> Option<Result<Value, String>
 
 fn exact(calc: Calc, a: &Frac, b: &Frac) -> Result<Value, String> {
     let places = a.places.or(b.places);
-    if crate::binary::short() && (places.is_some() || calc == Calc::RealDiv) {
+    if crate::binary::short() && places.is_some() {
         let (x, y) = (crate::binary::from_ratio(&a.p, &a.q), crate::binary::from_ratio(&b.p, &b.q));
         let worth = match calc {
             Calc::Add => x + y, Calc::Sub => x - y, Calc::Mul => x * y,
             Calc::Pow => x.powf(y.trunc()),
             _ => {
                 if y == 0.0 { return Err("Division by zero".to_owned()); }
-                match calc { Calc::Quot => (x / y).trunc(), Calc::Rem => x - y * (x / y).trunc(), _ => x / y }
+                match calc { Calc::Quot => (x / y).trunc(), Calc::Rem => x % y, _ => x / y }
             }
         };
         let (p, q) = crate::binary::as_ratio(worth);
