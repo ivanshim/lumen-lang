@@ -1,8 +1,8 @@
-def make(x):
+def make():
     def f():
-        return x
+        return 1
     return f
-a = make(1)
-b = make(2)
+a = make()
+b = make()
 c = a
 print(id(a) != id(b), id(a) == id(c), a(), b())

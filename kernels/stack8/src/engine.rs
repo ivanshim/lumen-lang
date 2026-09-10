@@ -2111,10 +2111,16 @@ impl<'a> Engine<'a> {
             }
             match &instrs[pc] {
                 Instr::Const(v) => {
-                    if let (Value::Routine(routine), Some(names)) = (v, &self.namespace) {
+                    // Each definition makes a fresh function, though its
+                    // words may be the same words read before.
+                    let value = match v {
+                        Value::Routine(body) if !self.lang.builtin_id.is_empty() => Value::Routine(Rc::new((**body).clone())),
+                        other => other.clone(),
+                    };
+                    if let (Value::Routine(routine), Some(names)) = (&value, &self.namespace) {
                         self.routine_names.insert(Rc::as_ptr(routine) as usize, (routine.clone(), names.clone()));
                     }
-                    self.data.push(self.keep_collection(v.clone()));
+                    self.data.push(self.keep_collection(value));
                 }
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
                     Ok(v) => self.data.push(v),

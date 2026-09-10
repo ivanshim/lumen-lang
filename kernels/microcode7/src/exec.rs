@@ -1819,7 +1819,7 @@ impl<'a> Machine<'a> {
                     Value::Thing(p) => Rc::as_ptr(p) as usize,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize,
                     Value::Bound(_, _, Some(identity)) => Rc::as_ptr(identity) as usize,
-                    Value::Routine(p) => Rc::as_ptr(p) as usize,
+                    Value::Routine(p) | Value::Bound(p, _, None) => Rc::as_ptr(p) as usize,
                     Value::Text(s) => s.as_ptr() as usize,
                     _ => return Err(refused),
                 };
@@ -3051,7 +3051,7 @@ impl<'a> Machine<'a> {
         if let Some(value) = class.constant(name) { return Some(value.clone()); }
         class.program(name).map(|body| match value {
             Value::Thing(o) => Value::Method(body.clone(), o.clone()),
-            _ => Value::Bound(body.clone(), self.outermost.clone(), self.table.single("ext.builtin.id").map(|_| Rc::new(()))),
+            _ => Value::Bound(body.clone(), self.outermost.clone(), None),
         })
     }
 
