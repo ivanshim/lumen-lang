@@ -546,6 +546,17 @@ only. The extension labels so far, all from PHP:
   a tuple of one, and empty grouping marks hold a tuple of none. This
   reading does not give arrays the name of tuples: reaching a tuple or
   a taking-apart raises `ext.system.scope.unready` pending tuple values.
+  Commas in a collection loop's target have the same reading, including
+  grouped targets and a final comma. The whole source and body are read;
+  reaching such a loop raises the same complaint before binding a part.
+  `ext.syntax.array.spread` also marks a starred part in a comma tuple,
+  on either side of an assignment or within a loop target. Its operand
+  is read whole; tuple gathering and binding retain the same refusal.
+- `ext.stmt.function.async` precedes a function definition whose calls
+  would make a suspended computation. The ordinary function reader reads
+  its names and suite, including asynchronous comprehensions within it.
+  `ext.stmt.function.async.unavailable` refuses the definition when
+  reached; no ordinary callable is put in its stead.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -1435,7 +1446,10 @@ only. The extension labels so far, all from PHP:
   spells an ellipsis among the places in brackets. Several places
   separated by the call separator, an ellipsis, and a compound slice
   write are read whole but stop with `.unsupported`: their running
-  is still wanting.
+  is still wanting. Index brackets may follow a piped member or method
+  call as well as a bare value, so a member's slice stays with its base. A
+  bare member with no builtin meaning raises `ext.system.scope.unready`
+  where object attributes are still owed.
 - `ext.op.index.text`: a switch; a piece of text is a row of places,
   each holding one letter. Such a place takes a letter as well as
   giving one: only the first letter of what is written there is put
@@ -2175,6 +2189,20 @@ only. The extension labels so far, all from PHP:
   number is refused with `ext.system.fault.operands`. A right shift
   beyond every bit gives nought or minus one according to the sign;
   either shift by a negative count uses `ext.system.fault.shift`.
+- `ext.op.bit.whole`: a switch; bit operations take whole numbers and
+  truth values, keeping all their bits, without reading numbers out of
+  text or dropping a fractional part. Two truth values keep that kind
+  under and, or and exclusive or. `ext.op.bit.whole.amiss` refuses any
+  other kind; methods supplying an index are not yet called here.
+  `ext.system.fault.shift` refuses a count below nought, and
+  `ext.op.bit.whole.large` a left shift whose count cannot fit the host.
+  The ordinary bit labels spell the signs; `ext.op.assign.compound`
+  gives each its form which writes the answer back into its place.
+- `ext.op.matrix` is matrix multiplication, taking the tier given by
+  `op.precedence` and the compound form where compound writes are on.
+  Both operands and the whole target are read. Reaching the operation
+  raises `ext.op.matrix.unavailable`; matrix values and their methods
+  are not yet provided.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -2772,6 +2800,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.amiss` | - | - | `TypeError: bit operations require integers` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.large` | - | - | `OverflowError: shift count is too large` | - | - | - | - | - | - | - |
 | `ext.op.bit.whole.room` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2824,6 +2854,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
 | `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
+| `ext.op.matrix.unavailable` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.matrix.unready` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | `.` | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
@@ -2917,6 +2948,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.for.target.unready` | - | - | `NotImplementedError: unpacking loop targets are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.function.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.function.async.unavailable` | - | - | `NotImplementedError: asynchronous functions are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |

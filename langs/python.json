@@ -619,6 +619,12 @@
     ">>"
   ],
   "ext.op.bit.whole": true,
+  "ext.op.bit.whole.amiss": [
+    "TypeError: bit operations require integers"
+  ],
+  "ext.op.bit.whole.large": [
+    "OverflowError: shift count is too large"
+  ],
   "ext.op.bit.whole.room": [
     "OverflowError: too many digits in integer"
   ],
@@ -722,6 +728,9 @@
   ],
   "ext.op.matrix": [
     "@"
+  ],
+  "ext.op.matrix.unavailable": [
+    "NotImplementedError: matrix multiplication is not supported"
   ],
   "ext.op.matrix.unready": [
     "NotImplementedError: matrix multiplication is not supported"
@@ -839,6 +848,12 @@
   "ext.stmt.for.collection": true,
   "ext.stmt.for.target.unready": [
     "NotImplementedError: unpacking loop targets are not supported"
+  ],
+  "ext.stmt.function.async": [
+    "async"
+  ],
+  "ext.stmt.function.async.unavailable": [
+    "NotImplementedError: asynchronous functions are not supported"
   ],
   "ext.stmt.function.carries": [
     "*"

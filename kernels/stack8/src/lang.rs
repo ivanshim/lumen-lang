@@ -194,6 +194,9 @@ pub struct Lang {
     pub pair_mark: Option<String>,
     pub index_brackets: Option<Brackets>,
     pub text_indexable: bool,
+    pub whole_bits_amiss: Option<String>,
+    pub whole_bits_large: Option<String>,
+    pub matrix_unavailable: Option<String>,
     pub slice_marks: Vec<String>,
     pub slice_ellipsis: Vec<String>,
     pub slice_zero: Option<String>,
@@ -235,6 +238,8 @@ pub struct Lang {
     pub break_words: Vec<String>,
     pub continue_words: Vec<String>,
     pub function_words: Vec<String>,
+    pub async_functions: Vec<String>,
+    pub async_functions_unavailable: Vec<String>,
     pub return_marks: Vec<String>,
     pub named_result: bool,
     pub pass_words: Vec<String>,
@@ -873,7 +878,7 @@ w ext.stmt.class.self | w ext.lexical.name_lead | w ext.stmt.assert | w ext.stmt
 w ext.stmt.finally | w ext.stmt.throw | w ext.stmt.catch.separator | w ext.op.reference
 w ext.system.request.query | w ext.system.request.form | w ext.system.request.cookies | w ext.system.request.server
 w ext.system.request.env | w ext.system.request.files | w ext.system.request.all | w ext.system.request.settings | b ext.op.index.absent | w ext.op.index.scalar | w ext.op.index.nothing | w ext.stmt.class.interface | w ext.stmt.class.implements | w ext.op.compare | w ext.builtin.unset | b ext.lexical.template | w ext.op.otherwise
-w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number
+w ext.lexical.line_continuation | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | w ext.op.bit.whole.room | w ext.op.plus.non_number | w ext.op.bit.whole.amiss | w ext.op.bit.whole.large | w ext.op.matrix | w ext.op.matrix.unavailable | w ext.stmt.function.async | w ext.stmt.function.async.unavailable
 w ext.op.bit.and | w ext.op.bit.or | w ext.op.bit.xor | w ext.op.bit.not | w ext.op.bit.left | w ext.op.bit.right | b ext.op.bit.shift.numbers
 w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
@@ -1545,6 +1550,10 @@ impl Lang {
             slice_marks: r.strings("ext.op.index.slice")?,
             slice_zero: r.head("ext.op.index.slice.zero")?,
             slice_bounds: r.head("ext.op.index.slice.bounds")?,
+            whole_bits_amiss: r.head("ext.op.bit.whole.amiss")?,
+            whole_bits_large: r.head("ext.op.bit.whole.large")?,
+            matrix_words: r.strings("ext.op.matrix")?,
+            matrix_unavailable: r.head("ext.op.matrix.unavailable")?,
             slice_unsupported: r.head("ext.op.index.slice.unsupported")?,
             slice_assign: r.head("ext.op.index.slice.assign")?,
             slice_length: r.strings("ext.op.index.slice.length")?,
@@ -1578,6 +1587,8 @@ impl Lang {
             break_words: r.strings("stmt.break")?,
             continue_words: r.strings("stmt.continue")?,
             function_words: functions,
+            async_functions: r.strings("ext.stmt.function.async")?,
+            async_functions_unavailable: r.strings("ext.stmt.function.async.unavailable")?,
             return_marks: returns_marks,
             named_result: result_by_name,
             pass_words: r.strings("stmt.pass")?,
@@ -1669,7 +1680,6 @@ impl Lang {
             chained_calls: r.flag("ext.syntax.call.chained")?,
             chained_names: r.flag("ext.stmt.assign.names.chained")?,
             tuple_marks: r.strings("ext.op.tuple")?,
-            matrix_words: r.strings("ext.op.matrix")?,
             matrix_unready: r.head("ext.op.matrix.unready")?,
             epilogue: r.strings("ext.lexical.epilogue")?,
             prologue_echo: r.head("ext.lexical.prologue.echo")?,
@@ -2048,7 +2058,7 @@ impl Lang {
             }
         }
         let mut lists: Vec<&Vec<String>> = vec![
-            &self.type_params_open, &self.type_params_close, &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words, &self.line_continuations, &self.match_ors, &self.matrix_words,
+            &self.type_params_open, &self.type_params_close, &self.comprehension_async, &self.comprehension_for, &self.comprehension_in, &self.comprehension_if, &self.array_spread, &self.map_spread, &self.block_intros, &self.assign_words, &self.stmt_ends, &self.argument_labels, &self.type_marks, &self.annotation_marks, &self.return_marks, &self.if_else_words, &self.lambda_words, &self.identity_not, &self.membership_words, &self.membership_not, &self.expression_assign, &self.ellipsis_words, &self.dup_words, &self.drop_words, &self.swap_words, &self.over_words, &self.rot_words, &self.eval_words, &self.quote_open, &self.long_quotes, &self.tuple_marks, &self.class_bases_open, &self.class_bases_close, &self.del_words, &self.nonlocal_words, &self.with_words, &self.with_as_words, &self.yield_words, &self.yield_from_words, &self.slice_ellipsis, &self.slice_marks, &self.quote_close, &self.increments, &self.decrements, &self.case_marks, &self.decorator_words, &self.carries_words, &self.carries_pairs, &self.keyword_only, &self.positional_only, &self.call_spread, &self.call_spread_pairs, &self.stmt_separators, &self.unpack_rest, &self.unpack_words, &self.line_continuations, &self.match_ors, &self.matrix_words, &self.async_functions,
         ];
         if self.blocks != Blocks::Indented {
             lists.push(&self.block_opens);
