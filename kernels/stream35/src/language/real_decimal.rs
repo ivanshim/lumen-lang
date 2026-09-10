@@ -48,7 +48,8 @@ pub fn exact(worth: f64) -> (BigInt, BigInt) {
     let power = exponent.max(1) - 1075;
     let denominator = if power >= 0 { numerator <<= power as usize; BigInt::from(1) }
         else { BigInt::from(1) << (-power) as usize };
-    (numerator, denominator)
+    let common = num_integer::gcd(numerator.clone(), denominator.clone());
+    (numerator / &common, denominator / common)
 }
 
 pub fn spelling(x: f64) -> String {

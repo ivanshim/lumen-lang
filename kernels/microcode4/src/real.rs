@@ -51,7 +51,8 @@ pub fn keep(number: f64) -> (BigInt, BigInt) {
     let mut lower = BigInt::from(1);
     let step = biased.max(1) - 1075;
     match step { 0.. => upper <<= step as usize, _ => lower <<= -step as usize }
-    (upper, lower)
+    let shared = num_integer::gcd(upper.clone(), lower.clone());
+    (upper / &shared, lower / shared)
 }
 
 pub fn write(number: f64) -> String {

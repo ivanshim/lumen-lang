@@ -44,7 +44,10 @@ pub fn ratio(x: f64) -> (BigInt, BigInt) {
     let power = if field == 0 { -1074 } else { field - 1075 };
     let mut n = BigInt::from(significand);
     if x.is_sign_negative() { n = -n; }
-    if power >= 0 { (n << power as usize, BigInt::one()) } else { (n, BigInt::one() << -power as usize) }
+    if power >= 0 { return (n << power as usize, BigInt::one()); }
+    let d = BigInt::one() << -power as usize;
+    let common = n.gcd(&d);
+    (n / &common, d / common)
 }
 
 pub fn text(x: f64) -> String {

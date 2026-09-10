@@ -140,11 +140,12 @@ impl Value {
 
     pub fn same(&self, other: &Value) -> bool {
         if let (Some(a), Some(b)) = (crate::arith::exact(self), crate::arith::exact(other)) {
-            if crate::real::chosen() && a.digits.or(b.digits).is_some() {
-                let left = crate::real::read(&a.num, &a.den);
-                return left == crate::real::read(&b.num, &b.den);
+            match (a.den.is_zero(), b.den.is_zero()) {
+                (true, true) => return !a.num.is_zero() && !b.num.is_zero() && a.num.is_negative() == b.num.is_negative(),
+                (true, false) | (false, true) => return false,
+                _ => (),
             }
-            return a.num * b.den == b.num * a.den;
+            return &a.num * b.den.abs() == &b.num * a.den.abs();
         }
         match (self, other) {
             (Value::Str(a), Value::Str(b)) => a == b,

@@ -125,10 +125,10 @@ impl Value {
 
     pub fn equals(&self, other: &Value) -> bool {
         if let (Some(a), Some(b)) = (crate::numeric::ratio(self), crate::numeric::ratio(other)) {
-            if crate::decimal::active() && (a.digits.is_some() || b.digits.is_some()) {
-                return crate::decimal::binary(&a.num, &a.den) == crate::decimal::binary(&b.num, &b.den);
+            if a.den.is_zero() || b.den.is_zero() {
+                return a.den.is_zero() && b.den.is_zero() && !a.num.is_zero() && !b.num.is_zero() && a.num.sign() == b.num.sign();
             }
-            return a.num * b.den == b.num * a.den;
+            return a.num * b.den.abs() == b.num * a.den.abs();
         }
         match (self, other) {
             (Value::Text(a), Value::Text(b)) => a == b,

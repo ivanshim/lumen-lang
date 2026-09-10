@@ -137,9 +137,14 @@ pub fn less(a: &Value, b: &Value) -> Option<bool> {
         return Some(x < y);
     }
     let (a, b) = (exact(a)?, exact(b)?);
-    if a.digits.or(b.digits).is_some() && crate::real::chosen() {
-        let pair = (crate::real::read(&a.num, &a.den), crate::real::read(&b.num, &b.den));
-        return Some(pair.0 < pair.1);
-    }
-    Some((&a.num * &b.den).cmp(&(&b.num * &a.den)) == Ordering::Less)
+    let outside = (a.den.is_zero(), b.den.is_zero());
+    let answer = match outside {
+        (true, _) if a.num.is_zero() => false,
+        (_, true) if b.num.is_zero() => false,
+        (true, true) => a.num < b.num,
+        (true, false) => a.num.is_negative(),
+        (false, true) => b.num.is_positive(),
+        (false, false) => (&a.num * b.den.abs()).cmp(&(&b.num * a.den.abs())) == Ordering::Less,
+    };
+    Some(answer)
 }

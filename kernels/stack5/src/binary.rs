@@ -44,8 +44,10 @@ pub fn as_ratio(real: f64) -> (BigInt, BigInt) {
     let significand = (raw & 0x000fffffffffffff) + if encoded_power == 0 { 0 } else { 0x0010000000000000 };
     let power = encoded_power.max(1) as i32 - 1075;
     let top = BigInt::from(significand) * polarity;
-    if power < 0 { (top, BigInt::from(1) << power.unsigned_abs() as usize) }
-    else { (top << power as usize, 1.into()) }
+    if power >= 0 { return (top << power as usize, 1.into()); }
+    let bottom = BigInt::from(1) << power.unsigned_abs() as usize;
+    let factor = top.gcd(&bottom);
+    (top / &factor, bottom / factor)
 }
 
 pub fn display(real: f64) -> String {

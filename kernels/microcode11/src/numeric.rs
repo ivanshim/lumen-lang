@@ -149,8 +149,10 @@ pub fn below(a: &Value, b: &Value) -> Option<bool> {
         return Some(x < y);
     }
     let (a, b) = (ratio(a)?, ratio(b)?);
-    if crate::decimal::active() && (a.digits.is_some() || b.digits.is_some()) {
-        return Some(crate::decimal::binary(&a.num, &a.den) < crate::decimal::binary(&b.num, &b.den));
+    if a.den.is_zero() || b.den.is_zero() {
+        if a.den.is_zero() && a.num.is_zero() || b.den.is_zero() && b.num.is_zero() { return Some(false); }
+        if a.den.is_zero() && b.den.is_zero() { return Some(a.num < b.num); }
+        return Some(if a.den.is_zero() { a.num.is_negative() } else { b.num.is_positive() });
     }
-    Some((&a.num * &b.den).cmp(&(&b.num * &a.den)) == Ordering::Less)
+    Some((&a.num * b.den.abs()).cmp(&(&b.num * a.den.abs())) == Ordering::Less)
 }

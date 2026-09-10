@@ -167,11 +167,19 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     if let (Value::Int(x), Value::Int(y)) = (a, b) {
         return Some(x.cmp(y));
     }
-    let first = Frac::of(a)?;
-    let second = Frac::of(b)?;
-    if crate::binary::short() && first.places.or(second.places).is_some() {
-        return crate::binary::from_ratio(&first.p, &first.q).partial_cmp(&crate::binary::from_ratio(&second.p, &second.q));
+    let mut first = Frac::of(a)?;
+    let mut second = Frac::of(b)?;
+    if first.q.is_zero() || second.q.is_zero() {
+        if first.q.is_zero() && first.p.is_zero() || second.q.is_zero() && second.p.is_zero() { return None; }
+        let sign = |p: &BigInt| if p.is_negative() { Ordering::Less } else { Ordering::Greater };
+        return Some(match (first.q.is_zero(), second.q.is_zero()) {
+            (true, true) => first.p.cmp(&second.p),
+            (true, false) => sign(&first.p),
+            _ => sign(&second.p).reverse(),
+        });
     }
+    first.q = first.q.abs();
+    second.q = second.q.abs();
     Some(first.order(&second))
 }
 
