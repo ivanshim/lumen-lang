@@ -120,6 +120,11 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
+        let numbered = lang.core_words.iter().filter(|(key, _)| key.starts_with("to_int.")).any(|(_, words)| words.first().map_or(false, |head| !head.is_empty() && e.starts_with(head)));
+        let literal = lang.to_int_text_amiss.first().map_or(false, |head| !head.is_empty() && e.starts_with(head));
+        let shift = !lang.to_int_base.is_empty() && lang.fault_shift.as_deref() == Some(e.as_str());
+        let hexadecimal = ["hex", "hex_overflow"].iter().any(|key| lang.method_errors.get(*key).map_or(false, |head| !head.is_empty() && e.starts_with(head)));
+        if numbered || literal || shift || hexadecimal { return e; }
         if lang.byte_words.iter().any(|(key, words)|
             (key.starts_with("ext.system.bytes.") && !["repr", "type", "encodings", "order", "strict"].iter().any(|part| key.ends_with(&format!(".{}", part)))
              || key == "ext.lexical.string.bytes.ascii" || key == "ext.lexical.string.bytes.mixed")

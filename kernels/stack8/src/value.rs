@@ -517,6 +517,7 @@ impl Value {
     /// worked out. The small common formats are honoured here; the
     /// rest say that the run has no rule for them.
     pub fn string_field(&self, words: &Wording, spec: &str, conversion: &str) -> Option<String> {
+        if let Value::Bytes(..) = self { return spec.is_empty().then(|| self.plain()); }
         if !matches!(self, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Text(_) | Value::Flag(_) | Value::Null) { return None; }
         if !spec.is_empty() && conversion.is_empty() && matches!(self, Value::Flag(_) | Value::Null) { return None; }
         let mut shown = self.display(words);

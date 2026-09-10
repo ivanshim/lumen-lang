@@ -1546,10 +1546,10 @@ only. The extension labels so far, all from PHP:
   false when given none. `ext.builtin.callable` asks whether the value is
   a builtin, routine or class the run may call.
 - `ext.builtin.abs`, `.round`, `.divmod` and `.pow`: absolute worth,
-  rounding, quotient with remainder, and exponentiation. Rounding keeps
-  the shared library behavior: halfway values go away from zero, unlike
-  CPython, whose ties go to even. Negative decimal counts act as zero
-  places, as in the library; CPython instead rounds to tens or higher.
+  rounding, quotient with remainder, and exponentiation. Real rounding
+  keeps the shared library behavior: halfway values go away from zero,
+  unlike CPython, whose ties go to even. Negative decimal counts on reals
+  act as zero places; rounding reals to tens or higher remains wanting.
   Whole arguments keep their whole kind; negative counts round to powers
   of ten, with halfway values choosing the even multiple.
   `ext.builtin.round.number` and `.ndigits` name the number and its places;
@@ -3508,7 +3508,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
 | `ext.stmt.annotation` | - | - | `:` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.amiss` | - | - | `invalid syntax` | - | - | - | - | - | - | - |
-| `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |

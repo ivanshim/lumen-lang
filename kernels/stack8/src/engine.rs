@@ -4766,13 +4766,20 @@ impl<'a> Engine<'a> {
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if operation == "__truediv__" {
             if args.len() != 1 || !named.is_empty() || !matches!(receiver.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
-            return self.dyadic_numbers(&Action::DivReal, &receiver.contents(), &args[0].contents());
+            return self.dyadic_numbers(&Action::DivReal, &receiver.contents(), &args[0].contents()).map(|value| value.with_point(true));
         }
         if !self.lang.byte_words["ext.builtin.bytes"].is_empty() && (matches!(receiver.contents(), Value::Bytes(..)) || operation == "encode") {
+            if operation == "append" {
+                if args.len() != 1 || !named.is_empty() { return Err(self.byte_fault("arguments")); }
+                let Value::Bytes(cell, true, _) = receiver.contents() else { return Err(self.byte_fault("immutable")); };
+                let byte = self.byte_number(&args[0].contents())?;
+                cell.borrow_mut().push(byte);
+                return Ok(Value::Null);
+            }
             let task = match operation { "encode" => Some(2), "decode" => Some(3), "hex" => Some(4), "upper" => Some(6), "lower" => Some(7), "split" => Some(8), "join" => Some(9), "startswith" => Some(10), "replace" => Some(11), "strip" => Some(12), "find" => Some(13), _ => None };
             if let Some(task) = task {
                 if !named.is_empty() { return Err(self.byte_fault("unready")); }
-                let mut given = vec![receiver.contents()]; given.extend(args);
+                let mut given = vec![receiver.contents()]; given.extend(args.into_iter().map(|value| value.contents()));
                 return self.byte_call(task, &given);
             }
         }

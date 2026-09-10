@@ -480,6 +480,9 @@ impl Value {
     /// Common field presentations, with the ordinary spelling kept for
     /// those whose further rules the machine does not yet know.
     pub fn in_field(&self, names: Names, pattern: &str, manner: &str) -> Option<String> {
+        if matches!(self, Value::Octets { .. }) {
+            return if pattern.len() == 0 { Some(self.bare()) } else { None };
+        }
         match self {
             Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) => {},
             Value::Flag(_) | Value::Nil if pattern.is_empty() || !manner.is_empty() => {},

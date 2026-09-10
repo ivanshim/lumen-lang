@@ -3198,13 +3198,23 @@ impl<'a> Machine<'a> {
         if name == "__truediv__" {
             let target = receiver.settled();
             if !keywords.is_empty() || arguments.len() != 1 || !matches!(target, Value::Small(_) | Value::Huge(_) | Value::Frac(_)) { return Err(self.method_fault("arguments").into()); }
-            return self.prim(Prim::OverReal, name, &[target, arguments[0].settled()]).map_err(Escape::from);
+            return self.prim(Prim::OverReal, name, &[target, arguments[0].settled()]).map(|value| value.keeping_point(true)).map_err(Escape::from);
         }
         if self.table.has_any("ext.builtin.bytes") && (matches!(receiver.settled(), Value::Octets { .. }) || name == "encode") {
+            if name == "append" {
+                match (receiver.settled(), arguments.as_slice()) {
+                    (Value::Octets { cell, changeable: true, .. }, [item]) if keywords.is_empty() => {
+                        let entry = self.octet_item(&item.settled())?;
+                        cell.borrow_mut().push(entry);
+                        return Ok(Value::Nil);
+                    }
+                    _ => return Err(self.octet_error("arguments").into()),
+                }
+            }
             let number = ["encode", "decode", "hex", "", "upper", "lower", "split", "join", "startswith", "replace", "strip", "find"].iter().position(|entry| *entry == name);
             if let Some(number) = number {
                 if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
-                let mut values = arguments;
+                let mut values: Vec<Value> = arguments.iter().map(Value::settled).collect();
                 values.insert(0, receiver.settled());
                 return self.octet_routine(number as u8 + 2, &values).map_err(Escape::from);
             }
@@ -4500,7 +4510,7 @@ impl<'a> Machine<'a> {
             Prim::ValueMethod if self.table.spells("ext.builtin.method.fromhex", name) => return crate::members::hexadecimal(v, &|key| self.method_fault(key)),
             Prim::ValueMethod if self.table.spells("ext.builtin.method.__truediv__", name) => {
                 if v.len() != 2 { return Err(self.method_fault("arguments")); }
-                return self.prim(Prim::OverReal, name, v);
+                return self.prim(Prim::OverReal, name, v).map(|value| value.keeping_point(true));
             }
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
