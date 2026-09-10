@@ -390,6 +390,24 @@ impl Value {
                 result = format!("{delimiter}{body}{delimiter}");
             }
         }
+        if matches!(self, Value::Small(_) | Value::Huge(_)) && manner.is_empty() {
+            let decimal_width = pattern.strip_suffix('d').filter(|text| text.bytes().all(|byte| byte.is_ascii_digit()));
+            if let Some(field) = decimal_width {
+                let size = if field.is_empty() { Ok(0) } else { field.parse::<usize>() };
+                if let Ok(size) = size {
+                    if size <= 100000 {
+                        let extra = size.saturating_sub(result.len());
+                        if field.starts_with('0') {
+                            let minus = result.starts_with('-');
+                            let head = if minus { "-" } else { "" };
+                            let body = if minus { &result[1..] } else { &result };
+                            return format!("{head}{}{body}", "0".repeat(extra));
+                        }
+                        return " ".repeat(extra) + &result;
+                    }
+                }
+            }
+        }
         if manner.is_empty() && !matches!(self, Value::Text(_)) && pattern.starts_with('.') && pattern.ends_with('f') {
             let precision = pattern[1..pattern.len() - 1].parse::<usize>();
             if let (Ok(digits), Ok(number)) = (precision, result.parse::<f64>()) {

@@ -280,6 +280,37 @@ only. The extension labels so far, all from PHP:
 - `ext.op.increment`, `ext.op.decrement`: `++` and `--`, as statements
   and in expressions, before or after the name (`++$i` is the stepped
   value, `$i++` the value before).
+- `ext.stmt.class.bases.open` and `.close`: marks about the expressions
+  naming a class's bases. The body is read in its own scope, including
+  its methods and their bodies. Class member annotations are not local
+  function annotations and await their own reader. This small reading
+  defers the making of the class to the class piece.
+- `ext.stmt.class.unready`: the complaint when a class can be read but
+  its making cannot yet be honoured by the run.
+- `ext.op.member.pipes`: a member mark may also spell the old pipe to a
+  builtin. Those builtins keep their old calling path; other names are
+  read as members. Full dispatch belongs to the class piece.
+- `ext.stmt.with` and `.as`: a context expression, an optional bound
+  name, and a body. Several such expressions may stand before the body.
+  Each expression and the whole body are read; the context protocol
+  awaits the blocks piece.
+- `ext.stmt.with.unready`: what the run says before entering a context
+  whose entry and exit it cannot yet honour.
+- `ext.op.tuple`: the separator making a parenthesised sequence a
+  tuple; empty parentheses make one too. A bare sequence of loop target
+  names is also read. The tuple piece supplies the values and bindings.
+- `ext.op.tuple.unready`: the complaint upon reaching a tuple value or
+  a multiple loop target that this small reading cannot yet run.
+- `ext.op.identical.negated`: the word following the identity operator
+  which asks whether the two values are not the same one. Its presence
+  leaves ordinary equality unchanged. Singletons and shared objects
+  can be compared; values whose identity was lost cannot.
+- `ext.op.identical.unsupported`: what is said of such a lost identity.
+  This reading takes the identity rules from the expressions piece.
+- `ext.builtin.range.zero_start`: a range call used as a loop's bounds
+  may give its stop alone. The starting count is then nought. Its stop
+  is found once, before the loop; two given bounds keep their meaning.
+
 - `ext.lexical.string.long`: the quote marks that enclose text over
   lines. The whole mark ends the string; a shorter run and the other
   kind of quote stand for themselves.
@@ -287,6 +318,15 @@ only. The extension labels so far, all from PHP:
   letters before a quote that ask for raw text, byte text, plain text,
   or text with expressions between braces. A raw letter may stand on
   either side of a byte or format letter. Raw text keeps its backslashes,
+  even one shielding a quote. Byte text is read whole; its distinct value
+  awaits the run. Doubled braces in formatted text stand for single braces;
+  fields may carry conversions, format specifications and a debug equals
+  sign. Each field and each field in its specification is read as code.
+  Plain fields and whole-number debug fields run. Further conversions
+  and nonempty specifications stop with `ext.lexical.string.value.unready`.
+- `ext.lexical.string.value.unready`: what is said upon reaching byte
+  text or a field presentation the run cannot honour. Reading continues
+  through these forms even in the bodies of routines never called.
   even one shielding a quote. Byte text is held as ordinary text at
   present. Doubled braces in formatted text stand for single braces;
   fields may carry conversions, format specifications and a debug equals
@@ -306,6 +346,8 @@ only. The extension labels so far, all from PHP:
   exactly this many figures, instead of taking one or two as it may.
 - `ext.lexical.escape.controls`: further escape letters for the full
   readers: `a` for bell, `b` for backspace, `f` for form feed, `v` for
+  vertical tab, and `r` for carriage return where the core leaves it out.
+  The older readers keep their smaller alphabet of escapes.
   vertical tab. The older readers keep their smaller alphabet of escapes.
 - `ext.lexical.escape.continued`: whether a backslash and the line end
   after it join the two lines of a string, standing for no character.
@@ -2155,6 +2197,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
@@ -2226,6 +2269,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.format.unready` | - | - | `NotImplementedError: formatted strings are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
+| `ext.lexical.string.value.unready` | - | - | `NotImplementedError: this string value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |

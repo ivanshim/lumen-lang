@@ -410,6 +410,21 @@ impl Value {
                 shown.push(quote);
             }
         }
+        if conversion.is_empty() && matches!(self, Value::Small(_) | Value::Huge(_)) {
+            if let Some(digits) = spec.strip_suffix('d') {
+                if digits.chars().all(|c| c.is_ascii_digit()) {
+                    let width = if digits.is_empty() { Some(0) } else { digits.parse::<usize>().ok() };
+                    if let Some(width) = width.filter(|n| *n <= 100000) {
+                        let padding = width.saturating_sub(shown.len());
+                        if digits.starts_with('0') {
+                            return if let Some(body) = shown.strip_prefix('-') { format!("-{}{body}", "0".repeat(padding)) }
+                                else { format!("{}{shown}", "0".repeat(padding)) };
+                        }
+                        return format!("{}{shown}", " ".repeat(padding));
+                    }
+                }
+            }
+        }
         if conversion.is_empty() && !matches!(self, Value::Text(_)) {
             if let Some(places) = spec.strip_prefix('.').and_then(|s| s.strip_suffix('f')).and_then(|s| s.parse::<usize>().ok()).filter(|n| *n <= 1000) {
                 if let Ok(number) = shown.parse::<f64>() { return format!("{number:.places$}"); }

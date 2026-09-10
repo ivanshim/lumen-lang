@@ -380,6 +380,7 @@
   "ext.builtin.range.zero": [
     "ValueError: range() arg 3 must not be zero"
   ],
+  "ext.builtin.range.zero_start": true,
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
@@ -520,6 +521,9 @@
   "ext.lexical.string.prefix.raw": [
     "r",
     "R"
+  ],
+  "ext.lexical.string.value.unready": [
+    "NotImplementedError: this string value is not supported"
   ],
   "ext.literal.ellipsis": [
     "..."
