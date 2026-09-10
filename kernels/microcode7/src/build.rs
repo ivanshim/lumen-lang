@@ -1199,7 +1199,7 @@ impl<'a> Builder<'a> {
             whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(whole)
+        Ok(prim_call(Prim::FixedRow, vec![whole]))
     }
 
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
@@ -1214,7 +1214,7 @@ impl<'a> Builder<'a> {
             value = prim_call(Prim::TupleJoined, vec![value, segment]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(value)
+        Ok(prim_call(Prim::FixedRow, vec![value]))
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
@@ -5037,7 +5037,7 @@ impl<'a> Builder<'a> {
                         Some(at) => self.gather_comprehension(at, table.single("syntax.group.close").unwrap(), false)?,
                         None => {
                             let expression = if !table.has_any("ext.op.tuple") { self.expr(0)? }
-                                else if self.on_any("syntax.group.close") { prim_call(Prim::MakeArray, Vec::new()) }
+                                else if self.on_any("syntax.group.close") { prim_call(Prim::FixedRow, vec![prim_call(Prim::MakeArray, Vec::new())]) }
                                 else { self.comma_value()? };
                             self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
                             expression
@@ -5836,7 +5836,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
-        Ok(value)
+        Ok(if mapped { value } else { prim_call(Prim::MutableSequence, vec![value]) })
     }
 
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
@@ -5850,6 +5850,7 @@ impl<'a> Builder<'a> {
         self.gather_names.truncate(old_names);
         self.need_sign(end, "to finish a comprehension")?;
         let answer = self.read(&name);
+        let answer = if dictionary { answer } else { prim_call(Prim::MutableSequence, vec![answer]) };
         Ok(sequence(vec![start, work, answer]))
     }
 
@@ -5916,7 +5917,7 @@ impl<'a> Builder<'a> {
         let begin = self.write(&cursor, constant(Value::Small(0)));
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
-        let test = prim_call(Prim::Lt, vec![index, prim_call(Prim::Length, vec![bag])]);
+        let test = prim_call(Prim::WithinCollection, vec![bag, index]);
         let bag = self.read(&source_name);
         let index = self.read(&cursor);
         let mut item = prim_call(Prim::At, vec![bag, index]);

@@ -127,6 +127,8 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    Tuple(Rc<Vec<Value>>),
+    List(Rc<RefCell<Value>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -174,6 +176,18 @@ pub struct Wording<'a> {
 }
 
 impl Value {
+    pub fn sequence_view(&self) -> Value {
+        match self {
+            Value::List(cell) => cell.borrow().clone(),
+            Value::Tuple(items) => Value::Array(items.clone()),
+            other => other.clone(),
+        }
+    }
+
+    pub fn list(items: Vec<Value>) -> Value {
+        Value::List(Rc::new(RefCell::new(Value::array(items))))
+    }
+
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -196,8 +210,8 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
-            Value::Bond(shared) => return shared.borrow().sort(),
+            Value::Array(_) | Value::Tuple(_) | Value::Map(_) => Sort::Array,
+            Value::Bond(shared) | Value::List(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
             _ => return None,
@@ -209,7 +223,7 @@ impl Value {
     pub fn outside_numbers(&self) -> bool {
         match self {
             Value::Real(r) => r.outside(),
-            Value::Bond(shared) => shared.borrow().outside_numbers(),
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().outside_numbers(),
             _ => false,
         }
     }
@@ -218,7 +232,7 @@ impl Value {
     pub fn no_number(&self) -> bool {
         match self {
             Value::Real(r) => r.no_number(),
-            Value::Bond(shared) => shared.borrow().no_number(),
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().no_number(),
             _ => false,
         }
     }
@@ -235,8 +249,8 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
-            Value::Bond(shared) => shared.borrow().is_true(),
+            Value::Frac(_) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
@@ -255,9 +269,9 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
-            Value::Bond(shared) => shared.borrow().as_big(),
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
@@ -269,6 +283,13 @@ impl Value {
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
     pub fn equals(&self, other: &Value) -> bool {
+        let left = self.sequence_view();
+        let right = other.sequence_view();
+        let (self_value, other_value) = (&left, &right);
+        self_value.equals_open(other_value)
+    }
+
+    fn equals_open(&self, other: &Value) -> bool {
         if let Some(order) = crate::arith::order_values(self, other) {
             return order == std::cmp::Ordering::Equal;
         }
@@ -335,7 +356,7 @@ impl Value {
         match self {
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
-            Value::Bond(shared) => shared.borrow().display(sp),
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().display(sp),
             Value::Flag(true) => match sp.flag_counts {
                 true => "1".to_string(),
                 false => sp.true_word.to_string(),
@@ -345,7 +366,7 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
-            Value::Array(items) => {
+            Value::Array(items) | Value::Tuple(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))
             }
@@ -426,7 +447,7 @@ impl Value {
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => "null".to_string(),
-            Value::Array(items) => {
+            Value::Array(items) | Value::Tuple(items) => {
                 let shown: Vec<String> = items.iter().map(Value::plain).collect();
                 format!("[{}]", shown.join(", "))
             }
@@ -436,7 +457,7 @@ impl Value {
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
-            Value::Bond(shared) => shared.borrow().plain(),
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
@@ -450,7 +471,7 @@ impl Value {
             Value::Text(s) => {
                 let _ = write!(into, "s{}:{}", s.len(), s);
             }
-            Value::Array(items) => {
+            Value::Array(items) | Value::Tuple(items) => {
                 into.push('[');
                 for v in items.iter() {
                     v.memo_key(into);
@@ -482,7 +503,7 @@ impl Value {
             Value::Object(o) => {
                 let _ = write!(into, "o{:p}", Rc::as_ptr(o));
             }
-            Value::Bond(shared) => shared.borrow().memo_key(into),
+            Value::Bond(shared) | Value::List(shared) => shared.borrow().memo_key(into),
             Value::Class(c) => {
                 let _ = write!(into, "c{}", c.name);
             }

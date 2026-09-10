@@ -161,11 +161,75 @@ class _Cycle:
 def cycle(iterable):
     return _Cycle(_finite(iterable))
 
+class _Group:
+    def __init__(self, owner, index):
+        self.owner = owner
+        self.index = index
+
+    def __class_iter__(self):
+        result = []
+        while self.owner.active == self.index and self.owner._peek():
+            if self.owner.current_key != self.owner.target:
+                break
+            result.append(self.owner.values[self.owner.position])
+            self.owner._advance()
+        return result
+
+class _Grouped:
+    def __init__(self, iterable, key):
+        self.values = _finite(iterable)
+        self.key = key
+        self.position = 0
+        self.active = -1
+        self.ready = False
+        self.pending = False
+        self.started = False
+        self.target = None
+        self.current_key = None
+
+    def _peek(self):
+        if self.position >= len(self.values):
+            return False
+        if not self.ready:
+            value = self.values[self.position]
+            self.current_key = value if self.key is None else self.key(value)
+            self.ready = True
+        return True
+
+    def _advance(self):
+        self.position += 1
+        self.ready = False
+
+    def __class_iter__(self):
+        return self
+
+    def __has_index__(self, index):
+        if self.pending:
+            return True
+        if self.started:
+            while self._peek() and self.current_key == self.target:
+                self._advance()
+        if not self._peek():
+            self.active += 1
+            return False
+        self.target = self.current_key
+        self.active += 1
+        self.pending = True
+        return True
+
+    def __getitem__(self, index):
+        if not self.__has_index__(index):
+            raise 'IndexError: group iterator exhausted'
+        self.pending = False
+        self.started = True
+        return (self.target, _Group(self, self.active))
+
 def groupby(iterable, key=None):
-    raise 'NotImplementedError: groupby needs tuple values and shared group iterators'
+    return _Grouped(iterable, key)
 
 def pairwise(iterable):
-    raise 'NotImplementedError: pairwise needs tuple values'
+    values = _finite(iterable)
+    return [(values[i], values[i + 1]) for i in range(len(values) - 1)]
 
 def tee(iterable, n=2):
     raise 'NotImplementedError: tee needs tuple values and independent iterators'

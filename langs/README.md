@@ -2201,6 +2201,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.list.contents` | - | - | `__list_contents` | - | - | - | - | - | - | - |
 | `ext.builtin.map.test` | - | - | `__is_mapping` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2234,6 +2235,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -2363,7 +2365,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
-| `ext.op.object.protocol` | - | - | `__repr__` `__eq__` `__getitem__` `__class_call__` `__class_iter__` `__init_subclass__` `__str__` `__call__` | - | - | - | - | - | - | - |
+| `ext.op.object.protocol` | - | - | `__repr__` `__eq__` `__getitem__` `__class_call__` `__class_iter__` `__init_subclass__` `__str__` `__call__` `__len__` `__has_index__` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
@@ -2584,3 +2586,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
 <!-- table:end -->
+
+Python standard modules now use shared list contents for bisection insertion
+and heap operations. Tuple literals retain their punctuation for `repr` and
+compact `pprint` output; the ordinary collection display keeps the earlier
+reader's array spelling. Finite `groupby` walks share the current group with
+the outer walk, and `pairwise` produces tuple pairs. Input gathering remains
+eager, as in the other finite itertools routines. Pretty printing supports
+compact representations and dictionary ordering; depth truncation and grouped
+number formatting still report their limits.

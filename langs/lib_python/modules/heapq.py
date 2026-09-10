@@ -57,17 +57,62 @@ def merge(*iterables, key=None, reverse=False):
             heads[chosen] = item if key is None else key(item)
     return result
 
+def _siftdown(heap, start, pos):
+    item = heap[pos]
+    while pos > start:
+        parent = (pos - 1) // 2
+        if not item < heap[parent]:
+            break
+        heap[pos] = heap[parent]
+        pos = parent
+    heap[pos] = item
+
+def _siftup(heap, pos):
+    end = len(heap)
+    start = pos
+    item = heap[pos]
+    child = 2 * pos + 1
+    while child < end:
+        right = child + 1
+        if right < end and not heap[child] < heap[right]:
+            child = right
+        heap[pos] = heap[child]
+        pos = child
+        child = 2 * pos + 1
+    heap[pos] = item
+    _siftdown(heap, start, pos)
+
 def heapify(x):
-    raise 'NotImplementedError: heapify needs shared mutable list storage'
+    for i in range(len(x) // 2 - 1, -1, -1):
+        _siftup(x, i)
 
 def heappush(heap, item):
-    raise 'NotImplementedError: heappush needs shared mutable list storage'
+    __list_contents(heap, [*heap, item])
+    _siftdown(heap, 0, len(heap) - 1)
 
 def heappop(heap):
-    raise 'NotImplementedError: heappop needs shared mutable list storage'
+    if len(heap) == 0:
+        raise 'IndexError: index out of range'
+    last = heap[len(heap) - 1]
+    result = heap[0]
+    __list_contents(heap, heap[:len(heap) - 1])
+    if len(heap):
+        heap[0] = last
+        _siftup(heap, 0)
+    return result
 
 def heapreplace(heap, item):
-    raise 'NotImplementedError: heapreplace needs shared mutable list storage'
+    if len(heap) == 0:
+        raise 'IndexError: index out of range'
+    result = heap[0]
+    heap[0] = item
+    _siftup(heap, 0)
+    return result
 
 def heappushpop(heap, item):
-    raise 'NotImplementedError: heappushpop needs shared mutable list storage'
+    if len(heap) and heap[0] < item:
+        result = heap[0]
+        heap[0] = item
+        _siftup(heap, 0)
+        return result
+    return item

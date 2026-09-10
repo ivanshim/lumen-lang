@@ -1006,6 +1006,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        self.act(Action::KeepTuple, 1);
         Ok(())
     }
 
@@ -3846,6 +3847,7 @@ impl<'a> Compiler<'a> {
             if !self.tuple_piece()? { self.act(Action::MakeArray, 1); }
             self.act(Action::TupleJoin, 2);
         }
+        self.act(Action::KeepTuple, 1);
         Ok(())
     }
 
@@ -5413,6 +5415,7 @@ impl<'a> Compiler<'a> {
                         } else {
                             if self.at_symbol(&group.close) && !lang.tuple_marks.is_empty() {
                                 self.act(Action::MakeArray, 0);
+                                self.act(Action::KeepTuple, 1);
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
                             else { self.scope_value()?; }
                             self.want_sign(&group.close, "to close a group")?;
@@ -6408,7 +6411,9 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &pair.between { self.want_sign(sep, "between literal items")?; }
             else { return Err("Expected a literal separator".to_string()); }
         }
-        self.want_sign(&pair.close, "after a literal")
+        self.want_sign(&pair.close, "after a literal")?;
+        if !map { self.act(Action::ShareList, 1); }
+        Ok(())
     }
 
     fn comprehension(&mut self, pair: &Brackets, clause: usize, map: bool) -> Res<()> {
@@ -6422,6 +6427,7 @@ impl<'a> Compiler<'a> {
         self.comprehension_names.truncate(bindings);
         self.want_sign(&pair.close, "after a comprehension")?;
         self.read(&result);
+        if !map { self.act(Action::ShareList, 1); }
         Ok(())
     }
 
@@ -6476,10 +6482,9 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Small(0));
             self.write(&at);
             let test = self.mark();
-            self.read(&at);
             self.read(&bag);
-            self.act(Action::Extent, 1);
-            self.act(Action::Lt, 2);
+            self.read(&at);
+            self.act(Action::CollectionHas, 2);
             let done = self.skip();
             self.read(&bag);
             self.read(&at);

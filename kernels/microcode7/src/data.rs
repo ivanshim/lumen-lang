@@ -130,6 +130,8 @@ pub enum Value {
     Nil,
     Ellipsis,
     Vector(Rc<Vec<Value>>),
+    Row(Rc<Vec<Value>>),
+    Mutable(Rc<RefCell<Value>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -181,6 +183,16 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn opened_sequence(&self) -> Self {
+        if let Self::Mutable(storage) = self { return storage.borrow().clone(); }
+        if let Self::Row(values) = self { return Self::Vector(values.clone()); }
+        self.clone()
+    }
+
+    pub fn mutable_sequence(values: Vec<Self>) -> Self {
+        Self::Mutable(Rc::new(RefCell::new(Self::Vector(Rc::new(values)))))
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -198,9 +210,9 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
+            Value::Vector(_) | Value::Row(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
-            Value::Shared(cell) => return cell.borrow().kind(),
+            Value::Shared(cell) | Value::Mutable(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
@@ -233,9 +245,9 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Vector(_) | Value::Row(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
-            Value::Shared(cell) => return cell.borrow().as_big(),
+            Value::Shared(cell) | Value::Mutable(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
@@ -245,6 +257,13 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        let left = self.opened_sequence();
+        let right = other.opened_sequence();
+        let (self_value, other_value) = (&left, &right);
+        self_value.equals_open(other_value)
+    }
+
+    fn equals_open(&self, other: &Value) -> bool {
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
             // Nought beneath is no ratio to cross-multiply: what lies
             // past every number is equal to another only where both lie
@@ -325,13 +344,13 @@ impl Value {
     pub fn render(&self, w: Names) -> String {
         match self {
             // A cell that names share is written as what it holds.
-            Value::Shared(cell) => cell.borrow().render(w),
+            Value::Shared(cell) | Value::Mutable(cell) => cell.borrow().render(w),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
             Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
-            Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+            Value::Vector(items) | Value::Row(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
             }
@@ -418,13 +437,13 @@ impl Value {
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),
-            Value::Vector(items) => format!("[{}]", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Vector(items) | Value::Row(items) => format!("[{}]", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
-            Value::Shared(cell) => cell.borrow().bare(),
+            Value::Shared(cell) | Value::Mutable(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
             Value::Thing(t) => format!("<object {}>", t.of.name),
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
@@ -435,7 +454,7 @@ impl Value {
     pub fn memo_key(&self, out: &mut String) {
         match self {
             Value::Text(s) => out.push_str(&format!("s{:?}", s)),
-            Value::Vector(items) => {
+            Value::Vector(items) | Value::Row(items) => {
                 out.push('[');
                 items.iter().for_each(|v| v.memo_key(out));
                 out.push(']');
@@ -457,7 +476,7 @@ impl Value {
             Value::Method(p, t) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
             Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
-            Value::Shared(cell) => cell.borrow().memo_key(out),
+            Value::Shared(cell) | Value::Mutable(cell) => cell.borrow().memo_key(out),
             Value::Blueprint(b) => out.push_str(&format!("b{}", b.name)),
             other => out.push_str(&other.bare()),
         }

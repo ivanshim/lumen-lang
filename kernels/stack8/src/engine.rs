@@ -441,6 +441,7 @@ impl<'a> Engine<'a> {
     /// and nothing, a language may count an array holding nothing as
     /// untrue, and may name pieces of text it counts as untrue.
     fn truth(&self, v: &Value) -> bool {
+        let v = &v.sequence_view();
         match v {
             Value::Bond(shared) => self.truth(&shared.borrow()),
             Value::Array(items) if self.lang.untrue_empty => !items.is_empty(),
@@ -1010,7 +1011,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Array(_) | Value::List(_) | Value::Tuple(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -1414,7 +1415,7 @@ impl<'a> Engine<'a> {
             match value {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
-                    Value::Flag(false) => match &pair.1 {
+                    Value::Flag(false) => match &pair.1.sequence_view() {
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
@@ -2121,6 +2122,7 @@ impl<'a> Engine<'a> {
     }
 
     fn object_text(&mut self, value: &Value, nested: bool) -> Res<String> {
+        let value = &value.sequence_view();
         if let Value::Array(items) = value {
             if !self.lang.object_protocol.is_empty() {
                 let mut parts = Vec::new();
@@ -2140,6 +2142,19 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         let result = match op {
+            Action::CollectionHas => {
+                let args = self.drop_many(2)?;
+                if let Some(answer) = self.object_answer(&args[0], 9, vec![args[1].clone()])? { answer }
+                else { Value::Flag(as_index(&args[1])? < self.comprehension_items(&args[0])?.len()) }
+            }
+            Action::KeepTuple => {
+                let source = self.drop_top()?;
+                Value::Tuple(Rc::new(self.comprehension_items(&source)?))
+            }
+            Action::ShareList => {
+                let source = self.drop_top()?;
+                Value::list(self.comprehension_items(&source)?)
+            }
             Action::Not => {
                 let held = self.drop_top()?;
                 Value::Flag(!self.truth(&held))
@@ -2493,7 +2508,7 @@ impl<'a> Engine<'a> {
             }
             Action::Unpack(count, rest) => {
                 let source = self.drop_top()?;
-                let mut items = match source {
+                let mut items = match source.sequence_view() {
                     Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
@@ -2554,7 +2569,14 @@ impl<'a> Engine<'a> {
                 Value::Tie(Rc::new((k, v)))
             }
             Action::KeyAt | Action::ValueAt => {
-                let pair = self.drop_many(2)?;
+                let mut pair = self.drop_many(2)?;
+                if matches!(op, Action::ValueAt) {
+                    if let Some(item) = self.object_answer(&pair[0], 2, vec![pair[1].clone()])? {
+                        self.data.push(item);
+                        return Ok(());
+                    }
+                }
+                pair[0] = pair[0].sequence_view();
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
                 match &pair[0] {
@@ -3036,7 +3058,7 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 if program.parameter_rules.is_some() && program.carried.iter().zip(&carried).any(|(slot, value)|
-                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::Map(_) | Value::Object(_))) {
+                    *slot < program.formals.len() && matches!(value, Value::Array(_) | Value::List(_) | Value::Map(_) | Value::Object(_))) {
                     return Err(self.lang.defaults_amiss[0].clone().into());
                 }
                 let mut made = (*program).clone();
@@ -3213,6 +3235,10 @@ impl<'a> Engine<'a> {
             }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
+                if let Some(more) = self.object_answer(&pair[0], 9, vec![pair[1].clone()])? {
+                    self.data.push(more);
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None if matches!(&pair[0], Value::Counted(_)) => {
@@ -3220,7 +3246,7 @@ impl<'a> Engine<'a> {
                         Value::Flag(pair[1].as_big().map_or(false, |i| i >= BigInt::from(0) && i < r.length()))
                     }
                     None => {
-                        let reach = match &pair[0] {
+                        let reach = match &pair[0].sequence_view() {
                             Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -3251,11 +3277,13 @@ impl<'a> Engine<'a> {
                 self.walk_asked(&held, self.lang.walk_onward.clone())?;
                 Value::Null
             }
-            Action::Extent => match self.drop_top()? {
+            Action::Extent => match self.drop_top()?.sequence_view() {
                 Value::Counted(r) => Value::of_big(r.length()),
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
-                Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
+                Value::Object(o) => {
+                    self.object_answer(&Value::Object(o.clone()), 8, vec![])?.unwrap_or_else(|| Value::Small(o.fields.borrow().len() as i64))
+                },
                 // A language with a word for a warning is told a value
                 // cannot be walked and walks it no times, rather than
                 // having the run stopped over it.
@@ -3345,6 +3373,11 @@ impl<'a> Engine<'a> {
     }
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
+        if let Value::List(cell) = value { return self.rem_repr(&cell.borrow()); }
+        if let Value::Tuple(items) = value {
+            let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
+            return Ok(format!("({}{})", parts.join(", "), if parts.len() == 1 { "," } else { "" }));
+        }
         Ok(match value {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
@@ -3438,6 +3471,12 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::Same | Action::Unsame) {
+            if let (Value::List(x), Value::List(y)) = (a, b) {
+                return Ok(Value::Flag(Rc::ptr_eq(x, y) != matches!(op, Action::Unsame)));
+            }
+        }
+        let (a, b) = (&a.sequence_view(), &b.sequence_view());
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4045,6 +4084,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        let target = &target.sequence_view();
         if self.lang.read_from_end {
             if let Value::Small(index) = at {
                 if *index < 0 {
@@ -4138,7 +4178,7 @@ impl<'a> Engine<'a> {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         };
         let (start, stop, step, places) = self.slice_places(parts, items.len())?;
-        let replacement = match given {
+        let replacement = match given.sequence_view() {
             Value::Array(values) => values.as_ref().clone(),
             Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -4248,6 +4288,7 @@ impl<'a> Engine<'a> {
 
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+        let value = &value.sequence_view();
         match value {
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
@@ -4412,9 +4453,17 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Length && args.len() == 1 {
+            if let Some(length) = self.object_answer(&args[0], 8, vec![])? { return Ok(length); }
+        }
         if builtin == Builtin::ToText && args.len() == 1 && matches!(args[0], Value::Object(_)) {
             return Ok(Value::text(&self.object_text(&args[0], false)?));
         }
+        let mut views;
+        let args = if matches!(builtin, Builtin::Length) {
+            views = args.iter().map(Value::sequence_view).collect::<Vec<_>>();
+            &mut views
+        } else { args };
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {
@@ -5132,11 +5181,29 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::Repr => { arity(1)?; Value::text(&self.rem_repr(&args[0])?) }
+            Builtin::ListContents => {
+                arity(2)?;
+                let values = self.comprehension_items(&args[1])?;
+                let Value::List(cell) = &args[0] else { return Err("TypeError: expected a list".into()); };
+                *cell.borrow_mut() = Value::array(values);
+                Value::Null
+            }
             Builtin::List => {
-                if args.is_empty() { return Ok(Value::array(Vec::new())); }
+                if args.is_empty() { return Ok(Value::list(Vec::new())); }
                 arity(1)?;
-                if let Some(values) = self.object_answer(&args[0], 4, vec![])? { values }
-                else { Value::array(self.comprehension_items(&args[0])?) }
+                let source = self.object_answer(&args[0], 4, vec![])?.unwrap_or_else(|| args[0].clone());
+                let values = if matches!(source, Value::Object(_)) {
+                    let mut values = Vec::new();
+                    loop {
+                        let index = Value::Small(values.len() as i64);
+                        let more = self.object_answer(&source, 9, vec![index.clone()])?.ok_or("TypeError: value is not iterable")?;
+                        if !self.truth(&more) { break; }
+                        values.push(self.object_answer(&source, 2, vec![index])?.ok_or("TypeError: value is not iterable")?);
+                    }
+                    values
+                } else { self.comprehension_items(&source)? };
+                Value::list(values)
             }
             Builtin::Any => {
                 arity(1)?;
@@ -5299,6 +5366,13 @@ impl<'a> Engine<'a> {
                 arity(2)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
+                if let Value::List(cell) = &target {
+                    let mut plain = vec![v, cell.borrow().clone()];
+                    if builtin == Builtin::Replace { plain.insert(0, args.pop().expect("the key")); }
+                    let result = self.builtin(builtin, name, &mut plain)?;
+                    *cell.borrow_mut() = result;
+                    return Ok(target);
+                }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
                 let target = match target {
@@ -5323,6 +5397,13 @@ impl<'a> Engine<'a> {
                 arity(3)?;
                 let target = args.pop().expect("the array");
                 let v = args.pop().expect("the value");
+                if let Value::List(cell) = &target {
+                    let mut plain = vec![v, cell.borrow().clone()];
+                    if builtin == Builtin::Replace { plain.insert(0, args.pop().expect("the key")); }
+                    let result = self.builtin(builtin, name, &mut plain)?;
+                    *cell.borrow_mut() = result;
+                    return Ok(target);
+                }
                 let at = self.key(&args.pop().expect("the key"));
                 if let Value::Slice(parts) = &at {
                     return self.write_slice(target, parts, v);
@@ -5792,6 +5873,7 @@ fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usiz
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
+    if let Value::List(cell) = held { return shared_item(&mut cell.borrow_mut(), at); }
     // A thing's members are counted as an array's places are, but they
     // live behind a shared holding, so the cell is made within it.
     if let Value::Object(thing) = held {
@@ -5842,6 +5924,11 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
 /// along the way made where they are not there yet and the language
 /// makes what a write needs.
 fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<Value>>> {
+    if let Value::List(cell) = held { return shared_deep(&mut cell.borrow_mut(), keys, makes); }
+    if keys.len() > 1 {
+        let first = place_within(held, &keys[0], makes)?;
+        return shared_deep(first, &keys[1..], makes);
+    }
     let Some((last, first)) = keys.split_last() else {
         return Err("No place was named".to_string());
     };

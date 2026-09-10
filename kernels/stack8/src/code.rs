@@ -138,6 +138,9 @@ pub enum Action {
     Unpack(usize, Option<usize>),
     /// Join the gathered portions of a tuple.
     TupleJoin,
+    KeepTuple,
+    ShareList,
+    CollectionHas,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is refused as a write to one is.
@@ -341,6 +344,8 @@ pub enum Builtin {
     ProgramNamespace,
     Sum,
     List,
+    ListContents,
+    Repr,
     Any,
     Echo,
     Say,

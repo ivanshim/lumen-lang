@@ -685,7 +685,9 @@
     "__class_iter__",
     "__init_subclass__",
     "__str__",
-    "__call__"
+    "__call__",
+    "__len__",
+    "__has_index__"
   ],
   "ext.op.plus": [
     "+"
@@ -999,5 +1001,11 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.builtin.list.contents": [
+    "__list_contents"
+  ],
+  "ext.builtin.repr": [
+    "repr"
+  ]
 }

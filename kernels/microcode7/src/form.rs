@@ -60,6 +60,8 @@ pub enum Prim {
     SliceRefused,
     Total,
     Listed,
+    SequenceContents,
+    Representation,
     SomeTrue,
     /// A step onward or back (`++`, `--`): adding or taking away one,
     /// save where a language walks text along its letters instead.
@@ -371,6 +373,9 @@ pub enum Prim {
     Partition(usize, Option<usize>),
     /// Gather consecutive portions of one comma expression.
     TupleJoined,
+    FixedRow,
+    MutableSequence,
+    WithinCollection,
     /// What a value holds at that place, read so that what comes of it
     /// may be written back there. A value with no places at all is no
     /// place to write, so it is turned down as a write to one is.

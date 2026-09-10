@@ -1,5 +1,6 @@
 from itertools import groupby, pairwise
-print([(k, list(g)) for k, g in groupby("aabbc")], list(pairwise([1, 2, 3])))
+from pprint import pformat
+print(pformat([(k, list(g)) for k, g in groupby("aabbc")]), pformat(list(pairwise([1, 2, 3]))))
 from functools import lru_cache
 @lru_cache
 def f(n):
