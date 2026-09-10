@@ -325,6 +325,8 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    SharedList,
+    SharedAppend,
     ReprValue,
     ClassName,
     DeriveClass,
@@ -335,7 +337,6 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
-    Repr,
     Iter,
     Next,
     Sum,

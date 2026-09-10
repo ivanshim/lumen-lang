@@ -1564,7 +1564,10 @@ only. The extension labels so far, all from PHP:
   in this order: the root, ordinary faults, arithmetic, division, overflow,
   lookup, index, key, type, value, name, local name, attribute, runtime,
   unimplemented, exhausted walk, assertion, exit, interruption, import,
-  operating system, recursion and Unicode. Ordinary faults stand upon the
+  operating system, recursion, Unicode, warnings, and their kinds: user,
+  deprecation, syntax, runtime, future, pending deprecation, import, Unicode,
+  bytes, resource and encoding. Warning kinds stand upon warnings, which
+  stand upon ordinary faults. Ordinary faults stand upon the
   root, arithmetic children upon arithmetic, lookup children upon lookup,
   local names upon name, unimplemented and recursion upon runtime, and
   Unicode upon value. Exit and interruption stand directly upon the root;
@@ -1582,6 +1585,11 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.class.title`: the member naming a class itself. Where the
   native exception classes are furnished, the kind builtin returns an
   object's class, so this member can name it.
+- `ext.builtin.list.shared` and `.append`: builtins making an empty list
+  whose holders see additions together, and adding one value to its end.
+  The latter takes the list first and returns nothing. Such lists can be
+  counted, indexed and walked, so a context can hand out its record list
+  before the records arrive. Ordinary arrays keep their former account.
 - `ext.builtin.iter` and `ext.builtin.next`: a walk over a sequence, text,
   a counted range or the keys of a map, and its next value. A second
   argument to the latter stands when the walk ends; without one the
@@ -2168,7 +2176,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
-| `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
+| `ext.builtin.calls` | - | - | `__warning_calls` | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
@@ -2187,7 +2195,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
@@ -2204,6 +2212,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
+| `ext.builtin.list.shared` | - | - | `__shared_list` | - | - | - | - | - | - | - |
+| `ext.builtin.list.shared.append` | - | - | `__shared_append` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |

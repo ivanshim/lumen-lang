@@ -250,7 +250,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), _ => Some(1),
+                22 => Some(9), 24.. => Some(23), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
@@ -391,6 +391,7 @@ impl<'a> Machine<'a> {
     /// for its key where the places carry none.
     fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
         match v {
+            Value::Ledger(row) => row.borrow().iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
             Value::Vector(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
             Value::Dict(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
@@ -3934,6 +3935,18 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
+            Prim::NewLedger => {
+                n(0)?;
+                Value::Ledger(Rc::new(RefCell::new(vec![])))
+            }
+            Prim::LedgerAdd => {
+                n(2)?;
+                match v.first() {
+                    Some(Value::Ledger(row)) => row.borrow_mut().extend(v.get(1).cloned()),
+                    _ => return Err(self.argument_fault("ext.builtin.module.helper.amiss", None)),
+                }
+                Value::Nil
+            }
             Prim::QuotedWorth => {
                 n(1)?;
                 Value::text(&self.quote_worth(&v[0]))
@@ -4905,6 +4918,7 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
+                    (needle, Value::Ledger(row)) => row.borrow().iter().any(|item| needle.equals(item)),
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -4918,6 +4932,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
+                    (Value::Ledger(a), Value::Ledger(b)) => Rc::ptr_eq(a, b),
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
@@ -5272,10 +5287,6 @@ impl<'a> Machine<'a> {
                 else if let Some(fallback) = v.get(1) { fallback.clone() }
                 else { return Err(format!("\0{}:", self.table.single("ext.system.fault.class.stop").unwrap_or_default())); }
             }
-            Prim::Repr => {
-                n(1)?;
-                Value::text(&v[0].representation(self.wording()))
-            }
             Prim::AsText => {
                 n(1)?;
                 if let Value::Thing(object) = &v[0] {
@@ -5311,7 +5322,8 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Ledger(row) => Value::Small(row.borrow().len() as i64),
+                    Value::Arguments(l) | Value::Vector(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -5528,6 +5540,10 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        if let Value::Ledger(row) = target {
+            let snapshot = Value::Vector(Rc::new(row.borrow().to_vec()));
+            return self.element(&snapshot, at, how);
+        }
         if let Value::Arguments(row) = target {
             let place = if let Value::Small(n) = at {
                 let n = if *n < 0 { row.len() as i128 + i128::from(*n) } else { i128::from(*n) };
@@ -5729,6 +5745,7 @@ impl<'a> Machine<'a> {
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::Ledger(row) => row.borrow().to_vec(),
             Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
@@ -6426,7 +6443,7 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => Value::Unset,
+                    true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or(Value::Unset),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));
@@ -6525,7 +6542,7 @@ impl Machine<'_> {
                 }).collect();
                 ("{", "}", members)
             }
-            _ => return worth.render(self.wording()),
+            _ => return worth.representation(self.wording()),
         };
         format!("{}{}{}", opening, members.join(", "), closing)
     }

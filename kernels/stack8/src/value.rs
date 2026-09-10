@@ -116,6 +116,7 @@ impl Counted {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    SharedList(Rc<RefCell<Vec<Value>>>),
     Tuple(Rc<Vec<Value>>),
     Stream(bool),
     Counted(Rc<Counted>),
@@ -203,6 +204,7 @@ impl Value {
                 }
                 self.display(sp)
             }
+            Value::SharedList(items) => Value::array(items.borrow().clone()).repr(sp),
             Value::Tuple(items) => Self::tuple_text(items, sp),
             Value::Array(items) => format!("[{}]", items.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", ")),
             _ => self.display(sp),
@@ -249,7 +251,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::SharedList(_) | Value::Array(_) | Value::Map(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -278,6 +280,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::SharedList(items) => !items.borrow().is_empty(),
             Value::Tuple(items) => !items.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
@@ -309,7 +312,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::SharedList(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Receiver(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -327,6 +330,8 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::SharedList(a), b) => Value::array(a.borrow().clone()).equals(b),
+            (a, Value::SharedList(b)) => a.equals(&Value::array(b.borrow().clone())),
             (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
@@ -389,6 +394,7 @@ impl Value {
     pub fn display(&self, sp: &Wording) -> String {
         if let Some(told) = self.exception_message(sp) { return told; }
         match self {
+            Value::SharedList(items) => Value::array(items.borrow().clone()).repr(sp),
             Value::Tuple(items) => Self::tuple_text(items, sp),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
@@ -471,6 +477,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::SharedList(items) => Value::array(items.borrow().clone()).plain(),
             Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }

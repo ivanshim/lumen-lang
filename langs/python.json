@@ -331,6 +331,9 @@
   "ext.builtin.call.outcome": [
     "__call_outcome"
   ],
+  "ext.builtin.calls": [
+    "__warning_calls"
+  ],
   "ext.builtin.class.derive": [
     "__derive_class"
   ],
@@ -375,7 +378,19 @@
     "ImportError",
     "OSError",
     "RecursionError",
-    "UnicodeError"
+    "UnicodeError",
+    "Warning",
+    "UserWarning",
+    "DeprecationWarning",
+    "SyntaxWarning",
+    "RuntimeWarning",
+    "FutureWarning",
+    "PendingDeprecationWarning",
+    "ImportWarning",
+    "UnicodeWarning",
+    "BytesWarning",
+    "ResourceWarning",
+    "EncodingWarning"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -397,6 +412,12 @@
   ],
   "ext.builtin.list": [
     "list"
+  ],
+  "ext.builtin.list.shared": [
+    "__shared_list"
+  ],
+  "ext.builtin.list.shared.append": [
+    "__shared_append"
   ],
   "ext.builtin.math": [
     "__math"

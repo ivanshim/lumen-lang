@@ -222,7 +222,7 @@ impl<'a> Engine<'a> {
             if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
             if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
             classes.push(Rc::new(Class {
-                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
+                name: name.clone(), base: (if at == 23 { Some(1) } else if at > 23 { Some(23) } else { parents.get(at).copied().flatten() }).and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 constants: Vec::new(), shared: RefCell::new(Vec::new()),
             }));
@@ -3611,6 +3611,7 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::SharedList(items) => items.borrow().iter().any(|v| a.equals(v)),
                     Value::Array(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
                     Value::Text(haystack) => match a {
@@ -3627,6 +3628,7 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::SharedList(x), Value::SharedList(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -3937,6 +3939,7 @@ impl<'a> Engine<'a> {
     /// its key where the places are unnamed.
     fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
         match v {
+            Value::SharedList(items) => items.borrow().iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
             Value::Array(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
             Value::Map(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
@@ -4146,6 +4149,9 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if let Value::SharedList(items) = target {
+            return self.element(&Value::array(items.borrow().clone()), at, how);
+        }
         if let Value::Tuple(items) = target {
             let index = match at {
                 Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
@@ -4346,6 +4352,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::SharedList(items) => Ok(items.borrow().clone()),
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4766,6 +4773,16 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words)) => return Err(words),
                     Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
                 }
+            }
+            Builtin::SharedList => {
+                arity(0)?;
+                Value::SharedList(Rc::new(RefCell::new(Vec::new())))
+            }
+            Builtin::SharedAppend => {
+                arity(2)?;
+                let Value::SharedList(items) = &args[0] else { return Err(self.lang.module_helper_amiss.clone()); };
+                items.borrow_mut().push(args[1].clone());
+                Value::Null
             }
             Builtin::ReprValue => {
                 arity(1)?;
@@ -5221,10 +5238,6 @@ impl<'a> Engine<'a> {
                     None => return Err(format!("\0{}:", self.lang.fault_stop.as_deref().unwrap_or(""))),
                 }
             }
-            Builtin::Repr => {
-                arity(1)?;
-                Value::text(&args[0].repr(&sp))
-            }
             Builtin::ToText => {
                 arity(1)?;
                 if let Value::Object(object) = &args[0] {
@@ -5261,6 +5274,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::SharedList(items) => Value::Small(items.borrow().len() as i64),
                     Value::Tuple(items) | Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
@@ -6165,7 +6179,7 @@ impl Engine<'_> {
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { Value::Blank };
+            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { self.native_exceptions.get(name).cloned().unwrap_or(Value::Blank) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
             fields.push((name.clone(), shared));
@@ -6288,6 +6302,6 @@ fn literal_view(value: &Value, words: &Wording) -> String {
         Value::Array(items) => format!("[{}]", items.iter().map(|v| literal_view(v, words)).collect::<Vec<_>>().join(", ")),
         Value::Map(pairs) => format!("{{{}}}", pairs.iter().map(|(k, v)| format!("{}: {}", literal_view(k, words), literal_view(v, words))).collect::<Vec<_>>().join(", ")),
         Value::Bond(cell) => literal_view(&cell.borrow(), words),
-        _ => value.display(words),
+        _ => value.repr(words),
     }
 }

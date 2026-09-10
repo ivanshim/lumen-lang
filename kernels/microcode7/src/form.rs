@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    NewLedger,
+    LedgerAdd,
     QuotedWorth,
     ClassTitle,
     MakeHeir,
@@ -48,7 +50,6 @@ pub enum Prim {
     ProgramNames,
     BringModule,
     SpreadModule,
-    Repr,
     Iterate,
     NextOne,
     /// Whether a member, rather than the pipe, takes the name.
