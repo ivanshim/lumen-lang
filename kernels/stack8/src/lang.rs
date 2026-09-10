@@ -1629,10 +1629,10 @@ impl Lang {
             ("ext.builtin.text.repr", Builtin::Text(crate::strings::TextOp::Repr)),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
-            ("ext.builtin.isinstance", Builtin::ClassTool(0)), ("ext.builtin.issubclass", Builtin::ClassTool(1)), ("ext.builtin.callable", Builtin::ClassTool(2)), ("ext.builtin.getattr", Builtin::ClassTool(3)), ("ext.builtin.setattr", Builtin::ClassTool(4)), ("ext.builtin.delattr", Builtin::ClassTool(5)), ("ext.builtin.hasattr", Builtin::ClassTool(6)), ("ext.builtin.vars", Builtin::ClassTool(7)), ("ext.builtin.dir", Builtin::ClassTool(8)), ("ext.builtin.staticmethod", Builtin::ClassTool(9)), ("ext.builtin.classmethod", Builtin::ClassTool(10)), ("ext.builtin.property", Builtin::ClassTool(11)),
+             ("ext.builtin.issubclass", Builtin::ClassTool(1)),       ("ext.builtin.dir", Builtin::ClassTool(8)), ("ext.builtin.staticmethod", Builtin::ClassTool(9)), ("ext.builtin.classmethod", Builtin::ClassTool(10)), ("ext.builtin.property", Builtin::ClassTool(11)),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
             ("builtin.extern", Builtin::External), ("builtin.range", Builtin::Span), ("builtin.real", Builtin::MakeReal),
-            ("builtin.precision", Builtin::Places), ("ext.builtin.iter", Builtin::Iter), ("ext.builtin.next", Builtin::Next), ("ext.builtin.repr", Builtin::Repr), ("builtin.to_string", Builtin::ToText),
+            ("builtin.precision", Builtin::Places),    ("builtin.to_string", Builtin::ToText),
             ("builtin.to_int", Builtin::ToInt), ("builtin.to_real", Builtin::AsReal), ("builtin.num", Builtin::Numer),
             ("builtin.den", Builtin::Denom), ("builtin.push", Builtin::Append), ("builtin.get", Builtin::Fetch),
             ("builtin.put", Builtin::Replace), ("ext.builtin.echo", Builtin::Tell), ("ext.builtin.define", Builtin::Define),
@@ -1652,8 +1652,8 @@ impl Lang {
             ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
             ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
             ("ext.builtin.program.namespace", Builtin::ProgramNamespace),
-            ("ext.builtin.member.get", Builtin::MemberGet),
-            ("ext.builtin.member.set", Builtin::MemberSet),
+            ("ext.builtin.member.get", Builtin::GetAttr),
+            ("ext.builtin.member.set", Builtin::SetAttr),
             ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
@@ -1675,6 +1675,10 @@ impl Lang {
                     return Err(format!("builtin name '{lex}' must begin like an identifier and hold no spaces or quotes"));
                 }
                 if natives.get(&lex) == Some(&native) { continue; }
+                if let Some(prior) = natives.get(&lex).copied() {
+                    if matches!(native, Builtin::Bytes(_) | Builtin::Text(_) | Builtin::ClassTool(_)) { continue; }
+                    if matches!(prior, Builtin::Bytes(_) | Builtin::Text(_)) { natives.insert(lex.clone(), native); continue; }
+                }
                 if natives.insert(lex.clone(), native).is_some() {
                     return Err(format!("'{lex}' is listed under two builtin labels"));
                 }

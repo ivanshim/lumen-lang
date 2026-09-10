@@ -1761,7 +1761,7 @@ impl<'a> Machine<'a> {
         let f = ascend(frame, slot.up);
         let mut v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = &v {
-            if self.table.flag("ext.syntax.call.bind_names") { return Ok(v); }
+            if self.table.flag("ext.syntax.call.bind_names") && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.table.flag("ext.stmt.function.closes_over") { return Ok(held); }
             v = held;
@@ -1799,7 +1799,12 @@ impl<'a> Machine<'a> {
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         if self.table.flag("ext.syntax.call.bind_names") {
-            ascend(frame, slot.up).cells.borrow_mut()[slot.at] = self.collection_cell(value);
+            let destination = ascend(frame, slot.up);
+            let stored = self.collection_cell(value);
+            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
+                if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
+            }
+            destination.cells.borrow_mut()[slot.at] = stored;
             return Ok(());
         }
         // A cell becomes a name's own only by being tied to it. A plain
@@ -3147,8 +3152,8 @@ impl<'a> Machine<'a> {
                     if self.has_class_order() {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
-                            Prim::SortOf=>return self.class_from_type(values),
-                            Prim::Of if values.len()==2=>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.of.presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some()) || matches!(&values[0], Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false),
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -3558,6 +3563,15 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        let actual = receiver.settled();
+        if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_)) {
+            let operation = match name { "encode"=>Some(2), "decode"=>Some(3), "hex"=>Some(4), "upper"=>Some(6), "lower"=>Some(7), "split"=>Some(8), "join"=>Some(9), "startswith"=>Some(10), "replace"=>Some(11), "strip"=>Some(12), "find"=>Some(13), _=>None };
+            if let Some(operation) = operation {
+                if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
+                let mut values = vec![actual]; values.extend(arguments);
+                return self.octet_routine(operation, &values).map_err(Escape::from);
+            }
+        }
         if matches!(receiver.settled(), Value::Set(_)) {
             let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None };
             if let Some(code) = code {
@@ -8611,7 +8625,7 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or(Value::Unset),
+                    true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or_else(|| if self.table.prims.contains_key(name) { Value::Intrinsic(Rc::from(name.as_str())) } else { Value::Unset }),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));

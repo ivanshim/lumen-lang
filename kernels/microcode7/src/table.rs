@@ -152,7 +152,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 249] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 242] = [
             ("ext.builtin.isinstance", Prim::Belongs),
             ("ext.builtin.tuple", Prim::Tupling),
             ("ext.builtin.set", Prim::Uniques),
@@ -314,7 +314,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 249] = [
             ("ext.builtin.text.length", Prim::Textual(crate::text::Work::LENGTH)),
             ("ext.builtin.text.repr", Prim::Textual(crate::text::Work::REPR)),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
-    ("ext.builtin.isinstance", Prim::ClassWork(0)), ("ext.builtin.issubclass", Prim::ClassWork(1)), ("ext.builtin.callable", Prim::ClassWork(2)), ("ext.builtin.getattr", Prim::ClassWork(3)), ("ext.builtin.setattr", Prim::ClassWork(4)), ("ext.builtin.delattr", Prim::ClassWork(5)), ("ext.builtin.hasattr", Prim::ClassWork(6)), ("ext.builtin.vars", Prim::ClassWork(7)), ("ext.builtin.dir", Prim::ClassWork(8)), ("ext.builtin.staticmethod", Prim::ClassWork(9)), ("ext.builtin.classmethod", Prim::ClassWork(10)), ("ext.builtin.property", Prim::ClassWork(11)),
+     ("ext.builtin.issubclass", Prim::ClassWork(1)),       ("ext.builtin.dir", Prim::ClassWork(8)), ("ext.builtin.staticmethod", Prim::ClassWork(9)), ("ext.builtin.classmethod", Prim::ClassWork(10)), ("ext.builtin.property", Prim::ClassWork(11)),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
     ("builtin.error", Prim::Raise), ("builtin.extern", Prim::External), ("builtin.range", Prim::Span), ("builtin.real", Prim::MakeReal),
     ("builtin.precision", Prim::Places), ("builtin.to_string", Prim::AsText), ("builtin.to_int", Prim::AsInt),
@@ -334,8 +334,8 @@ pub const BUILTIN_LABELS: [(&str, Prim); 249] = [
     ("ext.builtin.classes", Prim::ClassesBound), ("ext.builtin.routines", Prim::RoutinesBound), ("ext.builtin.spelled", Prim::WordsSpelled), ("ext.builtin.class.methods", Prim::ClassMethods), ("ext.builtin.class.properties", Prim::ClassProperties),
     ("ext.builtin.class.beneath", Prim::ClassBeneath), ("ext.builtin.math", Prim::Reckon),
     ("ext.builtin.program.namespace", Prim::ProgramNames),
-    ("ext.builtin.member.get", Prim::ReadMember),
-    ("ext.builtin.member.set", Prim::WriteMember),
+    ("ext.builtin.member.get", Prim::GetMember),
+    ("ext.builtin.member.set", Prim::SetMember),
     ("ext.builtin.instance", Prim::Belongs),
     ("ext.builtin.module.load", Prim::LoadModule),
     ("ext.builtin.copy", Prim::CopyWorth),
@@ -766,6 +766,10 @@ impl Table {
                     return Err(format!("builtin name '{lex}' must begin like an identifier and hold no spaces or quotes"));
                 }
                 if self.prims.get(&lex) == Some(&op) { continue; }
+                if let Some(previous) = self.prims.get(&lex).copied() {
+                    if matches!(op, Prim::Octets(_) | Prim::Textual(_) | Prim::ClassWork(_)) { continue; }
+                    if matches!(previous, Prim::Octets(_) | Prim::Textual(_)) { self.prims.insert(lex, op); continue; }
+                }
                 if self.prims.insert(lex, op).is_some() {
                     return Err(format!("a builtin name is listed under two builtin labels"));
                 }
