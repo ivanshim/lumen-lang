@@ -418,6 +418,10 @@
   "ext.builtin.classmethod": [
     "classmethod"
   ],
+  "ext.builtin.clock": [
+    "__clock"
+  ],
+  "ext.builtin.clock.parts": true,
   "ext.builtin.copy": [
     "__copy_value"
   ],

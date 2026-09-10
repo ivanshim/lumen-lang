@@ -6365,6 +6365,25 @@ impl<'a> Machine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Prim::SinceEpoch => {
+                // With one flag, where the table allows, the answer is a
+                // real: seconds since the machine's own steady origin
+                // when the flag stands, seconds since the epoch when not.
+                if v.len() == 1 && self.table.flag("ext.builtin.clock.parts") {
+                    let Value::Flag(steady) = v[0] else {
+                        return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string());
+                    };
+                    let seconds = match steady {
+                        true => {
+                            static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                            ORIGIN.get_or_init(std::time::Instant::now).elapsed().as_secs_f64()
+                        }
+                        false => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0),
+                    };
+                    let figures = self.table.count("ext.system.real.digits").unwrap_or(15);
+                    let mut worth = crate::data::worth_of_binary(seconds, figures);
+                    if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = true; }
+                    return Ok(worth);
+                }
                 n(0)?;
                 let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(gone.map_or(0, |since| since.as_secs() as i64))

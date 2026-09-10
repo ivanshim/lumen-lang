@@ -6928,6 +6928,22 @@ impl<'a> Engine<'a> {
             // year it counts from. A clock that will not answer counts
             // as standing at the start of it.
             Builtin::Clock => {
+                // Handed a flag where the definition allows, the clock
+                // answers in seconds and their parts, and the flag says
+                // from where: the run's own start, a clock that never
+                // steps back, or the epoch.
+                if self.lang.clock_parts && args.len() == 1 {
+                    let steady = match args[0] { Value::Flag(steady) => steady, _ => return Err(self.lang.module_helper_amiss.clone()) };
+                    let gone = if steady {
+                        static BEGUN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+                        BEGUN.get_or_init(std::time::Instant::now).elapsed().as_secs_f64()
+                    } else {
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64())
+                    };
+                    let mut told = crate::value::real_of(gone, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                    if let Value::Real(real) = &mut told { Rc::make_mut(real).floating = true; }
+                    return Ok(told);
+                }
                 arity(0)?;
                 let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(since.map_or(0, |gone| gone.as_secs() as i64))

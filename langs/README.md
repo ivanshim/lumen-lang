@@ -915,6 +915,10 @@ only. The extension labels so far, all from PHP:
   this one, as the system knows it, for a program that wants to find
   itself again. It stands beside `ext.system.source.file` and comes the
   same way, from the request the host carried in.
+- `ext.builtin.clock.parts`: a switch; the clock builtin below, handed
+  one flag, answers a real of seconds and their parts rather than whole
+  seconds: since the run's own start, on a clock that never steps back,
+  when the flag holds, and since the epoch when it does not.
 - `ext.builtin.clock`: a builtin answering with how many seconds have
   passed since the start of the year the system counts from. Turning that
   into a date, and a date back into it, is arithmetic and belongs in a
@@ -3456,7 +3460,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
-| `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
+| `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
