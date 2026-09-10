@@ -37,6 +37,7 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt,
 /// The global names, each with a slot.
 #[derive(Default)]
 pub struct Registry {
+    pub expression_read: bool,
     index: HashMap<String, usize>,
     pub idents: Vec<String>,
     /// The line the reading had reached when it stopped, for a language
@@ -243,6 +244,7 @@ pub fn compile_within(
     within: Option<(String, Option<String>)>,
     read_in: bool,
 ) -> Res<Rc<Routine>> {
+    let expression = std::mem::take(&mut table.expression_read);
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let top = Piece {
@@ -273,7 +275,11 @@ pub fn compile_within(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let mut a = Compiler { class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
-    if lang.rpn {
+    if expression {
+        a.scope_value()?;
+        while a.look().shape == Shape::LineEnd { a.take(); }
+        if !a.exhausted() { return Err(lang.builtin_source_syntax.first().cloned().unwrap_or_default()); }
+    } else if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
             return Err(said);
@@ -287,6 +293,7 @@ pub fn compile_within(
         // a call above its function finds it (ext.stmt.function.hoisted).
         let mut lifted: Vec<Instr> = Vec::new();
         a.skip_seps();
+        let mut first_statement = true;
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let from = a.mark();
@@ -297,6 +304,17 @@ pub fn compile_within(
                 a.registry.stopped_at = a.look().row;
                 return Err(said);
             }
+            if first_statement && !lang.system_module_doc.is_empty() {
+                let words: Vec<&Instr> = a.pieces.last().unwrap().instrs[from..].iter().filter(|i| !matches!(i, Instr::Line(_))).collect();
+                let documentation = match words.as_slice() {
+                    [Instr::Const(Value::Text(text)), Instr::Shed] => Some(text.to_string()),
+                    _ => None,
+                };
+                if let Some(text) = documentation {
+                    for name in &lang.system_module_doc { a.constant(Value::text(&text)); a.write(name); }
+                }
+            }
+            first_statement = false;
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
             }
@@ -607,10 +625,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
-        if !self.lang.builtin_globals.is_empty() && self.lang.builtins.contains_key(name) {
-            self.constant(Value::text(name));
-            return;
-        }
         let alias = self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned();
         if let Some(alias) = alias {
             let slot = self.cell_to_read(&alias, false);

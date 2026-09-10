@@ -1913,7 +1913,10 @@ only. The extension labels so far, all from PHP:
   inheritance, optimisation and feature version. Flags and inheritance
   are read and ignored. `ext.builtin.compile.modes` names whole source,
   an expression and a single statement; `ext.builtin.compile.kind` names
-  the code value. `ext.builtin.source.syntax` gives the plain complaint
+  the code value. A single-statement code value may be checked and kept,
+  but its interactive display cannot yet run. Altered builtin dictionaries
+  and optimisation beyond the ordinary setting are likewise refused.
+  `ext.builtin.source.syntax` gives the plain complaint
   for text that cannot be read. `ext.builtin.source.unready` gives the
   complaint where a source operation cannot yet be honoured.
 - `ext.builtin.id` gives the identity of a value held by reference;
@@ -1926,7 +1929,9 @@ only. The extension labels so far, all from PHP:
   nothing. `ext.builtin.import` names the module reader;
   `ext.builtin.import.unready` refuses it whilst modules cannot run.
 - `ext.system.module.builtins` names the dictionary of builtin words,
-  and `ext.system.module.doc` names the module's documentation.
+  and `ext.system.module.doc` names the module's opening documentation.
+  Text read in keeps the outer dictionary on routines it makes, so their
+  later calls still read the names they were made amongst.
   `ext.system.class.name` names the plain name on a class value.
   `ext.system.fault.class.name` names the class of a missing binding;
   `ext.system.name.absent` gives the words about that binding's name.

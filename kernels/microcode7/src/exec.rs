@@ -107,6 +107,9 @@ pub struct Machine<'a> {
     named_world: Option<Rc<RefCell<Value>>>,
     near_names: Vec<(Value, Value)>,
     near_world: bool,
+    inner_books: HashMap<usize, Rc<RefCell<Value>>>,
+    near_book: Option<Rc<RefCell<Value>>>,
+    made_under: HashMap<usize, (Rc<Routine>, Rc<RefCell<Value>>)>,
     table: &'a Table,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
@@ -249,6 +252,8 @@ impl<'a> Machine<'a> {
         Machine {
             table,
             named_world: None, near_names: Vec::new(), near_world: true,
+            inner_books: HashMap::new(), near_book: None,
+            made_under: HashMap::new(),
             outermost: Env::make(idents.len(), None),
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
@@ -1128,8 +1133,8 @@ impl<'a> Machine<'a> {
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
         if self.table.single("ext.builtin.globals").is_some() {
-            if told.starts_with("Undefined variable") || self.table.single("ext.system.name.absent").map_or(false, |s| told.starts_with(s)) { return self.table.single("ext.system.fault.class.name").map(str::to_owned); }
-            if self.table.single("ext.builtin.source.syntax") == Some(told) { return self.table.single("ext.system.fault.class.reading").map(str::to_owned); }
+            if self.table.single("ext.system.name.absent").map_or(false, |s| told.starts_with(s)) { return self.table.single("ext.system.fault.class.name").map(str::to_owned); }
+            if self.table.single("ext.system.fault.class.reading").map_or(false, |name| told.starts_with(&format!("{}:", name))) { return self.table.single("ext.system.fault.class.reading").map(str::to_owned); }
         }
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
@@ -1536,6 +1541,11 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined variable {}", slot.ident));
             return Ok(Value::Nil);
         }
+        if self.table.single("ext.builtin.globals").is_some() {
+            if let Some(class) = self.class_bound(&slot.ident) { return Ok(class); }
+            if self.table.prims.contains_key(slot.ident.as_ref()) { return Ok(Value::text(&slot.ident)); }
+            return Err(format!("Undefined variable: {}", slot.ident));
+        }
         Err(format!("Undefined variable: {}", slot.ident))
     }
 
@@ -1544,6 +1554,15 @@ impl<'a> Machine<'a> {
             let target = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
             if Rc::ptr_eq(target, &self.outermost) { self.write_outer_name(&slot.ident, &stored); }
+            if let Some(book) = self.inner_books.get(&(Rc::as_ptr(target) as usize)) {
+                if Self::visible_binding(&slot.ident) {
+                    if let Value::Dict(pairs) = &mut *book.borrow_mut() {
+                        let pairs = Rc::make_mut(pairs);
+                        if let Some(entry) = pairs.iter_mut().find(|(k, _)| k.equals(&Value::text(&slot.ident))) { entry.1 = stored.clone(); }
+                        else { pairs.push((Value::text(&slot.ident), stored.clone())); }
+                    }
+                }
+            }
             target.cells.borrow_mut()[slot.at] = stored;
             return Ok(());
         }
@@ -1641,7 +1660,6 @@ impl<'a> Machine<'a> {
             for title in self.table.strings(label) {
                 let worth = Value::Blueprint(self.small_class(title));
                 seeds.push((format!("{}{}", title, crate::form::OF_A_CLASS), worth.clone()));
-                seeds.push((title.clone(), worth));
             }
         }
         for (word, worth) in seeds {
@@ -1689,6 +1707,7 @@ impl<'a> Machine<'a> {
 
     fn remember_scope(&mut self, frame: &Rc<Env>) {
         self.near_world = Rc::ptr_eq(frame, &self.outermost);
+        self.near_book = self.inner_books.get(&(Rc::as_ptr(frame) as usize)).cloned();
         self.near_names.clear();
         if self.near_world { return; }
         if let Some(routine) = self.frames_named.last() {
@@ -1702,6 +1721,7 @@ impl<'a> Machine<'a> {
     }
 
     fn current_names(&self) -> Value {
+        if let Some(book) = &self.near_book { return Value::Shared(book.clone()); }
         if self.near_world { Value::Shared(self.named_world.as_ref().unwrap().clone()) }
         else { Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(self.near_names.clone()))))) }
     }
@@ -1774,7 +1794,7 @@ impl<'a> Machine<'a> {
             }
             (Prim::HashOf, [item]) => {
                 let number = match collection_read(item) {
-                    Value::Small(n) => n,
+                    Value::Small(n) => n % ((1i64 << 61) - 1),
                     Value::Flag(truth) => if truth { 1 } else { 0 },
                     Value::Text(s) => s.bytes().fold(0i64, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as i64)),
                     _ => return Err(refused),
@@ -1814,67 +1834,103 @@ impl<'a> Machine<'a> {
         };
         if !preparing && supplied.len() > 3 { return Err(cannot); }
         if preparing && supplied.get(5).map_or(false, |value| !matches!(value, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(cannot); }
-        let written = if manner == 1 {
-            let start = table.single("stmt.return").ok_or_else(|| cannot.clone())?;
-            let open = table.single("syntax.group.open").ok_or_else(|| cannot.clone())?;
-            let close = table.single("syntax.group.close").ok_or_else(|| cannot.clone())?;
-            format!("{start} {open}\n{}\n{close}", body.trim())
-        } else { body.clone() };
-        let scan = self.text_scanned(&written).map_err(|_| bad_text.clone())?;
-        crate::build::build_from_at(&scan, table, &[], HashMap::new(), true, 0).map_err(|_| bad_text.clone())?;
+        let written = if manner == 1 { body.trim().to_owned() } else { body.clone() };
+        let opening = table.single("ext.system.fault.class.reading").map(|word| format!("{}:", word)).unwrap_or_default();
+        let tell_reading = |said: String| { if !opening.is_empty() && said.starts_with(&opening) { said } else { bad_text.clone() } };
+        let scan = self.text_scanned(&written).map_err(&tell_reading)?;
+        if manner == 1 { crate::build::expression_code(&scan, table, &[], None).map_err(&tell_reading)?; }
+        else { crate::build::build_from_at(&scan, table, &[], HashMap::new(), true, 0).map_err(|(said, _)| tell_reading(said))?; }
         if preparing {
             self.made += 1;
             let contents = vec![(formals[0].clone(), Value::text(&body)), (formals[1].clone(), Value::text(&file)), (formals[2].clone(), Value::Small(manner as i64))];
             return Ok(Value::Thing(Rc::new(Thing { turn: self.made, holds: RefCell::new(contents), of: self.small_class(code_kind) })));
         }
+        if manner == 2 { return Err(cannot); }
         let world = match supplied.get(1) {
             None | Some(Value::Nil) => None,
             Some(Value::Shared(book)) if matches!(*book.borrow(), Value::Dict(_)) => Some(book.clone()),
             _ => return Err(cannot),
         };
-        let local = supplied.get(2).filter(|v| !matches!(v, Value::Nil)).cloned().or_else(|| {
+        let mut local = supplied.get(2).filter(|v| !matches!(v, Value::Nil)).cloned().or_else(|| {
             if world.is_none() && !self.near_world { Some(self.current_names()) } else { None }
         });
         if local.as_ref().map_or(false, |v| !matches!(collection_read(v), Value::Dict(_))) { return Err(cannot); }
+        if let (Some(Value::Shared(local_book)), Some(world_book)) = (&local, world.as_ref().or(self.named_world.as_ref())) {
+            if Rc::ptr_eq(local_book, world_book) { local = None; }
+        }
         let original = self.named_world.clone();
         if let Some(world) = world { self.named_world = Some(world); }
+        if let Some(key) = table.single("ext.system.module.builtins") {
+            let default = original.as_ref().and_then(|book| {
+                if let Value::Dict(pairs) = &*book.borrow() { pairs.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()) } else { None }
+            });
+            if let Some(default) = default {
+                let supplied = self.named_world.as_ref().and_then(|book| {
+                    if let Value::Dict(pairs) = &*book.borrow() { pairs.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()) } else { None }
+                });
+                match supplied {
+                    None => self.write_outer_name(key, &default),
+                    Some(Value::Shared(p)) if matches!(&default, Value::Shared(q) if Rc::ptr_eq(&p,q)) => (),
+                    Some(_) => { self.named_world = original; self.refresh_outer(); return Err(cannot); }
+                }
+            }
+        }
         self.refresh_outer();
         let worked = (|| {
             if let Some(ref local) = local {
                 let Value::Dict(entries) = collection_read(local) else { unreachable!() };
                 let named: Vec<String> = entries.iter().map(|entry| entry.0.bare()).collect();
                 let known = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
-                let read = crate::build::build_within_at(&scan, table, &self.idents, &named, known, 0, None).map_err(|_| bad_text.clone())?;
+                let read = if manner == 1 { crate::build::expression_code(&scan, table, &self.idents, Some(&named)).map_err(&tell_reading)? }
+                    else { crate::build::build_within_at(&scan, table, &self.idents, &named, known, 0, None).map_err(|_| bad_text.clone())? };
                 self.idents = read.globals;
                 self.refresh_outer();
                 let env = Env::make(read.program.idents.len(), Some(self.outermost.clone()));
                 for (at, (_, v)) in entries.iter().enumerate() { env.cells.borrow_mut()[at] = v.clone(); }
+                if let Value::Shared(book) = local { self.inner_books.insert(Rc::as_ptr(&env) as usize, book.clone()); }
                 self.frames_named.push(read.program.clone());
                 let ran = self.value_of(&read.program.body, &env);
                 self.frames_named.pop();
-                if let Value::Shared(book) = local {
-                    let held = env.cells.borrow();
-                    let mut saved = Vec::new();
-                    for (at, key) in read.program.idents.iter().enumerate() {
-                        if Self::visible_binding(key) && !matches!(held[at], Value::Unset) { saved.push((Value::text(key), held[at].clone())); }
-                    }
-                    *book.borrow_mut() = Value::Dict(Rc::new(saved));
-                }
+                self.inner_books.remove(&(Rc::as_ptr(&env) as usize));
+                self.near_book = None;
                 match ran {
                     Ok(v) | Err(Escape::Yield(v)) => Ok(v),
                     Err(Escape::Error(s)) => Err(s),
                     Err(escape) => { self.got_away = Some(escape); Err(cannot.clone()) }
                 }
+            } else if manner == 1 {
+                let built = crate::build::expression_code(&scan, table, &self.idents, None).map_err(&tell_reading)?;
+                self.idents = built.globals;
+                self.refresh_outer();
+                let outer = self.outermost.clone();
+                let origin = std::mem::replace(&mut self.written_in, Rc::from(file.as_str()));
+                let result = self.value_of(&built.program.body, &outer);
+                self.written_in = origin;
+                match result {
+                    Ok(v) | Err(Escape::Yield(v)) => Ok(v),
+                    Err(Escape::Error(s)) => Err(s),
+                    Err(other) => { self.got_away = Some(other); Err(cannot.clone()) }
+                }
             } else { self.run_source(&written, Some(file)) }
         })();
         self.named_world = original;
         self.refresh_outer();
-        worked.map(|answer| if operation == Prim::RunText || manner == 0 { Value::Nil } else { answer })
+        worked.map_err(|said| { if let Some(name) = said.strip_prefix("Undefined variable: ") { self.argument_fault("ext.system.name.absent", Some(name)) } else { said } }).map(|answer| if operation == Prim::RunText || manner == 0 { Value::Nil } else { answer })
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         self.establish_names();
         self.refresh_outer();
+        if let Some(book) = self.inner_books.get(&(Rc::as_ptr(frame) as usize)) {
+            if let (Value::Dict(entries), Some(routine)) = (&*book.borrow(), self.frames_named.last()) {
+                let mut slots = frame.cells.borrow_mut();
+                for (at, name) in routine.idents.iter().enumerate() {
+                    if Self::visible_binding(name) {
+                        slots[at] = entries.iter().find(|(k, _)| k.equals(&Value::text(name))).map(|(_,v)| v.clone()).unwrap_or(Value::Unset);
+                    }
+                }
+            }
+        }
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
         // reach back into the program to hand it on.
@@ -1882,7 +1938,10 @@ impl<'a> Machine<'a> {
             self.hand_over_unheard()?;
         }
         match node {
-            Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
+            Form::Const(Value::Routine(p)) => {
+                if let Some(world) = &self.named_world { self.made_under.insert(Rc::as_ptr(p) as usize, (p.clone(), world.clone())); }
+                Ok(Value::Bound(p.clone(), frame.clone()))
+            }
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Glance(slot) => {
@@ -2142,6 +2201,7 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                if Rc::ptr_eq(f, &self.outermost) { self.write_outer_name(&slot.ident, &Value::Unset); }
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
                 Ok(Value::Nil)
             }
@@ -2889,6 +2949,7 @@ impl<'a> Machine<'a> {
         Some((|| {
             let values = self.value_list(args, frame)?;
             self.remember_scope(frame);
+            let values = if self.table.single("ext.builtin.globals").is_some() && matches!(op, Prim::Weigh | Prim::RunText | Prim::PrepareText) { self.text_parameters(op, values)? } else { values };
             let made = self.prim(op, &name, &values);
             if let Some(away) = self.got_away.take() {
                 return Err(away);
@@ -3580,6 +3641,16 @@ impl<'a> Machine<'a> {
     /// Run a program in a frame already built. A tail call replaces the
     /// program and the frame; what the replaced programs caught is still caught.
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
+        let previous = self.named_world.clone();
+        if let Some((_, world)) = self.made_under.get(&(Rc::as_ptr(&program) as usize)) { self.named_world = Some(world.clone()); }
+        self.refresh_outer();
+        let result = self.drive_bound(program, frame);
+        if previous.is_some() { self.named_world = previous; }
+        self.refresh_outer();
+        result
+    }
+
+    fn drive_bound(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         let memo = program.traps == Traps::Yields && self.memo_cell.map_or(false, |i| matches!(self.outermost.cells.borrow()[i], Value::Flag(true)));
         let key = memo.then(|| {
             let mut k = format!("{}(", program.ident);
@@ -3664,6 +3735,7 @@ impl<'a> Machine<'a> {
                     break Ok(v);
                 }
                 Ok(Next::Jump(p, f)) => {
+                    if let Some((_, world)) = self.made_under.get(&(Rc::as_ptr(&p) as usize)) { self.named_world = Some(world.clone()); self.refresh_outer(); }
                     program = p;
                     frame = f;
                     // A program holding no names of its own is a piece

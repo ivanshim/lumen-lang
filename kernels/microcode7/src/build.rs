@@ -172,7 +172,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false, false)
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -180,7 +180,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, false, false)
         .map_err(|said| (said, at.get(), hard.get()))
 }
 
@@ -189,7 +189,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
 /// statement that means one thing in a program of its own and another
 /// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true, false)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -207,7 +207,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true, false)
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -223,18 +223,26 @@ pub fn build_within_at(
     within: Option<(String, Option<String>)>,
 ) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within, true).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within, true, false).map_err(|said| (said, at.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true, false).map_err(|said| (said, at.get()))
+}
+
+pub fn expression_code(tokens: &[Token], table: &Table, seeded: &[String], inner: Option<&[String]>) -> Res<Built> {
+    let arguments = HashMap::new();
+    let names = HashMap::new();
+    let returns = HashSet::new();
+    let within = inner.map(|inside| (inside, (&arguments, &names, &returns)));
+    build_marking(tokens, table, seeded, HashMap::new(), true, 0, None, None, within, None, true, true)
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, expression: bool) -> Res<Built> {
     let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
@@ -257,7 +265,12 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) };
-    let body = if table.rpn {
+    let body = if expression {
+        let value = r.comma_value()?;
+        while r.look().shape == Shape::LineEnd { r.advance(); }
+        if !r.exhausted() { return Err(table.single("ext.builtin.source.syntax").unwrap_or_default().to_string()); }
+        value
+    } else if table.rpn {
         let (mut stmts, rest) = match r.rpn_body(&[], Mode::Body) {
             Ok(got) => got,
             Err(said) => {
@@ -283,6 +296,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
         let mut stmts = Vec::new();
         let mut ahead = Vec::new();
         r.skip_line_ends();
+        let mut first_statement = true;
         while !r.exhausted() {
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
             // Where the reading stops, the row it had reached is kept,
@@ -297,10 +311,18 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
                     return Err(said);
                 }
             };
-            if defines {
-                ahead.push(stmt);
-            } else {
-                stmts.push(stmt);
+            let doc = if first_statement {
+                let mut plain = &stmt;
+                while let Form::OnLine(_, inner) = plain { plain = inner; }
+                if let Form::Const(Value::Text(text)) = plain { Some(text.clone()) } else { None }
+            } else { None };
+            first_statement = false;
+            if defines { ahead.push(stmt); } else { stmts.push(stmt); }
+            if let Some(text) = doc {
+                for name in table.strings("ext.system.module.doc") {
+                    let place = r.address_to_write(name);
+                    stmts.push(Form::Write(place, Box::new(constant(Value::text(&text)))));
+                }
             }
             r.skip_line_ends();
         }
@@ -870,9 +892,6 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
-        if self.table.single("ext.builtin.globals").is_some() && self.table.prims.contains_key(name) {
-            return constant(Value::text(name));
-        }
         if let Some((depth, names)) = self.class_bindings.last() {
             if *depth == self.layers.len() {
                 if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }

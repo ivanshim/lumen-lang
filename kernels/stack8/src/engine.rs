@@ -28,6 +28,9 @@ pub struct Engine<'a> {
     namespace: Option<Rc<RefCell<Value>>>,
     scope_values: Vec<(Value, Value)>,
     scope_is_module: bool,
+    source_locals: Option<(usize, Rc<RefCell<Value>>)>,
+    using_source_locals: bool,
+    routine_names: HashMap<usize, (Rc<Routine>, Rc<RefCell<Value>>)>,
     world: Vec<Value>,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
@@ -216,6 +219,8 @@ impl<'a> Engine<'a> {
         Engine {
             lang,
             namespace: None, scope_values: Vec::new(), scope_is_module: true,
+            source_locals: None, using_source_locals: false,
+            routine_names: HashMap::new(),
             world: vec![Value::Blank; idents.len()],
             data: Vec::new(),
             caught: Vec::new(),
@@ -836,8 +841,8 @@ impl<'a> Engine<'a> {
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
         if !self.lang.builtin_globals.is_empty() {
-            if told.starts_with("Undefined variable") || self.lang.system_name_absent.first().map_or(false, |w| told.starts_with(w)) { return self.lang.system_fault_class_name.first().cloned(); }
-            if self.lang.builtin_source_syntax.first().map_or(false, |w| told == w) { return self.lang.fault_reading.clone(); }
+            if self.lang.system_name_absent.first().map_or(false, |w| told.starts_with(w)) { return self.lang.system_fault_class_name.first().cloned(); }
+            if self.lang.fault_reading.as_ref().map_or(false, |name| told.starts_with(&format!("{}:", name))) { return self.lang.fault_reading.clone(); }
         }
         let named = match told {
             // Words the definition itself gave for a place outside the
@@ -1181,6 +1186,11 @@ impl<'a> Engine<'a> {
             self.complain(Complaint::Warning, &told);
             return Ok(Value::Null);
         }
+        if matches!(self.world[slot.far], Value::Blank) && !self.lang.builtin_globals.is_empty() {
+            if let Some(class) = self.class_named(&slot.ident) { return Ok(class.clone()); }
+            if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::text(&slot.ident)); }
+            return Err(format!("Undefined variable: {}", slot.ident));
+        }
         let g = &mut self.world[slot.far];
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
@@ -1230,7 +1240,14 @@ impl<'a> Engine<'a> {
     /// cell it holds: how a name is fastened to another's cell.
     fn put_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) {
         match slot.near.first() {
-            Some(&s) => frame[s] = v,
+            Some(&s) => {
+                if self.using_source_locals && Self::public_name(&slot.ident) {
+                    if let Some((_, local)) = &self.source_locals {
+                        if let Value::Map(pairs) = &mut *local.borrow_mut() { self.replace_item(Rc::make_mut(pairs), Value::text(&slot.ident), v.clone()); }
+                    }
+                }
+                frame[s] = v;
+            }
             None => { self.namespace_write(&slot.ident, v.clone()); self.world[slot.far] = v; },
         }
     }
@@ -1480,6 +1497,16 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        let saved = self.namespace.clone();
+        if let Some((_, names)) = self.routine_names.get(&(Rc::as_ptr(program) as usize)) { self.namespace = Some(names.clone()); }
+        self.namespace_cells();
+        let answer = self.invoke_in_namespace(program, n);
+        self.namespace = saved.or_else(|| self.namespace.clone());
+        self.namespace_cells();
+        answer
+    }
+
+    fn invoke_in_namespace(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
         let n = if let Some(rules) = &program.parameter_rules {
             let given = self.drop_many(n)?;
             let bound = self.bind_call(program, given, rules)?;
@@ -1767,13 +1794,14 @@ impl<'a> Engine<'a> {
             &self.lang.builtin_sorted] {
             builtins.extend(words.iter().map(|name| (Value::text(name), Value::text(name))));
         }
-        builtins.extend(self.lang.builtins.keys().map(|name| (Value::text(name), Value::text(name))));
+        for name in self.lang.builtins.keys() {
+            if !builtins.iter().any(|(k, _)| k.equals(&Value::text(name))) { builtins.push((Value::text(name), Value::text(name))); }
+        }
         let dictionary = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(builtins)))));
         let mut initial: Vec<(String, Value)> = self.lang.system_module_builtins.iter().map(|name| (name.clone(), dictionary.clone())).collect();
         initial.extend(self.lang.system_module_doc.iter().map(|name| (name.clone(), Value::Null)));
         for name in self.lang.system_fault_class_name.iter().chain(self.lang.fault_reading.iter()) {
             let class = Value::Class(self.scope_class(name));
-            initial.push((name.clone(), class.clone()));
             initial.push((format!("{}{}", name, crate::code::OF_A_CLASS), class));
         }
         for (name, value) in initial {
@@ -1813,6 +1841,7 @@ impl<'a> Engine<'a> {
     }
 
     fn scope_words(&self) -> Value {
+        if self.using_source_locals { if let Some((_, local)) = &self.source_locals { return Value::Bond(local.clone()); } }
         if self.scope_is_module { return Value::Bond(self.namespace.as_ref().unwrap().clone()); }
         Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(self.scope_values.clone())))))
     }
@@ -1881,7 +1910,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::Hash if args.len() == 1 => {
                 match collection_contents(&args[0]) {
-                    Value::Small(n) => Ok(Value::Small(if n == -1 { -2 } else { n })),
+                    Value::Small(n) => { let n = n % 2_305_843_009_213_693_951; Ok(Value::Small(if n == -1 { -2 } else { n })) },
                     Value::Flag(b) => Ok(Value::Small(i64::from(b))),
                     Value::Text(text) => {
                         let mut h = 0i64;
@@ -1917,15 +1946,15 @@ impl<'a> Engine<'a> {
         };
         if builtin != Builtin::Compile && args.len() > 3 { return Err(unready); }
         if builtin == Builtin::Compile && args.get(5).map_or(false, |v| !matches!(v, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(unready); }
-        let source = if mode == 1 {
-            let group = self.lang.grouping.as_ref().ok_or_else(|| unready.clone())?;
-            format!("{} {}\n{}\n{}", self.lang.return_words[0], group.open, text.trim(), group.close)
-        } else { text.clone() };
-        let tokens = self.tokens_of_text(&source).map_err(|_| syntax.clone())?;
+        let source = if mode == 1 { text.trim().to_string() } else { text.clone() };
+        let prefix = self.lang.fault_reading.as_ref().map(|name| format!("{}:", name)).unwrap_or_default();
+        let reading_fault = |said: String| if !prefix.is_empty() && said.starts_with(&prefix) { said } else { syntax.clone() };
+        let tokens = self.tokens_of_text(&source).map_err(&reading_fault)?;
         // Validation uses a fresh registry and leaves the running names alone.
         let mut validation = crate::compile::Registry::default();
+        validation.expression_read = mode == 1;
         crate::compile::compile_from(&tokens, self.lang, &mut validation, 0, Some(Rc::from(filename.as_str())))
-            .map_err(|_| syntax.clone())?;
+            .map_err(&reading_fault)?;
         if builtin == Builtin::Compile {
             self.made += 1;
             return Ok(Value::Object(Rc::new(Instance {
@@ -1935,38 +1964,56 @@ impl<'a> Engine<'a> {
                     (self.lang.builtin_compile_parameters[2].clone(), Value::Small(mode as i64))]),
             })));
         }
+        if mode == 2 { return Err(unready); }
         let explicit = args.get(1).filter(|v| !matches!(v, Value::Null));
         let target_global = match explicit {
             Some(Value::Bond(cell)) if matches!(*cell.borrow(), Value::Map(_)) => Some(cell.clone()),
             Some(_) => return Err(unready),
             None => None,
         };
-        let local = args.get(2).filter(|v| !matches!(v, Value::Null)).cloned()
+        let mut local = args.get(2).filter(|v| !matches!(v, Value::Null)).cloned()
             .or_else(|| if explicit.is_none() && !self.scope_is_module { Some(self.scope_words()) } else { None });
         if let Some(value) = &local { if !matches!(collection_contents(value), Value::Map(_)) { return Err(unready); } }
+        let world = target_global.as_ref().or(self.namespace.as_ref());
+        if matches!((&local, world), (Some(Value::Bond(a)), Some(b)) if Rc::ptr_eq(a,b)) { local = None; }
         let saved_namespace = self.namespace.clone();
         if let Some(target) = target_global { self.namespace = Some(target); }
+        if let (Some(current), Some(previous), Some(key)) = (&self.namespace, &saved_namespace, self.lang.system_module_builtins.first()) {
+            let default = match &*previous.borrow() { Value::Map(p) => p.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()), _ => None };
+            if let Some(default) = default {
+                let present = match &*current.borrow() { Value::Map(p) => p.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()), _ => None };
+                if let Some(present) = present {
+                    if !matches!((&present, &default), (Value::Bond(a), Value::Bond(b)) if Rc::ptr_eq(a,b)) {
+                        self.namespace = saved_namespace;
+                        self.namespace_cells();
+                        return Err(unready);
+                    }
+                } else { self.namespace_write(key, default); }
+            }
+        }
         self.namespace_cells();
         let depth = self.data.len();
         let result = (|| {
             if let Some(local) = &local {
                 let Value::Map(pairs) = collection_contents(local) else { unreachable!() };
                 let names: Vec<String> = pairs.iter().map(|(k, _)| k.plain()).collect();
+                self.registry.expression_read = mode == 1;
                 let read = crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(Rc::from(filename.as_str())), Some(names), None, true).map_err(|_| syntax.clone())?;
                 self.world.resize(self.registry.idents.len(), Value::Blank);
                 let mut frame: Vec<Value> = pairs.iter().map(|(_, v)| v.clone()).collect();
                 frame.resize(read.idents.len(), Value::Blank);
+                let prior = self.source_locals.clone();
+                if let Value::Bond(book) = local { self.source_locals = Some((Rc::as_ptr(&read) as usize, book.clone())); }
                 let ran = self.run_instrs(&read, &mut frame);
-                if let Value::Bond(cell) = local {
-                    *cell.borrow_mut() = Value::Map(Rc::new(read.idents.iter().zip(frame).filter(|(n,v)| Self::public_name(n) && !matches!(v, Value::Blank | Value::Gap)).map(|(n,v)| (Value::text(n), v)).collect()));
-                }
-                match ran { Ok(()) => Ok(self.data.pop().unwrap_or(Value::Null)), Err(Fault::Note(s)) => Err(s), Err(other) => { self.carried = Some(other); Err(unready.clone()) } }
-            } else { self.run_source(&source, Some(filename)) }
+                self.source_locals = prior;
+                self.using_source_locals = false;
+                match ran { Ok(()) => Ok(if self.data.len() > depth { self.data.pop().unwrap() } else { Value::Null }), Err(Fault::Note(s)) => Err(s), Err(other) => { self.carried = Some(other); Err(unready.clone()) } }
+            } else { self.registry.expression_read = mode == 1; self.run_source(&source, Some(filename)) }
         })();
         self.data.truncate(depth);
         self.namespace = saved_namespace;
         self.namespace_cells();
-        result.map(|v| if builtin == Builtin::Exec { Value::Null } else if mode == 0 { Value::Null } else { v })
+        result.map_err(|said| match said.strip_prefix("Undefined variable: ") { Some(name) => Self::named_fault(&self.lang.system_name_absent, name), None => said }).map(|v| if builtin == Builtin::Exec || mode == 0 { Value::Null } else { v })
     }
 
     fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
@@ -1978,6 +2025,16 @@ impl<'a> Engine<'a> {
         self.start_namespace();
         while pc >= span.0 && pc < span.1 {
             self.namespace_cells();
+            self.using_source_locals = self.source_locals.as_ref().map_or(false, |(id, _)| *id == Rc::as_ptr(program) as usize);
+            if self.using_source_locals {
+                if let Some((_, local)) = &self.source_locals {
+                    if let Value::Map(pairs) = &*local.borrow() {
+                        for (name, value) in program.idents.iter().zip(frame.iter_mut()) {
+                            if Self::public_name(name) { *value = pairs.iter().find(|(k, _)| k.equals(&Value::text(name))).map_or(Value::Blank, |(_,v)| v.clone()); }
+                        }
+                    }
+                }
+            }
             // A complaint raised where the run could only read waits to
             // be handed over; here, before the next word, is where the
             // run can reach back into the program to hand it on.
@@ -2007,7 +2064,12 @@ impl<'a> Engine<'a> {
                 }
             }
             match &instrs[pc] {
-                Instr::Const(v) => self.data.push(self.keep_collection(v.clone())),
+                Instr::Const(v) => {
+                    if let (Value::Routine(routine), Some(names)) = (v, &self.namespace) {
+                        self.routine_names.insert(Rc::as_ptr(routine) as usize, (routine.clone(), names.clone()));
+                    }
+                    self.data.push(self.keep_collection(v.clone()));
+                }
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
                     Ok(v) => self.data.push(v),
                     Err(told) => match self.offer_to_guard(&told, &mut guards) {
@@ -2158,6 +2220,7 @@ impl<'a> Engine<'a> {
                         frame[s] = Value::Blank;
                     }
                     if slot.near.is_empty() {
+                        self.namespace_write(&slot.ident, Value::Blank);
                         self.world[slot.far] = Value::Blank;
                     }
                 }
@@ -2270,7 +2333,7 @@ impl<'a> Engine<'a> {
                         _ => None,
                     };
                     match fast {
-                        Some(sum) => *cell = Value::Small(sum),
+                        Some(sum) => self.store_cell(slot, frame, Value::Small(sum))?,
                         None => {
                             let v = cell.clone();
                             let r = self.dyadic(&Action::Add, &v, by)?;
@@ -2617,7 +2680,10 @@ impl<'a> Engine<'a> {
                     Value::Text(word) => match self.lang.builtins.get(word.as_ref()).copied() {
                         Some(native) => {
                             let mut given = self.drop_many(argc - 1)?;
-                            let outcome = self.builtin(native, &word, &mut given);
+                            let outcome = if self.lang.bind_names {
+                                let items = self.call_items(std::mem::take(&mut given))?;
+                                self.builtin_call(native, &word, items)
+                            } else { self.builtin(native, &word, &mut given) };
                             let held = match self.carried.take() {
                                 Some(fled) => return Err(fled),
                                 None => outcome?,
@@ -3149,7 +3215,9 @@ impl<'a> Engine<'a> {
                 let carried = self.drop_many(argc - 1)?;
                 let mut made = (*program).clone();
                 made.held = carried;
-                Value::Routine(Rc::new(made))
+                let routine = Rc::new(made);
+                if let Some(names) = &self.namespace { self.routine_names.insert(Rc::as_ptr(&routine) as usize, (routine.clone(), names.clone())); }
+                Value::Routine(routine)
             }
             Action::KindredTo => {
                 let pair = self.drop_many(2)?;
@@ -4459,6 +4527,8 @@ impl<'a> Engine<'a> {
     /// Builtins take the same opened arguments as a declared routine,
     /// but each names its own few places, where the definition spells them.
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        if matches!(builtin, Builtin::Breakpoint | Builtin::Help) { return Ok(Value::Null); }
+        if builtin == Builtin::Import { return Err(self.lang.builtin_import_unready[0].clone()); }
         if !self.lang.builtin_globals.is_empty() && matches!(builtin, Builtin::Eval | Builtin::Exec | Builtin::Compile) {
             let args = self.source_arguments(builtin, items)?;
             return self.source_builtin(builtin, &args);
