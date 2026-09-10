@@ -1595,6 +1595,8 @@ only. The extension labels so far, all from PHP:
   receive warnings found while reading. The routine takes the message,
   class, filename and line; thus imported source obeys the filters already
   in force, and an outer program warns before its first statement runs.
+  This label also keeps statement lines and restores the caller's place
+  after a routine returns, for warnings raised while running.
 - `ext.builtin.list.shared` and `.append`: builtins making an empty list
   whose holders see additions together, and adding one value to its end.
   The latter takes the list first and returns nothing. Such lists can be

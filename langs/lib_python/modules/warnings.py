@@ -28,7 +28,8 @@ class WarningMessage:
 
 def _fold(text):
     result = ''
-    for letter in text:
+    for index in range(len(text)):
+        letter = text[index]
         number = ord(letter)
         if number >= 65 and number <= 90:
             letter = chr(number + 32)
@@ -48,7 +49,8 @@ def _matches(pattern, text, folded=False):
         pattern = pattern[:-2] + '$'
     if pattern[:1] == '^':
         pattern = pattern[1:]
-    for letter in pattern:
+    for index in range(len(pattern)):
+        letter = pattern[index]
         if letter in '[](){}|':
             raise NotImplementedError('grouped warning filter expressions cannot run yet')
     from unittest import _match_at

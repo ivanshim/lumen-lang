@@ -3553,6 +3553,8 @@ impl<'a> Machine<'a> {
         let elsewhere = program.written_in.as_ref().map(|place| {
             let was = std::mem::replace(&mut self.written_in, place.clone());
             (was, self.row)
+        }).or_else(|| {
+            if self.table.has_any("ext.system.warning.reader") { Some((self.written_in.clone(), self.row)) } else { None }
         });
         let mut caught: u8 = 0;
         // The names of the frame being run in, kept while it runs, so

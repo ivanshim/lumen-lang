@@ -1667,7 +1667,7 @@ impl<'a> Engine<'a> {
         let elsewhere = program.written_in.as_ref().map(|place| {
             let was = std::mem::replace(&mut self.source, place.clone());
             (was, self.line)
-        });
+        }).or_else(|| (!self.lang.reader_warning.is_empty()).then(|| (self.source.clone(), self.line)));
         self.inside.push(program.within.clone());
         let outcome = self.run_instrs(program, &mut frame);
         self.inside.pop();
