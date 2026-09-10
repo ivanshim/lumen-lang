@@ -157,6 +157,7 @@ pub enum Value {
     Arguments(Rc<Vec<Value>>),
     Octets { cell: Rc<RefCell<Vec<u8>>>, changeable: bool, lead: Rc<str> },
     OctetKind { changeable: bool, shown: Rc<str> },
+    Wrapped(u8, Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -443,7 +444,7 @@ impl Value {
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::Wrapped(..) | Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::TextCall { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
@@ -487,7 +488,7 @@ impl Value {
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
-            Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
+            Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::TextCall { .. } | Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
@@ -556,8 +557,9 @@ impl Value {
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
-            (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
+            (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
+            (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -783,7 +785,6 @@ impl Value {
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
             Value::Generator(_) => "<generator>".into(),
-            Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
             Value::Adorned(_) => String::from("<descriptor>"),
             Value::Backtrace(words) => words.to_string(),
             Value::Keyed(value, _) => value.bare(),
@@ -792,7 +793,12 @@ impl Value {
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
-            Value::Blueprint(b) => format!("<class {}>", b.name),
+            Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            Value::Wrapped(..) => "<member wrapper>".into(),
+            Value::Tuple(items) => {
+                let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
+                format!("({body}{})", if items.len() == 1 { "," } else { "" })
+            },
             Value::Thing(t) => format!("<object {}>", t.of.name),
             Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
@@ -871,6 +877,9 @@ pub enum Reach {
 
 #[derive(Debug)]
 pub struct Blueprint {
+    pub ancestry: Vec<Rc<Blueprint>>,
+    pub parents: Vec<Rc<Blueprint>>,
+    pub presentation: Option<String>,
     pub name: String,
     pub under: Option<Rc<Blueprint>>,
     /// The classes of method names only that this one answers to.

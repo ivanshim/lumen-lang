@@ -470,6 +470,7 @@ pub enum Builtin {
     ProgramNamespace,
     Bytes(u8),
     Text(crate::strings::TextOp),
+    ClassTool(u8),
     Sum,
     List,
     Any,
@@ -743,6 +744,8 @@ impl Builtin {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub generator: bool,
+    pub doc: Option<String>,
+    pub qualified: String,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.

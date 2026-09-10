@@ -144,6 +144,8 @@ impl Suspension {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    ancestor: Option<Rc<Blueprint>>,
+    routine_members: Vec<(Value, Vec<(String, Value)>)>,
     table: &'a Table,
     fault_kinds: HashMap<String, Value>,
     pub outermost: Rc<Env>,
@@ -297,7 +299,7 @@ impl<'a> Machine<'a> {
                 7 => seed.push(("\0key-fault".to_string(), Value::Flag(true))),
                 _ => {}
             }
-            let kind = Blueprint {
+            let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: word.clone(), under: parent.and_then(|p| chain.get(p).cloned()),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
                 shared: RefCell::new(vec![]), constants: vec![],
@@ -351,7 +353,7 @@ impl<'a> Machine<'a> {
         let outermost = Env::make(idents.len(), None);
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
-                let blueprint = Blueprint {
+                let blueprint = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     name: idents[at].clone(), under: None, answers: Vec::new(),
                     fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(),
@@ -367,6 +369,7 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             imported: HashMap::new(),
+            ancestor: None, routine_members: Vec::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -1389,7 +1392,7 @@ impl<'a> Machine<'a> {
             if let Some(Value::Blueprint(kind)) = self.fault_kinds.get(self.table.single("ext.stmt.class.special.stop")?).cloned() {
                 return Some(self.make_fault(kind, vec![], Value::Nil));
             }
-            let of = Blueprint { name: self.table.single("ext.stmt.class.special.stop")?.to_owned(), under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![] };
+            let of = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.stmt.class.special.stop")?.to_owned(), under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![] };
             self.made += 1;
             return Some(Value::Thing(Rc::new(Thing { of: Rc::new(of), holds: RefCell::new(vec![]), turn: self.made })));
         }
@@ -1787,6 +1790,10 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined variable {}", slot.ident));
             return Ok(Value::Nil);
         }
+        if self.has_class_order() {
+            if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
+            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)])));}
+        }
         Err(format!("Undefined variable: {}", slot.ident))
     }
 
@@ -2057,6 +2064,7 @@ impl<'a> Machine<'a> {
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        if self.has_class_order() && self.ancestor.is_none() { self.common_ancestor(); }
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
         // reach back into the program to hand it on.
@@ -2476,6 +2484,7 @@ impl<'a> Machine<'a> {
                 if self.object_truth(&tested)? { return Ok(Value::Nil); }
                 let held = self.value_of(message, frame)?;
                 let kind = Blueprint {
+                    ancestry: vec![], parents: vec![], presentation: None,
                     name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
                     fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
                     shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
@@ -2592,7 +2601,7 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
-                        _ => return Err(format!("Class {} cannot be built on that", plan.name).into()),
+                        _ => return Err(if self.has_class_order(){self.detail("unready").to_owned()}else{format!("Class {} cannot be built on that", plan.name)}.into()),
                     },
                 };
                 let mut answers = Vec::with_capacity(plan.answers);
@@ -2610,7 +2619,14 @@ impl<'a> Machine<'a> {
                 let fields = named(&plan.field_names);
                 let shared = named(&plan.shared_names);
                 let constants = named(&plan.constant_names);
+                if self.has_class_order() {
+                    let mut entries=shared;
+                    entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
+                    let mut parents=Vec::new();parents.extend(under);parents.extend(answers);
+                    return self.build_class_value(plan.name.clone(),parents,entries);
+                }
                 Ok(Value::Blueprint(Rc::new(Blueprint {
+                    ancestry: vec![], parents: vec![], presentation: None,
                     name: plan.name.clone(),
                     under,
                     answers,
@@ -2678,6 +2694,7 @@ impl<'a> Machine<'a> {
                     return self.call_adornment(adornment, given, frame);
                 }
                 if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {let values=self.value_list(args,frame)?;return self.apply_class_member(stands,values);}
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2913,6 +2930,7 @@ impl<'a> Machine<'a> {
                             return Ok(Value::text(&layout.interpolate(pattern, &positions, &keywords)?));
                         }
                     }
+                    if self.has_class_order() && matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..)){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -2947,8 +2965,10 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() needs a class and a method name", name).into());
                     }
                     let subject = values.remove(0);
-                    let holder = self.class_it_spells(values.remove(0));
+                    let parent = values.remove(0);
                     let called = values.remove(0).bare();
+                    if self.has_class_order(){if let Value::Text(owner)=&parent{return self.next_ancestor_call(subject,owner,&called,values);}}
+                    let holder = self.class_it_spells(parent);
                     let Value::Blueprint(class) = holder else {
                         let said = self.class_lacking(&holder).unwrap_or_else(|| format!("Cannot call '{}' on something that is not a class", called));
                         return Err(said.into());
@@ -3124,6 +3144,16 @@ impl<'a> Machine<'a> {
                     // not hold, and take the write of one: where the
                     // language names such methods and the class is
                     // written with them, they stand in its place.
+                    if self.has_class_order() {
+                        match op {
+                            Prim::ClassWork(k)=>return self.work_on_class(*k,values),
+                            Prim::SortOf=>return self.class_from_type(values),
+                            Prim::Of if values.len()==2=>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Onto if values.len()==3=>return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false),
+                            Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
+                            _=>{}
+                        }
+                    }
                     if let Some(done) = self.stands_for_property(*op, &values)? {
                         return Ok(done);
                     }
@@ -3378,6 +3408,7 @@ impl<'a> Machine<'a> {
             }
             return Ok(self.make_fault(class, args, Value::Nil));
         }
+        if self.has_class_order(){return self.construct_ordered(class,args);}
         self.made += 1;
         let fields = class.every_field();
         let object = Rc::new(Thing { of: class.clone(), holds: RefCell::new(fields), turn: self.made });
@@ -3444,6 +3475,7 @@ impl<'a> Machine<'a> {
                     return self.call_adornment(adornment, given, frame).map(Next::Value);
                 }
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)){let given=self.value_list(args,frame)?;return Ok(Next::Value(self.apply_class_member(stands,given)?));}
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -5003,7 +5035,7 @@ impl<'a> Machine<'a> {
             (Prim::NextItem, [one, otherwise]) => self.advance_object(one)?.unwrap_or_else(|| otherwise.clone()),
             (Prim::NextItem, [Value::Cursor(cursor)]) => {
                 if let Some(value) = cursor.borrow_mut().pop_front() { value } else {
-                    let class = Blueprint {
+                    let class = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                         name: self.table.single("ext.stmt.class.special.stop").unwrap_or_default().to_owned(),
                         under: None, fields: vec![], methods: vec![], shared: RefCell::new(vec![]), reaches: vec![], answers: vec![], constants: vec![],
                     };
@@ -5272,6 +5304,7 @@ impl<'a> Machine<'a> {
                     _ => changed,
                 }
             }
+            Prim::ClassWork(_) => return Err(self.detail("unready").to_owned()),
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::NumberAlone => match &v[0] {
                 Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
@@ -5606,7 +5639,7 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                     }
                 }
-                let heir = Blueprint {
+                let heir = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     under: Some(ancestor), name: title, shared: RefCell::new(holdings),
                     methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![],
                 };
@@ -5672,6 +5705,7 @@ impl<'a> Machine<'a> {
             Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
             Prim::HasMember => {
                 n(2)?;
+                if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
@@ -6626,6 +6660,9 @@ impl<'a> Machine<'a> {
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
+                    (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
+                    (Value::Bound(a,_), Value::Bound(b,_)) => Rc::ptr_eq(a,b),
+                    (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -6639,6 +6676,11 @@ impl<'a> Machine<'a> {
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+            Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
+                let Value::Blueprint(class)=&v[0] else{unreachable!()};
+                if self.inherited_entry(class,self.detail("getitem")).is_none(){return Err(self.detail("unready").to_owned());}
+                v[0].clone()
+            }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
             Prim::Toward => self.element(&v[0], &v[1], Reading::Toward)?,
@@ -7018,7 +7060,7 @@ impl<'a> Machine<'a> {
                 if !matches!(source, Value::Vector(_) | Value::Arguments(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_)) {
                     return Err(self.argument_fault("ext.builtin.exceptions.unready", None));
                 }
-                let kind = Blueprint { name: name.into(), under: None, answers: vec![], reaches: vec![],
+                let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: name.into(), under: None, answers: vec![], reaches: vec![],
                     fields: vec![], shared: RefCell::new(vec![]), constants: vec![], methods: vec![] };
                 self.made += 1;
                 Value::Thing(Rc::new(Thing { of: Rc::new(kind), turn: self.made,
@@ -7335,6 +7377,16 @@ impl<'a> Machine<'a> {
                 usize::try_from(n).ok()
             } else { as_index(at).ok() };
             return place.and_then(|p| row.get(p)).cloned().ok_or_else(|| format!("\0{}: {}", self.table.single("ext.system.fault.class.index").unwrap_or_default(), self.table.single("ext.system.fault.index").unwrap_or_default()));
+        }
+        if let Value::Tuple(values)=target {
+            let selected=if let Value::Span(bounds)=at {
+                let (_,places,_)=self.span_selection(bounds,values.len())?;
+                Value::Tuple(Rc::new(places.into_iter().map(|i|values[i].clone()).collect()))
+            }else{
+                let index=at.as_big()?;let index=if index<BigInt::from(0){index+values.len()}else{index};
+                index.to_usize().and_then(|i|values.get(i)).cloned().ok_or_else(||self.detail("unready").to_owned())?
+            };
+            return Ok(selected);
         }
         if let Value::Progression(walk) = target {
             match at {
@@ -8569,7 +8621,7 @@ impl Machine<'_> {
         for word in self.table.strings("ext.system.module.name") {
             if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::text(path))); }
         }
-        let kind = Blueprint {
+        let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
             name: path.into(), under: None, methods: Vec::new(), constants: Vec::new(),
             shared: RefCell::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
         };
@@ -9124,3 +9176,5 @@ impl Machine<'_> {
         }
     }
 }
+#[path = "classes.rs"]
+mod classes;

@@ -376,7 +376,7 @@ fn compile_pass(
     }
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -893,6 +893,12 @@ impl<'a> Compiler<'a> {
     /// its value is left on the stack at the end.
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let source = self.pos;
+        let first_body = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).next();
+        let doc = first_body.filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.clone());
+        let local = self.lang.class_details.get("locals").and_then(|v|v.first()).cloned().unwrap_or_default();
+        let mut qualified = self.within.as_ref().map_or(String::new(),|(n,_)|format!("{n}."));
+        for p in self.pieces.iter().filter(|p|!p.outermost) {qualified.push_str(&format!("{}.{local}.",p.ident));}
+        qualified.push_str(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
@@ -981,7 +987,7 @@ impl<'a> Compiler<'a> {
         }
         let within = self.within.as_ref().map(|(named, _)| Rc::from(named.as_str()));
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(Rc::new(Routine { generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)) }))
+        Ok(Rc::new(Routine { qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)) }))
     }
 
     // ---------- statements ----------
@@ -3398,6 +3404,7 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as the class name")?;
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
+        let mut further = Vec::new();
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
@@ -3411,10 +3418,10 @@ impl<'a> Compiler<'a> {
                 if keyword { self.take(); self.take(); unready = true; }
                 let from = self.mark();
                 self.expr(0)?;
-                if count == 0 && !keyword && !spread {
+                if !keyword && !spread && (count == 0 || lang.class_details.get("root").map_or(false,|v|!v.is_empty())) {
                     let held = self.gensym("base");
                     self.write(&held);
-                    base = Some(held);
+                    if count == 0 { base = Some(held); } else { further.push(held); }
                 } else {
                     self.piece().instrs.truncate(from);
                 }
@@ -3424,6 +3431,8 @@ impl<'a> Compiler<'a> {
             self.want_sign(&close, "after the bases")?;
         }
         let outer = self.within.replace((name.clone(), base.clone()));
+        let qualification=outer.as_ref().map_or_else(||name.clone(),|(n,_)|format!("{n}.{name}"));
+        if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
         self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
         if !inline {
@@ -3435,15 +3444,28 @@ impl<'a> Compiler<'a> {
         self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
         let mut shared: Vec<(String, String)> = Vec::new();
+        if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
+            self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
+        }
         let body_at = self.mark();
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
-            if self.on_any(&lang.decorator_words) {
+            if !lang.class_details.get("root").map_or(false, |v| !v.is_empty()) && self.on_any(&lang.decorator_words) {
                 let (named, slot) = self.adorned_member()?;
                 if lang.constructor.as_ref() == Some(&named) { unready = true; }
                 methods.retain(|(old, _)| old != &named);
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, slot));
-            } else if self.on_keyword(&lang.function_words) {
+                self.skip_seps();
+                continue;
+            }
+            let mut decorators=Vec::new();
+            while lang.class_details.get("root").map_or(false,|v|!v.is_empty()) && self.on_any(&lang.decorator_words) {
+                self.take();self.expr(0)?;
+                let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
+                self.skip_seps();
+            }
+            if !decorators.is_empty() && !self.on_keyword(&lang.function_words) {unready=true;}
+            if self.on_keyword(&lang.function_words) {
                 self.take();
                 let named = self.want_name("as the method name")?;
                 let method = self.method(&named)?;
@@ -3451,9 +3473,12 @@ impl<'a> Compiler<'a> {
                 shared.retain(|(old, _)| old != &named);
                 let slot = self.gensym("method");
                 self.constant(Value::Routine(method.clone()));
+                let wrapped=!decorators.is_empty();
+                for held in decorators.into_iter().rev() {self.read(&held);self.act(Action::Invoke(Rc::from("")),2);}
                 self.write(&slot);
+                if wrapped {shared.push((named.clone(),slot.clone()));}
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
-                methods.push((named, method));
+                if !wrapped {methods.push((named, method));}
             } else if self.on_keyword(&lang.pass_words) {
                 self.take();
             } else if self.look().shape == Shape::Quote {
@@ -3510,8 +3535,9 @@ impl<'a> Compiler<'a> {
         }
         let mut count = shared.len();
         if let Some(under) = &base { self.read(under); count += 1; }
+        for held in &further { self.read(held); count += 1; }
         for (_, held) in &shared { self.read(held); }
-        let plan = Plan { name: name.clone(), answers: 0, field_names: Vec::new(), field_reach: Vec::new(),
+        let plan = Plan { name: name.clone(), answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
             shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
         self.act(Action::Forge(Rc::new(plan)), count);
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
@@ -5794,7 +5820,7 @@ impl<'a> Compiler<'a> {
         }
         if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
             self.take();
-            let class = crate::value::Class { name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
+            let class = crate::value::Class { direct: Vec::new(), lineage: Vec::new(), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
@@ -5924,6 +5950,11 @@ impl<'a> Compiler<'a> {
                 };
                 self.act(Action::Make, argc + 1);
             }
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
+                && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
+                && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
+                self.take();self.constant(Value::Adapter(Rc::new((9,vec![]))));
+            }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
                 let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
@@ -5934,13 +5965,13 @@ impl<'a> Compiler<'a> {
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
                 for _ in 0..extra { self.discard(); }
-                let parent = self.within.as_ref().and_then(|(_, base)| base.clone());
+                let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
                 if let (0, Some(base), Some(this), Some(mark)) = (extra, parent, self.method_self.clone(), member) {
                     self.want_sign(&mark, "after the parent call")?;
                     let named = self.want_name("as the parent's member")?;
                     self.read(&this);
-                    self.read(&base);
+                    if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {self.constant(Value::text(&base));} else {self.read(&base);}
                     if self.at_symbol(&call.open) {
                         self.take();
                         let count = self.arguments(&call)?;

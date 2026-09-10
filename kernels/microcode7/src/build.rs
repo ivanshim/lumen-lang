@@ -350,7 +350,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
-    let program = Routine { generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
@@ -994,6 +994,14 @@ impl<'a> Builder<'a> {
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         let began = self.pos;
+        let mut start = self.pos;
+        while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
+        let doc = self.tokens.get(start).filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.to_owned());
+        let mut path=self.within.as_ref().map(|(c,_)|format!("{c}.")).unwrap_or_default();
+        let local=self.table.single("ext.stmt.class.detail.locals").unwrap_or("");
+        for outer in &self.naming {path.push_str(outer);path.push('.');path.push_str(local);path.push('.');}
+        path.push_str(name);
+        let qualification=path;
         let taking = self.taking.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is set aside while
@@ -1052,7 +1060,7 @@ impl<'a> Builder<'a> {
         }
         self.naming.pop();
         let carried = std::mem::replace(&mut self.carrying, around);
-        Ok(constant(Value::Routine(Rc::new(Routine { generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, traps: catches, carried, body }))))
     }
 
     /// A branch arm or a loop body: a program that holds no names.
@@ -1069,7 +1077,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -2308,6 +2316,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let mut setup = Vec::new();
         let mut parent = None;
+        let mut other_parents = Vec::new();
         let mut cannot = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
@@ -2319,10 +2328,10 @@ impl<'a> Builder<'a> {
                 let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
                 if keyword { self.pos += 2; cannot = true; }
                 let value = self.expr(0)?;
-                if first && !keyword && !expanded {
+                if !keyword && !expanded && (first || table.has_any("ext.stmt.class.detail.root")) {
                     let slot = self.gensym("parent");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
-                    parent = Some(slot);
+                    if first { parent = Some(slot); } else { other_parents.push(slot); }
                 }
                 first = false;
                 match table.single("syntax.call.separator") {
@@ -2333,6 +2342,8 @@ impl<'a> Builder<'a> {
             self.need_sign(end, "after the bases")?;
         }
         let previous = self.within.replace((named.clone(), parent.as_ref().map(|s| s.ident.to_string())));
+        let full_name=previous.as_ref().map_or(named.clone(),|(n,_)|format!("{n}.{named}"));
+        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
         self.need_intro()?;
         let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
         if !on_one_line {
@@ -2346,10 +2357,12 @@ impl<'a> Builder<'a> {
         let mut attributes = Vec::new();
         let mut values = Vec::new();
         if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
+        values.extend(other_parents.iter().cloned().map(Form::Read));
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {attributes.push(word.to_string());values.push(constant(Value::text(&full_name)));}
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
-            if self.on_any("ext.stmt.decorator") {
+            if !table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
                 let (word, address) = self.member_adornments(&mut setup)?;
                 cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
                 methods.retain(|(n, _)| n != &word);
@@ -2359,19 +2372,33 @@ impl<'a> Builder<'a> {
                 }
                 attributes.push(word);
                 values.push(Form::Read(address));
-            } else if self.key("stmt.function") {
+                self.skip_line_ends();
+                continue;
+            }
+            let mut wrappers=Vec::new();
+            while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
+                self.advance();let expression=self.expr(0)?;let address=self.gensym("member_wrapper");
+                setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
+                self.skip_line_ends();
+            }
+            if !wrappers.is_empty() && !self.key("stmt.function") {cannot=true;}
+            if self.key("stmt.function") {
                 self.advance();
                 let method_name = self.need_word("as the method name")?;
                 let body = self.method(&method_name)?;
                 methods.retain(|(old, _)| old != &method_name);
                 if let Some(i) = attributes.iter().position(|old| old == &method_name) {
                     attributes.remove(i);
-                    values.remove(i + usize::from(parent.is_some()));
+                    values.remove(i + usize::from(parent.is_some()) + other_parents.len());
                 }
                 let slot = self.gensym("method_body");
-                setup.push(Form::Write(slot.clone(), Box::new(constant(Value::Routine(body.clone())))));
+                let decorated=!wrappers.is_empty();
+                let mut expression=constant(Value::Routine(body.clone()));
+                while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
+                setup.push(Form::Write(slot.clone(),Box::new(expression)));
+                if decorated {attributes.push(method_name.clone());values.push(Form::Read(slot.clone()));}
                 self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
-                methods.push((method_name, body));
+                if !decorated {methods.push((method_name, body));}
             } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
                 self.advance();
             } else {
@@ -2404,7 +2431,7 @@ impl<'a> Builder<'a> {
                     let word = attributes.last().expect("an attribute").clone();
                     if let Some(index) = attributes[..attributes.len() - 1].iter().position(|n| n == &word) {
                         attributes.remove(index);
-                        values.remove(index + usize::from(parent.is_some()));
+                        values.remove(index + usize::from(parent.is_some()) + other_parents.len());
                     }
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(word, place.clone());
                     values.push(Form::Read(place));
@@ -2427,7 +2454,7 @@ impl<'a> Builder<'a> {
             setup.push(self.class_not_ready());
         }
         let plan = Plan {
-            name: named.clone(), answers: 0, field_names: vec![], field_reach: vec![],
+            name: named.clone(), answers: other_parents.len(), field_names: vec![], field_reach: vec![],
             shared_names: attributes, constant_names: vec![], methods, extends: parent.is_some(),
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
@@ -5443,7 +5470,7 @@ impl<'a> Builder<'a> {
         }
         if table.spells("ext.stmt.class.special.stop", &t.lexeme) && !table.spells("ext.builtin.exceptions", &t.lexeme) {
             self.advance();
-            let plan = crate::data::Blueprint {
+            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
                 fields: vec![], constants: vec![], reaches: vec![], answers: vec![],
             };
@@ -5570,6 +5597,10 @@ impl<'a> Builder<'a> {
                 }
                 prim_call(Prim::Spawn, given)
             }
+            Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
+                && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
+                self.advance();constant(Value::Wrapped(9,Rc::new(Vec::new())))
+            }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
                 let open = table.single("syntax.call.open").ok_or("A parent call needs brackets")?;
@@ -5579,13 +5610,14 @@ impl<'a> Builder<'a> {
                 }
                 self.need_sign(open, "after the parent word")?;
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
-                let base = self.within.as_ref().and_then(|(_, b)| b.clone());
+                let base = self.within.as_ref().map(|(n,b)| if table.has_any("ext.stmt.class.detail.root") {n.clone()} else {b.clone().unwrap_or_default()});
                 let sign = table.single("ext.op.member").filter(|m| self.sign(m));
                 match (extra.is_empty(), base, self.receiver.clone(), sign) {
                     (true, Some(base), Some(receiver), Some(_)) => {
                         self.advance();
                         let called = self.need_word("as the parent's member")?;
-                        let mut given = vec![self.read(&receiver), self.read(&base), constant(Value::text(&called))];
+                        let parent = if table.has_any("ext.stmt.class.detail.root") {constant(Value::text(&base))} else {self.read(&base)};
+                        let mut given = vec![self.read(&receiver), parent, constant(Value::text(&called))];
                         if self.sign(open) {
                             self.advance();
                             given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
@@ -7271,7 +7303,7 @@ impl<'a> Builder<'a> {
             let mut param_slots = scope.formal_slots;
             params.reverse();
             param_slots.reverse();
-            let program = Routine { generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
+            let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, traps: Traps::Yields, carried: Vec::new(), body: sequence(s) };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
