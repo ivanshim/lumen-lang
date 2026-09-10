@@ -688,7 +688,7 @@ class TextTestRunner:
             self._failure('ERROR', error, '')
         for failure in result.failures:
             self._failure('FAIL', failure, 'AssertionError: ')
-        self._write('-' * 70 + '\n')
+        self._write('----------------------------------------------------------------------' + '\n')
         noun = ' tests'
         if result.testsRun == 1:
             noun = ' test'
@@ -718,9 +718,9 @@ class TextTestRunner:
         return result
 
     def _failure(self, label, entry, prefix):
-        self._write('=' * 70 + '\n')
+        self._write('======================================================================' + '\n')
         self._write(label + ': ' + entry[0] + ' (' + entry[2] + ')\n')
-        self._write('-' * 70 + '\n')
+        self._write('----------------------------------------------------------------------' + '\n')
         self._write('Traceback (most recent call last):\n')
         self._write(prefix + entry[1] + '\n\n')
 
