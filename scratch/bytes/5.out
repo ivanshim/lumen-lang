@@ -1,0 +1,5 @@
+b'' b'\x00\x00\x00' 255 b'bc\x00' b'\xff\x00cba'
+True True True True
+True True True b'xyxy'
+b'x' <class 'bytes'> True False
+7 True

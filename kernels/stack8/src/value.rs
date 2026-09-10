@@ -174,6 +174,8 @@ pub enum Value {
     Walking(Rc<RefCell<(Value, Option<Value>)>>),
     Declined(Rc<str>),
     Walk(Rc<RefCell<(Vec<Value>, usize)>>),
+    Bytes(Rc<RefCell<Vec<u8>>>, bool, Rc<str>),
+    ByteKind(bool, Rc<str>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -495,6 +497,8 @@ impl Value {
             Value::Native(..) | Value::Cursor(_) => true,
             Value::Set(s) => !s.borrow().held.is_empty(),
             Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Stream(_) => true,
+            Value::Bytes(row, ..) => !row.borrow().is_empty(),
+            Value::ByteKind(..) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -532,7 +536,7 @@ impl Value {
             Value::Descriptor(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
-            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Bytes(..) | Value::ByteKind(..) | Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Walking(_) | Value::Declined(_) | Value::Walk(_) | Value::SetWalk(..) | Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -556,6 +560,8 @@ impl Value {
                 let (a, b) = (a.borrow(), b.borrow());
                 a.held.len() == b.held.len() && a.beneath(&b)
             }
+            (Value::Bytes(a, ..), Value::Bytes(b, ..)) => *a.borrow() == *b.borrow(),
+            (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -761,6 +767,8 @@ impl Value {
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::SetWalk(..) => "<set walk>".into(),
             Value::Set(s) => s.borrow().show(Value::plain),
+            Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
+            Value::ByteKind(_, text) => text.to_string(),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -1281,4 +1289,23 @@ fn expanded_real(number: f64, places: usize) -> String {
         text.truncate(text.len().min(point + 1 + places.saturating_sub(whole)));
     }
     text
+}
+
+fn byte_repr(row: &[u8], mutable: bool, opening: &str) -> String {
+    let quote = if row.contains(&b'\'') && !row.contains(&b'"') { '"' } else { '\'' };
+    let mut out = format!("{}{}", opening, quote);
+    for &byte in row {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b if b == quote as u8 => { out.push('\\'); out.push(quote); }
+            32..=126 => out.push(byte as char),
+            _ => { let _ = write!(out, "\\x{:02x}", byte); }
+        }
+    }
+    out.push(quote);
+    if mutable { out.push(')'); }
+    out
 }

@@ -1,0 +1,5 @@
+bytearray(b'abc') bytearray(b'abc')
+bytearray(b'abcabc') bytearray(b'abcabc')
+bytearray(b'abcabc') bytearray(b'abcabc!')
+bytearray(b'') bytearray(b'')
+20
