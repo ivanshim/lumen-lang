@@ -997,6 +997,8 @@ impl<'a> Machine<'a> {
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
         match item {
+            Value::TextRow(words, closed) => return Ok(crate::text::written_row(words,*closed)),
+            Value::Text(word) if self.table.has_any("ext.builtin.text.repr") => return Ok(crate::text::quotation(word)),
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
                 for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
@@ -2838,6 +2840,10 @@ impl<'a> Machine<'a> {
             }
             return Ok(Some(Value::Nil));
         }
+        if let Prim::Textual(work) = op {
+            crate::text::fit_names(table, work, positional, keywords)?;
+            return Ok(None);
+        }
         for (key, value) in keywords {
             let index = match op {
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
@@ -3515,6 +3521,7 @@ impl<'a> Machine<'a> {
         }
         Ok(match op {
             Prim::Pointed => v[0].clone().keeping_point(true),
+            Prim::Textual(work) => crate::text::apply(self.table, work, name, v, self.wording())?,
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -3643,6 +3650,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
+                    Value::TextRow(row, _) => Value::Small(row.len() as i64),
                     Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
@@ -4744,6 +4752,21 @@ impl<'a> Machine<'a> {
                 };
                 self.at_width(evenly)
             }
+            Prim::Times if self.table.flag("ext.builtin.text.repeat") && v.iter().any(|x| matches!(x,Value::Text(_))) => {
+                let (word, multiplier) = match (&v[0],&v[1]) { (Value::Text(t),x)|(x,Value::Text(t)) => (t,x), _ => unreachable!() };
+                let number = match multiplier {
+                    Value::Flag(b) => if *b { 1 } else { 0 }, Value::Small(i) => *i,
+                    Value::Huge(i) => i.to_i64().unwrap_or_else(|| if **i < BigInt::from(0) { i64::MIN } else { i64::MAX }),
+                    _ => return Err(crate::text::complaint(self.table,"integer").into()),
+                };
+                let mut repeated = String::new();
+                if number > 0 && !word.is_empty() {
+                    let length = (number as usize).checked_mul(word.len()).ok_or_else(||crate::text::complaint(self.table,"room"))?;
+                    repeated.try_reserve(length).map_err(|_|crate::text::complaint(self.table,"room"))?;
+                    for _ in 0..number { repeated.push_str(word); }
+                }
+                Value::text(&repeated)
+            }
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => {
                 let sum = match op {
                     Prim::Plus => Calc::Plus,
@@ -4919,6 +4942,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::TextRow(words, _) => Value::Small(words.len() as i64),
                     Value::Vector(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
@@ -5222,6 +5246,16 @@ impl<'a> Machine<'a> {
     }
 
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Value::TextRow(row, closed) = target {
+            if let Value::Span(bounds) = at {
+                let (_, selection, _) = self.span_selection(bounds, row.len())?;
+                let words = selection.iter().map(|&i| row[i].clone()).collect();
+                return Ok(Value::TextRow(Rc::new(words), *closed));
+            }
+            let offset = match at { Value::Small(i) => *i, Value::Flag(f) => if *f {1} else {0}, _ => return Err(crate::text::complaint(self.table,"integer")) };
+            let place = if offset >= 0 {offset} else {(row.len() as i64).saturating_add(offset)};
+            return match row.get(place as usize) {Some(word) => Ok(Value::text(word)),None => Err(self.span_complaint("bounds"))};
+        }
         if let Value::Span(bounds) = at {
             let row = match target {
                 Value::Vector(values) => values.as_ref().clone(),
@@ -5316,6 +5350,7 @@ impl<'a> Machine<'a> {
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
+            Value::TextRow(words, _) => words.iter().map(|s| Value::text(s)).collect(),
             Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {

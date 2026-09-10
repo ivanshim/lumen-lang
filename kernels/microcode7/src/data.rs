@@ -128,6 +128,7 @@ pub enum Value {
     Huge(Rc<BigInt>),
     Frac(Rc<Ratio>),
     Text(Rc<str>),
+    TextRow(Rc<Vec<String>>, bool),
     Flag(bool),
     Nil,
     Ellipsis,
@@ -216,7 +217,7 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
+            Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
@@ -233,6 +234,7 @@ impl Value {
             // Neither worth standing past the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
+            Value::TextRow(words, _) => !words.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Nil | Value::Unset => false,
             _ => true,
@@ -251,7 +253,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -263,6 +265,13 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
+            (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
+                return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
+            }
+            _ => (),
+        }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
             // Nought beneath is no ratio to cross-multiply: what lies
             // past every number is equal to another only where both lie
@@ -472,6 +481,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::TextRow(words, closed) => crate::text::written_row(words, *closed),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };

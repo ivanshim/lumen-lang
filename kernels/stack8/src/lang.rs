@@ -40,6 +40,8 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub text_words: HashMap<String, Vec<String>>,
+    pub text_repeat: bool,
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
@@ -815,6 +817,8 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.builtin.text.splitlines | w ext.builtin.text.partition | w ext.builtin.text.rpartition | w ext.builtin.text.expandtabs | w ext.builtin.text.swapcase | w ext.builtin.text.casefold | w ext.builtin.text.capitalize | w ext.builtin.text.title | w ext.builtin.text.istitle | w ext.builtin.text.isidentifier | w ext.builtin.text.isprintable | w ext.builtin.text.isdecimal | w ext.builtin.text.isnumeric | w ext.builtin.text.isascii | w ext.builtin.text.removeprefix | w ext.builtin.text.removesuffix | w ext.builtin.text.format_map | w ext.builtin.text.maketrans | w ext.builtin.text.translate | w ext.builtin.text.encode | w ext.builtin.text.join | w ext.builtin.text.split | w ext.builtin.text.rsplit | w ext.builtin.text.strip | w ext.builtin.text.lstrip | w ext.builtin.text.rstrip | w ext.builtin.text.center | w ext.builtin.text.ljust | w ext.builtin.text.rjust | w ext.builtin.text.zfill | w ext.builtin.text.count | w ext.builtin.text.find | w ext.builtin.text.rfind | w ext.builtin.text.index | w ext.builtin.text.rindex | w ext.builtin.text.startswith | w ext.builtin.text.endswith | w ext.builtin.text.replace | w ext.builtin.text.upper | w ext.builtin.text.lower | w ext.builtin.text.length | w ext.builtin.text.repr | w ext.builtin.text.keyword.keepends | w ext.builtin.text.keyword.tabsize | w ext.builtin.text.keyword.maxsplit | w ext.builtin.text.keyword.sep | w ext.builtin.text.keyword.encoding | w ext.builtin.text.keyword.errors | w ext.builtin.text.fault.arguments | w ext.builtin.text.fault.receiver | w ext.builtin.text.fault.string | w ext.builtin.text.fault.integer | w ext.builtin.text.fault.separator | w ext.builtin.text.fault.fill | w ext.builtin.text.fault.missing | w ext.builtin.text.fault.encode | w ext.builtin.text.fault.mapping | w ext.builtin.text.fault.translation | w ext.builtin.text.fault.codepoint | w ext.builtin.text.fault.surrogate | w ext.builtin.text.fault.maketrans.length | w ext.builtin.text.fault.maketrans.key | w ext.builtin.text.fault.maketrans.type | w ext.builtin.text.fault.format | w ext.builtin.text.fault.format.positional | w ext.builtin.text.fault.format.brace | w ext.builtin.text.fault.join | w ext.builtin.text.fault.walk | w ext.builtin.text.fault.room | w ext.builtin.text.fault.key | w ext.builtin.text.complaint | b ext.builtin.text.repeat
+
 w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
 w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready
 
@@ -1313,6 +1317,49 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.text.splitlines", Builtin::Text(crate::strings::TextOp::Splitlines)),
+            ("ext.builtin.text.partition", Builtin::Text(crate::strings::TextOp::Partition)),
+            ("ext.builtin.text.rpartition", Builtin::Text(crate::strings::TextOp::Rpartition)),
+            ("ext.builtin.text.expandtabs", Builtin::Text(crate::strings::TextOp::Expandtabs)),
+            ("ext.builtin.text.swapcase", Builtin::Text(crate::strings::TextOp::Swapcase)),
+            ("ext.builtin.text.casefold", Builtin::Text(crate::strings::TextOp::Casefold)),
+            ("ext.builtin.text.capitalize", Builtin::Text(crate::strings::TextOp::Capitalize)),
+            ("ext.builtin.text.title", Builtin::Text(crate::strings::TextOp::Title)),
+            ("ext.builtin.text.istitle", Builtin::Text(crate::strings::TextOp::Istitle)),
+            ("ext.builtin.text.isidentifier", Builtin::Text(crate::strings::TextOp::Isidentifier)),
+            ("ext.builtin.text.isprintable", Builtin::Text(crate::strings::TextOp::Isprintable)),
+            ("ext.builtin.text.isdecimal", Builtin::Text(crate::strings::TextOp::Isdecimal)),
+            ("ext.builtin.text.isnumeric", Builtin::Text(crate::strings::TextOp::Isnumeric)),
+            ("ext.builtin.text.isascii", Builtin::Text(crate::strings::TextOp::Isascii)),
+            ("ext.builtin.text.removeprefix", Builtin::Text(crate::strings::TextOp::Removeprefix)),
+            ("ext.builtin.text.removesuffix", Builtin::Text(crate::strings::TextOp::Removesuffix)),
+            ("ext.builtin.text.format_map", Builtin::Text(crate::strings::TextOp::FormatMap)),
+            ("ext.builtin.text.maketrans", Builtin::Text(crate::strings::TextOp::Maketrans)),
+            ("ext.builtin.text.translate", Builtin::Text(crate::strings::TextOp::Translate)),
+            ("ext.builtin.text.encode", Builtin::Text(crate::strings::TextOp::Encode)),
+            ("ext.builtin.text.join", Builtin::Text(crate::strings::TextOp::Join)),
+            ("ext.builtin.text.split", Builtin::Text(crate::strings::TextOp::Split)),
+            ("ext.builtin.text.rsplit", Builtin::Text(crate::strings::TextOp::Rsplit)),
+            ("ext.builtin.text.strip", Builtin::Text(crate::strings::TextOp::Strip)),
+            ("ext.builtin.text.lstrip", Builtin::Text(crate::strings::TextOp::Lstrip)),
+            ("ext.builtin.text.rstrip", Builtin::Text(crate::strings::TextOp::Rstrip)),
+            ("ext.builtin.text.center", Builtin::Text(crate::strings::TextOp::Center)),
+            ("ext.builtin.text.ljust", Builtin::Text(crate::strings::TextOp::Ljust)),
+            ("ext.builtin.text.rjust", Builtin::Text(crate::strings::TextOp::Rjust)),
+            ("ext.builtin.text.zfill", Builtin::Text(crate::strings::TextOp::Zfill)),
+            ("ext.builtin.text.count", Builtin::Text(crate::strings::TextOp::Count)),
+            ("ext.builtin.text.find", Builtin::Text(crate::strings::TextOp::Find)),
+            ("ext.builtin.text.rfind", Builtin::Text(crate::strings::TextOp::Rfind)),
+            ("ext.builtin.text.index", Builtin::Text(crate::strings::TextOp::Index)),
+            ("ext.builtin.text.rindex", Builtin::Text(crate::strings::TextOp::Rindex)),
+            ("ext.builtin.text.startswith", Builtin::Text(crate::strings::TextOp::Startswith)),
+            ("ext.builtin.text.endswith", Builtin::Text(crate::strings::TextOp::Endswith)),
+            ("ext.builtin.text.replace", Builtin::Text(crate::strings::TextOp::Replace)),
+            ("ext.builtin.text.upper", Builtin::Text(crate::strings::TextOp::Upper)),
+            ("ext.builtin.text.lower", Builtin::Text(crate::strings::TextOp::Lower)),
+            ("ext.builtin.text.length", Builtin::Text(crate::strings::TextOp::Length)),
+            ("ext.builtin.text.repr", Builtin::Text(crate::strings::TextOp::Repr)),
+
             ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
@@ -1534,6 +1581,8 @@ impl Lang {
             eval_words: next_list(),
             quote_open: next_list(),
             quote_close: next_list(),
+            text_repeat: r.flag("ext.builtin.text.repeat")?,
+            text_words: ["ext.builtin.text.splitlines","ext.builtin.text.partition","ext.builtin.text.rpartition","ext.builtin.text.expandtabs","ext.builtin.text.swapcase","ext.builtin.text.casefold","ext.builtin.text.capitalize","ext.builtin.text.title","ext.builtin.text.istitle","ext.builtin.text.isidentifier","ext.builtin.text.isprintable","ext.builtin.text.isdecimal","ext.builtin.text.isnumeric","ext.builtin.text.isascii","ext.builtin.text.removeprefix","ext.builtin.text.removesuffix","ext.builtin.text.format_map","ext.builtin.text.maketrans","ext.builtin.text.translate","ext.builtin.text.encode","ext.builtin.text.join","ext.builtin.text.split","ext.builtin.text.rsplit","ext.builtin.text.strip","ext.builtin.text.lstrip","ext.builtin.text.rstrip","ext.builtin.text.center","ext.builtin.text.ljust","ext.builtin.text.rjust","ext.builtin.text.zfill","ext.builtin.text.count","ext.builtin.text.find","ext.builtin.text.rfind","ext.builtin.text.index","ext.builtin.text.rindex","ext.builtin.text.startswith","ext.builtin.text.endswith","ext.builtin.text.replace","ext.builtin.text.upper","ext.builtin.text.lower","ext.builtin.text.length","ext.builtin.text.repr","ext.builtin.text.keyword.keepends","ext.builtin.text.keyword.tabsize","ext.builtin.text.keyword.maxsplit","ext.builtin.text.keyword.sep","ext.builtin.text.keyword.encoding","ext.builtin.text.keyword.errors","ext.builtin.text.fault.arguments","ext.builtin.text.fault.receiver","ext.builtin.text.fault.string","ext.builtin.text.fault.integer","ext.builtin.text.fault.separator","ext.builtin.text.fault.fill","ext.builtin.text.fault.missing","ext.builtin.text.fault.encode","ext.builtin.text.fault.mapping","ext.builtin.text.fault.translation","ext.builtin.text.fault.codepoint","ext.builtin.text.fault.surrogate","ext.builtin.text.fault.maketrans.length","ext.builtin.text.fault.maketrans.key","ext.builtin.text.fault.maketrans.type","ext.builtin.text.fault.format","ext.builtin.text.fault.format.positional","ext.builtin.text.fault.format.brace","ext.builtin.text.fault.join","ext.builtin.text.fault.walk","ext.builtin.text.fault.room","ext.builtin.text.fault.key","ext.builtin.text.complaint"].into_iter().map(|k| Ok((k.to_string(), r.strings(k)?))).collect::<Result<_, String>>()?,
             builtins: natives,
             holes: r.strings("builtin.print.placeholder")?,
             args_binding: args_name,

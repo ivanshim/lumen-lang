@@ -82,6 +82,7 @@ system.kind.array:L system.kind.null:L \
 /// Extension labels beyond the core: optional, an absent one is empty
 /// (or off). The reference kernels skip them; this one reads them.
 const EXT_TAGS: &str = "\
+ext.builtin.text.splitlines:L ext.builtin.text.partition:L ext.builtin.text.rpartition:L ext.builtin.text.expandtabs:L ext.builtin.text.swapcase:L ext.builtin.text.casefold:L ext.builtin.text.capitalize:L ext.builtin.text.title:L ext.builtin.text.istitle:L ext.builtin.text.isidentifier:L ext.builtin.text.isprintable:L ext.builtin.text.isdecimal:L ext.builtin.text.isnumeric:L ext.builtin.text.isascii:L ext.builtin.text.removeprefix:L ext.builtin.text.removesuffix:L ext.builtin.text.format_map:L ext.builtin.text.maketrans:L ext.builtin.text.translate:L ext.builtin.text.encode:L ext.builtin.text.join:L ext.builtin.text.split:L ext.builtin.text.rsplit:L ext.builtin.text.strip:L ext.builtin.text.lstrip:L ext.builtin.text.rstrip:L ext.builtin.text.center:L ext.builtin.text.ljust:L ext.builtin.text.rjust:L ext.builtin.text.zfill:L ext.builtin.text.count:L ext.builtin.text.find:L ext.builtin.text.rfind:L ext.builtin.text.index:L ext.builtin.text.rindex:L ext.builtin.text.startswith:L ext.builtin.text.endswith:L ext.builtin.text.replace:L ext.builtin.text.upper:L ext.builtin.text.lower:L ext.builtin.text.length:L ext.builtin.text.repr:L ext.builtin.text.keyword.keepends:L ext.builtin.text.keyword.tabsize:L ext.builtin.text.keyword.maxsplit:L ext.builtin.text.keyword.sep:L ext.builtin.text.keyword.encoding:L ext.builtin.text.keyword.errors:L ext.builtin.text.fault.arguments:L ext.builtin.text.fault.receiver:L ext.builtin.text.fault.string:L ext.builtin.text.fault.integer:L ext.builtin.text.fault.separator:L ext.builtin.text.fault.fill:L ext.builtin.text.fault.missing:L ext.builtin.text.fault.encode:L ext.builtin.text.fault.mapping:L ext.builtin.text.fault.translation:L ext.builtin.text.fault.codepoint:L ext.builtin.text.fault.surrogate:L ext.builtin.text.fault.maketrans.length:L ext.builtin.text.fault.maketrans.key:L ext.builtin.text.fault.maketrans.type:L ext.builtin.text.fault.format:L ext.builtin.text.fault.format.positional:L ext.builtin.text.fault.format.brace:L ext.builtin.text.fault.join:L ext.builtin.text.fault.walk:L ext.builtin.text.fault.room:L ext.builtin.text.fault.key:L ext.builtin.text.complaint:L ext.builtin.text.repeat:B \
 ext.lexical.string.long:L ext.op.lambda:L ext.op.tuple:L ext.stmt.class.bases.open:L ext.stmt.class.bases.close:L ext.stmt.class.unready:L ext.stmt.del:L ext.stmt.nonlocal:L ext.stmt.nonlocal.unrun:L ext.stmt.with:L ext.stmt.with.as:L ext.stmt.yield:L ext.stmt.yield.from:L ext.stmt.yield.unrun:L ext.system.scope.unready:L ext.op.index.slice.ellipsis:L ext.op.index.slice:L ext.op.index.slice.zero:L ext.op.index.slice.bounds:L ext.op.index.slice.unsupported:L ext.op.index.slice.assign:L ext.op.index.slice.length:L ext.op.index.slice.detached:L ext.op.comprehension.async:L ext.op.comprehension.async.unavailable:L ext.op.comprehension.target.unavailable:L ext.builtin.sum.non_number:L ext.builtin.range.non_integer:L ext.builtin.range.zero_step:L ext.op.comprehension.for:L ext.op.comprehension.in:L ext.op.comprehension.if:L ext.syntax.set:B ext.syntax.array.spread:L ext.syntax.map.spread:L ext.syntax.collection.unwalkable:L ext.syntax.map.spread.unmapped:L ext.op.comprehension.unpack.amiss:L ext.builtin.range.value:B ext.builtin.sum:L ext.builtin.list:L ext.builtin.any:L ext.op.await:L ext.stmt.async:L ext.stmt.loop.else:B ext.stmt.del.unrun:L ext.stmt.binding.unrun:L \
 ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.increment:L ext.op.decrement:L \
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
@@ -144,7 +145,50 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 72] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 114] = [
+    ("ext.builtin.text.splitlines", Prim::Textual(crate::text::Work::SPLITLINES)),
+    ("ext.builtin.text.partition", Prim::Textual(crate::text::Work::PARTITION)),
+    ("ext.builtin.text.rpartition", Prim::Textual(crate::text::Work::RPARTITION)),
+    ("ext.builtin.text.expandtabs", Prim::Textual(crate::text::Work::EXPANDTABS)),
+    ("ext.builtin.text.swapcase", Prim::Textual(crate::text::Work::SWAPCASE)),
+    ("ext.builtin.text.casefold", Prim::Textual(crate::text::Work::CASEFOLD)),
+    ("ext.builtin.text.capitalize", Prim::Textual(crate::text::Work::CAPITALIZE)),
+    ("ext.builtin.text.title", Prim::Textual(crate::text::Work::TITLE)),
+    ("ext.builtin.text.istitle", Prim::Textual(crate::text::Work::ISTITLE)),
+    ("ext.builtin.text.isidentifier", Prim::Textual(crate::text::Work::ISIDENTIFIER)),
+    ("ext.builtin.text.isprintable", Prim::Textual(crate::text::Work::ISPRINTABLE)),
+    ("ext.builtin.text.isdecimal", Prim::Textual(crate::text::Work::ISDECIMAL)),
+    ("ext.builtin.text.isnumeric", Prim::Textual(crate::text::Work::ISNUMERIC)),
+    ("ext.builtin.text.isascii", Prim::Textual(crate::text::Work::ISASCII)),
+    ("ext.builtin.text.removeprefix", Prim::Textual(crate::text::Work::REMOVEPREFIX)),
+    ("ext.builtin.text.removesuffix", Prim::Textual(crate::text::Work::REMOVESUFFIX)),
+    ("ext.builtin.text.format_map", Prim::Textual(crate::text::Work::FORMATMAP)),
+    ("ext.builtin.text.maketrans", Prim::Textual(crate::text::Work::MAKETRANS)),
+    ("ext.builtin.text.translate", Prim::Textual(crate::text::Work::TRANSLATE)),
+    ("ext.builtin.text.encode", Prim::Textual(crate::text::Work::ENCODE)),
+    ("ext.builtin.text.join", Prim::Textual(crate::text::Work::JOIN)),
+    ("ext.builtin.text.split", Prim::Textual(crate::text::Work::SPLIT)),
+    ("ext.builtin.text.rsplit", Prim::Textual(crate::text::Work::RSPLIT)),
+    ("ext.builtin.text.strip", Prim::Textual(crate::text::Work::STRIP)),
+    ("ext.builtin.text.lstrip", Prim::Textual(crate::text::Work::LSTRIP)),
+    ("ext.builtin.text.rstrip", Prim::Textual(crate::text::Work::RSTRIP)),
+    ("ext.builtin.text.center", Prim::Textual(crate::text::Work::CENTER)),
+    ("ext.builtin.text.ljust", Prim::Textual(crate::text::Work::LJUST)),
+    ("ext.builtin.text.rjust", Prim::Textual(crate::text::Work::RJUST)),
+    ("ext.builtin.text.zfill", Prim::Textual(crate::text::Work::ZFILL)),
+    ("ext.builtin.text.count", Prim::Textual(crate::text::Work::COUNT)),
+    ("ext.builtin.text.find", Prim::Textual(crate::text::Work::FIND)),
+    ("ext.builtin.text.rfind", Prim::Textual(crate::text::Work::RFIND)),
+    ("ext.builtin.text.index", Prim::Textual(crate::text::Work::INDEX)),
+    ("ext.builtin.text.rindex", Prim::Textual(crate::text::Work::RINDEX)),
+    ("ext.builtin.text.startswith", Prim::Textual(crate::text::Work::STARTSWITH)),
+    ("ext.builtin.text.endswith", Prim::Textual(crate::text::Work::ENDSWITH)),
+    ("ext.builtin.text.replace", Prim::Textual(crate::text::Work::REPLACE)),
+    ("ext.builtin.text.upper", Prim::Textual(crate::text::Work::UPPER)),
+    ("ext.builtin.text.lower", Prim::Textual(crate::text::Work::LOWER)),
+    ("ext.builtin.text.length", Prim::Textual(crate::text::Work::LENGTH)),
+    ("ext.builtin.text.repr", Prim::Textual(crate::text::Work::REPR)),
+
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),

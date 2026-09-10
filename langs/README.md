@@ -264,6 +264,34 @@ only. The extension labels so far, all from PHP:
   call gives empty text. Encoding and errors are read but cannot yet be
   run, nor can their positional forms; `ext.builtin.to_string.unready`
   gives the plain complaint rather than pretending to decode bytes.
+- `ext.builtin.text.*`: words for the operations upon text below. Each
+  takes its text first, whether called through a member mark or by its
+  whole name. A language leaving these words unspelled keeps its former
+  reading and running.
+- `ext.builtin.text.splitlines`, `ext.builtin.text.partition`, `ext.builtin.text.rpartition`, `ext.builtin.text.expandtabs`: divide text at line endings or a separator, or reckon tabs from the present column.
+- `ext.builtin.text.swapcase`, `ext.builtin.text.casefold`, `ext.builtin.text.capitalize`, `ext.builtin.text.title`, `ext.builtin.text.upper`, `ext.builtin.text.lower`: change the case of letters, including changes which yield more than one letter.
+- `ext.builtin.text.istitle`, `ext.builtin.text.isidentifier`, `ext.builtin.text.isprintable`, `ext.builtin.text.isdecimal`, `ext.builtin.text.isnumeric`, `ext.builtin.text.isascii`: ask whether text bears the named Unicode property.
+- `ext.builtin.text.removeprefix`, `ext.builtin.text.removesuffix`: take away a matching beginning or ending once.
+- `ext.builtin.text.format_map`: fill named fields from a mapping.
+- `ext.builtin.text.maketrans`, `ext.builtin.text.translate`: make a table of character numbers and apply such a table, dropping entries whose value is nothing.
+- `ext.builtin.text.encode`: read an encoding and error manner; bytes remain wanting, and the run says so.
+- `ext.builtin.text.join`, `ext.builtin.text.split`, `ext.builtin.text.rsplit`, `ext.builtin.text.strip`, `ext.builtin.text.lstrip`, `ext.builtin.text.rstrip`: join a walk of text, divide text with a bound upon the divisions, or trim chosen characters.
+- `ext.builtin.text.center`, `ext.builtin.text.ljust`, `ext.builtin.text.rjust`, `ext.builtin.text.zfill`: pad to a character width, keeping a sign before the noughts.
+- `ext.builtin.text.count`, `ext.builtin.text.find`, `ext.builtin.text.rfind`, `ext.builtin.text.index`, `ext.builtin.text.rindex`, `ext.builtin.text.startswith`, `ext.builtin.text.endswith`, `ext.builtin.text.replace`: count, seek, test a beginning or ending, or replace a bounded number of matches.
+- `ext.builtin.text.length`, `ext.builtin.text.repr`: count characters or write a value as a quoted expression.
+- `ext.builtin.text.keyword.keepends`, `.tabsize`, `.maxsplit`, `.sep`,
+  `.encoding` and `.errors`: lists naming the keyword places admitted by
+  the corresponding text operation. Other names are refused at the run.
+- `ext.builtin.text.repeat`: a switch admitting repetition of text by a
+  whole number; nought and numbers below it yield empty text.
+- `ext.builtin.text.fault.*`: plain complaints for ill-shaped arguments,
+  wrong kinds, empty separators, absent substrings, invalid translation
+  tables and character numbers, or a part of the run still wanting.
+  `.key` stands before the quoted key absent from a format mapping.
+  `ext.builtin.text.complaint` lists complaint beginnings already bearing
+  their own kind, which need no further banner before them.
+  Unicode properties and case mappings follow the Unicode 16.0 data;
+  lone surrogate code points remain outside the kernels' text values.
 - `ext.builtin.range.value`: a switch making the range builtin a value
   with one, two or three whole-number arguments: end; start and end;
   start, end and step. Its bounds are kept, so its length, indexed places
@@ -2221,6 +2249,78 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
+| `ext.builtin.text.capitalize` | - | - | `capitalize` `str.capitalize` | - | - | - | - | - | - | - |
+| `ext.builtin.text.casefold` | - | - | `casefold` `str.casefold` | - | - | - | - | - | - | - |
+| `ext.builtin.text.center` | - | - | `center` `str.center` | - | - | - | - | - | - | - |
+| `ext.builtin.text.complaint` | - | - | `TypeError:` `ValueError:` `NotImplementedError:` `KeyError:` `OverflowError:` | - | - | - | - | - | - | - |
+| `ext.builtin.text.count` | - | - | `count` `str.count` | - | - | - | - | - | - | - |
+| `ext.builtin.text.encode` | - | - | `encode` `str.encode` | - | - | - | - | - | - | - |
+| `ext.builtin.text.endswith` | - | - | `endswith` `str.endswith` | - | - | - | - | - | - | - |
+| `ext.builtin.text.expandtabs` | - | - | `expandtabs` `str.expandtabs` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.arguments` | - | - | `TypeError: invalid string method arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.codepoint` | - | - | `ValueError: character mapping must be in range(0x110000)` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.encode` | - | - | `NotImplementedError: str.encode requires bytes, which are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.format` | - | - | `NotImplementedError: this mapping format is not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.format.brace` | - | - | `ValueError: unmatched brace in format string` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.format.positional` | - | - | `ValueError: Format string contains positional fields` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.integer` | - | - | `TypeError: integer argument expected` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.join` | - | - | `TypeError: sequence item must be str` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.key` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.maketrans.key` | - | - | `ValueError: string keys in translate table must be of length 1` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.maketrans.length` | - | - | `ValueError: the first two maketrans arguments must have equal length` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.maketrans.type` | - | - | `TypeError: keys in translate table must be strings or integers` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.mapping` | - | - | `TypeError: translation table must be a mapping` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.missing` | - | - | `ValueError: substring not found` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.receiver` | - | - | `TypeError: string method requires a str object` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.room` | - | - | `OverflowError: repeated string is too long` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.string` | - | - | `TypeError: argument must be str` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.surrogate` | - | - | `NotImplementedError: surrogate code points are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.translation` | - | - | `TypeError: character mapping must return integer, None or str` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.walk` | - | - | `TypeError: can only join an iterable` | - | - | - | - | - | - | - |
+| `ext.builtin.text.find` | - | - | `find` `str.find` | - | - | - | - | - | - | - |
+| `ext.builtin.text.format_map` | - | - | `format_map` `str.format_map` | - | - | - | - | - | - | - |
+| `ext.builtin.text.index` | - | - | `index` `str.index` | - | - | - | - | - | - | - |
+| `ext.builtin.text.isascii` | - | - | `isascii` `str.isascii` | - | - | - | - | - | - | - |
+| `ext.builtin.text.isdecimal` | - | - | `isdecimal` `str.isdecimal` | - | - | - | - | - | - | - |
+| `ext.builtin.text.isidentifier` | - | - | `isidentifier` `str.isidentifier` | - | - | - | - | - | - | - |
+| `ext.builtin.text.isnumeric` | - | - | `isnumeric` `str.isnumeric` | - | - | - | - | - | - | - |
+| `ext.builtin.text.isprintable` | - | - | `isprintable` `str.isprintable` | - | - | - | - | - | - | - |
+| `ext.builtin.text.istitle` | - | - | `istitle` `str.istitle` | - | - | - | - | - | - | - |
+| `ext.builtin.text.join` | - | - | `join` `str.join` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.errors` | - | - | `errors` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.keepends` | - | - | `keepends` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.maxsplit` | - | - | `maxsplit` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.sep` | - | - | `sep` | - | - | - | - | - | - | - |
+| `ext.builtin.text.keyword.tabsize` | - | - | `tabsize` | - | - | - | - | - | - | - |
+| `ext.builtin.text.length` | - | - | `str.__len__` `__len__` | - | - | - | - | - | - | - |
+| `ext.builtin.text.ljust` | - | - | `ljust` `str.ljust` | - | - | - | - | - | - | - |
+| `ext.builtin.text.lower` | - | - | `lower` `str.lower` | - | - | - | - | - | - | - |
+| `ext.builtin.text.lstrip` | - | - | `lstrip` `str.lstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.text.maketrans` | - | - | `maketrans` `str.maketrans` | - | - | - | - | - | - | - |
+| `ext.builtin.text.partition` | - | - | `partition` `str.partition` | - | - | - | - | - | - | - |
+| `ext.builtin.text.removeprefix` | - | - | `removeprefix` `str.removeprefix` | - | - | - | - | - | - | - |
+| `ext.builtin.text.removesuffix` | - | - | `removesuffix` `str.removesuffix` | - | - | - | - | - | - | - |
+| `ext.builtin.text.repeat` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.text.replace` | - | - | `replace` `str.replace` | - | - | - | - | - | - | - |
+| `ext.builtin.text.repr` | - | - | `repr` | - | - | - | - | - | - | - |
+| `ext.builtin.text.rfind` | - | - | `rfind` `str.rfind` | - | - | - | - | - | - | - |
+| `ext.builtin.text.rindex` | - | - | `rindex` `str.rindex` | - | - | - | - | - | - | - |
+| `ext.builtin.text.rjust` | - | - | `rjust` `str.rjust` | - | - | - | - | - | - | - |
+| `ext.builtin.text.rpartition` | - | - | `rpartition` `str.rpartition` | - | - | - | - | - | - | - |
+| `ext.builtin.text.rsplit` | - | - | `rsplit` `str.rsplit` | - | - | - | - | - | - | - |
+| `ext.builtin.text.rstrip` | - | - | `rstrip` `str.rstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.text.split` | - | - | `split` `str.split` | - | - | - | - | - | - | - |
+| `ext.builtin.text.splitlines` | - | - | `splitlines` `str.splitlines` | - | - | - | - | - | - | - |
+| `ext.builtin.text.startswith` | - | - | `startswith` `str.startswith` | - | - | - | - | - | - | - |
+| `ext.builtin.text.strip` | - | - | `strip` `str.strip` | - | - | - | - | - | - | - |
+| `ext.builtin.text.swapcase` | - | - | `swapcase` `str.swapcase` | - | - | - | - | - | - | - |
+| `ext.builtin.text.title` | - | - | `title` `str.title` | - | - | - | - | - | - | - |
+| `ext.builtin.text.translate` | - | - | `translate` `str.translate` | - | - | - | - | - | - | - |
+| `ext.builtin.text.upper` | - | - | `upper` `str.upper` | - | - | - | - | - | - | - |
+| `ext.builtin.text.zfill` | - | - | `zfill` `str.zfill` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |

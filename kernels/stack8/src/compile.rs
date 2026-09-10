@@ -6837,7 +6837,7 @@ impl<'a> Compiler<'a> {
                     || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)));
             let tagged = self.lang.bind_names && labelled;
             let named_spread = Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
-            let spread = self.lang.bind_names && !labelled
+            let spread = self.lang.bind_names && !labelled && matches!(self.look().shape, Shape::Instr | Shape::Sign)
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
             if tagged {

@@ -3203,6 +3203,8 @@ impl<'a> Engine<'a> {
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
         Ok(match value {
+            Value::Words(items, tuple) => crate::strings::row(items, *tuple),
+            Value::Text(s) if !self.lang.text_words.get("ext.builtin.text.repr").map_or(true, Vec::is_empty) => crate::strings::quoted(s),
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);
@@ -3378,6 +3380,7 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::Words(items, _) => items.iter().any(|s| a.equals(&Value::text(s))),
                     Value::Array(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
                     Value::Text(haystack) => match a {
@@ -3387,6 +3390,17 @@ impl<'a> Engine<'a> {
                     _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
                 };
                 Value::Flag(found != matches!(op, Action::Lacks))
+            }
+            Action::Mul if self.lang.text_repeat && (matches!(a, Value::Text(_)) || matches!(b, Value::Text(_))) => {
+                let (text, times) = match (a,b) { (Value::Text(s), n) | (n,Value::Text(s)) => (s,n), _ => unreachable!() };
+                let times = match times { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().unwrap_or(if n.sign() == num_bigint::Sign::Minus { i64::MIN } else { i64::MAX }), _ => return Err(crate::strings::fault(self.lang,"integer")) };
+                let mut result = String::new();
+                if times > 0 && !text.is_empty() {
+                    let size = text.len().checked_mul(times as usize).ok_or_else(|| crate::strings::fault(self.lang,"room"))?;
+                    result.try_reserve(size).map_err(|_| crate::strings::fault(self.lang,"room"))?;
+                    for _ in 0..times { result.push_str(text); }
+                }
+                Value::text(&result)
             }
             Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
                 let Value::Text(template) = a else { unreachable!() };
@@ -4035,6 +4049,15 @@ impl<'a> Engine<'a> {
     }
 
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let Value::Words(words, tuple) = target {
+            if let Value::Slice(parts) = at {
+                let (_, _, _, places) = self.slice_places(parts, words.len())?;
+                return Ok(Value::Words(Rc::new(places.into_iter().map(|i| words[i].clone()).collect()), *tuple));
+            }
+            let index = match at { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), _ => return Err(crate::strings::fault(self.lang,"integer")) };
+            let index = if index < 0 { index.saturating_add(words.len() as i64) } else { index };
+            return words.get(index as usize).map(|s| Value::text(s)).ok_or_else(|| self.lang.slice_bounds.clone().unwrap_or_default());
+        }
         if let Value::Slice(parts) = at {
             return self.read_slice(target, parts);
         }
@@ -4123,6 +4146,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::Words(items, _) => Ok(items.iter().map(|s| Value::text(s)).collect()),
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4216,6 +4240,10 @@ impl<'a> Engine<'a> {
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
+        if let Builtin::Text(op) = builtin {
+            crate::strings::keywords(op, &mut args, named, self.lang)?;
+            return self.builtin(builtin, name, &mut args);
+        }
         for (key, value) in named {
             let place = if builtin == Builtin::ToInt && Lang::spells(&self.lang.to_int_base, &key) {
                 1
@@ -4278,6 +4306,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Text(op) => crate::strings::run(op, name, args, self.lang, &sp)?,
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -4874,6 +4903,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
+                    Value::Words(items, _) => Value::Small(items.len() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),

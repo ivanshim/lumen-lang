@@ -125,6 +125,7 @@ pub enum Value {
     Frac(Rc<Frac>),
     Real(Rc<Real>),
     Text(Rc<str>),
+    Words(Rc<Vec<String>>, bool),
     Flag(bool),
     Null,
     Ellipsis,
@@ -215,7 +216,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Words(..) | Value::Array(_) | Value::Map(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -253,6 +254,7 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Words(row, _) => !row.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
@@ -274,7 +276,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Words(..) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -297,6 +299,8 @@ impl Value {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
+            (Value::Words(a, x), Value::Words(b, y)) => x == y && a == b,
+            (Value::Words(a, false), Value::Array(b)) | (Value::Array(b), Value::Words(a, false)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(s,v)| matches!(v,Value::Text(t) if s.as_str()==t.as_ref())),
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -476,6 +480,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Words(row, fixed) => crate::strings::row(row, *fixed),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
