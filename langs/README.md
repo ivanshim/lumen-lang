@@ -75,12 +75,14 @@ starred subscript, after the entire subscript has been read.
   the finite range, and nonfinite multiplication or division between complex
   operands still say the unready words. The ordinary real writer supplies
   the figures, preserving signed noughts and nonfinite parts.
-- `ext.builtin.complex.arguments`, `ext.builtin.complex.invalid`,
+- `ext.builtin.complex.invalid`,
   `ext.builtin.complex.integer`, `ext.builtin.complex.zero`,
   `ext.builtin.complex.power.zero` and `ext.builtin.complex.unready`
-  give plain complaints for wrong arguments, ill-written text, integer
+  give plain complaints for ill-written text, integer
   conversion, division by nought, a forbidden power of nought, and work
-  still owed. Each is a list holding one message.
+  still owed. Each is a list holding one message. Wrong constructor
+  arguments borrow `ext.builtin.core.arity`; wrong method arguments borrow
+  `ext.builtin.method.error.arguments`.
 - `ext.builtin.complex.order` holds four pieces surrounding the sign and
   the two operand kinds in an ordering complaint. `ext.builtin.complex.floor`
   holds three pieces surrounding the kinds for floor division, remainder
@@ -3031,7 +3033,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.complex` | - | - | `complex` | - | - | - | - | - | - | - |
-| `ext.builtin.complex.arguments` | - | - | `TypeError: complex() requires one or two numeric arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.floor` | - | - | `TypeError: unsupported operand type(s) for //: '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.complex.integer` | - | - | `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'complex'` | - | - | - | - | - | - | - |

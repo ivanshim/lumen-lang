@@ -41,6 +41,11 @@ pub fn shown(z: &Complex) -> String {
 }
 
 pub fn fault(lang: &Lang, tail: &str) -> String {
+    if tail == "arguments" {
+        let words = &lang.core_words["core.arity"];
+        let name = lang.complex_words["ext.builtin.complex"].first().map_or("", String::as_str);
+        return match words.as_slice() { [head, end, ..] => format!("{head}{name}{end}"), _ => String::new() };
+    }
     lang.complex_words.get(&format!("ext.builtin.complex.{tail}")).and_then(|w| w.first()).cloned().unwrap_or_default()
 }
 
@@ -151,7 +156,9 @@ pub fn construct(lang: &Lang, values: &[Value]) -> Result<Value,String> {
         return Ok(made(lang, a,b));
     }
     let (a,b) = parts(&values[0]).ok_or_else(|| fault(lang, "arguments"))?;
-    if values.len() == 1 { return Ok(made(lang, a,b)); }
+    if values.len() == 1 {
+        return Ok(if matches!(values[0], Value::Complex(_)) { values[0].clone() } else { made(lang, a,b) });
+    }
     let (c,d) = parts(&values[1]).ok_or_else(|| fault(lang, "arguments"))?;
     Ok(made(lang, if matches!(values[1], Value::Complex(_)) { a-d } else { a },
         if matches!(values[0], Value::Complex(_)) { b+c } else { c }))
@@ -165,6 +172,7 @@ pub fn real(n: f64) -> Value {
 
 /// A complaint already bearing its kind needs no outer banner.
 pub fn says(lang: &Lang, message: &str) -> bool {
+    if lang.complex_words["ext.builtin.complex"].is_empty() { return false; }
     ["arguments", "invalid", "integer", "zero", "power.zero", "unready"].iter()
         .any(|tail| { let words = fault(lang, tail); !words.is_empty() && message == words })
         || ["order", "floor"].iter().any(|tail| {

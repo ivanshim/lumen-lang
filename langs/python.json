@@ -355,9 +355,6 @@
   "ext.builtin.complex": [
     "complex"
   ],
-  "ext.builtin.complex.arguments": [
-    "TypeError: complex() requires one or two numeric arguments"
-  ],
   "ext.builtin.complex.floor": [
     "TypeError: unsupported operand type(s) for //: '",
     "' and '",

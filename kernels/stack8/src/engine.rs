@@ -4710,9 +4710,10 @@ impl<'a> Engine<'a> {
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if operation == "conjugate" {
-            if !args.is_empty() || !named.is_empty() { return Err(crate::complex::fault(self.lang, "arguments")); }
+            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             let held = receiver.contents();
             let (a,b) = crate::complex::parts(&held).ok_or_else(|| crate::complex::fault(self.lang, "unready"))?;
+            if !matches!(held, Value::Complex(_)) { return Ok(match held { Value::Flag(b) => Value::Small(i64::from(b)), number => number }); }
             return Ok(crate::complex::made(self.lang, a,-b));
         }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {

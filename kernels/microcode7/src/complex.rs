@@ -37,6 +37,11 @@ pub fn written(p: &(f64,f64,Rc<str>)) -> String {
 }
 
 pub fn complaint(t: &Table, ending: &str) -> String {
+    if ending == "arguments" {
+        return t.around("ext.builtin.core.arity").map_or_else(String::new, |(before,after)| {
+            [before, t.single("ext.builtin.complex").unwrap_or_default(), after].concat()
+        });
+    }
     t.single(&format!("ext.builtin.complex.{ending}")).unwrap_or_default().to_owned()
 }
 
@@ -174,6 +179,7 @@ pub fn create(t: &Table, input: &[Value]) -> Result<Value,String> {
             let parsed = from_chars(s).ok_or_else(|| complaint(t,"invalid"))?;
             Ok(pair(t, parsed.0,parsed.1))
         }
+        [value @ Value::Complex(_)] => Ok(value.clone()),
         [one] => coordinates(one).map(|p| pair(t, p.0,p.1)).ok_or_else(|| complaint(t,"arguments")),
         [one,two] => {
             let left = coordinates(one).ok_or_else(|| complaint(t,"arguments"))?;
@@ -196,6 +202,7 @@ pub fn decimal_value(number: f64) -> Value {
 
 /// Keep the kind which the definition itself gave the complaint.
 pub fn already_named(table: &Table, words: &str) -> bool {
+    if !table.has_any("ext.builtin.complex") { return false; }
     for ending in ["invalid", "arguments", "integer", "power.zero", "zero", "unready"] {
         let expected = complaint(table, ending);
         if !expected.is_empty() && words == expected { return true; }

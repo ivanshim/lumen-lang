@@ -3182,9 +3182,12 @@ impl<'a> Machine<'a> {
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if name == "conjugate" {
-            if !arguments.is_empty() || !keywords.is_empty() { return Err(crate::complex::complaint(self.table, "arguments").into()); }
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             let subject = receiver.settled();
             let pair = crate::complex::coordinates(&subject).ok_or_else(|| crate::complex::complaint(self.table, "unready"))?;
+            if !matches!(subject, Value::Complex(_)) {
+                return Ok(if let Value::Flag(b) = subject { Value::Small(if b { 1 } else { 0 }) } else { subject });
+            }
             return Ok(crate::complex::pair(self.table, pair.0, -pair.1));
         }
         let mut found = Vec::new();
