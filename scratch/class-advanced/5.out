@@ -1,0 +1,7 @@
+subclass B
+True True True
+get x
+3
+del x
+get x
+False

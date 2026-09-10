@@ -167,6 +167,7 @@ pub enum Value {
     Native(crate::code::Builtin, Rc<str>),
     Set(Rc<Vec<Value>>),
     Cursor(Rc<RefCell<CursorState>>),
+    Adapter(Rc<(u8, Vec<Value>)>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -359,7 +360,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
             Value::Descriptor(_) | Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().is_true(),
-            Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
+            Value::Adapter(_) | Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
     }
 
@@ -386,6 +387,7 @@ impl Value {
             Value::ValueMethod(_) => Err("Cannot coerce method to number".to_string()),
             Value::Native(..) | Value::Cursor(_) | Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
+            Value::Adapter(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
         }
@@ -427,7 +429,8 @@ impl Value {
             // Two names for one object are the same object; two objects
             // of one class are not.
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
-            (Value::Class(a), Value::Class(b)) => a.name == b.name,
+            (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
+            (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
         }
     }
@@ -632,7 +635,8 @@ impl Value {
             Value::Descriptor(_) => "<descriptor>".to_string(),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
-            Value::Class(c) => format!("<class {}>", c.name),
+            Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
+            Value::Adapter(_) => "<member wrapper>".into(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].plain(), parts[1].plain(), parts[2].plain()),
@@ -728,6 +732,9 @@ pub enum Reach {
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    pub lineage: Vec<Rc<Class>>,
+    pub direct: Vec<Rc<Class>>,
+    pub outline: Option<String>,
     pub name: String,
     pub base: Option<Rc<Class>>,
     /// The classes of method names only that this one answers to.

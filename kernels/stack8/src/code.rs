@@ -432,6 +432,7 @@ pub enum Builtin {
     ValueMethod,
     Sorted,
     InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
+    ClassTool(u8),
     Sum,
     List,
     Any,
@@ -699,6 +700,8 @@ pub enum Instr {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub generator: bool,
+    pub doc: Option<String>,
+    pub qualified: String,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.
