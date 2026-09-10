@@ -70,7 +70,7 @@ def dataclass(cls=None, frozen=False, **options):
         raise 'NotImplementedError: these dataclass options are not supported'
     if cls is None:
         return dataclass
-    if __class_beneath(cls) is not None:
+    if len(cls.__bases__) and cls.__bases__[0].__name__ != 'object':
         raise 'NotImplementedError: dataclass inheritance is not supported'
     if len(__class_methods(cls)):
         raise 'NotImplementedError: dataclasses with custom methods are not supported'

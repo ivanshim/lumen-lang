@@ -87,7 +87,7 @@ def heapify(x):
         _siftup(x, i)
 
 def heappush(heap, item):
-    __list_contents(heap, [*heap, item])
+    heap[:] = [*heap, item]
     _siftdown(heap, 0, len(heap) - 1)
 
 def heappop(heap):
@@ -95,7 +95,7 @@ def heappop(heap):
         raise 'IndexError: index out of range'
     last = heap[len(heap) - 1]
     result = heap[0]
-    __list_contents(heap, heap[:len(heap) - 1])
+    heap[:] = heap[:len(heap) - 1]
     if len(heap):
         heap[0] = last
         _siftup(heap, 0)

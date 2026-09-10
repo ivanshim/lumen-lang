@@ -19,11 +19,12 @@ class _Member:
         return self is other
 
 class Enum:
-    def __init_subclass__(cls, attributes):
+    def __init_subclass__(cls, **options):
+        attributes = vars(cls)
         members = []
         next_value = 1
         for name in list(attributes):
-            if name[:1] != '_':
+            if name[:1] != '_' and not callable(attributes[name]):
                 value = attributes[name]
                 if isinstance(value, auto):
                     value = next_value
@@ -50,5 +51,5 @@ class Enum:
 
 # Stub: integer arithmetic on members awaits numeric object methods.
 class IntEnum(Enum):
-    def __init_subclass__(cls, attributes):
+    def __init_subclass__(cls, **options):
         raise 'NotImplementedError: integer enumeration arithmetic is not supported'

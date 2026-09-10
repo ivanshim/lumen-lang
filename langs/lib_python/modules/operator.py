@@ -283,98 +283,98 @@ __delitem__ = delitem
 __not__ = not_
 
 def iadd(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return add(a, b)
 
 __iadd__ = iadd
 
 def isub(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return sub(a, b)
 
 __isub__ = isub
 
 def imul(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return mul(a, b)
 
 __imul__ = imul
 
 def itruediv(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return truediv(a, b)
 
 __itruediv__ = itruediv
 
 def ifloordiv(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return floordiv(a, b)
 
 __ifloordiv__ = ifloordiv
 
 def imod(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return mod(a, b)
 
 __imod__ = imod
 
 def ipow(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return pow(a, b)
 
 __ipow__ = ipow
 
 def iand(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return and_(a, b)
 
 __iand__ = iand
 
 def ior(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return or_(a, b)
 
 __ior__ = ior
 
 def ixor(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return xor(a, b)
 
 __ixor__ = ixor
 
 def ilshift(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return lshift(a, b)
 
 __ilshift__ = ilshift
 
 def irshift(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return rshift(a, b)
 
 __irshift__ = irshift
 
 def iconcat(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return concat(a, b)
 
 __iconcat__ = iconcat
 
 def imatmul(a, b):
-    if type(a) == type([]) or __is_mapping(a):
+    if type(a) == type([]) or isinstance(a, dict):
         raise 'NotImplementedError: in-place container operators need shared mutable storage'
     return matmul(a, b)
 

@@ -204,6 +204,14 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        // A namespace may hold a routine, under the table's word for it,
+        // that answers for names the namespace has not.
+        if let (false, Value::Thing(t), Some(word)) = (self.asking_presence, &value, self.table.single("ext.system.module.getattr")) {
+            let answerer = t.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| held.settled());
+            if let Some(routine @ (Value::Routine(_) | Value::Bound(..))) = answerer {
+                return self.apply_class_member(routine, vec![Value::text(key)]);
+            }
+        }
         Err(self.absent_attribute(&value,key))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
@@ -241,6 +249,12 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if key==self.detail("kind")||key==self.detail("namespace"){return Err(self.class_unready());}
+                // A loaded namespace keeps each binding in a cell its own
+                // code reads through; a new value goes into the cell.
+                if self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
+                    let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
+                    if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
+                }
                 if replacement.is_some()&&!self.allowed_slot(&t.of,key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{
@@ -310,7 +324,12 @@ impl<'a> Machine<'a> {
         if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
         if (op==3||op==6)&&values.len()>=2{
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
-            return match self.read_class_member(values[0].clone(),key,false){
+            // Asking whether a name is there, or reading it with something
+            // to fall back on, does not wake a namespace's own answerer.
+            self.asking_presence = op==6 || values.len()==3;
+            let read = self.read_class_member(values[0].clone(),key,false);
+            self.asking_presence = false;
+            return match read {
                 Ok(v)=>Ok(if op==6{Value::Flag(true)}else{v}),
                 Err(Escape::Error(words)) if words.starts_with(self.detail("attribute.amiss"))=>{
                     if op==6{Ok(Value::Flag(false))}else if values.len()==3{Ok(values[2].clone())}else{Err(words.into())}

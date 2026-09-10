@@ -51,7 +51,7 @@ def mode(data):
     best = values[0]
     most = 0
     for value in values:
-        if type(value) == type([]) or __is_mapping(value):
+        if type(value) == type([]) or isinstance(value, dict):
             raise 'TypeError: unhashable data item'
         count = sum([1 for item in values if item == value])
         if count > most:

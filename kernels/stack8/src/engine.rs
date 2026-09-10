@@ -1196,6 +1196,15 @@ impl<'a> Engine<'a> {
         o.class.method(named).cloned()
     }
 
+    /// The routine a module holds under the definition's word for
+    /// answering a name it has not, where the module holds one.
+    fn module_reader(&self, o: &Instance) -> Option<Rc<Routine>> {
+        let named = self.lang.module_getattr.as_deref()?;
+        let fields = o.fields.borrow();
+        let (_, held) = fields.iter().find(|(n, _)| n == named)?;
+        match held.contents() { Value::Routine(routine) => Some(routine), _ => None }
+    }
+
     fn writes_for(&self, o: &Instance) -> Option<Rc<Routine>> {
         let named = self.lang.writer.as_deref()?;
         o.class.method(named).cloned()
@@ -1945,7 +1954,9 @@ impl<'a> Engine<'a> {
                         let mut takes = arm.bare;
                         for span in &arm.kinds {
                             self.run_span(program, frame, instrs, *span)?;
-                            let kind = self.drop_top()?;
+                            // A module's own binding stands in a cell;
+                            // the class is what the cell holds.
+                            let kind = self.drop_top()?.contents();
                             match kind {
                                 Value::Blank => {},
                                 Value::Class(class) => {
@@ -2672,6 +2683,12 @@ impl<'a> Engine<'a> {
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
             Builtin::ToText if args.len() == 1 => Value::text(&self.special_text(&args[0], false)?),
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
+            // A thing may say what whole number, real, or magnitude it
+            // stands for, through the methods so named.
+            Builtin::ToInt | Builtin::AsReal | Builtin::Absolute if args.len() == 1 && matches!(&args[0], Value::Object(_)) => {
+                let place = match op { Builtin::ToInt => 38, Builtin::AsReal => 39, _ => 40 };
+                match self.special_call(&args[0], place, Vec::new())? { Some(answer) => answer, None => return Ok(None) }
+            }
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Map(_)) => {
                 let Value::Map(entries) = &args[2] else { unreachable!() };
                 let mut entries = entries.as_ref().clone();
@@ -3233,6 +3250,15 @@ impl<'a> Engine<'a> {
                     }
                     Value::Class(c) if self.lang.explicit_this => {
                         let args = self.drop_many(argc - 1)?;
+                        // A class with a method for being called answers
+                        // the call itself, instead of making a thing.
+                        if let Some(answering) = self.lang.class_called.as_deref().and_then(|word| self.class_value(&c, word)) {
+                            let mut given = vec![Value::Class(c)];
+                            given.extend(args);
+                            let answer = self.class_apply(answering, given)?;
+                            self.data.push(answer);
+                            return Ok(());
+                        }
                         self.data.push(Value::Class(c));
                         self.data.extend(args);
                         self.perform(&Action::Make, argc)
@@ -3614,7 +3640,8 @@ impl<'a> Engine<'a> {
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
                 Value::Flag(text_method || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
-            Action::Grab(name) => match self.drop_top()? {
+            // A member is read of what a module's cell holds, not of the cell.
+            Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
@@ -3686,6 +3713,12 @@ impl<'a> Engine<'a> {
                             let method = self.reads_for(&o).expect("the method");
                             let asked = Value::Text(Rc::from(name.as_ref()));
                             return self.invoke(&method, vec![Value::Object(o), asked]);
+                        }
+                        // A module may answer for a name it does not
+                        // hold, through a routine of its own so named.
+                        None if self.module_reader(&o).is_some() => {
+                            let routine = self.module_reader(&o).expect("the routine");
+                            return self.invoke(&routine, vec![Value::text(name)]);
                         }
                         // A language with a word for a warning says a
                         // property is not there and reads nothing.
@@ -4158,6 +4191,9 @@ impl<'a> Engine<'a> {
             }
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if let Value::Class(class) = &handed {
+                    if let Some(yielded) = self.class_walked(&class.clone())? { handed = yielded; }
+                }
                 if let Some(walk) = self.set_walk(&handed) { self.data.push(walk); return Ok(()); }
                 if self.lang.yield_suspends && !matches!(handed, Value::Object(_)) {
                     let walk = self.iterator(handed)?;
@@ -4560,6 +4596,16 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        // A key handed out with its hash still stands for the key.
+        if let Value::Hashed(pair) = a { return self.dyadic(op, &pair.0, b); }
+        if let Value::Hashed(pair) = b { return self.dyadic(op, a, &pair.0); }
+        // Texts ordered as their code points run, where the definition says so.
+        if self.lang.text_ordered && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            if let (Value::Text(x), Value::Text(y)) = (a, b) {
+                let order = x.chars().cmp(y.chars());
+                return Ok(Value::Flag(match op { Action::Lt => order.is_lt(), Action::Le => order.is_le(), Action::Gt => order.is_gt(), _ => order.is_ge() }));
+            }
+        }
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
         if self.lang.arithmetic_flags && matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
             && (matches!(a, Value::Flag(_)) || matches!(b, Value::Flag(_))) {
@@ -5743,7 +5789,21 @@ impl<'a> Engine<'a> {
     }
 
     /// The collections this reader can walk without asking a protocol.
+    /// What walking a class yields, where the class has a method that
+    /// hands it over; nothing where it has none.
+    fn class_walked(&mut self, class: &Rc<Class>) -> Res<Option<Value>> {
+        let Some(handing) = self.lang.class_walked.as_deref().and_then(|word| self.class_value(class, word)) else { return Ok(None) };
+        match self.class_apply(handing, vec![Value::Class(class.clone())]) {
+            Ok(yielded) => Ok(Some(yielded)),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+        }
+    }
+
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+        if let Value::Class(class) = value {
+            if let Some(yielded) = self.class_walked(class)? { return self.comprehension_items(&yielded); }
+        }
         match value {
             Value::Generator(held) => {
                 let mut items = Vec::new();
@@ -6611,6 +6671,35 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
             }
+            // The fault in hand: its kind's name and its words, or the
+            // pair of nothing when none is being handled. Given a fault,
+            // that one is told of instead.
+            Builtin::FaultInHand => {
+                if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                let held = match args.first() { Some(given) => Some(given.clone()), None => self.caught.last().cloned() };
+                let Some(fault) = held else { return Ok(Value::array(vec![Value::Null, Value::Null])) };
+                let kind = match &fault { Value::Object(o) => Value::text(&o.class.name), _ => Value::Null };
+                let words = self.special_text(&fault, false)?;
+                Value::array(vec![kind, Value::text(&words)])
+            }
+            // One for a file, two for a directory, nought for neither.
+            Builtin::FileKind => {
+                arity(1)?;
+                let sp = self.wording();
+                let path = std::path::PathBuf::from(args[0].display(&sp));
+                Value::Small(if path.is_file() { 1 } else if path.is_dir() { 2 } else { 0 })
+            }
+            // The working directory (or nothing), the word for the
+            // system, the word for the machine, and the environment as
+            // a map, in that order.
+            Builtin::HostFacts => {
+                arity(0)?;
+                let directory = std::env::current_dir().ok().and_then(|d| d.to_str().map(Value::text)).unwrap_or(Value::Null);
+                let surroundings: Vec<(Value, Value)> = std::env::vars_os()
+                    .filter_map(|(k, v)| Some((Value::text(k.to_str()?), Value::text(v.to_str()?))))
+                    .collect();
+                Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(surroundings))])
+            }
             // A command put before the host's own shell. It travels as
             // the bytes its text stands for, and everything the shell
             // wrote where a run writes is read back from bytes the same
@@ -7001,7 +7090,7 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "atan2" | "hypot" | "pow" | "fdiv" => 2,
+                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" => 2,
                     _ => 1,
                 };
                 if args.len() != wants + 1 {
@@ -7050,6 +7139,17 @@ impl<'a> Engine<'a> {
                     // every number rather than stopping the run, which
                     // is the whole of why it is asked for here.
                     "fdiv" => x / y,
+                    "fmod" => x % y,
+                    "ldexp" => x * 2f64.powi(y as i32),
+                    // The next real after the first, towards the second.
+                    "nextafter" => if x.is_nan() || y.is_nan() { f64::NAN } else if x == y { y }
+                        else if x == 0.0 { f64::from_bits(1).copysign(y) }
+                        else if (y > x) == (x > 0.0) { f64::from_bits(x.to_bits() + 1) } else { f64::from_bits(x.to_bits() - 1) },
+                    // The distance to the next real of the same sign.
+                    "ulp" => if x.is_nan() { x } else if x.is_infinite() { f64::INFINITY } else {
+                        let x = x.abs();
+                        if x == f64::MAX { x - f64::from_bits(x.to_bits() - 1) } else { f64::from_bits(x.to_bits() + 1) - x }
+                    },
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 };
                 let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));

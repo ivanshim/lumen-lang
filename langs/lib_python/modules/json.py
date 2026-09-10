@@ -87,7 +87,7 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
         if isinstance(obj, type(1.0)) and '.' not in text and 'e' not in text and 'E' not in text:
             text += '.0'
         return text
-    if __is_mapping(obj):
+    if isinstance(obj, dict):
         keys = list(obj)
         if ordered:
             # An insertion sort needs no host sorting convention.

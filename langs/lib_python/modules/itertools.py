@@ -166,14 +166,16 @@ class _Group:
         self.owner = owner
         self.index = index
 
-    def __class_iter__(self):
-        result = []
-        while self.owner.active == self.index and self.owner._peek():
-            if self.owner.current_key != self.owner.target:
-                break
-            result.append(self.owner.values[self.owner.position])
-            self.owner._advance()
-        return result
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        owner = self.owner
+        if owner.active != self.index or not owner._peek() or owner.current_key != owner.target:
+            raise StopIteration
+        value = owner.values[owner.position]
+        owner._advance()
+        return value
 
 class _Grouped:
     def __init__(self, iterable, key):
@@ -182,7 +184,6 @@ class _Grouped:
         self.position = 0
         self.active = -1
         self.ready = False
-        self.pending = False
         self.started = False
         self.target = None
         self.current_key = None
@@ -200,27 +201,18 @@ class _Grouped:
         self.position += 1
         self.ready = False
 
-    def __class_iter__(self):
+    def __iter__(self):
         return self
 
-    def __has_index__(self, index):
-        if self.pending:
-            return True
+    def __next__(self):
         if self.started:
             while self._peek() and self.current_key == self.target:
                 self._advance()
         if not self._peek():
             self.active += 1
-            return False
+            raise StopIteration
         self.target = self.current_key
         self.active += 1
-        self.pending = True
-        return True
-
-    def __getitem__(self, index):
-        if not self.__has_index__(index):
-            raise 'IndexError: group iterator exhausted'
-        self.pending = False
         self.started = True
         return (self.target, _Group(self, self.active))
 

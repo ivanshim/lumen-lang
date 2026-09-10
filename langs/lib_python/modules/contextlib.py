@@ -50,7 +50,9 @@ class redirect_stdout:
         self.saved = self.saved[:-1]
         return False
 
-# Stub: suspended generators cannot yet be resumed by the run.
+# The generator runs to its yield on entering and is resumed on leaving.
+# An exception raised in the body is thrown into it where the generator
+# can take one; where it cannot, the exception goes on its way.
 class _GeneratorContextManager:
     def __init__(self, function, args, keywords):
         self.function = function
@@ -58,11 +60,31 @@ class _GeneratorContextManager:
         self.keywords = keywords
 
     def __enter__(self):
-        self.function(*self.args, **self.keywords)
-        raise 'NotImplementedError: generator context managers cannot be resumed'
+        self.generator = self.function(*self.args, **self.keywords)
+        try:
+            return next(self.generator)
+        except StopIteration:
+            raise RuntimeError("generator didn't yield")
 
     def __exit__(self, kind, value, traceback):
-        return False
+        if kind is None:
+            try:
+                next(self.generator)
+            except StopIteration:
+                return False
+            raise RuntimeError("generator didn't stop")
+        throw = getattr(self.generator, 'throw', None)
+        if throw is None:
+            return False
+        try:
+            throw(value)
+        except StopIteration as stopped:
+            return stopped is not value
+        except BaseException as raised:
+            if raised is value:
+                return False
+            raise
+        raise RuntimeError("generator didn't stop after throw()")
 
 class _ContextFactory:
     def __init__(self, function):

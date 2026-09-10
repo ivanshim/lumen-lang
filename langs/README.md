@@ -1599,6 +1599,9 @@ only. The extension labels so far, all from PHP:
   is a word before the operator that turns the answer about (`not in`).
   `ext.op.in.unsupported` holds the plain complaint where the right
   value cannot be searched, or the left of a text search is not text.
+- `ext.op.order.text`: a switch; two texts compared with `<`, `<=`, `>`
+  or `>=` are ordered letter by letter, by code point, as CPython orders
+  them, rather than by whatever number they might spell.
 - `ext.op.compare.chained`: a switch; comparisons beside one another
   ask each adjacent pair in turn. A middle value is worked out once
   and kept; after a false comparison no further operand runs. Equality,
@@ -1999,6 +2002,17 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.include.demanded.missing` gives the words standing before
   and after the file's name in what is said. The rest say what they
   found and answer false, as they did before.
+- `ext.system.source.marked`: a switch; each statement of the program
+  is marked with its line as the run goes, whether or not the language
+  has complaints to say where they arose, so that a call may be told
+  where it was made from.
+- `ext.system.module.getattr`: the word for a routine a module may hold
+  to answer for a name it does not; reading such a name of the module
+  calls the routine with the name, as CPython does.
+- `ext.system.fault.current`: a builtin answering the fault being
+  handled as a list of two: the name of its kind and its words, or
+  nothing twice when none is in hand. Given a fault, it tells of that
+  one instead.
 - `ext.system.source.line`: the name a program calls the line it is
   written on (`__LINE__`), which is known while the program is read.
 - `ext.system.kind.brief`: the shorter name each kind goes by where a
@@ -2016,6 +2030,11 @@ only. The extension labels so far, all from PHP:
   run only by spelling these, and only the full kernels read them. What
   cannot be done answers false rather than stopping the run, which is
   what a language spelling them expects.
+- `ext.builtin.file.kind`: a builtin answering one for a path naming a
+  file, two for a directory, nought for neither.
+- `ext.builtin.host.info`: a builtin answering the host's own facts as a
+  list: the working directory (or nothing), the word for the system, the
+  word for the machine, and the environment as a map.
 - `ext.builtin.wait`: a word for standing still so many millionths of a
   second. A run that waits on something outside itself — a thing it has
   begun, a host it has reached for — must be able to wait, or it asks
@@ -3064,6 +3083,14 @@ only. The extension labels so far, all from PHP:
   only by being tied to it. Asking to share a cell from something that
   has none writes the value plainly, as such a language does rather
   than stopping.
+- `ext.stmt.class.called` and `ext.stmt.class.walked`: the words for a
+  class's own methods that answer a call of the class itself, in place
+  of making a thing, and hand over what walking the class yields. Each
+  is given the class first. These stand in for a metaclass's `__call__`
+  and `__iter__`, which an enumeration needs.
+- `ext.stmt.class.annotations`: the word under which a class carries a
+  map of the names annotated in its body, in the order written, each
+  standing for nothing; the annotations themselves are read past.
 - `ext.stmt.annotation`: the sign after a name or a place at the head
   of a statement, or after a parameter name. What follows is an
   expression naming its kind, read whole and put by without being
@@ -3555,9 +3582,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
-| `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
+| `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
+| `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
-| `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
+| `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
 | `ext.builtin.filter` | - | - | `filter` | - | - | - | - | - | - | - |
 | `ext.builtin.format` | - | - | `format` | - | - | - | - | - | - | - |
@@ -3565,6 +3593,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
 | `ext.builtin.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.host.info` | - | - | `__host_info` | - | - | - | - | - | - | - |
 | `ext.builtin.id` | - | - | `id` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
@@ -3995,6 +4024,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
+| `ext.op.order.text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.pipe.attribute` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
@@ -4068,8 +4098,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
+| `ext.stmt.class.annotations` | - | - | `__annotations__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
+| `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.stmt.class.constructor` | - | - | `__init__` | - | `__construct` | - | - | - | - | - |
@@ -4116,7 +4148,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
@@ -4128,6 +4160,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.unready` | - | - | `NotImplementedError: this class form cannot run yet` | - | - | - | - | - | - | - |
 | `ext.stmt.class.uses` | - | - | - | - | `use` | - | - | - | - | - |
 | `ext.stmt.class.uses.alias` | - | - | - | - | `as` | - | - | - | - | - |
+| `ext.stmt.class.walked` | - | - | `__class_iter__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.writer` | - | - | - | - | `__set` | - | - | - | - | - |
 | `ext.stmt.const` | - | - | - | - | `const` | - | - | - | - | - |
 | `ext.stmt.decorator` | - | - | `@` | - | - | - | - | - | - | - |
@@ -4281,6 +4314,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
+| `ext.system.fault.current` | - | - | `__current_fault` | - | - | - | - | - | - | - |
 | `ext.system.fault.division` | - | - | `division by zero` | - | - | - | - | - | - | - |
 | `ext.system.fault.index` | - | - | `list index out of range` | - | - | - | - | - | - | - |
 | `ext.system.fault.kind` | - | - | `unsupported operand types` | - | - | - | - | - | - | - |
@@ -4295,6 +4329,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.module.cache` | - | - | `sys` `modules` | - | - | - | - | - | - | - |
+| `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
@@ -4326,6 +4361,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.directory` | - | - | - | - | `__DIR__` | - | - | - | - | - |
 | `ext.system.source.file` | - | - | - | - | `__FILE__` | - | - | - | - | - |
 | `ext.system.source.line` | - | - | - | - | `__LINE__` | - | - | - | - | - |
+| `ext.system.source.marked` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.source.method` | - | - | - | - | `__METHOD__` | - | - | - | - | - |
 | `ext.system.source.routine` | - | - | - | - | `__FUNCTION__` | - | - | - | - | - |
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |

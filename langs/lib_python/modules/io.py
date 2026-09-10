@@ -100,7 +100,7 @@ class StringIO:
     def __next__(self):
         line = self.readline()
         if line == '':
-            raise 'StopIteration'
+            raise StopIteration
         return line
 
     def _check(self):

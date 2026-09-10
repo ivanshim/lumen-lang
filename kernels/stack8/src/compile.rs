@@ -1172,7 +1172,7 @@ impl<'a> Compiler<'a> {
         // Only the program's own lines are marked: what stands before it
         // is the library, and a complaint from inside that names the
         // line of the program that was running, as PHP names it.
-        if lang.tells_place && self.look().row as u32 > self.before {
+        if (lang.tells_place || lang.marks_lines) && self.look().row as u32 > self.before {
             let row = self.look().row as u32 - self.before;
             if self.piece().line != row {
                 self.piece().line = row;
@@ -3444,6 +3444,7 @@ impl<'a> Compiler<'a> {
         self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
         let mut shared: Vec<(String, String)> = Vec::new();
+        let mut annotated: Vec<(Value, Value)> = Vec::new();
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
         }
@@ -3506,6 +3507,7 @@ impl<'a> Compiler<'a> {
                 let named = self.take().lexeme;
                 self.take();
                 self.annotation_expression(&lang.assign_words)?;
+                annotated.push((Value::text(&named), Value::Null));
                 if self.on_assign() {
                     self.take();
                     self.scope_value()?;
@@ -3533,6 +3535,13 @@ impl<'a> Compiler<'a> {
             self.piece().instrs.truncate(body_at);
             self.class_cannot_run();
             self.discard();
+        }
+        // The names annotated in the body, as the class carries them.
+        if let Some(word) = lang.class_annotations.first() {
+            let slot = self.gensym("annotations");
+            self.constant(Value::Map(Rc::new(annotated)));
+            self.write(&slot);
+            shared.push((word.clone(), slot));
         }
         let mut count = shared.len();
         if let Some(under) = &base { self.read(under); count += 1; }

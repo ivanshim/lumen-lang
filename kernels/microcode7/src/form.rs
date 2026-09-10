@@ -166,6 +166,12 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    /// The fault in hand, as the name of its kind and its words.
+    FaultHeld,
+    /// What a path names: a file, a directory, or neither.
+    PathSort,
+    /// The host's facts as a row: directory, system, machine, surroundings.
+    HostRow,
     /// Everything the host's own shell wrote out, having been handed a
     /// command to run (ext.builtin.shell). Starting a second program
     /// beside this one is something only a language spelling this may

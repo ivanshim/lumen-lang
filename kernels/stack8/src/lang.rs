@@ -447,6 +447,9 @@ pub struct Lang {
     pub exception_unready: Option<String>,
     pub fault_index: Option<String>,
     pub fault_key: Option<String>,
+    /// Whether each statement of the program is marked with its line as
+    /// the run goes, so that a call may be told where it was made from.
+    pub marks_lines: bool,
     pub fault_name: Option<String>,
     pub fault_attribute: Option<String>,
     pub fault_stop: Option<String>,
@@ -831,6 +834,18 @@ pub struct Lang {
     /// and the one that takes a write of such a property. Each is given
     /// the name that was asked for, the writer the value as well.
     pub reader: Option<String>,
+    /// The word for a routine a module answers absent names through.
+    pub module_getattr: Option<String>,
+    /// The word under which a class carries the names of its annotated
+    /// members, in the order written.
+    pub class_annotations: Vec<String>,
+    /// The words for a class's own method that answers a call of the
+    /// class itself, and for one that hands over what walking the class
+    /// yields.
+    pub class_called: Option<String>,
+    /// Whether two texts are ordered letter by letter, by code point.
+    pub text_ordered: bool,
+    pub class_walked: Option<String>,
     pub writer: Option<String>,
     /// The method a class answers a call it does not have with, given
     /// the name called and the arguments as an array.
@@ -1037,8 +1052,8 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
-w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
 w ext.builtin.print.redirect | w ext.builtin.input | w ext.builtin.input.reader | w ext.builtin.stream.write | w ext.builtin.stream.read | w ext.builtin.stream.amiss | w ext.builtin.stream.failed | w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | b ext.builtin.clock.parts | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
@@ -1683,7 +1698,7 @@ impl Lang {
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
             ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
-            ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.remove", Builtin::FileGone),
+            ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.kind", Builtin::FileKind), ("ext.system.fault.current", Builtin::FaultInHand), ("ext.builtin.host.info", Builtin::HostFacts), ("ext.builtin.file.remove", Builtin::FileGone),
             ("ext.builtin.shell", Builtin::ShellSaid),
             ("ext.builtin.net.ask", Builtin::NetAsk), ("ext.builtin.wait", Builtin::Waited),
             ("ext.builtin.run.begin", Builtin::RunBegin), ("ext.builtin.run.end", Builtin::RunEnd),
@@ -2048,6 +2063,7 @@ impl Lang {
             kind_words: r.head("ext.system.fault.kind")?,
             fault_index: r.head("ext.system.fault.class.index")?,
             fault_key: r.head("ext.system.fault.class.key")?,
+            marks_lines: r.flag("ext.system.source.marked")?,
             fault_name: r.head("ext.system.fault.class.name")?,
             fault_attribute: r.head("ext.system.fault.class.attribute")?,
             fault_stop: r.head("ext.system.fault.class.stop")?,
@@ -2294,6 +2310,11 @@ impl Lang {
             constructor: r.head("ext.stmt.class.constructor")?,
             destructor: r.head("ext.stmt.class.destructor")?,
             reader: r.head("ext.stmt.class.reader")?,
+            module_getattr: r.head("ext.system.module.getattr")?,
+            class_annotations: r.strings("ext.stmt.class.annotations")?,
+            class_called: r.head("ext.stmt.class.called")?,
+            text_ordered: r.flag("ext.op.order.text")?,
+            class_walked: r.head("ext.stmt.class.walked")?,
             writer: r.head("ext.stmt.class.writer")?,
             caller: r.head("ext.stmt.class.caller")?,
             walker_class: r.head("ext.op.walk.class")?,

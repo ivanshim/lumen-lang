@@ -282,7 +282,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         iteration_binding: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
-            .any(|key| table.single(key).is_some()) };
+            .any(|key| table.single(key).is_some()) || table.flag("ext.system.source.marked") };
     let body = if table.rpn {
         let (mut stmts, rest) = match r.rpn_body(&[], Mode::Body) {
             Ok(got) => got,
@@ -2355,6 +2355,7 @@ impl<'a> Builder<'a> {
         let mut methods = Vec::new();
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         let mut attributes = Vec::new();
+        let mut annotated_names: Vec<(Value, Value)> = Vec::new();
         let mut values = Vec::new();
         if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
         values.extend(other_parents.iter().cloned().map(Form::Read));
@@ -2417,6 +2418,7 @@ impl<'a> Builder<'a> {
                 } else if self.look().shape == Shape::Bare && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
                     self.pos += 2;
                     self.put_by_annotation(&["stmt.assign"])?;
+                    annotated_names.push((Value::text(&member), Value::Nil));
                     if self.on_assign() {
                         self.advance();
                         attributes.push(member);
@@ -2454,6 +2456,11 @@ impl<'a> Builder<'a> {
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
+        }
+        // What the body annotated, carried by the class under the table's word.
+        if let Some(word) = table.strings("ext.stmt.class.annotations").first() {
+            attributes.push(word.clone());
+            values.push(constant(Value::Dict(Rc::new(annotated_names))));
         }
         let plan = Plan {
             name: named.clone(), answers: other_parents.len(), field_names: vec![], field_reach: vec![],

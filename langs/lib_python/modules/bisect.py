@@ -32,10 +32,10 @@ bisect = bisect_right
 def insort_left(a, x, lo=0, hi=None, key=None):
     wanted = x if key is None else key(x)
     at = bisect_left(a, wanted, lo, hi, key=key)
-    __list_contents(a, [*a[:at], x, *a[at:]])
+    a[:] = [*a[:at], x, *a[at:]]
 
 def insort_right(a, x, lo=0, hi=None, key=None):
     wanted = x if key is None else key(x)
     at = bisect_right(a, wanted, lo, hi, key=key)
-    __list_contents(a, [*a[:at], x, *a[at:]])
+    a[:] = [*a[:at], x, *a[at:]]
 insort = insort_right

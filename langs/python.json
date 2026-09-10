@@ -35,9 +35,38 @@
   "ext.builtin.complex.zero": [
     "ZeroDivisionError: complex division by zero"
   ],
+  "ext.builtin.file.exists": [
+    "__file_exists"
+  ],
+  "ext.builtin.file.kind": [
+    "__file_kind"
+  ],
+  "ext.builtin.file.remove": [
+    "__remove_file"
+  ],
+  "ext.builtin.host.info": [
+    "__host_info"
+  ],
   "ext.builtin.method.conjugate": [
     "conjugate"
   ],
+  "ext.op.order.text": true,
+  "ext.stmt.class.annotations": [
+    "__annotations__"
+  ],
+  "ext.stmt.class.called": [
+    "__class_call__"
+  ],
+  "ext.stmt.class.walked": [
+    "__class_iter__"
+  ],
+  "ext.system.fault.current": [
+    "__current_fault"
+  ],
+  "ext.system.module.getattr": [
+    "__getattr__"
+  ],
+  "ext.system.source.marked": true,
   "format_version": 1,
   "language": "python",
   "extensions": [
@@ -2078,7 +2107,11 @@
     "__exit__",
     "__class__",
     "__dict__",
-    "__name__"
+    "__name__",
+    "__int__",
+    "__float__",
+    "__abs__",
+    "__pos__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"
@@ -2494,7 +2527,6 @@
   "ext.system.module.name": [
     "__name__"
   ],
-  "ext.system.real.bits": 64,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

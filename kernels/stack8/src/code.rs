@@ -534,6 +534,12 @@ pub enum Builtin {
     FileWrite,
     FileThere,
     FileGone,
+    /// The fault being handled, as its kind's name and its words.
+    FaultInHand,
+    /// Whether a path names a file, a directory, or nothing.
+    FileKind,
+    /// The host's own facts: working directory, system, machine, environment.
+    HostFacts,
     /// A command handed to the host's own shell, answering with all
     /// that the shell wrote where a run writes (ext.builtin.shell).
     /// Only a language that spells this may start another program at

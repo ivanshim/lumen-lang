@@ -269,7 +269,12 @@ impl<'a> Engine<'a> {
     }
     fn write_members(members:&mut Vec<(String,Value)>,name:&str,value:Option<Value>)->Result<(),()> {
         let at=members.iter().position(|(n,_)|n==name);
-        match (at,value) {(Some(i),Some(v))=>members[i].1=v,(None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
+        // A member held in a shared cell -- a module's own binding, or a
+        // property something else stands for -- is written through the
+        // cell, so that every holder of it sees the new value.
+        match (at,value) {
+            (Some(i),Some(v))=>match &members[i].1 { Value::Bond(cell)=>{*cell.borrow_mut()=v;} _=>members[i].1=v },
+            (None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         let own=Self::own_class_value(c,self.class_word("slots"));

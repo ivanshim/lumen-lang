@@ -349,6 +349,8 @@ class _Skip:
             return function
         def skipped(*args, _reason=self.reason, **kwargs):
             raise SkipTest(_reason)
+        setattr(skipped, '__unittest_skip__', True)
+        setattr(skipped, '__unittest_skip_why__', self.reason)
         return skipped
 
 def skip(reason):

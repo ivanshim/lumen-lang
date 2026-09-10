@@ -14,7 +14,7 @@ def pformat(object, indent=1, width=80, depth=None, compact=False, sort_dicts=Tr
         raise 'ValueError: invalid formatting bounds'
     if depth is not None or underscore_numbers:
         raise 'NotImplementedError: depth and grouped numbers are not supported'
-    if __is_mapping(object):
+    if isinstance(object, dict):
         keys = list(object)
         if sort_dicts:
             keys = _ordered(keys)
