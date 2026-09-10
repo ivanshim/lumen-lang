@@ -66,11 +66,38 @@ class Template:
         return result
 
 def capwords(s, sep=None):
-    words = s.split(sep)
-    result = []
-    for word in words:
-        result.append(word[:1].upper() + word[1:].lower())
-    return (' ' if sep is None else sep).join(result)
+    words = []
+    word = ''
+    i = 0
+    if sep == '':
+        raise 'ValueError: empty separator'
+    while i < len(s):
+        divides = s[i] in whitespace if sep is None else s[i:i + len(sep)] == sep
+        if divides:
+            if word != '' or sep is not None:
+                words.append(word)
+            word = ''
+            i += 1 if sep is None else len(sep)
+        else:
+            word += s[i]
+            i += 1
+    if word != '' or sep is not None:
+        words.append(word)
+    result = ''
+    for index in range(len(words)):
+        if index:
+            result += ' ' if sep is None else sep
+        word = words[index]
+        for j in range(len(word)):
+            ch = word[j]
+            if ord(ch) > 127:
+                raise 'NotImplementedError: capwords supports ASCII case conversion'
+            if j == 0 and ch in ascii_lowercase:
+                ch = chr(ord(ch) - 32)
+            elif j != 0 and ch in ascii_uppercase:
+                ch = chr(ord(ch) + 32)
+            result += ch
+    return result
 
 class Formatter:
     def format(self, format_string, *args, **kwargs):

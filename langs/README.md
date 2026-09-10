@@ -556,7 +556,10 @@ only. The extension labels so far, all from PHP:
   is given is the name of the working and the rest are what it works on:
   `sqrt`, `exp`, `expm1`, `log`, `log1p`, `log10`, `log2`, `sin`, `cos`,
   `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `asinh`,
-  `acosh`, `atanh` take one; `atan2`, `hypot`, `pow` and `fdiv` take two.
+  `acosh`, `atanh` take one; `ulp` takes one; `atan2`, `hypot`, `pow`, `fdiv`, `fmod` and
+  `nextafter` take two. The last gives the adjacent binary real toward
+  its second value, and `ulp` gives the gap above the magnitude, or
+  below it at the greatest finite real.
   One label covers them all because the one power being lent is the
   working at the width itself, which a definition has no way of spelling
   and a kernel holding numbers exactly has no other cause to do. None of

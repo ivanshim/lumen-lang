@@ -2,13 +2,14 @@
 typecodes = 'i'
 
 class array:
-    def __init__(self, typecode, initializer=()):
+    def __init__(self, typecode, initializer=None):
         if typecode != 'i':
             raise 'NotImplementedError: array supports only signed four-byte integers'
         self.typecode = typecode
         self.itemsize = 4
         self.data = []
-        self.extend(initializer)
+        if initializer is not None:
+            self.extend(initializer)
 
     def append(self, value):
         if type(value) != type(1):

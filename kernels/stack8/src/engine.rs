@@ -4943,7 +4943,7 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 let wants = match working.as_str() {
-                    "atan2" | "hypot" | "pow" | "fdiv" => 2,
+                    "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "nextafter" => 2,
                     _ => 1,
                 };
                 if args.len() != wants + 1 {
@@ -4966,6 +4966,22 @@ impl<'a> Engine<'a> {
                 };
                 let (x, y) = (given(1), if wants == 2 { given(2) } else { 0.0 });
                 let got = match working.as_str() {
+                    "fmod" => x % y,
+                    "nextafter" => {
+                        if x.is_nan() || y.is_nan() { f64::NAN }
+                        else if x == y { y }
+                        else if x == 0.0 { f64::from_bits(1).copysign(y) }
+                        else {
+                            let bits = x.to_bits();
+                            f64::from_bits(if (y > x) == (x > 0.0) { bits + 1 } else { bits - 1 })
+                        }
+                    }
+                    "ulp" => {
+                        let magnitude = x.abs();
+                        if !magnitude.is_finite() { magnitude }
+                        else if magnitude == f64::MAX { magnitude - f64::from_bits(magnitude.to_bits() - 1) }
+                        else { f64::from_bits(magnitude.to_bits() + 1) - magnitude }
+                    }
                     "sqrt" => x.sqrt(),
                     "exp" => x.exp(),
                     "expm1" => x.exp_m1(),

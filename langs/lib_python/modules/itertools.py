@@ -30,6 +30,14 @@ def islice(iterable, *bounds):
         raise 'TypeError: islice needs one to three bounds'
     if start < 0 or step <= 0 or (stop is not None and stop < 0):
         raise 'ValueError: invalid islice bounds'
+    if isinstance(iterable, _Cycle):
+        if stop is None:
+            raise 'NotImplementedError: an unbounded cycle cannot be gathered'
+        if len(iterable.values) == 0:
+            return []
+        result = [iterable.values[(iterable.position + i) % len(iterable.values)] for i in range(start, stop, step)]
+        iterable.position = (iterable.position + stop) % len(iterable.values)
+        return result
     if isinstance(iterable, _Count):
         if stop is None:
             raise 'NotImplementedError: an unbounded islice cannot be gathered'

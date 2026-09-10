@@ -269,16 +269,26 @@ def lgamma(x):
     raise 'NotImplementedError: lgamma is not supported'
 
 def nextafter(x, y, steps=1):
-    raise 'NotImplementedError: nextafter needs binary floating-point neighbours'
+    if type(steps) != type(1):
+        raise 'TypeError: steps must be an integer'
+    if steps < 0:
+        raise 'ValueError: steps must be non-negative'
+    for i in range(steps):
+        x = __math('nextafter', x, y)
+        if x == y:
+            break
+    return __math('fdiv', x, 1.0)
 
 def ulp(x):
-    raise 'NotImplementedError: ulp needs binary floating-point neighbours'
+    return __math('ulp', x)
 
 def remainder(x, y):
     raise 'NotImplementedError: remainder needs nearest-even binary division'
 
 def fmod(x, y):
-    raise 'NotImplementedError: fmod needs binary floating-point division'
+    if isinf(x) or y == 0:
+        raise 'ValueError: math domain error'
+    return __math('fmod', x, y)
 
 def modf(x):
     raise 'NotImplementedError: modf needs tuple values'

@@ -226,6 +226,26 @@ pub fn whole_part(v: &Value) -> Option<BigInt> {
 /// what it gives, or nothing at all where no working goes by that name.
 pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
     Some(match named {
+        "ulp" if one.is_nan() || one.is_infinite() => one.abs(),
+        "ulp" => {
+            let positive = one.abs();
+            let encoding = positive.to_bits();
+            let neighbour = f64::from_bits(if positive == f64::MAX { encoding - 1 } else { encoding + 1 });
+            (neighbour - positive).abs()
+        }
+        "nextafter" => {
+            match (one, two) {
+                (a, b) if a.is_nan() || b.is_nan() => f64::NAN,
+                (a, b) if a == b => b,
+                (0.0, b) => f64::from_bits(1 | (b.to_bits() & (1_u64 << 63))),
+                (a, b) => {
+                    let upwards = (a < b) != a.is_sign_negative();
+                    let encoding = a.to_bits();
+                    f64::from_bits(if upwards { encoding.wrapping_add(1) } else { encoding.wrapping_sub(1) })
+                }
+            }
+        }
+        "fmod" => one % two,
         "atan2" => one.atan2(two),
         "hypot" => one.hypot(two),
         "pow" => one.powf(two),
@@ -259,7 +279,7 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
 /// How many worths a working is handed after its name.
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "atan2" | "hypot" | "pow" | "fdiv" => 2,
+        "atan2" | "hypot" | "pow" | "fdiv" | "nextafter" | "fmod" => 2,
         _ => 1,
     }
 }
