@@ -5,7 +5,7 @@ print(json.dumps([1, 2], indent=2))
 stream = StringIO()
 json.dump({'x': 3}, stream)
 stream.seek(0)
-print(json.load(stream))
+print(json.dumps(json.load(stream)))
 try:
     json.loads('{bad}')
 except json.JSONDecodeError:
