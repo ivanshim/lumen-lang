@@ -831,6 +831,9 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        for pair in self.lang.exception_classes.chunks_exact(2) {
+            if told.starts_with(&format!("{}: ", pair[0])) { return Some(pair[0].clone()); }
+        }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -875,6 +878,86 @@ impl<'a> Engine<'a> {
         openings.into_iter().flatten().any(|word| told.starts_with(&word))
     }
 
+    fn leave_context(&mut self, manager: Value, raised: Option<&Value>) -> Flow<bool> {
+        let Value::Object(object) = manager else { return Err(self.lang.with_invalid.clone().unwrap_or_default().into()) };
+        let method = self.lang.with_exit.as_deref().and_then(|name| object.class.method(name)).cloned()
+            .ok_or_else(|| self.lang.with_invalid.clone().unwrap_or_default())?;
+        let mut args = vec![Value::Object(object), Value::Null, Value::Null, Value::Null];
+        if let Some(Value::Object(fault)) = raised {
+            args[1] = Value::Class(fault.class.clone());
+            args[2] = Value::Object(fault.clone());
+            if let Some(trace) = self.lang.exception_parts.get(3) {
+                args[3] = fault.fields.borrow().iter().find(|(name, _)| name == trace).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
+            }
+        }
+        self.invoke(&method, args)?;
+        let answer = self.drop_top()?;
+        Ok(self.truth(&answer))
+    }
+
+    fn empty_class(name: String, base: Option<Rc<Class>>, fields: Vec<(String, Value)>) -> Rc<Class> {
+        Rc::new(Class {
+            name, base, fields, answers: Vec::new(), reaches: Vec::new(),
+            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+        })
+    }
+
+    pub fn bind_exceptions(&mut self) {
+        for pair in self.lang.exception_classes.clone().chunks_exact(2) {
+            let base = match self.lookup(&pair[1]) { Some(Value::Class(class)) => Some(class.clone()), _ => None };
+            let fields = if base.is_none() {
+                self.lang.exception_parts.iter().enumerate().map(|(i, name)| {
+                    (name.clone(), if i == 2 { Value::Flag(false) } else { Value::Null })
+                }).collect()
+            } else { Vec::new() };
+            let class = Value::Class(Self::empty_class(pair[0].clone(), base, fields));
+            self.define(&pair[0], class.clone());
+            self.define(&format!("{}{}", pair[0], crate::code::OF_A_CLASS), class);
+        }
+    }
+
+    fn raised_value(&mut self, value: Value, cause: bool) -> Flow<Value> {
+        let Some(root) = self.lang.exception_classes.first() else { return Ok(value) };
+        let root = root.clone();
+        let value = match value {
+            Value::Class(class) if class.named(&root, false) => {
+                self.data.push(Value::Class(class));
+                self.perform(&Action::Make, 1)?;
+                self.drop_top()?
+            }
+            other => other,
+        };
+        match &value {
+            Value::Object(object) if object.class.named(&root, false) => Ok(value),
+            _ => Err(if cause { self.lang.cause_invalid.clone() } else { self.lang.exception_invalid.clone() }.unwrap_or_default().into()),
+        }
+    }
+
+    fn join_exception(&mut self, value: &Value, cause: Option<Value>) {
+        let Value::Object(object) = value else { return };
+        let parts = &self.lang.exception_parts;
+        if parts.len() != 4 { return; }
+        let mut fields = object.fields.borrow_mut();
+        let mut put = |name: &str, value: Value| {
+            if let Some(field) = fields.iter_mut().find(|(key, _)| key == name) { field.1 = value; }
+            else { fields.push((name.to_owned(), value)); }
+        };
+        if let Some(Value::Object(previous)) = self.caught.last() {
+            if !Rc::ptr_eq(previous, object) { put(&parts[0], Value::Object(previous.clone())); }
+        }
+        if let Some(cause) = cause {
+            put(&parts[1], cause);
+            put(&parts[2], Value::Flag(true));
+        }
+        if let Some(name) = &self.lang.traceback_class {
+            self.made += 1;
+            put(&parts[3], Value::Object(Rc::new(Instance {
+                class: Self::empty_class(name.clone(), None, Vec::new()),
+                fields: RefCell::new(Vec::new()), mark: self.made,
+            })));
+        }
+    }
+
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
@@ -884,7 +967,7 @@ impl<'a> Engine<'a> {
         // What a fault of the kernel's own holds: the words said, and
         // where in the program it was raised.
         for (named, held) in [
-            ("message", Value::text(told)),
+            ("message", Value::text(if self.lang.exception_classes.is_empty() { told } else { told.split_once(": ").map_or(told, |(_, rest)| rest) })),
             ("file", Value::text(&self.source)),
             ("line", Value::Small(self.line as i64)),
         ] {
@@ -893,7 +976,9 @@ impl<'a> Engine<'a> {
                 None => fields.push((named.to_string(), held)),
             }
         }
-        Some(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+        let value = Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made }));
+        self.join_exception(&value, None);
+        Some(value)
     }
 
     /// Offer a fault of the kernel's own to the innermost guard as a
@@ -1673,7 +1758,13 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(said)) => match self.as_fault(&said) {
+                Some(value) => Err(Fault::Thrown(value)),
+                None => Err(Fault::Note(said)),
+            },
+            other => other,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -1720,6 +1811,21 @@ impl<'a> Engine<'a> {
             }
             other => other,
         };
+        if let Some(cell) = &plan.context {
+            let manager = self.load_cell(cell, frame)?;
+            let raised = match &ending { Err(Fault::Thrown(value)) => Some(value), _ => None };
+            if let Some(value) = raised { self.caught.push(value.clone()); }
+            let cleared = self.leave_context(manager, raised);
+            self.caught.truncate(active);
+            match cleared {
+                Ok(true) if raised.is_some() => {
+                    self.data.truncate(depth);
+                    ending = Ok(Passage::Along(plan.after));
+                }
+                Err(fault) => { self.data.truncate(depth); ending = Err(fault); }
+                _ => {}
+            }
+        }
         if let Some(last) = plan.last {
             if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
             let saved = self.data.len();
@@ -2052,6 +2158,11 @@ impl<'a> Engine<'a> {
     }
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        if self.lang.bind_names && matches!(op, Action::WalkFrom) {
+            if let Some(Value::Bond(cell)) = self.data.last() {
+                if matches!(&*cell.borrow(), Value::Array(_)) { return Ok(()); }
+            }
+        }
         if self.lang.bind_names && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
             | Action::WalkFrom | Action::WalkAlone | Action::WalkMore | Action::WalkThis
             | Action::WalkKey | Action::WalkOnward) {
@@ -2598,6 +2709,9 @@ impl<'a> Engine<'a> {
                         // What the maker leaves is not the object.
                         self.drop_top()?;
                     }
+                    None if self.lang.exception_classes.first().map_or(false, |root| class.named(root, false)) => {
+                        if let Some(message) = args.first() { object.fields.borrow_mut().push(("message".to_string(), message.clone())); }
+                    }
                     None if !args.is_empty() => {
                         return Err(format!("Class {} takes no arguments when it is made", class.name).into());
                     }
@@ -2619,6 +2733,11 @@ impl<'a> Engine<'a> {
                 Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Class(class) if self.lang.kind_name.as_deref() == Some(name.as_ref()) => Value::text(&class.name),
+                Value::SortOf(kind) if self.lang.kind_name.as_deref() == Some(name.as_ref()) => {
+                    let index = match kind { Sort::Integer => 0, Sort::Rational => 1, Sort::Real => 2, Sort::Text => 3, Sort::Boolean => 4, Sort::Array => 5, Sort::Null => 6 };
+                    Value::text(self.lang.kind_names.get(index).map(String::as_str).unwrap_or_default())
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -2956,9 +3075,26 @@ impl<'a> Engine<'a> {
                 self.hurled_at.set(self.line);
                 return Err(Fault::Thrown(raised));
             }
-            Action::Hurl => {
+            Action::EnterContext => {
+                let manager = self.drop_top()?;
+                let Value::Object(object) = manager else { return Err(self.lang.with_invalid.clone().unwrap_or_default().into()) };
+                if self.lang.with_exit.as_deref().and_then(|name| object.class.method(name)).is_none() {
+                    return Err(self.lang.with_invalid.clone().unwrap_or_default().into());
+                }
+                let enter = self.lang.with_enter.as_deref().and_then(|name| object.class.method(name)).cloned()
+                    .ok_or_else(|| self.lang.with_invalid.clone().unwrap_or_default())?;
+                return self.invoke(&enter, vec![Value::Object(object)]);
+            }
+            Action::Hurl | Action::HurlCause => {
+                let cause = if matches!(op, Action::HurlCause) {
+                    let value = self.drop_top()?;
+                    Some(if matches!(value, Value::Null) { value } else { self.raised_value(value, true)? })
+                } else { None };
+                let value = self.drop_top()?;
+                let raised = self.raised_value(value, false)?;
+                self.join_exception(&raised, cause);
                 self.hurled_at.set(self.line);
-                return Err(Fault::Thrown(self.drop_top()?));
+                return Err(Fault::Thrown(raised));
             }
             Action::Titled => match self.drop_top()? {
                 Value::Object(o) => Value::text(&o.class.name),
@@ -4979,6 +5115,13 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
+                if self.lang.kind_name.is_some() {
+                    match &args[0] {
+                        Value::Object(object) => return Ok(Value::Class(object.class.clone())),
+                        Value::Class(_) | Value::SortOf(_) => return Ok(Value::Class(Self::empty_class(self.lang.kind_type.clone().unwrap_or_default(), None, Vec::new()))),
+                        _ => {}
+                    }
+                }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {

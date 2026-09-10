@@ -43,6 +43,17 @@ pub struct Lang {
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
+    pub with_enter: Option<String>,
+    pub with_exit: Option<String>,
+    pub with_invalid: Option<String>,
+    pub exception_classes: Vec<String>,
+    pub exception_parts: Vec<String>,
+    pub exception_invalid: Option<String>,
+    pub cause_invalid: Option<String>,
+    pub kind_name: Option<String>,
+    pub kind_names: Vec<String>,
+    pub kind_type: Option<String>,
+    pub traceback_class: Option<String>,
     pub recursion_limit: Option<usize>,
     pub recursion_exceeded: Option<String>,
 
@@ -909,7 +920,7 @@ w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.th
 b ext.op.member.pipes | w ext.stmt.class.unready
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
 
-n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.stmt.with.unready
+w ext.stmt.with.enter | w ext.stmt.with.exit | w ext.stmt.with.invalid | w ext.system.exception.classes | w ext.system.exception.parts | w ext.system.exception.invalid | w ext.system.exception.cause.invalid | w ext.system.kind.name | w ext.system.kind.names | w ext.system.kind.type | w ext.system.traceback.class | n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.stmt.with.unready
 b ext.op.member.pipes
 w ext.op.tuple.unready
 w ext.lexical.string.prefix.bytes.unready
@@ -1428,6 +1439,17 @@ impl Lang {
             separator_after_prefix: r.flag("ext.lexical.number.separator.after_prefix")?,
             whole_bits: r.flag("ext.op.bit.whole")?,
             print_real_point: r.flag("ext.builtin.print.real_point")?,
+            with_enter: r.head("ext.stmt.with.enter")?,
+            with_exit: r.head("ext.stmt.with.exit")?,
+            with_invalid: r.head("ext.stmt.with.invalid")?,
+            exception_classes: r.strings("ext.system.exception.classes")?,
+            exception_parts: r.strings("ext.system.exception.parts")?,
+            exception_invalid: r.head("ext.system.exception.invalid")?,
+            cause_invalid: r.head("ext.system.exception.cause.invalid")?,
+            kind_name: r.head("ext.system.kind.name")?,
+            kind_names: r.strings("ext.system.kind.names")?,
+            kind_type: r.head("ext.system.kind.type")?,
+            traceback_class: r.head("ext.system.traceback.class")?,
             recursion_limit: r.count("ext.system.recursion.limit")?,
             recursion_exceeded: r.head("ext.system.recursion.exceeded")?,
             with_as: r.strings("ext.stmt.with.as")?,

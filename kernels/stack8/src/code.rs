@@ -23,6 +23,7 @@ pub struct Attempt {
     pub otherwise: Option<(usize, usize)>,
     pub last: Option<(usize, usize)>,
     pub after: usize,
+    pub context: Option<Cell>,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +403,8 @@ pub enum Action {
     Titled,
     /// Raise the value above as a fault to be caught.
     Hurl,
+    HurlCause,
+    EnterContext,
     Reraise,
     AssertFault,
     /// Whether the value above is of any of those classes; it is consumed.

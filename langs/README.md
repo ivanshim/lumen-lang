@@ -829,12 +829,29 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.try.else`: a switch; the ordinary else word may follow the
   clauses, and its body runs only when the watched body ended of its own
   accord. A value raised there is not offered to those clauses.
+- `ext.stmt.with.enter` and `.exit`: the methods by which a context
+  admits its body and lets it go. Leaving receives the raised kind,
+  value and trace, or three nothings when no value was raised. A true
+  answer takes up the raised value. `ext.stmt.with.invalid` gives the
+  complaint when either method is wanting.
+- `ext.system.exception.classes`: pairs naming a raised class and its
+  parent, parents standing first; the first parent is empty. These
+  classes are bound before the program begins. `.parts` names, in order,
+  the preceding exception, the stated cause, the flag hiding context,
+  and the trace. `.invalid` and `.cause.invalid` give the complaints for
+  values that cannot be raised or made a cause.
+- `ext.system.kind.name`: the member giving a kind's name. `.names`
+  gives the names of whole numbers, ratios, reals, text, flags, arrays
+  and nothing, in that order; `.type` names the kind of classes.
+  `ext.system.traceback.class` names a trace handed to a context's exit.
 - `ext.system.recursion.limit`: the greatest number of routine frames a
   run may hold at once, the outermost frame included. A call that would
   reach this count says `ext.system.recursion.exceeded`; a tail call is
   counted too. Where no count is given, calls go on as before.
 - `ext.stmt.throw.from`: the word before a cause. The cause is read whole
-  and set aside. Where spelled, a throw without a value raises again what
+  and made the stated cause where the exception parts are named; a cause
+  of nothing hides context without forgetting it. Where spelled, a throw
+  without a value raises again what
   the innermost clause is holding. `ext.stmt.throw.empty` gives the words
   said when there is no such value.
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
@@ -2512,6 +2529,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.enter` | - | - | `__enter__` | - | - | - | - | - | - | - |
+| `ext.stmt.with.exit` | - | - | `__exit__` | - | - | - | - | - | - | - |
+| `ext.stmt.with.invalid` | - | - | `TypeError: object does not support the context manager protocol` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
@@ -2548,6 +2568,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
+| `ext.system.exception.cause.invalid` | - | - | `TypeError: exception causes must derive from BaseException` | - | - | - | - | - | - | - |
+| `ext.system.exception.classes` | - | - | `BaseException` `` `Exception` `BaseException` `ValueError` `Exception` `TypeError` `Exception` `RuntimeError` `Exception` `RecursionError` `RuntimeError` `AssertionError` `Exception` `NameError` `Exception` `StopIteration` `Exception` `GeneratorExit` `BaseException` | - | - | - | - | - | - | - |
+| `ext.system.exception.invalid` | - | - | `TypeError: exceptions must derive from BaseException` | - | - | - | - | - | - | - |
+| `ext.system.exception.parts` | - | - | `__context__` `__cause__` `__suppress_context__` `__traceback__` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
@@ -2562,8 +2586,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |
 | `ext.system.kind.loose` | - | - | - | - | `mixed` `callable` `iterable` `object` `self` `static` `parent` `void` `never` `false` `true` | - | - | - | - | - |
+| `ext.system.kind.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.kind.names` | - | - | `int` `rational` `float` `str` `bool` `list` `NoneType` | - | - | - | - | - | - | - |
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.kind.type` | - | - | `type` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
@@ -2600,6 +2627,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.source.method` | - | - | - | - | `__METHOD__` | - | - | - | - | - |
 | `ext.system.source.routine` | - | - | - | - | `__FUNCTION__` | - | - | - | - | - |
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.traceback.class` | - | - | `traceback` | - | - | - | - | - | - | - |
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
 <!-- table:end -->

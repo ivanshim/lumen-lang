@@ -129,6 +129,9 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
+        if !lang.exception_classes.is_empty() {
+            if let Some(said) = e.strip_prefix("Uncaught ") { return said.to_string(); }
+        }
         let words = &lang.call_builtin_amiss;
         if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else if lang.throw_empty.as_deref() == Some(e.as_str()) || lang.recursion_exceeded.as_deref() == Some(e.as_str()) { e }
@@ -219,12 +222,17 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in &lang.module_names {
         registry.slot(name);
     }
+    for pair in lang.exception_classes.chunks_exact(2) {
+        registry.slot(&pair[0]);
+        registry.slot(&format!("{}{}", pair[0], code::OF_A_CLASS));
+    }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    machine.bind_exceptions();
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
     }

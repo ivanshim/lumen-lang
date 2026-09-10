@@ -1371,12 +1371,12 @@ impl<'a> Builder<'a> {
                 {
                     return Ok(Form::Again);
                 }
-                let raised = self.expr(0)?;
+                let mut values = vec![self.expr(0)?];
                 if self.key("ext.stmt.throw.from") {
                     self.advance();
-                    let _cause = self.expr(0)?;
+                    values.push(self.expr(0)?);
                 }
-                return Ok(prim_call(Prim::Hurl, vec![raised]));
+                return Ok(prim_call(Prim::Hurl, values));
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
@@ -1577,21 +1577,32 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.advance(); }
         let mut steps = Vec::new();
+        let mut managers = Vec::new();
         loop {
             let value = self.expr(0)?;
-            if self.key("ext.stmt.with.as") {
+            let place = self.gensym("context");
+            let name = place.ident.to_string();
+            let bindings = if self.key("ext.stmt.with.as") {
                 self.advance();
-                let place = self.gensym("with");
-                let name = place.ident.to_string();
+                self.with_target(&name)?
+            } else { Vec::new() };
+            if table.has_any("ext.stmt.with.enter") {
+                managers.push((value, place, bindings));
+            } else {
                 steps.push(Form::Write(place, Box::new(value)));
-                steps.extend(self.with_target(&name)?);
-            } else { steps.push(value); }
+                steps.extend(bindings);
+            }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
             if enclosed && self.sign(close) { break; }
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
-        steps.push(self.body()?);
+        let mut body = self.watched_body()?;
+        while let Some((value, into, mut bindings)) = managers.pop() {
+            bindings.push(body);
+            body = Form::Context { value: Box::new(value), into, body: Box::new(sequence(bindings)) };
+        }
+        steps.push(body);
         Ok(sequence(steps))
     }
 

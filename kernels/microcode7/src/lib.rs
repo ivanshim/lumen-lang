@@ -71,6 +71,9 @@ fn run_table(mut table: Table, source: &str, program_args: &[String], request: &
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        if table.has_any("ext.system.exception.classes") && e.starts_with("Uncaught ") {
+            return e["Uncaught ".len()..].to_owned();
+        }
         if ["ext.stmt.throw.empty", "ext.system.recursion.exceeded"].iter().any(|key| table.single(key) == Some(e.as_str())) {
             return e;
         }
@@ -229,6 +232,10 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
     seeded.extend(table.strings("ext.system.module.name").iter().cloned());
+    for names in table.strings("ext.system.exception.classes").chunks_exact(2) {
+        seeded.push(names[0].clone());
+        seeded.push(format!("{}{}", names[0], form::OF_A_CLASS));
+    }
     let before: u32 = request
         .iter()
         .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
@@ -253,6 +260,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    machine.prepare_raised_classes();
     // Text read while the run goes is a piece of this same program, and
     // is built knowing what the whole of it declared about cells.
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());

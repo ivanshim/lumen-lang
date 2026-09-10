@@ -446,6 +446,7 @@ pub enum Form {
     Class { plan: Rc<Plan>, values: Vec<Form> },
     /// A body run with clauses ready to take what it raises, and a last
     /// part that runs however the body ends.
+    Context { value: Box<Form>, into: Address, body: Box<Form> },
     Again,
     Assert { condition: Box<Form>, message: Box<Form> },
     Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
