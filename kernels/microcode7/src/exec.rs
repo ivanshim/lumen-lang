@@ -251,6 +251,9 @@ pub struct Machine<'a> {
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
     builds_places: bool,
+    /// The binding rule is fixed for the whole run; a slot need not
+    /// seek its label afresh on every write.
+    binds_by_name: bool,
     /// Whether text is a row of places holding one letter each. Where it
     /// is, such a place takes a letter as well as giving one, and a place
     /// named by text is the number that text opens with.
@@ -283,6 +286,7 @@ impl<'a> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         Machine {
             table,
+            binds_by_name: table.flag("ext.syntax.call.bind_names"),
             outermost: Env::make(idents.len(), None),
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
@@ -467,7 +471,7 @@ impl<'a> Machine<'a> {
     /// asked of the thing where it is one, and counted through as an
     /// array is where it is not.
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
-        if self.table.flag("ext.syntax.call.bind_names") && v.iter().any(|x| matches!(x, Value::Shared(_))) {
+        if self.binds_by_name && v.iter().any(|x| matches!(x, Value::Shared(_))) {
             let items: Vec<Value> = v.iter().map(collection_read).collect();
             return self.walking(op, name, &items);
         }
@@ -1559,7 +1563,7 @@ impl<'a> Machine<'a> {
         let f = ascend(frame, slot.up);
         let v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = v {
-            return Ok(if self.table.flag("ext.syntax.call.bind_names") { Value::Shared(cell) } else { cell.borrow().clone() });
+            return Ok(if self.binds_by_name { Value::Shared(cell) } else { cell.borrow().clone() });
         }
         if matches!(v, Value::Unset) && self.table.flag("ext.stmt.function.closes_over") && !Rc::ptr_eq(&f, &self.outermost) {
             let label = if slot.up == 0 { "ext.stmt.function.local.unbound" } else { "ext.stmt.function.free.unbound" };
@@ -1589,7 +1593,7 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
-        if self.table.flag("ext.syntax.call.bind_names") {
+        if self.binds_by_name {
             ascend(frame, slot.up).cells.borrow_mut()[slot.at] = self.collection_cell(value);
             return Ok(());
         }
@@ -1873,7 +1877,7 @@ impl<'a> Machine<'a> {
                     _ => held,
                 };
                 Ok(match held {
-                    Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
+                    Value::Shared(cell) if !self.binds_by_name => cell.borrow().clone(),
                     other => other,
                 })
             }
@@ -2667,7 +2671,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
                     let mut values = self.value_list(&args[1..], frame)?;
-                    if self.table.flag("ext.syntax.call.bind_names") {
+                    if self.binds_by_name {
                         let (plain, named) = self.open_arguments(values)?;
                         if !named.is_empty() { return Err(self.builtin_keyword_fault(name).into()); }
                         values = plain;
@@ -2703,11 +2707,11 @@ impl<'a> Machine<'a> {
                     let over = match shared {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
-                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
+                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.binds_by_name)?
                         }
                         None => {
                             let mut slots = f.cells.borrow_mut();
-                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
+                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter, !self.binds_by_name)?
                         }
                     };
                     // More letters handed to a place in text than it has
@@ -2777,7 +2781,7 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let mut values = self.value_list(args, frame)?;
-                    if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
+                    if self.binds_by_name && self.table.prims.contains_key(name.as_ref()) {
                         let (mut positions, keywords) = self.open_arguments(values)?;
                         if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
                             return Ok(answer);
@@ -3917,7 +3921,7 @@ impl<'a> Machine<'a> {
 
     fn collection_cell(&self, value: Value) -> Value {
         match value {
-            Value::Vector(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
+            Value::Vector(_) | Value::Dict(_) if self.binds_by_name =>
                 Value::Shared(Rc::new(RefCell::new(value))),
             _ => value,
         }
@@ -3926,7 +3930,7 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
-        if self.table.flag("ext.syntax.call.bind_names") {
+        if self.binds_by_name {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple) {
@@ -5742,7 +5746,7 @@ impl<'a> Machine<'a> {
         // cell holds: the sharing lies between the names, not in the
         // value itself.
         return self.element_within(target, at, how).map(|found| match found {
-            Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
+            Value::Shared(cell) if !self.binds_by_name => cell.borrow().clone(),
             held => held,
         });
     }

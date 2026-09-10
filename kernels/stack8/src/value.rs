@@ -103,13 +103,30 @@ pub struct Counted {
 }
 
 impl Counted {
+    fn small_bounds(&self) -> Option<(i128, i128, i128)> {
+        Some((self.start.to_i64()? as i128, self.stop.to_i64()? as i128, self.step.to_i64()? as i128))
+    }
+
     pub fn length(&self) -> BigInt {
+        if let Some((start, stop, step)) = self.small_bounds() {
+            let distance = if step > 0 { stop - start } else { start - stop };
+            return BigInt::from(if distance <= 0 { 0 } else { (distance - 1) / step.abs() + 1 });
+        }
         let distance = if self.step.is_positive() { &self.stop - &self.start } else { &self.start - &self.stop };
         if distance <= BigInt::zero() { BigInt::zero() }
         else { (distance - 1) / self.step.abs() + 1 }
     }
 
     pub fn at(&self, mut index: BigInt) -> Option<Value> {
+        if let (Some((start, stop, step)), Some(mut at)) = (self.small_bounds(), index.to_i64()) {
+            let distance = if step > 0 { stop - start } else { start - stop };
+            let count = if distance <= 0 { 0 } else { (distance - 1) / step.abs() + 1 };
+            let mut place = at as i128;
+            if at < 0 { place += count; }
+            if place < 0 || place >= count { return None; }
+            at = (start + place * step) as i64;
+            return Some(Value::Small(at));
+        }
         let length = self.length();
         if index.is_negative() { index += &length; }
         (index >= BigInt::zero() && index < length).then(|| Value::of_big(&self.start + index * &self.step))
@@ -360,6 +377,12 @@ impl Value {
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
     pub fn equals(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Small(a), Value::Small(b)) => return a == b,
+            (Value::Huge(a), Value::Huge(b)) => return a == b,
+            (Value::Text(a), Value::Text(b)) => return a == b,
+            _ => {}
+        }
         if let Value::Native(cell, _) = self { return cell.borrow().equals(&other.contents()); }
         if let Value::Native(cell, _) = other { return self.equals(&cell.borrow()); }
         if let Some(order) = crate::arith::order_values(self, other) {

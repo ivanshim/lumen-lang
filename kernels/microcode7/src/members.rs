@@ -68,6 +68,21 @@ impl Request<'_> {
                 if self.given.len()<=at{self.given.resize(at+1,Value::Nil);}self.given[at]=value.clone();
             }
         }
+        if self.operation == "append" {
+            if let Value::Mutable(place, _) = self.target {
+                let list = matches!(&*place.borrow(), Value::Vector(_));
+                if list {
+                    self.takes(1, 1)?;
+                    let loops_back = circular(&place.borrow(), place, 0)
+                        || circular(&self.given[0], place, 1);
+                    if loops_back { return Err(self.fail("unready")); }
+                    let mut holding = place.borrow_mut();
+                    let Value::Vector(items) = &mut *holding else { unreachable!() };
+                    Rc::make_mut(items).push(self.given[0].clone());
+                    return Ok(Value::Nil);
+                }
+            }
+        }
         match self.target.settled(){
             Value::Text(chars)=>self.on_text(&chars),
             Value::Vector(items)=>self.on_list(items.to_vec()),
@@ -123,7 +138,20 @@ impl Request<'_> {
         }
         if op=="split"||op=="rsplit"{return self.split_text(s);}
         if op=="join"{
-            self.takes(1,1)?;let mut strings=Vec::new();for item in gather(&self.given[0],self.complaint)?{strings.push(letters(&item,self.complaint)?);}return Ok(Value::text(&strings.join(s)));
+            self.takes(1,1)?;
+            let mut output = String::new();
+            let mut first = true;
+            for item in gather(&self.given[0],self.complaint)? {
+                match item.settled() {
+                    Value::Text(chars) => {
+                        if !first { output.push_str(s); }
+                        output.push_str(&chars);
+                        first = false;
+                    }
+                    _ => return Err(self.fail("arguments")),
+                }
+            }
+            return Ok(Value::text(&output));
         }
         if op=="replace"{
             self.takes(2,3)?;let limit=self.number(2,-1)?;let old=self.string(0)?;let new=self.string(1)?;

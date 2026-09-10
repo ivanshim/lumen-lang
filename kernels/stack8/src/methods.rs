@@ -67,6 +67,23 @@ fn bound(n: i64, length: usize) -> usize {
 }
 
 pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String) -> Answer {
+    // An append need not take a copy of the row it lengthens. Keep the
+    // same check for a path back to the holding place before writing.
+    if op == "append" && names.is_empty() && args.len() == 1 {
+        if let Value::Native(cell, _) = receiver {
+            let held = cell.borrow();
+            if let Value::Array(row) = &*held {
+                if row.iter().any(|v| reaches(v, cell, 1)) || reaches(&args[0], cell, 1) {
+                    return Err(fault("unready"));
+                }
+                drop(held);
+                if let Value::Array(row) = &mut *cell.borrow_mut() {
+                    Rc::make_mut(row).push(args[0].clone());
+                }
+                return Ok(Value::Null);
+            }
+        }
+    }
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
         let slots: &[&str] = match op { "split" | "rsplit" => &["sep", "maxsplit"], _ => &[] };
@@ -132,7 +149,16 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     }
                     return Ok(Value::array(parts.iter().map(|x| Value::text(x)).collect()).held(true));
                 }
-                "join" => { arity(1,1)?; members(&a[0],fault)?.iter().map(|x| text(x,fault)).collect::<Result<Vec<_>,_>>()?.join(s) }
+                "join" => {
+                    arity(1,1)?;
+                    let mut joined = String::new();
+                    for (at, item) in members(&a[0],fault)?.iter().enumerate() {
+                        let Value::Text(part) = item.contents() else { return Err(fault("arguments")); };
+                        if at != 0 { joined.push_str(s); }
+                        joined.push_str(&part);
+                    }
+                    joined
+                }
                 "replace" => { arity(2,3)?; let n = a.get(2).map(|v| integer(v,fault)).transpose()?.unwrap_or(-1); s.replacen(&text(&a[0],fault)?, &text(&a[1],fault)?, if n < 0 { usize::MAX } else { n as usize }) }
                 "find" | "rfind" | "index" | "count" | "startswith" | "endswith" => {
                     arity(1,3)?;

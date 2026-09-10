@@ -104,7 +104,17 @@ pub struct Progression {
 }
 
 impl Progression {
+    fn native_walk(&self) -> Option<(i128, i128, i128)> {
+        let first = i128::from(self.first.to_i64()?);
+        let stride = i128::from(self.stride.to_i64()?);
+        let limit = i128::from(self.limit.to_i64()?);
+        let gap = if stride < 0 { first - limit } else { limit - first };
+        let size = if gap > 0 { 1 + (gap - 1) / stride.abs() } else { 0 };
+        Some((first, stride, size))
+    }
+
     pub fn count(&self) -> BigInt {
+        if let Some((_, _, size)) = self.native_walk() { return size.into(); }
         let forward = self.stride > BigInt::zero();
         if (forward && self.first >= self.limit) || (!forward && self.first <= self.limit) {
             return BigInt::zero();
@@ -113,6 +123,15 @@ impl Progression {
     }
 
     pub fn item(&self, position: &BigInt) -> Option<Value> {
+        if let Some((first, stride, size)) = self.native_walk() {
+            if let Some(offset) = position.to_i64() {
+                let offset = i128::from(offset);
+                let offset = if offset < 0 { size + offset } else { offset };
+                return if (0..size).contains(&offset) {
+                    Some(Value::Small((first + stride * offset) as i64))
+                } else { None };
+            }
+        }
         let count = self.count();
         let offset = if position < &BigInt::zero() { position + &count } else { position.clone() };
         if offset < BigInt::zero() || offset >= count { return None; }
@@ -321,6 +340,15 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        if let Value::Small(left) = self {
+            if let Value::Small(right) = other { return left == right; }
+        }
+        if let (Value::Huge(left), Value::Huge(right)) = (self, other) {
+            return left.as_ref() == right.as_ref();
+        }
+        if let (Value::Text(left), Value::Text(right)) = (self, other) {
+            return left.as_ref() == right.as_ref();
+        }
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
