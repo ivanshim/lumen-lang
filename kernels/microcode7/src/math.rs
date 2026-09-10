@@ -53,7 +53,7 @@ pub fn made_number(above: BigInt, beneath: BigInt, places: Option<usize>, under:
 
 pub fn to_decimal(v: &Value, places: usize) -> Option<Value> {
     let e = ratio_of(v)?;
-    Some(make_number(e.above, e.beneath, Some(places)).keeping_point(e.pointed))
+    Some(made_number(e.above, e.beneath, Some(places), e.under).keeping_point(e.pointed))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -262,4 +262,24 @@ pub fn worked_takes(named: &str) -> usize {
         "atan2" | "hypot" | "pow" | "fdiv" => 2,
         _ => 1,
     }
+}
+
+/// Ordinary real operations use binary operands at the configured width.
+/// Quotient and remainder continue through the common truncating path.
+pub fn binary_work(op: Calc, first: &Value, second: &Value) -> Option<Result<Value, String>> {
+    let a = ratio_of(first)?;
+    let b = ratio_of(second)?;
+    if a.places.or(b.places).is_none() { return None; }
+    let read = |r: &Ratio| if r.under && r.above.is_zero() { -0.0 }
+        else { crate::data::nearest_binary(&r.above, &r.beneath) };
+    let one = read(&a);
+    let two = read(&b);
+    let answer = match op {
+        Calc::Plus => one + two,
+        Calc::Minus => one - two,
+        Calc::Times => one * two,
+        Calc::Over | Calc::OverReal => one / two,
+        Calc::Remainder | Calc::IntDiv | Calc::Power => return None,
+    };
+    Some(Ok(crate::data::worth_of_binary(answer, DEFAULT_PLACES)))
 }

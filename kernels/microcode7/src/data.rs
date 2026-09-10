@@ -30,6 +30,7 @@ pub enum Kind {
     Chars,
     Truth,
     Vector,
+    Set,
     Nothing,
 }
 
@@ -42,6 +43,7 @@ impl Kind {
             Kind::Chars => "STRING",
             Kind::Truth => "BOOLEAN",
             Kind::Vector => "ARRAY",
+            Kind::Set => "SET",
             Kind::Nothing => "NULL",
         }
     }
@@ -144,8 +146,14 @@ pub enum Value {
     Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
     Intrinsic(Rc<str>),
-    Set(Rc<Vec<Value>>),
     Iterator(Rc<RefCell<IteratorState>>),
+    Backtrace(Rc<str>),
+    Keyed(Rc<Value>, Rc<Value>),
+    Attributes(Rc<Thing>),
+    Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
+    Refusal(Rc<str>),
+    Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
+    Arguments(Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -160,6 +168,8 @@ pub enum Value {
     Vector(Rc<Vec<Value>>),
     Tuple(Rc<Vec<Value>>),
     Generator(Rc<RefCell<crate::exec::Suspension>>),
+    Set(Rc<RefCell<SetStore>>),
+    SetCursor { source: Rc<RefCell<SetStore>>, count: usize },
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -190,6 +200,55 @@ pub struct Adornment {
     pub extra: Option<Value>,
 }
 
+/// Members keep both their hash address and their place in the telling.
+#[derive(Clone, Debug)]
+pub struct SetStore {
+    pub entries: Vec<(String, Value)>,
+    pub keys: std::collections::HashSet<String>,
+    pub spelling: String,
+}
+
+impl SetStore {
+    pub fn new(spelling: &str) -> SetStore {
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into() }
+    }
+
+    pub fn put(&mut self, address: String, item: Value) {
+        if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
+    }
+
+    pub fn take(&mut self, address: &str) -> Option<Value> {
+        if !self.keys.remove(address) { return None; }
+        let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
+        Some(self.entries.remove(place).1)
+    }
+
+    pub fn values(&self) -> Vec<Value> {
+        self.entries.iter().map(|(_, v)| v.clone()).collect()
+    }
+
+    pub fn merge(&self, rhs: &SetStore, rule: u8) -> SetStore {
+        let mut answer = SetStore::new(&self.spelling);
+        for (key, item) in self.entries.iter().chain(rhs.entries.iter()) {
+            let left = self.keys.contains(key);
+            let right = rhs.keys.contains(key);
+            let keep = match rule { 0 => left || right, 1 => left && right, 2 => left && !right, _ => left != right };
+            if keep { answer.put(key.clone(), item.clone()); }
+        }
+        answer
+    }
+
+    pub fn written(&self, item_text: impl Fn(&Value) -> String) -> String {
+        match self.entries.len() {
+            0 => self.spelling.clone() + "()",
+            _ => {
+                let words = self.entries.iter().map(|(_, item)| item_text(item)).collect::<Vec<_>>();
+                "{".to_owned() + &words.join(", ") + "}"
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.bare())
@@ -208,6 +267,7 @@ pub struct Names<'a> {
     /// figures one shows when simply written out; where it says
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
+    pub bit_reals: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -274,6 +334,87 @@ impl Value {
         }
     }
 
+    pub fn set_member_spelling(&self, names: Names) -> String {
+        let shown = self.in_field(names, "", "r").unwrap_or_else(|| self.render(names));
+        match self {
+            Value::Frac(r) if r.places.is_some() && !r.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'E' | 'e')) => shown + ".0",
+            _ => shown,
+        }
+    }
+
+    pub fn hash_address(&self) -> Result<String, &'static str> {
+        match self {
+            Value::Tuple(items) | Value::Row(items) => {
+                let parts = items.iter().map(Value::hash_address).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("row:{parts:?}"))
+            }
+            Value::Shared(slot) | Value::Mutable(slot, _) => slot.borrow().hash_address(),
+            Value::Vector(_) => Err("list"),
+            Value::Dict(_) => Err("dict"),
+            Value::Set(_) => Err("set"),
+            Value::Text(word) => Ok(format!("text:{word}")),
+            Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
+            Value::Nil => Ok("nothing".to_owned()),
+            Value::Ellipsis => Ok("ellipsis".to_owned()),
+            value => {
+                let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
+                if ratio.beneath.is_zero() { return Err(""); }
+                let divisor = ratio.above.gcd(&ratio.beneath);
+                Ok(format!("number:{}:{}", ratio.above / &divisor, ratio.beneath / divisor))
+            }
+        }
+    }
+
+    pub fn representation(&self, words: Names) -> String {
+        if let Value::Text(text) = self {
+            let mark = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+            let letters = text.chars().map(|ch| match ch {
+                '\n' => "\\n".into(), '\t' => "\\t".into(), '\r' => "\\r".into(),
+                '\\' => "\\\\".into(),
+                x if x == mark => format!("\\{x}"),
+                x if x.is_control() => format!("\\x{:02x}", x as u32),
+                x => x.to_string(),
+            }).collect::<String>();
+            return format!("{mark}{letters}{mark}");
+        }
+        match self {
+            Value::Arguments(row) => Self::argument_text(row, words),
+            Value::Thing(thing) => match self.arguments_held() {
+                Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                None => self.render(words),
+            },
+            Value::Vector(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+            _ => self.render(words),
+        }
+    }
+
+    fn argument_text(row: &[Value], words: Names) -> String {
+        let contents = row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ");
+        if row.len() == 1 { format!("({contents},)") } else { format!("({contents})") }
+    }
+
+    fn arguments_held(&self) -> Option<Vec<Value>> {
+        if let Value::Thing(thing) = self {
+            if thing.of.every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+                let holds = thing.holds.borrow();
+                return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
+                    Some((_, Value::Arguments(row))) => row.to_vec(),
+                    _ => holds.iter().filter(|(key, value)| key == "message" && !matches!(value, Value::Text(s) if s.is_empty())).map(|(_, value)| value.clone()).collect(),
+                });
+            }
+        }
+        None
+    }
+
+    pub fn raised_words(&self, words: Names) -> Option<String> {
+        let row = self.arguments_held()?;
+        let Value::Thing(thing) = self else { return None };
+        Some(if row.is_empty() { String::new() }
+            else if row.len() > 1 { Self::argument_text(&row, words) }
+            else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else { row[0].render(words) })
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -291,14 +432,15 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
+            Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
             Value::Member(..) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Set(_) => Kind::Set,
         })
     }
 
@@ -308,7 +450,8 @@ impl Value {
             Value::Mutable(cell, _) => cell.borrow().is_true(),
             Value::Row(items) => !items.is_empty(),
             Value::Window(..) => match self.settled() {Value::Vector(items)=>!items.is_empty(),_=>false},
-            Value::Set(items) => !items.is_empty(),
+            Value::Set(items) => !items.borrow().keys.is_empty(),
+            Value::Arguments(row) => !row.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -336,13 +479,13 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
+            Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -373,6 +516,8 @@ impl Value {
             }
             (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
+            (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
+            (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -385,7 +530,6 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Set(a), Value::Set(b)) => a.len() == b.len() && a.iter().all(|x| b.iter().any(|y| x.equals(y))),
             (Value::Tuple(a), Value::Tuple(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
@@ -439,13 +583,17 @@ impl Value {
     }
 
     pub fn render(&self, w: Names) -> String {
+        if let Some(words) = self.raised_words(w) { return words; }
         match self {
             Value::Mutable(cell, true) => cell.borrow().repr(&w),
             Value::Mutable(cell, false) => cell.borrow().render(w),
             Value::Row(_) => self.repr(&w),
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
+            Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
+            Value::Set(items) => items.borrow().written(|item| item.set_member_spelling(w)),
+
             Value::Flag(true) if w.flag_counted => "1".to_string(),
             Value::Flag(false) if w.flag_counted => String::new(),
             Value::Flag(true) => w.truth.to_string(),
@@ -468,6 +616,7 @@ impl Value {
             // A language whose reals are numbers of bits writes one to
             // its own count of figures.
             Value::Frac(e) if w.real_figures.is_some() => spelled_out(nearest_binary(&e.above, &e.beneath), figures_asked(false).unwrap_or(w.real_figures)),
+            Value::Frac(e) if w.bit_reals && e.places.is_some() => ordinary_real(nearest_binary(&e.above, &e.beneath), e.places.unwrap()),
             other => other.bare(),
         }
     }
@@ -583,9 +732,11 @@ impl Value {
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
-            Value::Set(_) => self.quoted(),
             Value::Intrinsic(name) => format!("<built-in function {}>", name),
             Value::Iterator(_) => String::from("<iterator>"),
+            Value::SetCursor { .. } => String::from("<set walk>"),
+            Value::Set(items) => items.borrow().written(Value::bare),
+            Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
@@ -610,6 +761,11 @@ impl Value {
             Value::Generator(_) => "<generator>".into(),
             Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
             Value::Adorned(_) => String::from("<descriptor>"),
+            Value::Backtrace(words) => words.to_string(),
+            Value::Keyed(value, _) => value.bare(),
+            Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
+            Value::Refusal(word) => word.to_string(),
+            Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),
@@ -926,10 +1082,11 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
         return v;
     }
     let Value::Frac(e) = &v else { return v };
-    match binary_worth(nearest_binary(&e.above, &e.beneath)) {
+    let rounded = nearest_binary(&e.above, &e.beneath);
+    match binary_worth(rounded) {
         // A nought under nought holds its minus at any width.
-        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under).keeping_point(e.pointed),
-        None => v,
+        Some((above, beneath)) => crate::math::made_number(above, beneath, Some(figures), e.under || rounded.is_sign_negative()).keeping_point(e.pointed),
+        None => worth_of_binary(rounded, figures),
     }
 }
 
@@ -1038,6 +1195,42 @@ fn brief_decimal(number: f64) -> String {
         _ => {
             let signed = format!("{scale:+03}");
             format!("{}e{}", &written[..split], signed)
+        }
+    }
+}
+
+/// Write a real to its usual figures, keeping powers of ten expanded.
+/// Rounding the display hides the remaining digits of its binary ratio.
+fn ordinary_real(worth: f64, figures: usize) -> String {
+    let shown = spelled_out(worth, Some(figures));
+    let expanded = match shown.split_once('E') {
+        None => shown,
+        Some((head, power)) => {
+            let negative = head.starts_with('-');
+            let run = head.trim_start_matches('-').replace('.', "");
+            let run = run.trim_end_matches('0');
+            let point = power.parse::<i32>().unwrap_or(0) + 1;
+            let mut result = if negative { String::from("-") } else { String::new() };
+            if point <= 0 {
+                result.push_str("0.");
+                result.push_str(&"0".repeat(-point as usize));
+                result.push_str(run);
+            } else {
+                for index in 0..run.len().max(point as usize) {
+                    if index == point as usize { result.push('.'); }
+                    result.push(run.as_bytes().get(index).copied().unwrap_or(b'0') as char);
+                }
+            }
+            result
+        }
+    };
+    // Match the ordinary writer's budget, including the zero before a
+    // fraction; figures past that budget are simply left unwritten.
+    match expanded.find('.') {
+        None => expanded,
+        Some(dot) => {
+            let whole = expanded[..dot].trim_start_matches('-').len();
+            expanded.chars().take(dot + 1 + figures.saturating_sub(whole)).collect()
         }
     }
 }

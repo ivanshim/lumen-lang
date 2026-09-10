@@ -1,0 +1,12 @@
+set() 0 True
+[1, 2, 3, 4, 5] [1, 2, 3, 4] True False
+[1, 6, 7] [1, 6, 7]
+[1, 6, 7, 8, 9] [6]
+[6] [1, 7, 8]
+True True True
+True True True True True
+[1, 2] [1, 2, 3]
+[1, 6, 7]
+[9] 9 set()
+set() 0 True
+2 {None} {'x'} False

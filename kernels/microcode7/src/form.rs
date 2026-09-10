@@ -39,6 +39,12 @@ pub enum Prim {
     /// A compound write may ask a real to retain its point.
     Pointed,
     Adorn(char),
+    StartContext,
+    DistinctObjects,
+    Repr,
+    Iterate,
+    NextOne,
+    FormatValue,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.
@@ -55,6 +61,7 @@ pub enum Prim {
     BindValueMethod,
     SortedValues,
     Belongs, Tupling, Uniques, Ordered, Backwards, Numbered, Zipped, Mapped, Filtered, EveryTrue, Least, Greatest, Magnitude, Rounded, QuotRem, Powered, Hexadecimal, Octal, Binary, Quoted, Truthful, CallableValue, IdentityOf, Hashed, NextItem, HasAttribute, GetMember, SetMember, DropMember, MembersOf,
+    SetCall(u8),
     /// Gather the parts naming a span within brackets.
     SliceBounds,
     /// A slice form kept readable while its running remains wanting.
@@ -379,6 +386,8 @@ pub enum Prim {
     /// place to write, so it is turned down as a write to one is.
     Toward,
     MakeArray,
+    EmptySet,
+    SetAssign(u8),
     /// The growing literal and the next part of it.
     ExtendLiteral(bool, bool),
     Iterated,
@@ -465,7 +474,7 @@ pub enum Form {
     /// part that runs however the body ends.
     Again,
     Assert { condition: Box<Form>, message: Box<Form> },
-    Attempt { body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
+    Attempt { context: Option<Address>, body: Box<Form>, clauses: Vec<Clause>, last: Option<Box<Form>>, otherwise: Option<Box<Form>> },
     /// Whether the call left this binding without a value.
     Missing(Address),
     /// A statement together with the line of the source it was written

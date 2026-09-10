@@ -89,7 +89,7 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
 
 pub fn to_real(v: &Value, places: usize) -> Option<Value> {
     let f = Exact::from_value(v)?;
-    Some(shape_number(f.p, f.q, Some(places)).with_point(v.keeps_point()))
+    Some(shape_signed(f.p, f.q, Some(places), matches!(v, Value::Real(r) if r.below)).with_point(v.keeps_point()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,4 +264,24 @@ pub fn whole_of(v: &Value) -> Option<BigInt> {
         true => BigInt::zero(),
         false => f.p / f.q,
     })
+}
+
+/// Work ordinary real arithmetic at the configured binary width.
+/// Quotient and remainder retain the shared truncating arithmetic.
+pub fn binary_work(calc: Operation, a: &Value, b: &Value) -> Option<Result<Value, String>> {
+    let (x, y) = (Exact::from_value(a)?, Exact::from_value(b)?);
+    if x.places.is_none() && y.places.is_none() { return None; }
+    let binary = |v: &Value, e: &Exact| {
+        if matches!(v, Value::Real(r) if r.below && r.p.is_zero()) { -0.0 }
+        else { crate::value::as_binary(&e.p, &e.q) }
+    };
+    let (left, right) = (binary(a, &x), binary(b, &y));
+    let result = match calc {
+        Operation::Plus => left + right,
+        Operation::Minus => left - right,
+        Operation::Times => left * right,
+        Operation::Over | Operation::OverReal => left / right,
+        Operation::Floor | Operation::Remainder | Operation::Raise => return None,
+    };
+    Some(Ok(crate::value::real_of(result, DEFAULT_PLACES)))
 }

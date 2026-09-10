@@ -276,6 +276,7 @@ fn compile_pass(
     plans: &mut HashMap<usize, BindingPlan>,
     discovering: bool,
 ) -> Res<Rc<Routine>> {
+    for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
     let top = Piece { nonlocals: Vec::new(), enclosed: Vec::new(),
@@ -1274,13 +1275,14 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Reraise, 0);
                 } else {
                     self.expr(0)?;
+                    let mut count = 1;
                     if self.on_keyword(&lang.throw_from) {
                         self.take();
                         let from = self.mark();
                         self.expr(0)?;
-                        self.piece().instrs.truncate(from);
+                        if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
                     }
-                    self.act(Action::Hurl, 1);
+                    self.act(Action::Hurl, count);
                 }
                 return Ok(());
             }
@@ -1361,8 +1363,18 @@ impl<'a> Compiler<'a> {
             }
         }
         if bracketed { self.take(); }
+        let mut watchers = Vec::new();
         loop {
             self.expr(0)?;
+            if lang.class_special.get(33).is_some() {
+                let manager = self.gensym("context");
+                self.write(&manager);
+                self.read(&manager);
+                self.act(Action::ContextEnter, 1);
+                let cell = self.cell_to_write(&manager);
+                let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
+                watchers.push(mark);
+            }
             if self.on_keyword(&lang.with_as_words) {
                 self.take();
                 let held = self.gensym("with");
@@ -1376,7 +1388,15 @@ impl<'a> Compiler<'a> {
             if bracketed && self.at_symbol(&group.close) { break; }
         }
         if bracketed { self.want_sign(&group.close, "after the with items")?; }
-        self.body()
+        self.body()?;
+        let end = self.mark();
+        for mark in watchers {
+            if let Instr::Attempt(plan) = &mut self.piece().instrs[mark] {
+                plan.body = (mark + 1, end);
+                plan.after = end;
+            }
+        }
+        Ok(())
     }
 
     fn target_count(&self, enclosed: bool) -> (usize, bool, bool) {
@@ -1514,6 +1534,26 @@ impl<'a> Compiler<'a> {
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
+                if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
+                    let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
+                    self.slice_part(&pair.close, comma.as_deref())?;
+                    let mut several = false;
+                    while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
+                        self.take();
+                        several = true;
+                        if self.at_symbol(&pair.close) { break; }
+                        self.slice_part(&pair.close, comma.as_deref())?;
+                    }
+                    self.want_sign(&pair.close, "after the index")?;
+                    if several {
+                        self.awkward_place = true;
+                        self.piece().instrs.truncate(at);
+                        self.constant(Value::Small(0));
+                    }
+                    keyed.push(at);
+                    self.act(Action::At, 2);
+                    continue;
+                }
                 let mut parts = 0;
                 let mut sliced = false;
                 loop {
@@ -3063,7 +3103,7 @@ impl<'a> Compiler<'a> {
     fn indented_attempt(&mut self) -> Res<()> {
         self.take();
         let mark = self.put(Instr::Attempt(Box::new(Attempt {
-            body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
+            context: None, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0,
         })));
         let body = self.attempt_body()?;
         let mut clauses = Vec::new();
@@ -3120,7 +3160,7 @@ impl<'a> Compiler<'a> {
             return Err("A try needs a catch or a last part".to_string());
         }
         let after = self.mark();
-        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { body, clauses, otherwise, last, after }));
+        self.piece().instrs[mark] = Instr::Attempt(Box::new(Attempt { context: None, body, clauses, otherwise, last, after }));
         Ok(())
     }
 
@@ -4579,6 +4619,14 @@ impl<'a> Compiler<'a> {
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;
+        if !self.lang.class_special.is_empty() && self.on_writing()
+            && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.lexeme)) {
+            let end = self.pos;
+            self.piece().instrs.truncate(from);
+            self.pos = target_at;
+            self.block_place()?;
+            self.pos = end;
+        }
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
             && self.look_ahead(2).shape == Shape::Sign
@@ -4752,6 +4800,9 @@ impl<'a> Compiler<'a> {
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
         let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
+        let compound = compound.map(|op| if self.lang.set_literals {
+            match op { Action::BitEither => Action::SetWrite(0), Action::BitBoth => Action::SetWrite(1), Action::Sub => Action::SetWrite(2), Action::BitOne => Action::SetWrite(3), other => other }
+        } else { op });
         let assign = self.take().lexeme;
         let words = self.lang.scope_unready.first().cloned();
         if matches!(&self.piece().instrs[from..],
@@ -5566,14 +5617,26 @@ impl<'a> Compiler<'a> {
             return self.mutation(&name, &target, argc + 1);
         }
         let mut argc = 1;
+        let mut called = false;
         if let Some(call) = self.lang.calling.clone() {
             if self.at_symbol(&call.open) {
                 self.take();
+                called = true;
                 argc += self.arguments(&call)?;
             }
         }
         if self.lang.yield_suspends && [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, &name)) {
             self.act(Action::Send(Rc::from(name)), argc);
+            return Ok(());
+        }
+        if let Some(method) = native.filter(|b| b.set_method()) {
+            if !called {
+                let words = self.lang.set_words["ext.builtin.set.method.unavailable"].first().cloned().unwrap_or_default();
+                self.constant(Value::text(&words));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from(name.as_str())), 1);
+                return Ok(());
+            }
+            self.act(Action::Builtin(method, Rc::from(name.as_str())), argc);
             Ok(())
         } else { self.call(&name, argc) }
     }
@@ -5707,6 +5770,17 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
+        if Lang::spells(&lang.special_declined, &tok.lexeme) {
+            self.take();
+            self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
+            return self.indexing(from);
+        }
+        if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
+            self.take();
+            let class = crate::value::Class { name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
+            self.constant(Value::Class(Rc::new(class)));
+            return self.indexing(from);
+        }
         if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
@@ -5832,6 +5906,10 @@ impl<'a> Compiler<'a> {
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
                 let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
+                if !self.at_symbol(&call.open) {
+                    self.class_cannot_run();
+                    return self.indexing(from);
+                }
                 self.want_sign(&call.open, "after the parent word")?;
                 let extra = self.arguments(&call)?;
                 for _ in 0..extra { self.discard(); }
@@ -6839,7 +6917,7 @@ impl<'a> Compiler<'a> {
                 beyond += 1;
             }
             let annotated = self.annotation_target == Some(beyond);
-            if member && lang.member_pipes && (call.is_some() || !self.writing_place && !self.on_writing() && !annotated) {
+            if member && lang.member_pipes && !Lang::spells(&lang.format_method, &named) && (call.is_some() || !self.writing_place && !self.on_writing() && !annotated) {
                 let resume = self.pos;
                 let target = match &self.piece().instrs[from..] {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
@@ -6893,6 +6971,9 @@ impl<'a> Compiler<'a> {
                     } else { self.class_cannot_run(); }
                 } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
                     self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
+                } else if let Some(method) = native.filter(|b| b.set_method()) {
+                    if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }
+                    else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;
@@ -7037,7 +7118,7 @@ impl<'a> Compiler<'a> {
         if let Some(clause) = self.comprehension_ahead() {
             return self.comprehension(pair, clause, map);
         }
-        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         while !self.at_symbol(&pair.close) {
             let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
             if spread { self.take(); }
@@ -7053,7 +7134,9 @@ impl<'a> Compiler<'a> {
             if let Some(sep) = &pair.between { self.want_sign(sep, "between literal items")?; }
             else { return Err("Expected a literal separator".to_string()); }
         }
-        self.want_sign(&pair.close, "after a literal")
+        self.want_sign(&pair.close, "after a literal")?;
+        if braces && !map && !self.lang.class_special.is_empty() { self.act(Action::SettleObjects, 1); }
+        Ok(())
     }
 
     fn lazy_comprehension(&mut self, pair: &Brackets, clause: usize) -> Res<()> {
@@ -7103,7 +7186,7 @@ impl<'a> Compiler<'a> {
         let head = self.pos;
         let bindings = self.comprehension_names.len();
         let result = self.gensym("comprehension");
-        self.act(if map { Action::MakeMap } else { Action::MakeArray }, 0);
+        self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         self.write(&result);
         self.pos = clause;
         self.comprehension_clause(head, &result, map)?;
@@ -7365,7 +7448,7 @@ impl<'a> Compiler<'a> {
     /// A call by name, the arguments already on the stack: a builtin of
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
-        match self.lang.builtins.get(name).copied() {
+        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method()) {
             Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead) => {
                 Err(format!("First argument to {}() must be an array variable name", name))
             }
@@ -8097,7 +8180,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let (whole, frac) = (&text[..at], &text[at + point.len_utf8()..]);
         let scale = BigInt::from(10).pow(frac.len() as u32);
         let whole = if whole.is_empty() { BigInt::from(0) } else { decimal(whole, text)? };
-        return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && (lang.bare_number_point || lang.number_point_edge) { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
+        return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && (lang.open_decimal_point || lang.bare_number_point || lang.number_point_edge || lang.point_open) { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
     }
     Ok(Value::of_big(decimal(text, text)?))
 }

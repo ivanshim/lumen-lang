@@ -25,6 +25,7 @@ enum Passage {
 
 pub struct Engine<'a> {
     lang: &'a Lang,
+    native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
@@ -191,6 +192,10 @@ impl Fault {
         match self {
             Fault::Note(note) => note,
             Fault::Thrown(Value::Object(o)) => {
+                if let Some((_, Value::Text(original))) = o.fields.borrow().iter().find(|(n, _)| n == "\0uncaught-words") { return original.to_string(); }
+                if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
+                    return if message.is_empty() { format!("\0{}:", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
+                }
                 let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
                 match told {
                     Some(told) => format!("Uncaught {}: {}", o.class.name, told),
@@ -208,6 +213,61 @@ impl Fault {
 type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
+    fn exception_classes(names: &[String]) -> HashMap<String, Value> {
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9)];
+        let mut classes: Vec<Rc<Class>> = Vec::new();
+        for (at, name) in names.iter().enumerate() {
+            let mut fields = Vec::new();
+            if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
+            if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
+            classes.push(Rc::new(Class {
+                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
+                fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                constants: Vec::new(), shared: RefCell::new(Vec::new()),
+            }));
+        }
+        classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
+    }
+
+    fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
+        let mut fields = class.all_fields();
+        let args = Value::Tuple(Rc::new(args));
+        fields.push(("\0arguments".into(), args.clone()));
+        if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
+        if let Some(name) = &self.lang.exception_cause { fields.push((name.clone(), cause)); }
+        self.made += 1;
+        Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made }))
+    }
+
+    fn exception_class(&self, class: &Class) -> bool {
+        !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
+    }
+
+    fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+        let mut class = Some(actual);
+        while let Some(current) = class {
+            if Rc::ptr_eq(current, wanted) { return true; }
+            class = current.base.as_ref();
+        }
+        false
+    }
+
+    fn exception_has_methods(class: &Class) -> bool {
+        !class.methods.is_empty() || class.base.as_ref().map_or(false, |parent| Self::exception_has_methods(parent))
+    }
+
+    fn prepare_raised(&mut self, value: Value) -> Flow<Value> {
+        if let Value::Class(class) = value {
+            if self.exception_class(&class) {
+                self.data.push(Value::Class(class));
+                self.perform(&Action::Make, 1)?;
+                return self.drop_top().map_err(Fault::from);
+            }
+            return Err(self.lang.catch_invalid.clone().unwrap_or_default().into());
+        }
+        Ok(value)
+    }
+
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
@@ -222,7 +282,12 @@ impl<'a> Engine<'a> {
                 }));
             }
         }
+        let native_exceptions = Self::exception_classes(&lang.exceptions);
+        for (i, word) in idents.iter().enumerate() {
+            if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
+        }
         Engine {
+            native_exceptions,
             lang,
             world,
             data: Vec::new(),
@@ -845,6 +910,18 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        let told = told.trim_start_matches('\0');
+        if !self.lang.exceptions.is_empty() {
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
+                else if told.starts_with("Undefined variable") { &self.lang.fault_name }
+                else if told.starts_with("Undefined array key") { &self.lang.fault_key }
+                else if told.contains("index") && told.contains("out of bounds") { &self.lang.fault_index }
+                else if told.starts_with("Undefined property") || told.starts_with("Cannot read property") { &self.lang.fault_attribute }
+                else if told.starts_with("Cannot") || told.contains("requires") || told.contains("must be") || told.starts_with("Cannot coerce") { &self.lang.fault_kind }
+                else { &None };
+            if kind.is_some() { return kind.clone(); }
+        }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -875,7 +952,7 @@ impl<'a> Engine<'a> {
             _ if self.unreadable(told) => &self.lang.fault_reading,
             _ => &None,
         };
-        named.clone().or_else(|| self.lang.fault_class.clone())
+        named.clone().or_else(|| if self.lang.exceptions.is_empty() { self.lang.fault_class.clone() } else { None })
     }
 
     /// Whether these are the words of a reading that stopped: any of
@@ -889,9 +966,56 @@ impl<'a> Engine<'a> {
         openings.into_iter().flatten().any(|word| told.starts_with(&word))
     }
 
+    fn exception_words(&self, told: &str, class: &str) -> String {
+        let told = told.trim_start_matches('\0');
+        if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
+        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
+        if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_index.as_deref() == Some(class) { return self.lang.index_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_kind.as_deref() == Some(class) { return self.lang.kind_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_name.as_deref() == Some(class) && self.lang.name_words.len() == 2 {
+            let name = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
+            return format!("{}{}{}", self.lang.name_words[0], name, self.lang.name_words[1]);
+        }
+        if self.lang.fault_key.as_deref() == Some(class) { return told.trim_start_matches("Undefined array key ").to_string(); }
+        if self.lang.fault_attribute.as_deref() == Some(class) && self.lang.attribute_words.len() == 2 {
+            let name = told.split("::$").nth(1).or_else(|| told.split("'").nth(1)).unwrap_or(told);
+            return format!("{}{}{}", self.lang.attribute_words[0], name, self.lang.attribute_words[1]);
+        }
+        told.to_string()
+    }
+
     fn as_fault(&mut self, told: &str) -> Option<Value> {
+        if self.lang.core_words.get("core.exhausted").and_then(|w| w.first()).map_or(false, |w| w == told) && !self.lang.special_stop.is_empty() {
+            if let Some(Value::Class(class)) = self.native_exceptions.get(&self.lang.special_stop[0]).cloned() {
+                return Some(self.exception_instance(class, vec![], Value::Null));
+            }
+            let class = Class { name: self.lang.special_stop[0].clone(), base: None, answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) };
+            self.made += 1;
+            return Some(Value::Object(Rc::new(Instance { class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
+        }
+        if let Some(key) = told.strip_prefix("\0key-text:") {
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            return Some(self.exception_instance(class, vec![Value::text(key)], Value::Null));
+        }
+        if let Some(key) = told.strip_prefix("\0key-number:") {
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            let number = key.parse::<BigInt>().ok()?;
+            return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
+        }
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
+        if self.exception_class(&class) {
+            let message = self.exception_words(told, &named);
+            let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
+            let value = self.exception_instance(class, args, Value::Null);
+            if self.lang.catch_invalid.as_deref() == Some(told) {
+                if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
+            }
+            return Some(value);
+        }
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
@@ -1110,6 +1234,10 @@ impl<'a> Engine<'a> {
     /// name however the name is written, a name nothing answers to is
     /// tried again with every letter made small.
     fn class_named(&self, name: &str) -> Option<&Value> {
+        if !self.lang.exceptions.is_empty() {
+            if let found @ Some(Value::Class(_)) = self.lookup(name) { return found; }
+            if let Some(value) = self.native_exceptions.get(name) { return Some(value); }
+        }
         let filed = format!("{}{}", name, crate::code::OF_A_CLASS);
         if let found @ Some(_) = self.lookup(&filed) {
             return found;
@@ -1142,6 +1270,7 @@ impl<'a> Engine<'a> {
             null_word: nothing,
             flag_counts: self.lang.flags_count,
             real_digits: self.lang.real_bits.and(self.lang.real_digits),
+            binary_reals: self.lang.real_bits.is_some(),
             text_is_bytes: self.lang.text_is_bytes,
             guarded_word: self.lang.guarded_words.first().map(String::as_str),
             hidden_word: self.lang.hidden_words.first().map(String::as_str),
@@ -1456,7 +1585,8 @@ impl<'a> Engine<'a> {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
                         }
-                        Value::Array(a) | Value::Tuple(a) | Value::Set(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
+                        Value::Array(a) | Value::Tuple(a) => items.extend(a.iter().cloned().map(|v| (None, v))),
+                        Value::Set(s) => items.extend(s.borrow().items().into_iter().map(|v| (None, v))),
                         Value::Text(t) => items.extend(t.chars().map(|c| (None, Value::text(&c.to_string())))),
                         Value::Map(m) => items.extend(m.iter().map(|(k, _)| (None, k.clone()))),
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
@@ -1722,7 +1852,12 @@ impl<'a> Engine<'a> {
         if outcome.is_err() {
             self.hushed.set(quiet);
         }
-        outcome
+        match outcome {
+            Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() && (told.starts_with('\0') || told.starts_with("Division by zero") || told.starts_with("Undefined property") || told.starts_with("Cannot read property") || told.starts_with("Array index")) => {
+                match self.as_fault(&told) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)) }
+            }
+            other => other,
+        }
     }
 
     fn run_body(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
@@ -1737,7 +1872,38 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+            other => other,
+        };
+        if let Some(cell) = &plan.context {
+            let object = self.load_cell(cell, frame)?;
+            if !matches!(object, Value::Object(_)) {
+                return ending.map(|end| match end { Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after), other => other });
+            }
+            if matches!(&ending, Err(Fault::Note(_))) || matches!(&ending, Err(Fault::Thrown(value)) if !matches!(value, Value::Object(_))) {
+                return Err(self.lang.special_unready.first().cloned().unwrap_or_default().into());
+            }
+            let args = match &ending {
+                Err(Fault::Thrown(value @ Value::Object(o))) => vec![Value::Class(o.class.clone()), value.clone(), Value::Trace(Rc::from(self.lang.special_unready.first().map_or("", String::as_str)))],
+                _ => vec![Value::Null, Value::Null, Value::Null],
+            };
+            let method = self.special_method(&object, 34).ok_or_else(|| self.special_fault())?;
+            let kept = self.data.len();
+            let mut given = vec![object];
+            given.extend(args);
+            self.invoke(&method, given)?;
+            let answer = self.drop_top()?;
+            self.data.truncate(kept);
+            if matches!(&ending, Err(Fault::Thrown(_))) && self.special_truth(&answer)? {
+                self.data.truncate(depth);
+                return Ok(Passage::Along(plan.after));
+            }
+            return ending.map(|end| match end {
+                Passage::Along(at) if at == plan.body.1 => Passage::Along(plan.after),
+                other => other,
+            });
+        }
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -1758,8 +1924,10 @@ impl<'a> Engine<'a> {
                             match kind {
                                 Value::Blank => {},
                                 Value::Class(class) => {
+                                    if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
                                     if let Value::Object(object) = &raised {
-                                        takes |= object.class.named(&class.name, self.lang.classes_folded);
+                                        takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
+                                            else { Self::exception_beneath(&object.class, &class) };
                                     }
                                 }
                                 _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
@@ -1784,6 +1952,14 @@ impl<'a> Engine<'a> {
             }
             other => other,
         };
+        if !self.lang.exceptions.is_empty() {
+            ending = match ending {
+                Err(Fault::Note(words)) => match self.as_fault(&words) {
+                    Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)),
+                },
+                other => other,
+            };
+        }
         if let Some(last) = plan.last {
             if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
             let saved = self.data.len();
@@ -2135,7 +2311,7 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Skip(to) => {
                     let held = self.drop_top()?;
-                    if !self.truth(&held) {
+                    if !self.special_truth(&held)? {
                         pc = *to;
                         continue;
                     }
@@ -2144,6 +2320,8 @@ impl<'a> Engine<'a> {
                     let bt = self.operand_value(b, frame)?;
                     let at = self.operand_value(a, frame)?;
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
+                    let (av, bv) = (av.clone(), bv.clone());
+                    let (av, bv) = (&av, &bv);
                     let holds = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
                             Action::Lt => x < y,
@@ -2154,7 +2332,7 @@ impl<'a> Engine<'a> {
                             _ => x != y,
                         },
                         _ => {
-                            let told = self.dyadic(op, av, bv)?;
+                            let told = self.special_dyad(op, av, bv)?;
                             self.truth(&told)
                         }
                     };
@@ -2167,6 +2345,8 @@ impl<'a> Engine<'a> {
                     let bt = self.operand_value(b, frame)?;
                     let at = self.operand_value(a, frame)?;
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
+                    let (av, bv) = (av.clone(), bv.clone());
+                    let (av, bv) = (&av, &bv);
                     let fast = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
                             Action::Add => x.checked_add(*y).map(Value::Small),
@@ -2186,7 +2366,7 @@ impl<'a> Engine<'a> {
                     };
                     let r = match fast {
                         Some(v) => v,
-                        None => self.dyadic(op, av, bv)?,
+                        None => self.special_dyad(op, av, bv)?,
                     };
                     self.data.push(r);
                 }
@@ -2195,7 +2375,7 @@ impl<'a> Engine<'a> {
                     // read and written the long way.
                     if self.shares_cell(slot, frame) {
                         let held = self.load_cell(slot, frame)?;
-                        let sum = self.dyadic(&Action::Add, &held, by)?;
+                        let sum = self.special_dyad(&Action::Add, &held, by)?;
                         self.store_cell(slot, frame, sum)?;
                         pc += 1;
                         continue;
@@ -2209,7 +2389,7 @@ impl<'a> Engine<'a> {
                         Some(sum) => *cell = Value::Small(sum),
                         None => {
                             let v = cell.clone();
-                            let r = self.dyadic(&Action::Add, &v, by)?;
+                            let r = self.special_dyad(&Action::Add, &v, by)?;
                             self.store_cell(slot, frame, r)?;
                         }
                     }
@@ -2258,6 +2438,355 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn special_key(&mut self, key: &Value) -> Res<Value> {
+        if matches!(key, Value::Object(_)) && !self.lang.class_special.is_empty() {
+            let hash = self.special_builtin(Builtin::Hash, std::slice::from_ref(key))?.ok_or_else(|| self.special_fault())?;
+            return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
+        }
+        Ok(key.clone())
+    }
+
+    fn special_keys_equal(&mut self, a: &Value, b: &Value) -> Res<bool> {
+        let (left, right) = match (a, b) {
+            (Value::Hashed(x), Value::Hashed(y)) => {
+                if !x.1.equals(&y.1) { return Ok(false); }
+                (&x.0, &y.0)
+            }
+            (Value::Hashed(x), y) | (y, Value::Hashed(x)) => {
+                if !matches!(y, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || !x.1.equals(y) { return Ok(false); }
+                (&x.0, y)
+            }
+            _ => return Ok(a.equals(b)),
+        };
+        if matches!((left, right), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(x, y)) { return Ok(true); }
+        let equal = self.special_dyad(&Action::Eq, left, right)?;
+        self.special_truth(&equal)
+    }
+
+    fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
+        let Value::Object(object) = value else { return None };
+        let named = self.lang.class_special.get(place)?;
+        let mut class = Some(&object.class);
+        while let Some(current) = class {
+            if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) { return Some(value.clone()); }
+            if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
+            if place == 8 && self.lang.class_special.get(2).map_or(false, |eq| current.methods.iter().any(|(n, _)| n == eq)) { return Some(Value::Null); }
+            class = current.base.as_ref();
+        }
+        None
+    }
+
+    fn special_method(&self, value: &Value, place: usize) -> Option<Rc<Routine>> {
+        match self.special_value(value, place) { Some(Value::Routine(routine)) => Some(routine), _ => None }
+    }
+
+    fn special_fault(&self) -> String {
+        self.lang.special_amiss.first().cloned().unwrap_or_default()
+    }
+
+    fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        if place == 3 && self.special_value(value, place).is_none() {
+            return match self.special_call(value, 2, args)? {
+                Some(v @ Value::Declined(_)) => Ok(Some(v)),
+                Some(v) => Ok(Some(Value::Flag(!self.special_truth(&v)?))),
+                None => Ok(None),
+            };
+        }
+        let method = match self.special_value(value, place) {
+            None => return Ok(None), Some(Value::Routine(routine)) => routine,
+            _ => return Err(self.special_fault()),
+        };
+        let mut given = vec![value.clone()];
+        given.extend(args);
+        match self.invoke(&method, given) {
+            Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
+            Err(Fault::Note(words)) => Err(words),
+            Err(other) => {
+                self.carried = Some(other);
+                Err(self.special_fault())
+            }
+        }
+    }
+
+    fn holds_object(value: &Value) -> bool {
+        match value {
+            Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) => true,
+            Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => Self::holds_object(&c.borrow()),
+            Value::Tuple(items) | Value::Array(items) => items.iter().any(Self::holds_object),
+            Value::Map(items) => items.iter().any(|(k, v)| Self::holds_object(k) || Self::holds_object(v)),
+            _ => false,
+        }
+    }
+
+    fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        if let Value::Binding(cell) = value { return self.special_text(&cell.borrow(), representation); }
+        if let Value::Collection(cell, quoted) = value { return self.special_text(&cell.borrow(), representation || *quoted); }
+        if matches!(value, Value::Bond(_)) { return self.special_text(&value.contents(), representation); }
+        if let Value::Trace(words) = value { return Err(words.to_string()); }
+        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(self.render(std::slice::from_ref(value))); }
+        if let Value::Object(object) = value {
+            if self.exception_class(&object.class) && self.special_value(value, if representation { 1 } else { 0 }).is_none() {
+                let words = self.wording();
+                return Ok(if representation { value.repr(&words) } else { value.display(&words) });
+            }
+            let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
+            return match self.special_call(value, place, Vec::new())? {
+                Some(Value::Text(text)) => Ok(text.to_string()),
+                Some(_) => Err(self.special_fault()),
+                None => Ok(format!("<{} object>", object.class.name)),
+            };
+        }
+        match value {
+            Value::Hashed(pair) => self.special_text(&pair.0, representation),
+            Value::Fields(object) => {
+                let entries = object.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
+                self.special_text(&Value::Map(Rc::new(entries)), true)
+            }
+            Value::Array(items) => {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.special_text(item, true)?); }
+                Ok(format!("[{}]", parts.join(", ")))
+            }
+            Value::Map(items) => {
+                let mut parts = Vec::new();
+                for (key, item) in items.iter() {
+                    parts.push(format!("{}: {}", self.special_text(key, true)?, self.special_text(item, true)?));
+                }
+                Ok(format!("{{{}}}", parts.join(", ")))
+            }
+            Value::Text(_) if representation => self.rem_repr(value),
+            _ => Ok(value.display(&self.wording())),
+        }
+    }
+
+    fn special_truth(&mut self, value: &Value) -> Res<bool> {
+        if let Value::Fields(o) = value { return Ok(o.fields.borrow().iter().any(|(_, v)| !matches!(v, Value::Blank))); }
+        if matches!(value, Value::Declined(_)) { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
+        if let Some(answer) = self.special_call(value, 9, Vec::new())? {
+            return match answer { Value::Flag(flag) => Ok(flag), _ => Err(self.special_fault()) };
+        }
+        if let Some(answer) = self.special_call(value, 10, Vec::new())? {
+            return match answer {
+                Value::Small(n) if n >= 0 => Ok(n != 0),
+                Value::Huge(n) if *n >= BigInt::from(0) => Ok(*n != BigInt::from(0)),
+                _ => Err(self.special_fault()),
+            };
+        }
+        Ok(self.truth(value))
+    }
+
+    fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(a, Value::Collection(..) | Value::Bond(_)) || matches!(b, Value::Collection(..) | Value::Bond(_)) { return self.special_dyad(op, &a.contents(), &b.contents()); }
+        if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        if let Value::Fields(o) = a {
+            let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
+            return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
+        }
+        let places = match op {
+            Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
+            Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
+            Action::Gt => Some((6, 4)), Action::Ge => Some((7, 5)),
+            Action::Add => Some((18, 26)), Action::Sub => Some((19, 27)),
+            Action::Mul => Some((20, 28)), Action::Div | Action::DivReal => Some((21, 29)),
+            Action::IntDiv => Some((22, 30)), Action::Mod => Some((23, 31)),
+            Action::Power => Some((24, 32)),
+            Action::At | Action::Apart | Action::Toward => Some((11, usize::MAX)),
+            _ => None,
+        };
+        if let Some((direct, reflected)) = places {
+            let first_right = match (a, b) {
+                (Value::Object(left), Value::Object(right)) if left.class.name != right.class.name && right.class.named(&left.class.name, false) => {
+                    if direct < 8 { true } else {
+                        match (self.special_method(a, reflected), self.special_method(b, reflected)) {
+                            (Some(one), Some(two)) => !Rc::ptr_eq(&one, &two),
+                            (None, Some(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+                _ => false,
+            };
+            if first_right {
+                if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? {
+                    if !matches!(answer, Value::Declined(_)) { return Ok(answer); }
+                }
+            }
+            if let Some(answer) = self.special_call(a, direct, vec![b.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
+            let same_class = matches!((a, b), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(&x.class, &y.class));
+            if !first_right && (direct < 8 || !same_class) {
+                if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
+            }
+
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            if let Value::Map(entries) = b {
+                let wanted = self.special_key(a)?;
+                let mut found = false;
+                for (key, _) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = true; break; } }
+                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+            }
+            if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
+                return Ok(Value::Flag(self.special_truth(&answer)? != matches!(op, Action::Lacks)));
+            }
+        }
+        if let (Action::At, Value::Map(entries)) = (op, a) {
+            let wanted = self.special_key(b)?;
+            for (key, value) in entries.iter() {
+                if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
+            }
+        }
+        self.dyadic(op, a, b)
+    }
+
+    fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
+        if self.lang.class_special.is_empty() { return Ok(None); }
+        let first = args.first();
+        if Self::core_builtin(op) && !args.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) { return Ok(None); }
+        if op == Builtin::InstanceOf { return Ok(None); }
+        let answer = match op {
+            Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
+            Builtin::ToText if args.len() == 1 => Value::text(&self.special_text(&args[0], false)?),
+            Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
+            Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Map(_)) => {
+                let Value::Map(entries) = &args[2] else { unreachable!() };
+                let mut entries = entries.as_ref().clone();
+                let key = self.special_key(&args[0])?;
+                let mut found = None;
+                for (at, (old, _)) in entries.iter().enumerate() { if self.special_keys_equal(old, &key)? { found = Some(at); break; } }
+                if let Some(at) = found { entries[at].1 = args[1].clone(); } else { entries.push((key, args[1].clone())); }
+                Value::Map(Rc::new(entries))
+            }
+            Builtin::Erase if args.len() == 2 && matches!(&args[0], Value::Map(_)) => {
+                let Value::Map(entries) = &args[0] else { unreachable!() };
+                let key = self.special_key(&args[1])?;
+                let mut kept = Vec::new();
+                let mut found = false;
+                for (old, value) in entries.iter() {
+                    if self.special_keys_equal(old, &key)? { found = true; } else { kept.push((old.clone(), value.clone())); }
+                }
+                if !found { return Err(self.lang.del_unrun.clone()); }
+                Value::Map(Rc::new(kept))
+            }
+            Builtin::Fetch if args.len() == 2 => self.special_dyad(&Action::At, &args[0], &args[1])?,
+            Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Fields(_)) => {
+                let (Value::Fields(o), Value::Text(key)) = (&args[2], &args[0]) else { return Err(self.special_fault()) };
+                let mut fields = o.fields.borrow_mut();
+                if let Some((_, v)) = fields.iter_mut().find(|(k, _)| k == key.as_ref()) { *v = args[1].clone(); }
+                else { fields.push((key.to_string(), args[1].clone())); }
+                args[2].clone()
+            }
+            Builtin::Length if args.len() == 1 && matches!(&args[0], Value::Fields(_)) => {
+                let Value::Fields(o) = &args[0] else { unreachable!() };
+                Value::Small(o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).count() as i64)
+            }
+            Builtin::Replace if args.len() == 3 && self.special_method(&args[2], 12).is_some() => {
+                self.special_call(&args[2], 12, vec![args[0].clone(), args[1].clone()])?;
+                args[2].clone()
+            }
+            Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
+                let answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
+                match answer {
+                    Value::Small(n) if n >= 0 => Value::Small(n),
+                    Value::Huge(ref n) if **n >= BigInt::from(0) => answer,
+                    _ => return Err(self.special_fault()),
+                }
+            }
+            Builtin::Hash if args.len() == 1 => {
+                if let Some(answer) = self.special_call(&args[0], 8, Vec::new())? {
+                    if !matches!(answer, Value::Small(_) | Value::Huge(_)) { return Err(self.special_fault()); }
+                    answer
+                } else {
+                    match &args[0] {
+                        Value::Object(object) if self.special_method(&args[0], 2).is_none() => Value::Small(object.mark as i64),
+                        Value::Small(_) | Value::Huge(_) => args[0].clone(),
+                        Value::Flag(flag) => Value::Small(i64::from(*flag)),
+                        _ => return Err(self.special_fault()),
+                    }
+                }
+            }
+            Builtin::Sorted if args.len() == 1 => {
+                let mut items = self.special_items(&args[0])?;
+                for next in 1..items.len() {
+                    let mut at = next;
+                    while at > 0 {
+                        let less = self.special_dyad(&Action::Lt, &items[at], &items[at - 1])?;
+                        if !self.special_truth(&less)? { break; }
+                        items.swap(at, at - 1);
+                        at -= 1;
+                    }
+                }
+                Value::array(items)
+            }
+            Builtin::List if args.len() == 1 => {
+                let row = Value::array(self.special_items(&args[0])?);
+                if matches!(args[0], Value::View(_) | Value::Collection(_, true)) { row.held(true) } else { row }
+            },
+            Builtin::Iter if args.len() == 1 => {
+                if matches!(&args[0], Value::Walk(_)) { return Ok(Some(args[0].clone())); }
+                if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? { answer }
+                else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
+            }
+            Builtin::Next if args.len() == 2 => {
+                self.special_step(&args[0])?.unwrap_or_else(|| args[1].clone())
+            }
+            Builtin::Next if args.len() == 1 => {
+                if let Value::Walk(walk) = &args[0] {
+                    let mut walk = walk.borrow_mut();
+                    let Some(value) = walk.0.get(walk.1).cloned() else {
+                        let class = Class { name: self.lang.special_stop.first().cloned().unwrap_or_default(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
+                        self.made += 1;
+                        self.carried = Some(Fault::Thrown(Value::Object(Rc::new(Instance { class: Rc::new(class), fields: RefCell::new(Vec::new()), mark: self.made }))));
+                        return Err(self.lang.special_stop.first().cloned().unwrap_or_default());
+                    };
+                    walk.1 += 1;
+                    value
+                } else { self.special_call(&args[0], 16, Vec::new())?.ok_or_else(|| self.special_fault())? }
+            }
+            Builtin::InstanceOf if args.len() == 2 => {
+                let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
+                Value::Flag(matches!(&args[0], Value::Object(o) if o.class.named(&class.name, false)))
+            }
+            Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
+            _ => return Ok(None),
+        };
+        Ok(Some(answer))
+    }
+
+    fn special_step(&mut self, value: &Value) -> Res<Option<Value>> {
+        if matches!(value, Value::Cursor(_) | Value::Generator(_)) { return self.core_step(value); }
+        if let Value::Walk(walk) = value {
+            let mut walk = walk.borrow_mut();
+            let next = walk.0.get(walk.1).cloned();
+            if next.is_some() { walk.1 += 1; }
+            return Ok(next);
+        }
+        let method = self.special_method(value, 16).ok_or_else(|| self.special_fault())?;
+        match self.invoke(&method, vec![value.clone()]) {
+            Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
+            Err(Fault::Thrown(Value::Object(o))) if self.lang.special_stop.iter().any(|n| o.class.named(n, false)) => Ok(None),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+        }
+    }
+
+    fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+        if let Value::Fields(o) = value {
+            return Ok(o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, _)| Value::text(k)).collect());
+        }
+        if let Value::Walk(walk) = value {
+            let mut walk = walk.borrow_mut();
+            let tail = walk.0[walk.1..].to_vec();
+            walk.1 = walk.0.len();
+            return Ok(tail);
+        }
+        if let Some(iterator) = self.special_call(value, 15, Vec::new())? {
+            let mut items = Vec::new();
+            while let Some(item) = self.special_step(&iterator)? { items.push(item); }
+            return Ok(items);
+        }
+        self.comprehension_items(value)
+    }
+
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         if self.lang.bind_names && matches!(op, Action::Extent | Action::KeyAt | Action::ValueAt
             | Action::WalkFrom | Action::WalkAlone | Action::WalkMore | Action::WalkThis
@@ -2284,11 +2813,11 @@ impl<'a> Engine<'a> {
             }
             Action::Not => {
                 let held = self.drop_top()?;
-                Value::Flag(!self.truth(&held))
+                Value::Flag(!self.special_truth(&held)?)
             }
             Action::AsBool => {
                 let held = self.drop_top()?;
-                Value::Flag(self.truth(&held))
+                Value::Flag(self.special_truth(&held)?)
             }
             // A name worked out while the run goes stands for the
             // binding of that name among the outermost ones, since only
@@ -2413,6 +2942,30 @@ impl<'a> Engine<'a> {
             }
             Action::ForgetWithin => {
                 let named = self.drop_top()?;
+                let holder = self.data.last().cloned().ok_or_else(|| self.special_fault())?;
+                let target = match &holder { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                if let Value::Fields(o) = &target {
+                    let Value::Text(key) = named else { return Err(self.special_fault().into()) };
+                    let mut fields = o.fields.borrow_mut();
+                    let at = fields.iter().position(|(k, _)| k == key.as_ref()).ok_or_else(|| self.special_fault())?;
+                    fields.remove(at);
+                    self.drop_top()?;
+                    self.data.push(Value::Null);
+                    return Ok(());
+                }
+                if matches!(&target, Value::Map(pairs) if pairs.iter().any(|(k, _)| matches!(k, Value::Hashed(_)))) {
+                    let left = self.special_builtin(Builtin::Erase, &[target, named])?.ok_or_else(|| self.special_fault())?;
+                    let Value::Bond(cell) = self.drop_top()? else { return Err(self.special_fault().into()) };
+                    *cell.borrow_mut() = left;
+                    self.data.push(Value::Null);
+                    return Ok(());
+                }
+                if self.special_method(&target, 13).is_some() {
+                    self.drop_top()?;
+                    self.special_call(&target, 13, vec![named])?;
+                    self.data.push(Value::Null);
+                    return Ok(());
+                }
                 let at = self.key_quietly(&named);
                 let holder = self.drop_top()?;
                 let Value::Bond(cell) = holder else {
@@ -2430,7 +2983,7 @@ impl<'a> Engine<'a> {
                         left.remove(i as usize);
                         Value::array(left)
                     }
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+                    Value::Array(items) | Value::Tuple(items) => {
                         let i = as_index(&at)?;
                         Value::Map(Rc::new(
                             items
@@ -2473,6 +3026,7 @@ impl<'a> Engine<'a> {
                 let v = self.drop_top()?;
                 let sp = self.wording();
                 match kind {
+                    Sort::Set => { let items = self.comprehension_items(&v)?; Value::Set(Rc::new(RefCell::new(self.set_from(items)?))) },
                     Sort::Text => Value::text(&v.display(&sp)),
                     Sort::Boolean => Value::Flag(self.truth(&v)),
                     Sort::Null => Value::Null,
@@ -2493,6 +3047,10 @@ impl<'a> Engine<'a> {
                         self.at_real_width(made)
                     }
                 }
+            }
+            Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
+                let v = self.drop_top()?;
+                Value::of_big(!self.whole_bits(&v)?)
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;
@@ -2517,6 +3075,11 @@ impl<'a> Engine<'a> {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
                 if let Value::Imaginary(_, words) = &v { return Err(words.to_string().into()); }
+                if let Some(answer) = self.special_call(&v, 25, Vec::new())? {
+                    self.data.push(answer);
+                    return Ok(());
+                }
+                let v = if self.lang.arithmetic_flags { match v { Value::Flag(b) => Value::Small(i64::from(b)), other => other } } else { v };
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -2599,6 +3162,12 @@ impl<'a> Engine<'a> {
                         let mut given = vec![Value::Object(object)];
                         given.extend(args);
                         self.invoke(&method, given)
+                    }
+                    Value::Object(object) if !self.lang.class_special.is_empty() => {
+                        let args = self.drop_many(argc - 1)?;
+                        let answer = self.special_call(&Value::Object(object), 17, args)?.ok_or_else(|| self.special_fault())?;
+                        self.data.push(answer);
+                        Ok(())
                     }
                     Value::Class(c) if self.lang.explicit_this => {
                         let args = self.drop_many(argc - 1)?;
@@ -2693,6 +3262,7 @@ impl<'a> Engine<'a> {
                         }
                         found
                     }
+                    Value::Set(set) => set.borrow().items(),
                     Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
@@ -2714,7 +3284,11 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                Value::array(self.comprehension_items(&source)?)
+                if matches!(source, Value::Object(_)) { self.data.push(source); return Ok(()); }
+                match self.set_walk(&source) {
+                    Some(walk) => walk,
+                    None => Value::array(self.special_items(&source)?),
+                }
             }
             Action::UnpackCount(wanted) | Action::BindCount(wanted) => {
                 let source = self.drop_top()?;
@@ -2739,23 +3313,44 @@ impl<'a> Engine<'a> {
                 let mut both = self.drop_many(2)?.into_iter();
                 let gathered_so_far = both.next().expect("growing literal").contents();
                 let next = both.next().expect("literal item");
-                if *map {
+                if let Value::Set(cell) = gathered_so_far {
+                    let incoming = if *spread { self.comprehension_items(&next)? } else { vec![next] };
+                    for item in incoming {
+                        if matches!(item, Value::Object(_)) {
+                            let hashed = self.special_key(&item)?;
+                            let prior = cell.borrow().items();
+                            let mut found = false;
+                            for old in prior { if self.special_keys_equal(&old, &hashed)? { found = true; break; } }
+                            if !found { let key = format!("object:{}", cell.borrow().held.len()); cell.borrow_mut().insert(key, hashed); }
+                        } else { cell.borrow_mut().insert(self.set_key(&item)?, item); }
+                    }
+                    Value::Set(cell)
+                } else if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
                     let new_pairs = match (spread, next.contents()) {
                         (true, Value::Map(p)) => p.as_ref().clone(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
-                    for (key, value) in new_pairs { put_key(&mut pairs, key, value); }
+                    for (key, value) in new_pairs {
+                        if self.lang.class_special.is_empty() { put_key(&mut pairs, key, value); continue; }
+                        let key = self.special_key(&key)?;
+                        let mut found = None;
+                        for (at, (old, _)) in pairs.iter().enumerate() {
+                            if self.special_keys_equal(old, &key)? { found = Some(at); break; }
+                        }
+                        if let Some(at) = found { pairs[at].1 = value; } else { pairs.push((key, value)); }
+                    }
                     Value::Map(Rc::new(pairs))
                 } else {
-                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) | Value::Set(a) => a.as_ref().clone(), _ => unreachable!() };
+                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a.as_ref().clone(), _ => unreachable!() };
                     if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
                     Value::array(items)
                 }
             }
             Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
             Action::MakeTuple => Value::Tuple(Rc::new(self.drop_many(argc)?)),
+            Action::MakeSet => Value::Set(Rc::new(RefCell::new(self.set_from(Vec::new())?))),
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
@@ -2768,11 +3363,17 @@ impl<'a> Engine<'a> {
                 let pair = self.drop_many(2)?;
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
+                if self.walked_set(&pair[0])?.is_some() {
+                    let item = self.element(&pair[0], &pair[1], Reading::Plain)?;
+                    self.data.push(item);
+                    return Ok(());
+                }
                 match &pair[0] {
+                    Value::Set(s) => s.borrow().items().get(at).cloned().ok_or_else(|| self.set_said(".missing", &at.to_string()))?,
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => match items.get(at) {
+                    Value::Array(items) | Value::Tuple(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
                         Some(_) => Value::Small(at as i64),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
@@ -2870,6 +3471,12 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = stands else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
+                if self.exception_class(&class) {
+                    if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+                    let object = self.exception_instance(class, args, Value::Null);
+                    self.data.push(object);
+                    return Ok(());
+                }
                 self.made += 1;
                 let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 if self.lang.destructor.is_some() {
@@ -2902,13 +3509,23 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(matches!(held, Value::ValueMethod(_)) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag((!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
                     self.descriptor_read(&d, subject)?
+                }
+                Value::Trace(words) => return Err(words.to_string().into()),
+                Value::Class(c) if self.lang.class_special.get(37).map_or(false, |n| n == name.as_ref()) => Value::text(&c.name),
+                Value::Object(o) if self.lang.class_special.get(35).map_or(false, |n| n == name.as_ref()) => Value::Class(o.class.clone()),
+                Value::Object(o) if self.lang.class_special.get(36).map_or(false, |n| n == name.as_ref()) => {
+                    Value::Fields(o)
+                }
+                Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
+                Value::Text(_) if Lang::spells(&self.lang.format_method, name) => {
+                    return Err(self.lang.fmt_text_format_unready.first().cloned().unwrap_or_default().into());
                 }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -2919,7 +3536,15 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::Object(o) => {
-                    let found = {
+                    let found = if self.exception_class(&o.class) && self.lang.exception_cause.as_deref() == Some(name.as_ref()) {
+                        Some(o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).unwrap_or(Value::Null))
+                    } else if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
+                        let held = o.fields.borrow();
+                        held.iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).or_else(|| {
+                            let args = held.iter().find(|(n, _)| n == "message").map(|(_, v)| vec![v.clone()]).unwrap_or_default();
+                            Some(Value::Tuple(Rc::new(args)))
+                        })
+                    } else {
                         let held = o.fields.borrow();
                         self.member_at(&held, name).map(|at| held[at].1.clone())
                     };
@@ -3015,6 +3640,9 @@ impl<'a> Engine<'a> {
             }
             Action::Plant(name) => {
                 let mut pair = self.drop_many(2)?;
+                if self.lang.class_special.get(35..38).map_or(false, |names| names.iter().any(|n| n == name.as_ref())) {
+                    return Err(self.lang.special_unready.first().cloned().unwrap_or_default().into());
+                }
                 let value = pair.pop().expect("the value");
                 match pair.pop().expect("the object") {
                     Value::Object(o) if self.descriptor_of(&Value::Object(o.clone()), name).map_or(false, |d| matches!(d.as_ref(), Descriptor::Property(..))) => {
@@ -3036,6 +3664,20 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     Value::Object(o) => {
+                        if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
+                            let row = match &value.contents() {
+                                Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
+                                _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+                            };
+                            let mut fields = o.fields.borrow_mut();
+                            for key in [name.as_ref(), "\0arguments"] {
+                                match fields.iter_mut().find(|(n, _)| n == key) {
+                                    Some((_, value)) => *value = row.clone(), None => fields.push((key.into(), row.clone())),
+                                }
+                            }
+                            self.data.push(Value::Null);
+                            return Ok(());
+                        }
                         let taken = {
                             let fields = o.fields.borrow();
                             self.member_at(&fields, name)
@@ -3118,6 +3760,14 @@ impl<'a> Engine<'a> {
                     };
                     self.data.push(result);
                     return Ok(());
+                }
+                if let Value::Text(text) = &subject {
+                    if Lang::spells(&self.lang.format_method, name) {
+                        let args = self.call_items(args)?;
+                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                        self.data.push(Value::text(&writer.template(text, &args)?));
+                        return Ok(());
+                    }
                 }
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
@@ -3261,6 +3911,9 @@ impl<'a> Engine<'a> {
                     answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
                     methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
                 });
+                let class = match self.lang.assert_kind.as_ref().and_then(|n| self.native_exceptions.get(n)) {
+                    Some(Value::Class(native)) => native.clone(), _ => class,
+                };
                 self.made += 1;
                 let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
                     Vec::new()
@@ -3273,14 +3926,32 @@ impl<'a> Engine<'a> {
             }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
-                let mut raised = self.drop_top()?;
+                let cause = if argc == 2 { Some(self.drop_top()?) } else { None };
+                let value = self.drop_top()?;
+                let value = if self.lang.exceptions.is_empty() {
+                    let mut raised = value;
                 if !self.lang.catch_as.is_empty() {
-                    if let Value::Class(class) = raised {
+                    if matches!(raised, Value::Class(_)) && !self.lang.class_special.is_empty() {
+                        self.data.push(raised); self.perform(&Action::Make, 1)?; raised = self.drop_top()?;
+                    } else if let Value::Class(class) = raised {
                         self.made += 1;
                         raised = Value::Object(Rc::new(Instance { class, fields: RefCell::new(Vec::new()), mark: self.made }));
                     }
                 }
-                return Err(Fault::Thrown(raised));
+                    raised
+                } else { self.prepare_raised(value)? };
+                if let (Value::Object(object), Some(cause)) = (&value, cause) {
+                    let cause = self.prepare_raised(cause)?;
+                    if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class)) {
+                        return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
+                    }
+                    if let Some(name) = &self.lang.exception_cause {
+                        let mut fields = object.fields.borrow_mut();
+                        if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = cause; }
+                        else { fields.push((name.clone(), cause)); }
+                    }
+                }
+                return Err(Fault::Thrown(value));
             }
             Action::Titled => match self.drop_top()? {
                 Value::Object(o) => Value::text(&o.class.name),
@@ -3340,11 +4011,43 @@ impl<'a> Engine<'a> {
             }
             // A thing may be its own walk, or may hand another over to
             // be walked in its stead. Either way the walk begins here.
+            Action::ContextEnter => {
+                let object = self.drop_top()?;
+                if matches!(&object, Value::Object(_)) {
+                    if self.special_value(&object, 34).is_none() { return Err(self.special_fault().into()); }
+                    self.special_call(&object, 33, Vec::new())?.ok_or_else(|| self.special_fault())?
+                } else { object }
+            }
+            Action::SettleObjects => {
+                let source = self.drop_top()?;
+                if matches!(source, Value::Set(_)) { self.data.push(source); return Ok(()); }
+                let Value::Array(items) = source else { return Err(self.special_fault().into()) };
+                let mut kept = Vec::new();
+                for item in items.iter() {
+                    if matches!(item, Value::Object(_)) {
+                        let hashed = self.special_key(item)?;
+                        let mut found = false;
+                        for prior in &kept {
+                            if self.special_keys_equal(prior, &hashed)? { found = true; break; }
+                        }
+                        if !found { kept.push(hashed); }
+                        continue;
+                    }
+                    kept.push(item.clone());
+                }
+                Value::array(kept.into_iter().map(|v| match v { Value::Hashed(pair) => pair.0.clone(), other => other }).collect())
+            }
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if let Some(walk) = self.set_walk(&handed) { self.data.push(walk); return Ok(()); }
                 if self.lang.yield_suspends && !matches!(handed, Value::Object(_)) {
                     let walk = self.iterator(handed)?;
                     self.data.push(walk);
+                    return Ok(());
+                }
+                if !self.lang.class_special.is_empty() && matches!(handed, Value::Object(_) | Value::Walk(_)) {
+                    let iterator = self.special_builtin(Builtin::Iter, std::slice::from_ref(&handed))?.ok_or_else(|| self.special_fault())?;
+                    self.data.push(Value::Walking(Rc::new(RefCell::new((iterator, None)))));
                     return Ok(());
                 }
                 // One thing may hand over another that hands over a
@@ -3362,6 +4065,7 @@ impl<'a> Engine<'a> {
                     handed = next;
                 }
                 self.line = stood_on;
+                if let Some(walk) = self.set_walk(&handed) { self.data.push(walk); return Ok(()); }
                 match self.walker(&handed) {
                     Some(_) => {
                         self.walk_asked(&handed, self.lang.walk_rewind.clone())?;
@@ -3420,6 +4124,18 @@ impl<'a> Engine<'a> {
                 if matches!(pair[0], Value::Cursor(_)) {
                     let more = self.core_more(&pair[0])?; self.data.push(Value::Flag(more)); return Ok(());
                 }
+                if let Some(set) = self.walked_set(&pair[0])? {
+                    self.data.push(Value::Flag(as_index(&pair[1]).map_or(false, |at| at < set.borrow().held.len())));
+                    return Ok(());
+                }
+                if let Value::Walking(walk) = &pair[0] {
+                    let iterator = walk.borrow().0.clone();
+                    let answer = self.special_step(&iterator)?;
+                    let more = answer.is_some();
+                    walk.borrow_mut().1 = answer;
+                    self.data.push(Value::Flag(more));
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None if matches!(&pair[0], Value::Counted(_)) => {
@@ -3428,7 +4144,8 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
-                            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.len(),
+                            Value::Array(items) | Value::Tuple(items) => items.len(),
+                            Value::Set(s) => s.borrow().held.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
                             _ => 0,
@@ -3449,6 +4166,10 @@ impl<'a> Engine<'a> {
                     self.data.push(item);
                     return Ok(());
                 }
+                if let Value::Walking(walk) = &pair[0] {
+                    self.data.push(if key { pair[1].clone() } else { walk.borrow().1.clone().ok_or_else(|| self.special_fault())? });
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], named)? {
                     None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else { self.core_step(&pair[0])?.ok_or_else(|| self.core_fault("core.exhausted", ""))? },
                     Some(answer) => answer,
@@ -3465,8 +4186,10 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::Extent => match self.drop_top()? {
+                value @ Value::SetWalk(..) if self.walked_set(&value)?.is_some() => Value::Small(self.walked_set(&value)?.unwrap().borrow().held.len() as i64),
                 Value::Counted(r) => Value::of_big(r.length()),
-                Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
+                Value::Set(set) => Value::Small(set.borrow().held.len() as i64),
+                Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
                 // A language with a word for a warning is told a value
@@ -3493,9 +4216,14 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
+                if self.lang.format_builtin.is_empty() {
                 let rendered = value.string_field(&self.wording(), &specification, &conversion)
                     .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_else(|| "This formatted value is not supported".into()))?;
                 Value::text(&rendered)
+                } else {
+                    let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                    Value::text(&writer.field(&value, &specification, &conversion)?)
+                }
             }
             Action::Builtin(builtin, name) => {
                 if self.data.len() < argc {
@@ -3533,7 +4261,7 @@ impl<'a> Engine<'a> {
             dyadic => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
-                self.dyadic(dyadic, &a, &b)?
+                self.special_dyad(dyadic, &a, &b)?
             }
         };
         self.data.push(self.keep_collection(result));
@@ -3586,7 +4314,7 @@ impl<'a> Engine<'a> {
                 out.push(quote);
                 out
             }
-            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+            Value::Array(items) | Value::Tuple(items) => {
                 let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
             }
@@ -3608,10 +4336,13 @@ impl<'a> Engine<'a> {
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+        if !self.lang.format_builtin.is_empty() {
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments);
+        }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
         let values: Vec<&Value> = match arguments {
-            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().collect(),
+            Value::Array(items) | Value::Tuple(items) => items.iter().collect(),
             one => vec![one],
         };
         let mut used = 0;
@@ -3660,6 +4391,37 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn whole_bits(&self, value: &Value) -> Res<BigInt> {
+        match value {
+            Value::Small(n) => Ok(BigInt::from(*n)),
+            Value::Huge(n) => Ok((**n).clone()),
+            Value::Flag(b) => Ok(BigInt::from(i64::from(*b))),
+            _ => Err(self.lang.bits_integer[0].clone()),
+        }
+    }
+
+    fn wide_bits(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let (left, right) = (self.whole_bits(a)?, self.whole_bits(b)?);
+        let result = match op {
+            Action::BitBoth => left & right,
+            Action::BitEither => left | right,
+            Action::BitOne => left ^ right,
+            _ => {
+                if right < BigInt::from(0) { return Err(self.lang.fault_shift.clone().unwrap_or_default()); }
+                if matches!(op, Action::BitDown) && right >= BigInt::from(left.bits()) {
+                    return Ok(Value::Small(if left < BigInt::from(0) { -1 } else { 0 }));
+                }
+                if left == BigInt::from(0) { return Ok(Value::Small(0)); }
+                let count = right.to_usize().ok_or_else(|| self.lang.bits_beyond[0].clone())?;
+                if matches!(op, Action::BitUp) { left << count } else { left >> count }
+            }
+        };
+        if matches!((a, b), (Value::Flag(_), Value::Flag(_)))
+            && matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne) {
+            Ok(Value::Flag(result != BigInt::from(0)))
+        } else { Ok(Value::of_big(result)) }
+    }
+
     fn mapping_equality(&self, left: &Value, right: &Value) -> bool {
         if let Value::Bond(cell) = left { return self.mapping_equality(&cell.borrow(), right); }
         if let Value::Bond(cell) = right { return self.mapping_equality(left, &cell.borrow()); }
@@ -3676,6 +4438,11 @@ impl<'a> Engine<'a> {
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
+        if self.lang.arithmetic_flags && matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && (matches!(a, Value::Flag(_)) || matches!(b, Value::Flag(_))) {
+            let counted = |v: &Value| match v { Value::Flag(t) => Value::Small(i64::from(*t)), _ => v.clone() };
+            return self.dyadic(op, &counted(a), &counted(b));
+        }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -3685,6 +4452,30 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = b {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
+        }
+        if let Action::SetWrite(how) = op {
+            let plain = match how { 0 => Action::BitEither, 1 => Action::BitBoth, 2 => Action::Sub, _ => Action::BitOne };
+            let answer = self.dyadic(&plain, a, b)?;
+            if let (Value::Set(cell), Value::Set(result)) = (a, &answer) {
+                *cell.borrow_mut() = result.borrow().clone();
+                return Ok(a.clone());
+            }
+            return Ok(answer);
+        }
+        if matches!(a, Value::Set(_)) || matches!(b, Value::Set(_)) {
+            let how = match op { Action::BitEither => Some(0), Action::BitBoth => Some(1), Action::Sub => Some(2), Action::BitOne => Some(3), _ => None };
+            if how.is_some() || matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                let (Value::Set(left), Value::Set(right)) = (a, b) else { return Err(self.set_said(".operands", "")); };
+                let (left, right) = (left.borrow(), right.borrow());
+                if let Some(how) = how { return Ok(Value::Set(Rc::new(RefCell::new(left.combine(&right, how))))); }
+                let answer = match op {
+                    Action::Le => left.beneath(&right),
+                    Action::Lt => left.held.len() < right.held.len() && left.beneath(&right),
+                    Action::Ge => right.beneath(&left),
+                    _ => right.held.len() < left.held.len() && right.beneath(&left),
+                };
+                return Ok(Value::Flag(answer));
+            }
         }
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
@@ -3752,7 +4543,7 @@ impl<'a> Engine<'a> {
                     (one, Value::Text(s)) | (Value::Text(s), one) if nothing(one) => s.is_empty(),
                     (one, other) | (other, one) if nothing(one) && matches!(other, Value::Array(_) | Value::Map(_)) => !self.truth(other) || {
                         match other {
-                            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.is_empty(),
+                            Value::Array(items) | Value::Tuple(items) => items.is_empty(),
                             Value::Map(pairs) => pairs.is_empty(),
                             _ => false,
                         }
@@ -3789,8 +4580,9 @@ impl<'a> Engine<'a> {
                             else { n <= range.start && n > range.stop };
                         inside && delta % &range.step == BigInt::from(0)
                     }),
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().any(|v| Self::member_matches(a, v)),
+                    Value::Array(items) | Value::Tuple(items) => items.iter().any(|v| Self::member_matches(a, v)),
                     Value::Map(items) => items.iter().any(|(key, _)| Self::member_matches(a, key)),
+                    Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
                         _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
@@ -3805,6 +4597,7 @@ impl<'a> Engine<'a> {
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
+                    (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -3908,6 +4701,7 @@ impl<'a> Engine<'a> {
                     Value::of_big(joined)
                 }
             }
+            Action::BitBoth | Action::BitEither | Action::BitOne | Action::BitUp | Action::BitDown if self.lang.bits_unbounded => self.wide_bits(op, a, b)?,
             Action::BitBoth | Action::BitEither | Action::BitOne if matches!(a, Value::Text(_)) && matches!(b, Value::Text(_)) => {
                 let (x, y) = (a.display(&sp), b.display(&sp));
                 let (x, y) = (self.lang.bytes_of(&x), self.lang.bytes_of(&y));
@@ -4055,7 +4849,44 @@ impl<'a> Engine<'a> {
     /// can be made so. Where a language holds its reals to a width, a
     /// whole number meeting a real is brought to that width first, so
     /// that the two are added as such a language adds them.
+    fn real_power(&self, a: &Value, b: &Value) -> Res<Option<Value>> {
+        let as_number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), _ => v.clone() };
+        let (a, b) = (as_number(a), as_number(b));
+        let (Some(x), Some(y)) = (arith::Exact::from_value(&a), arith::Exact::from_value(&b)) else { return Ok(None) };
+        if x.places.is_none() && y.places.is_none() && y.p >= BigInt::from(0) { return Ok(None); }
+        let binary = |v: &Value, e: &arith::Exact| {
+            if matches!(v, Value::Real(r) if r.below && r.p == BigInt::from(0)) { -0.0 }
+            else { crate::value::as_binary(&e.p, &e.q) }
+        };
+        let (left, right) = (binary(&a, &x), binary(&b, &y));
+        if left == 0.0 && right < 0.0 { return Err(self.lang.power_zero[0].clone()); }
+        if left.is_finite() && left < 0.0 && right.is_finite() && right.fract() != 0.0 {
+            return Err(self.lang.power_nonreal[0].clone());
+        }
+        let raised = left.powf(right);
+        if raised.is_infinite() && left.is_finite() && right.is_finite() {
+            return Err(self.lang.power_overflow[0].clone());
+        }
+        Ok(Some(crate::value::real_of(raised, arith::DEFAULT_PLACES)))
+    }
+
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if self.lang.power_real && matches!(op, Action::Power) {
+            if let Some(answer) = self.real_power(a, b)? { return Ok(answer); }
+        }
+        if !self.lang.division_zero.is_empty() && matches!(op, Action::Div | Action::DivReal | Action::IntDiv | Action::Mod) {
+            if arith::Exact::from_value(b).map_or(false, |e| e.p == BigInt::from(0) && e.q != BigInt::from(0)) || matches!(b, Value::Flag(false)) {
+                let real = matches!(a, Value::Real(_)) || matches!(b, Value::Real(_));
+                let words = match (op, real) {
+                    (Action::Mod, true) => &self.lang.remainder_real_zero,
+                    (Action::Mod, false) => return Err(self.lang.fault_modulo.clone().unwrap_or_default()),
+                    (Action::IntDiv, true) => &self.lang.quotient_real_zero,
+                    (Action::IntDiv, false) => &self.lang.quotient_zero,
+                    _ => &self.lang.division_zero,
+                };
+                return Err(words[0].clone());
+            }
+        }
         // A language whose division gives a real may still give a whole
         // number where two whole ones divide evenly, which is what the
         // exact division answers with when they do.
@@ -4102,7 +4933,8 @@ impl<'a> Engine<'a> {
                     Action::Mod => Operation::Remainder,
                     _ => Operation::Raise,
                 };
-                match arith::calculate(calc, a, b) {
+                let result = if self.lang.arithmetic_binary { arith::binary_work(calc, a, b) } else { None };
+                match result.or_else(|| arith::calculate(calc, a, b)) {
                     // A language may tell taking the remainder by
                     // nought apart from dividing by it, and word the
                     // one its own way. The class is the same either
@@ -4151,7 +4983,7 @@ impl<'a> Engine<'a> {
     /// its key where the places are unnamed.
     fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
         match v {
-            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
+            Value::Array(items) | Value::Tuple(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
             Value::Map(pairs) => pairs.as_ref().clone(),
             _ => Vec::new(),
         }
@@ -4349,7 +5181,31 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
-        if matches!(target, Value::Collection(..) | Value::View(_)) { return self.element(&target.contents(), at, how); }
+        if matches!(target, Value::Collection(..) | Value::Bond(_) | Value::View(_)) { return self.element(&target.contents(), at, how); }
+        if let Some(cell) = self.walked_set(target)? {
+            let held = cell.borrow();
+            let index = as_index(at)?;
+            return held.row.get(index).map(|key| held.held[key].clone()).ok_or_else(|| self.set_said(".missing", &index.to_string()));
+        }
+        if !self.lang.exceptions.is_empty() {
+            if let Value::Map(pairs) = target {
+                if !pairs.iter().any(|(key, _)| key.equals(at)) {
+                    return Err(match at {
+                        Value::Text(key) => format!("\0key-text:{key}"),
+                        Value::Small(_) | Value::Huge(_) => format!("\0key-number:{}", at.plain()),
+                        _ => self.lang.exception_unready.clone().unwrap_or_default(),
+                    });
+                }
+            }
+        }
+        if let Value::Tuple(items) = target {
+            if let Value::Slice(parts) = at { return self.read_slice(target, parts); }
+            let index = match at {
+                Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                _ => as_index(at).ok(),
+            };
+            return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| format!("\0{}: {}", self.lang.fault_index.as_deref().unwrap_or(""), self.lang.index_words.as_deref().unwrap_or("")));
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -4435,7 +5291,8 @@ impl<'a> Engine<'a> {
         };
         let (start, stop, step, places) = self.slice_places(parts, items.len())?;
         let replacement = match given.contents() {
-            Value::Array(values) | Value::Tuple(values) | Value::Set(values) => values.as_ref().clone(),
+            Value::Set(items) => items.borrow().items(),
+            Value::Array(values) | Value::Tuple(values) => values.as_ref().clone(),
             Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
             Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
             _ => return Err(self.lang.slice_assign.clone().unwrap_or_default()),
@@ -4506,7 +5363,7 @@ impl<'a> Engine<'a> {
             Err(told) => return absent(told, at),
         };
         match target {
-            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => match items.get(i) {
+            Value::Array(items) | Value::Tuple(items) => match items.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => absent(format!("Array index {} out of bounds (length: {})", i, items.len()), at),
             },
@@ -4559,6 +5416,118 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The walk keeps its first size beside the shared members.
+    fn set_walk(&self, source: &Value) -> Option<Value> {
+        if matches!(source, Value::SetWalk(..)) { return Some(source.clone()); }
+        let Value::Set(cell) = source else { return None };
+        Some(Value::SetWalk(cell.clone(), cell.borrow().held.len()))
+    }
+
+    fn walked_set(&self, value: &Value) -> Res<Option<Rc<RefCell<crate::value::Members>>>> {
+        if let Value::SetWalk(cell, count) = value {
+            if *count != cell.borrow().held.len() { return Err(self.set_said(".changed", "")); }
+            return Ok(Some(cell.clone()));
+        }
+        Ok(None)
+    }
+
+    fn set_said(&self, label: &str, piece: &str) -> String {
+        let words = &self.lang.set_words[&format!("ext.builtin.set{}", label)];
+        format!("{}{}{}", words.first().map_or("", String::as_str), piece, words.get(1).map_or("", String::as_str))
+    }
+
+    fn set_key(&self, value: &Value) -> Res<String> {
+        value.member_key().map_err(|kind| self.set_said(if kind.is_empty() { ".unsupported" } else { ".unhashable" }, kind))
+    }
+
+    fn set_from(&self, items: Vec<Value>) -> Res<crate::value::Members> {
+        let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default());
+        for item in items { set.insert(self.set_key(&item)?, item); }
+        Ok(set)
+    }
+
+    fn set_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Value> {
+        use Builtin::*;
+        if op == SetMake {
+            if args.len() > 1 { return Err(self.set_said(".arguments", "")); }
+            let items = if args.is_empty() { Vec::new() } else { self.comprehension_items(&args[0])? };
+            return Ok(Value::Set(Rc::new(RefCell::new(self.set_from(items)?))));
+        }
+        if op == SetSorted {
+            if args.len() != 1 { return Err(self.set_said(".arguments", "")); }
+            let mut items = self.comprehension_items(&args[0])?;
+            for next in 1..items.len() {
+                let mut at = next;
+                while at > 0 {
+                    let order = match (&items[at], &items[at - 1]) {
+                        (Value::Text(a), Value::Text(b)) => a.cmp(b),
+                        (a, b) => {
+                            let number = |v: &Value| match v { Value::Flag(b) => Value::Small(i64::from(*b)), _ => v.clone() };
+                            arith::order_values(&number(a), &number(b)).ok_or_else(|| self.set_said(".unsortable", ""))?
+                        }
+                    };
+                    if order != std::cmp::Ordering::Less { break; }
+                    items.swap(at, at - 1);
+                    at -= 1;
+                }
+            }
+            return Ok(Value::array(items));
+        }
+        let Some(Value::Set(cell)) = args.first() else { return Err(self.set_said(".operands", "")); };
+        let unary = matches!(op, SetPop | SetClear | SetCopy);
+        let many = matches!(op, SetUpdate | SetUnion | SetIntersection | SetDifference | SetMeetUpdate | SetLessUpdate);
+        if (unary && args.len() != 1) || (!unary && !many && args.len() != 2) {
+            return Err(self.set_said(".arguments", ""));
+        }
+        if matches!(op, SetAdd | SetRemove | SetDiscard) {
+            let key = self.set_key(&args[1])?;
+            if op == SetAdd { cell.borrow_mut().insert(key, args[1].clone()); }
+            else if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
+                return Err(self.set_said(".missing", &args[1].member_text(&self.wording())));
+            }
+            return Ok(Value::Null);
+        }
+        if op == SetPop {
+            let key = cell.borrow().row.first().cloned().ok_or_else(|| self.set_said(".empty", ""))?;
+            return Ok(cell.borrow_mut().remove(&key).unwrap());
+        }
+        if op == SetClear {
+            let mut set = cell.borrow_mut();
+            set.row.clear();
+            set.held.clear();
+            return Ok(Value::Null);
+        }
+        if op == SetUpdate {
+            for source in &args[1..] {
+                for item in self.comprehension_items(source)? { cell.borrow_mut().insert(self.set_key(&item)?, item); }
+            }
+            return Ok(Value::Null);
+        }
+        let mut result = cell.borrow().clone();
+        for other in &args[1..] {
+            let items = self.comprehension_items(other)?;
+            let rhs = self.set_from(items)?;
+            let comparison = match op {
+                SetSubset => Some(result.beneath(&rhs)),
+                SetSuperset => Some(rhs.beneath(&result)),
+                SetDisjoint => Some(result.held.keys().all(|k| !rhs.held.contains_key(k))),
+                _ => None,
+            };
+            if let Some(answer) = comparison { return Ok(Value::Flag(answer)); }
+            let how = match op {
+                SetIntersection | SetMeetUpdate => 1,
+                SetDifference | SetLessUpdate => 2,
+                SetSymmetric | SetXorUpdate => 3,
+                _ => 0,
+            };
+            result = result.combine(&rhs, how);
+        }
+        if matches!(op, SetUpdate | SetMeetUpdate | SetLessUpdate | SetXorUpdate) {
+            *cell.borrow_mut() = result;
+            Ok(Value::Null)
+        } else { Ok(Value::Set(Rc::new(RefCell::new(result)))) }
+    }
+
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         match value {
@@ -4567,11 +5536,12 @@ impl<'a> Engine<'a> {
                 while let Some(item) = self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? { items.push(item); }
                 Ok(items)
             }
-            Value::Set(items) | Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Collection(cell, _) => self.comprehension_items(&cell.borrow()),
             Value::View(_) => self.comprehension_items(&value.contents()),
             Value::Cursor(_) => self.core_members(value),
-            Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
+            Value::Set(s) => Ok(s.borrow().items()),
+            Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| match k { Value::Hashed(p) => p.0.clone(), _ => k.clone() }).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
                 let mut items = Vec::new();
@@ -4659,7 +5629,9 @@ impl<'a> Engine<'a> {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
             }
-            let text = args.iter().map(|v| self.render(std::slice::from_ref(v))).collect::<Vec<_>>().join(&between) + &ending;
+            let mut parts = Vec::new();
+            for value in &args { parts.push(self.special_text(value, false)?); }
+            let text = parts.join(&between) + &ending;
             if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
@@ -4686,6 +5658,14 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if matches!(receiver.contents(), Value::Set(_)) {
+            let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None };
+            if let Some(method) = method {
+                if !named.is_empty() { return Err(self.set_said(".arguments", "")); }
+                let mut given = vec![receiver.contents()]; given.extend(args);
+                return self.set_builtin(method, &given);
+            }
+        }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
@@ -4762,6 +5742,11 @@ impl<'a> Engine<'a> {
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
             return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
         };
+        let invalid = || {
+            if self.lang.integer_text_detail.len() == 2 {
+                format!("{}{}{}{}", self.lang.integer_text_detail[0], base, self.lang.integer_text_detail[1], self.rem_repr(value).unwrap_or_default())
+            } else { self.lang.to_int_text_amiss[0].clone() }
+        };
         let text = text.trim();
         let (minus, digits) = if let Some(tail) = text.strip_prefix('-') { (true, tail) }
             else { (false, text.strip_prefix('+').unwrap_or(text)) };
@@ -4775,9 +5760,9 @@ impl<'a> Engine<'a> {
             && digits.chars().all(|c| c == '_' || c.is_ascii() && c.is_digit(radix));
         let cleaned = digits.replace('_', "");
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
-            return Err(self.lang.to_int_text_amiss[0].clone());
+            return Err(invalid());
         }
-        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(|| self.lang.to_int_text_amiss[0].clone())?;
+        let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
         Ok(Value::of_big(if minus { -whole } else { whole }))
     }
 
@@ -4858,6 +5843,7 @@ impl<'a> Engine<'a> {
             }
         }
         if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
+        if let Some(answer) = self.special_builtin(builtin, args)? { return Ok(answer); }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
@@ -4870,6 +5856,17 @@ impl<'a> Engine<'a> {
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
+            Builtin::SetMake | Builtin::SetAdd | Builtin::SetRemove | Builtin::SetDiscard | Builtin::SetPop | Builtin::SetClear | Builtin::SetCopy | Builtin::SetUpdate | Builtin::SetUnion | Builtin::SetIntersection | Builtin::SetDifference | Builtin::SetSymmetric | Builtin::SetSubset | Builtin::SetSuperset | Builtin::SetDisjoint | Builtin::SetMeetUpdate | Builtin::SetLessUpdate | Builtin::SetXorUpdate | Builtin::SetSorted => self.set_builtin(builtin, args)?,
+            Builtin::Format => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
+                let writer = crate::formatting::Writer { lang: self.lang, words: sp };
+                let spec = match args.get(1) {
+                    None => "",
+                    Some(Value::Text(s)) => s.as_ref(),
+                    Some(v) => return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(v)])),
+                };
+                Value::text(&writer.field(&args[0], spec, "")?)
+            }
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -5471,24 +6468,33 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
-                if let Some(number) = text.trim().to_ascii_lowercase().parse::<f64>().ok().filter(|n| !n.is_finite()) {
-                    return Ok(crate::value::outside_number(number, arith::DEFAULT_PLACES));
+                let plain = text.trim().to_ascii_lowercase();
+                let unsigned = plain.strip_prefix(['+', '-']).unwrap_or(&plain);
+                if Lang::spells(&self.lang.infinity_words, unsigned) || Lang::spells(&self.lang.nan_words, unsigned) {
+                    let special = if Lang::spells(&self.lang.nan_words, unsigned) { f64::NAN }
+                        else if plain.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+                    return Ok(crate::value::real_of(special, arith::DEFAULT_PLACES));
                 }
                 let number = number_spelled(text).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?;
-                arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?
+                self.at_real_width(arith::to_real(&number, arith::DEFAULT_PLACES).ok_or_else(|| self.lang.to_real_text_amiss[0].clone())?)
+            }
+            Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
+                let Value::Flag(b) = args[0] else { unreachable!() };
+                arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
             }
             Builtin::AsReal => {
                 arity(1)?;
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
-                    v => arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?,
+                    v => self.at_real_width(arith::to_real(v, arith::DEFAULT_PLACES).ok_or_else(|| format!("{}() requires a number argument", name))?),
                 }
             }
             Builtin::Length => {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
+                    Value::Array(items) | Value::Tuple(items) => Value::Small(items.len() as i64),
+                    Value::Set(s) => Value::Small(s.borrow().held.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -5672,7 +6678,7 @@ impl<'a> Engine<'a> {
                         Value::Array(items)
                     }
                     // Any other key makes it a map, its places the keys.
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+                    Value::Array(items) | Value::Tuple(items) => {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
                         self.replace_item(&mut pairs, at, v);
@@ -5704,7 +6710,7 @@ impl<'a> Engine<'a> {
                 };
                 let mut kept: Vec<(Value, Value)> = args.drain(..).map(|v| (number(), v)).collect();
                 match target {
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => kept.extend(items.iter().map(|v| (number(), v.clone()))),
+                    Value::Array(items) | Value::Tuple(items) => kept.extend(items.iter().map(|v| (number(), v.clone()))),
                     Value::Map(pairs) => kept.extend(pairs.iter().map(|(k, v)| match k {
                         Value::Text(_) => (k.clone(), v.clone()),
                         _ => (number(), v.clone()),
@@ -5733,7 +6739,7 @@ impl<'a> Engine<'a> {
                         left.remove(i as usize);
                         Value::array(left)
                     }
-                    Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+                    Value::Array(items) | Value::Tuple(items) => {
                         let i = as_index(&at)?;
                         let kept: Vec<(Value, Value)> = items
                             .iter()
@@ -5861,7 +6867,7 @@ fn text_width(s: &str, as_bytes: bool) -> usize {
 fn one_after_another(v: &Value) -> Vec<Value> {
     match v {
         Value::Bond(shared) => one_after_another(&shared.borrow()),
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.as_ref().clone(),
+        Value::Array(items) | Value::Tuple(items) => items.as_ref().clone(),
         Value::Map(pairs) => pairs.iter().map(|(_, worth)| worth.clone()).collect(),
         _ => Vec::new(),
     }
@@ -5873,7 +6879,7 @@ fn named_pairs(v: &Value) -> Vec<(Value, Value)> {
     match v {
         Value::Bond(shared) => named_pairs(&shared.borrow()),
         Value::Map(pairs) => pairs.as_ref().clone(),
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items
+        Value::Array(items) | Value::Tuple(items) => items
             .iter()
             .enumerate()
             .map(|(at, worth)| (Value::Small(at as i64), worth.clone()))
@@ -5904,7 +6910,7 @@ fn dumped(v: &Value, depth: usize, binary_reals: bool, sp: &Wording) -> String {
         Value::Real(_) | Value::Frac(_) => format!("float({})", v.plain()),
         Value::Text(s) => format!("string({}) \"{}\"", text_width(s, sp.text_is_bytes), s),
         Value::Flag(b) => format!("bool({})", b),
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+        Value::Array(items) | Value::Tuple(items) => {
             let mut out = format!("array({}) {{\n", items.len());
             for (i, item) in items.iter().enumerate() {
                 out.push_str(&format!("{pad}  [{i}]=>\n{pad}  {}{}\n", shared(item), dumped(item, depth + 1, binary_reals, sp)));
@@ -6029,7 +7035,7 @@ fn standing(v: &Value) -> bool {
 fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
     let held;
     let (what, pairs): (String, Vec<(String, &Value)>) = match v {
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
+        Value::Array(items) | Value::Tuple(items) => ("Array".to_string(), items.iter().enumerate().map(|(i, x)| (i.to_string(), x)).collect()),
         Value::Map(entries) => ("Array".to_string(), entries.iter().map(|(k, x)| (k.display(sp), x)).collect()),
         Value::Object(thing) => {
             held = thing.fields.borrow();
@@ -6057,7 +7063,7 @@ fn laid_out(v: &Value, indent: usize, sp: &Wording) -> String {
 fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usize> {
     let same = |v: &Value| matches!(v, Value::Bond(other) if Rc::ptr_eq(other, cell));
     let held: &[Value] = match walked {
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items,
+        Value::Array(items) | Value::Tuple(items) => items,
         Value::Map(pairs) => {
             if pairs.get(was).map_or(false, |(_, v)| same(v)) {
                 return Some(was);
@@ -6093,7 +7099,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
         return Ok(shared);
     }
     let place: &mut Value = match held {
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+        Value::Array(items) | Value::Tuple(items) => {
             let i = as_index(at)?;
             let items = Rc::make_mut(items);
             match items.get_mut(i) {
@@ -6160,7 +7166,7 @@ fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut
         *held = Value::Map(Rc::new(spread));
     }
     let place: &mut Value = match held {
-        Value::Array(items) | Value::Tuple(items) | Value::Set(items) => {
+        Value::Array(items) | Value::Tuple(items) => {
             let i = as_index(at)?;
             let items = Rc::make_mut(items);
             let reach = items.len();
@@ -6519,6 +7525,7 @@ impl Engine<'_> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
         for value in &mut args { *value = value.contents(); }
+        if named.is_empty() { if let Some(value) = self.special_builtin(b, &args)? { return Ok(value); } }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
         let mut reverse = false;
@@ -6565,7 +7572,8 @@ impl Engine<'_> {
             Builtin::Identity => {
                 arity(1, 1)?;
                 let id = match &args[0] {
-                    Value::Array(a) | Value::Tuple(a) | Value::Set(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Array(a) | Value::Tuple(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
                     Value::Object(a) => Rc::as_ptr(a) as usize as u64,
@@ -6592,7 +7600,7 @@ impl Engine<'_> {
                     for v in items { if v.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &v.core_kind())); } if !unique.iter().any(|x: &Value| number(x).equals(&number(&v))) { unique.push(v); } }
                     items = unique;
                 }
-                if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(items)) }
+                if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(RefCell::new(self.set_from(items)?))) }
             }
             Builtin::Dict => {
                 arity(0, 1)?;

@@ -51,8 +51,7 @@ impl Value {
             }
             Value::Array(a) => format!("[{}]", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", ")),
             Value::Tuple(a) => format!("({}{})", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" }),
-            Value::Set(a) if a.is_empty() => "set()".into(),
-            Value::Set(a) => format!("{{{}}}", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", ")),
+            Value::Set(a) => a.borrow().show(Value::core_repr),
             Value::Map(a) => format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(), v.core_repr())).collect::<Vec<_>>().join(", ")),
             Value::Null => "None".into(),
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),

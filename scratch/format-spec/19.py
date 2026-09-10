@@ -1,0 +1,1 @@
+print("%i" % float("inf"))

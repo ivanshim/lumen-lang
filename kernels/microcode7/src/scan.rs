@@ -974,7 +974,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             pos = k;
             continue;
         }
-        if c.is_ascii_digit() || ((table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge"))
+        if c.is_ascii_digit() || ((table.flag("ext.lexical.number.point.open") || table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || table.flag("ext.lexical.number.point_open"))
             && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit))
         {
             let strict = table.flag("ext.lexical.number.separator.strict");
@@ -1007,7 +1007,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
                     }
                 }
             } else {
-                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
+                if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.open") || table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || table.flag("ext.lexical.number.point_open") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
                     k += 1;
                     while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
                         k += 1;

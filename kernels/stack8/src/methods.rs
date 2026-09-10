@@ -40,6 +40,7 @@ fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) ->
 
 pub fn members(v: &Value, fault: &dyn Fn(&str) -> String) -> Result<Vec<Value>, String> {
     match v.contents() {
+        Value::Set(items) => Ok(items.borrow().items()),
         Value::Array(a) | Value::Tuple(a) => Ok(a.as_ref().clone()),
         Value::Map(p) => Ok(p.iter().map(|(k, _)| k.clone()).collect()),
         Value::Text(s) => Ok(s.chars().map(|c| Value::text(&c.to_string())).collect()),

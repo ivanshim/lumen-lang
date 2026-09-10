@@ -256,7 +256,11 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
 }
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool) -> Res<Built> {
-    let top = Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let mut beginnings = seeded.to_vec();
+    for word in table.strings("ext.builtin.exceptions") {
+        if !beginnings.contains(word) { beginnings.push(word.clone()); }
+    }
+    let top = Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -1489,12 +1493,13 @@ impl<'a> Builder<'a> {
                 {
                     return Ok(Form::Again);
                 }
-                let raised = self.expr(0)?;
+                let mut values = vec![self.expr(0)?];
                 if self.key("ext.stmt.throw.from") {
                     self.advance();
-                    let _cause = self.expr(0)?;
+                    let cause = self.expr(0)?;
+                    if self.table.has_any("ext.builtin.exceptions") { values.push(cause); }
                 }
-                return Ok(prim_call(Prim::Hurl, vec![raised]));
+                return Ok(prim_call(Prim::Hurl, values));
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
@@ -1702,8 +1707,19 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.advance(); }
         let mut steps = Vec::new();
+        let mut contexts = Vec::new();
         loop {
-            let value = self.expr(0)?;
+            let mut value = self.expr(0)?;
+            if table.strings("ext.stmt.class.special").get(33).is_some() {
+                let manager = self.gensym("manager");
+                let manager_read = Form::Read(manager.clone());
+                steps.push(Form::Write(manager.clone(), Box::new(value)));
+                value = prim_call(Prim::StartContext, vec![manager_read]);
+                let entered = self.gensym("entered");
+                steps.push(Form::Write(entered.clone(), Box::new(value)));
+                value = Form::Read(entered);
+                contexts.push((steps.len(), manager));
+            }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
@@ -1717,6 +1733,10 @@ impl<'a> Builder<'a> {
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
         steps.push(self.body()?);
+        for (from, manager) in contexts.into_iter().rev() {
+            let enclosed = sequence(steps.split_off(from));
+            steps.push(Form::Attempt { context: Some(manager), body: Box::new(enclosed), clauses: Vec::new(), last: None, otherwise: None });
+        }
         Ok(sequence(steps))
     }
 
@@ -1838,6 +1858,20 @@ impl<'a> Builder<'a> {
                 place = self.called_on_value(place)?;
             } else if self.on_any("op.index.open") {
                 self.advance();
+                if self.table.has_any("ext.stmt.class.special") && self.table.has_any("ext.op.index.slice") {
+                    let end = self.table.single("op.index.close").unwrap().to_owned();
+                    let separator = self.table.single("syntax.call.separator").map(str::to_owned);
+                    let key = self.bracket_part(&end, separator.as_deref())?;
+                    while separator.as_ref().map_or(false, |word| self.sign(word)) {
+                        self.unsupported_place = true;
+                        self.advance();
+                        if self.sign(&end) { break; }
+                        self.bracket_part(&end, separator.as_deref())?;
+                    }
+                    self.need_sign(&end, "after the index")?;
+                    place = prim_call(Prim::At, vec![place, key]);
+                    continue;
+                }
                 let mut indices = Vec::new();
                 let mut special = false;
                 while !self.on_any("op.index.close") && !self.exhausted() {
@@ -2092,7 +2126,7 @@ impl<'a> Builder<'a> {
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
             return Err("A try needs a catch or a last part".to_string());
         }
-        Ok(Form::Attempt { body: Box::new(body), clauses, last, otherwise })
+        Ok(Form::Attempt { context: None, body: Box::new(body), clauses, last, otherwise })
     }
 
     /// A class and what it holds: properties, constants, values kept by
@@ -4437,7 +4471,15 @@ impl<'a> Builder<'a> {
         let read = self.expr_at(0, false);
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
-        let expr = read?;
+        let mut expr = read?;
+        if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
+            if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.lexeme)) {
+                let assignment = self.pos;
+                self.pos = began;
+                expr = self.deletion_place()?;
+                self.pos = assignment;
+            }
+        }
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
             && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
         if self.table.flag("ext.stmt.assign.chain") && follows(self) {
@@ -4505,6 +4547,9 @@ impl<'a> Builder<'a> {
     /// in a cell of its own and given back once the writing is done.
     fn written(&mut self, expr: Form, gives_back: bool) -> Res<Form> {
         let compound = if self.look().shape == Shape::Sign { self.table.compound.get(&self.look().lexeme).copied() } else { None };
+        let compound = if self.table.flag("ext.syntax.set") {
+            compound.map(|p| match p { Prim::BitsBoth => Prim::SetAssign(1), Prim::Minus => Prim::SetAssign(2), Prim::BitsEither => Prim::SetAssign(0), Prim::BitsOne => Prim::SetAssign(3), p => p })
+        } else { compound };
         let assign = self.advance();
         let refused_tuple = matches!(&expr, Form::Apply(Callee::Prim(Prim::Raise, _), parts)
             if matches!(parts.as_slice(), [Form::Const(Value::Text(words))]
@@ -5126,15 +5171,27 @@ impl<'a> Builder<'a> {
                     continue;
                 }
                 let mut args = vec![left];
+                let mut invoked = false;
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
                         self.advance();
+                        invoked = true;
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
                 if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|label| table.spells(label, &name)) {
                     args.insert(1, constant(Value::text(&name)));
                     left = prim_call(Prim::Ask, args);
+                } else if matches!(table.prims.get(&name), Some(Prim::SetCall(1..=17))) {
+                left = match table.prims.get(&name).copied() {
+                    Some(Prim::SetCall(1..=17)) if !invoked => {
+                        let words = table.single("ext.builtin.set.method.unavailable").unwrap_or_default();
+                        args.push(prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+                        sequence(args)
+                    }
+                    Some(op @ Prim::SetCall(1..=17)) => Form::Apply(Callee::Prim(op, Rc::from(name.as_str())), args),
+                    _ => self.named_call(&name, args)?,
+                };
                 } else {
                 let mutation = matches!(table.prims.get(&name), Some(Prim::Append) | Some(Prim::Replace));
                 left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
@@ -5359,6 +5416,18 @@ impl<'a> Builder<'a> {
             }
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
+        if table.spells("ext.stmt.class.special.declined", &t.lexeme) {
+            self.advance();
+            return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
+        }
+        if table.spells("ext.stmt.class.special.stop", &t.lexeme) && !table.spells("ext.builtin.exceptions", &t.lexeme) {
+            self.advance();
+            let plan = crate::data::Blueprint {
+                name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![],
+            };
+            return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
+        }
         if table.spells("ext.literal.ellipsis", &t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
@@ -5480,6 +5549,10 @@ impl<'a> Builder<'a> {
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
                 let open = table.single("syntax.call.open").ok_or("A parent call needs brackets")?;
+                if !self.sign(open) {
+                    let unavailable = self.class_not_ready();
+                    return self.subscript(unavailable);
+                }
                 self.need_sign(open, "after the parent word")?;
                 let extra = self.args("syntax.call.close", "syntax.call.separator")?;
                 let base = self.within.as_ref().and_then(|(_, b)| b.clone());
@@ -6232,7 +6305,7 @@ impl<'a> Builder<'a> {
             let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
                 && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
                     && table.spells("syntax.group.close", &token.lexeme)));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
+            if reaching && table.flag("ext.op.member.pipes") && !table.spells("ext.text.format", &named) && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
@@ -6261,6 +6334,10 @@ impl<'a> Builder<'a> {
                     if table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|key| table.spells(key, &named)) {
                         args.insert(1, constant(Value::text(&named)));
                         return Ok(prim_call(Prim::Ask, args));
+                    }
+                    if let Some(op @ Prim::SetCall(1..=17)) = table.prims.get(&named).copied() {
+                        return Ok(if calling { Form::Apply(Callee::Prim(op, Rc::from(named.as_str())), args) }
+                            else { prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]) });
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
@@ -6434,7 +6511,7 @@ impl<'a> Builder<'a> {
         if let Some(next) = self.ahead_in_item("ext.op.comprehension.for") {
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else { Prim::MakeArray }, vec![]);
+        let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
             if spreading { self.advance(); }
@@ -6449,6 +6526,7 @@ impl<'a> Builder<'a> {
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
+        if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { value = prim_call(Prim::DistinctObjects, vec![value]); }
         Ok(value)
     }
 
@@ -6490,7 +6568,7 @@ impl<'a> Builder<'a> {
         self.pos = first_for;
         let old_names = self.gather_names.len();
         let name = self.gather_name("gathered");
-        let empty = prim_call(if dictionary { Prim::MakeMap } else { Prim::MakeArray }, Vec::new());
+        let empty = prim_call(if dictionary { Prim::MakeMap } else if self.table.flag("ext.syntax.set") && self.table.spells("syntax.map.close", end) { Prim::EmptySet } else { Prim::MakeArray }, Vec::new());
         let start = self.write(&name, empty);
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
@@ -6718,7 +6796,7 @@ impl<'a> Builder<'a> {
     }
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
-        match self.table.prims.get(name).copied() {
+        match self.table.prims.get(name).copied().filter(|op| !matches!(op, Prim::SetCall(1..=17))) {
             // What is put in front of may be a name standing for a
             // shared cell, since the library of a language may spell it
             // as a routine taking one, so the place it names is looked
@@ -7407,7 +7485,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge")) {
+            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.open") || table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || table.flag("ext.lexical.number.point_open")) {
                 (true, true) => BigInt::from(0),
                 _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
             };
@@ -7499,7 +7577,7 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
             Input::Address(place) => uses(place), Input::Form(form) => borrows_enclosing(form, names), _ => false,
         }),
         Form::Assert { condition, message } => borrows_enclosing(condition, names) || borrows_enclosing(message, names),
-        Form::Attempt { body, clauses, last, otherwise } => borrows_enclosing(body, names)
+        Form::Attempt { body, clauses, last, otherwise, .. } => borrows_enclosing(body, names)
             || clauses.iter().any(|clause| borrows_enclosing(&clause.body, names))
             || last.as_deref().map_or(false, |part| borrows_enclosing(part, names)) || otherwise.as_deref().map_or(false, |part| borrows_enclosing(part, names)),
         _ => false,

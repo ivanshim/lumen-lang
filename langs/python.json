@@ -352,6 +352,9 @@
   "ext.builtin.callable": [
     "callable"
   ],
+  "ext.builtin.class.name": [
+    "__name__"
+  ],
   "ext.builtin.core.arity": [
     "TypeError: ",
     "() received invalid arguments"
@@ -465,8 +468,45 @@
   "ext.builtin.enumerate": [
     "enumerate"
   ],
+  "ext.builtin.exceptions": [
+    "BaseException",
+    "Exception",
+    "ArithmeticError",
+    "ZeroDivisionError",
+    "OverflowError",
+    "LookupError",
+    "IndexError",
+    "KeyError",
+    "TypeError",
+    "ValueError",
+    "NameError",
+    "UnboundLocalError",
+    "AttributeError",
+    "RuntimeError",
+    "NotImplementedError",
+    "StopIteration",
+    "AssertionError",
+    "SystemExit",
+    "KeyboardInterrupt",
+    "ImportError",
+    "OSError",
+    "RecursionError",
+    "UnicodeError"
+  ],
+  "ext.builtin.exceptions.args": [
+    "args"
+  ],
+  "ext.builtin.exceptions.cause": [
+    "__cause__"
+  ],
+  "ext.builtin.exceptions.unready": [
+    "NotImplementedError: this exception operation cannot run yet"
+  ],
   "ext.builtin.filter": [
     "filter"
+  ],
+  "ext.builtin.format": [
+    "format"
   ],
   "ext.builtin.getattr": [
     "getattr"
@@ -805,7 +845,90 @@
     "number"
   ],
   "ext.builtin.set": [
-    "set"
+    "set",
+    "frozenset"
+  ],
+  "ext.builtin.set.add": [
+    "add"
+  ],
+  "ext.builtin.set.arguments": [
+    "TypeError: invalid arguments to set operation"
+  ],
+  "ext.builtin.set.changed": [
+    "RuntimeError: Set changed size during iteration"
+  ],
+  "ext.builtin.set.clear": [
+    "clear"
+  ],
+  "ext.builtin.set.copy": [
+    "copy"
+  ],
+  "ext.builtin.set.difference": [
+    "difference"
+  ],
+  "ext.builtin.set.difference_update": [
+    "difference_update"
+  ],
+  "ext.builtin.set.discard": [
+    "discard"
+  ],
+  "ext.builtin.set.empty": [
+    "KeyError: 'pop from an empty set'"
+  ],
+  "ext.builtin.set.intersection": [
+    "intersection"
+  ],
+  "ext.builtin.set.intersection_update": [
+    "intersection_update"
+  ],
+  "ext.builtin.set.isdisjoint": [
+    "isdisjoint"
+  ],
+  "ext.builtin.set.issubset": [
+    "issubset"
+  ],
+  "ext.builtin.set.issuperset": [
+    "issuperset"
+  ],
+  "ext.builtin.set.method.unavailable": [
+    "NotImplementedError: bound set methods are not provided"
+  ],
+  "ext.builtin.set.missing": [
+    "KeyError: "
+  ],
+  "ext.builtin.set.operands": [
+    "TypeError: set operands must be sets"
+  ],
+  "ext.builtin.set.pop": [
+    "pop"
+  ],
+  "ext.builtin.set.remove": [
+    "remove"
+  ],
+  "ext.builtin.set.sorted": [
+    "sorted"
+  ],
+  "ext.builtin.set.symmetric_difference": [
+    "symmetric_difference"
+  ],
+  "ext.builtin.set.symmetric_difference_update": [
+    "symmetric_difference_update"
+  ],
+  "ext.builtin.set.unhashable": [
+    "TypeError: unhashable type: '",
+    "'"
+  ],
+  "ext.builtin.set.union": [
+    "union"
+  ],
+  "ext.builtin.set.unsortable": [
+    "TypeError: set members cannot be ordered"
+  ],
+  "ext.builtin.set.unsupported": [
+    "NotImplementedError: hashing this value is not provided"
+  ],
+  "ext.builtin.set.update": [
+    "update"
   ],
   "ext.builtin.setattr": [
     "setattr"
@@ -831,8 +954,19 @@
   "ext.builtin.to_int.text.amiss": [
     "ValueError: invalid literal for int()"
   ],
+  "ext.builtin.to_int.text.detail": [
+    "ValueError: invalid literal for int() with base ",
+    ": "
+  ],
   "ext.builtin.to_int.text.required": [
     "TypeError: int() can't convert non-string with explicit base"
+  ],
+  "ext.builtin.to_real.infinity": [
+    "inf",
+    "infinity"
+  ],
+  "ext.builtin.to_real.nan": [
+    "nan"
   ],
   "ext.builtin.to_real.text": true,
   "ext.builtin.to_real.text.amiss": [
@@ -962,7 +1096,9 @@
     "0O"
   ],
   "ext.lexical.number.point.bare": true,
+  "ext.lexical.number.point.open": true,
   "ext.lexical.number.point_edge": true,
+  "ext.lexical.number.point_open": true,
   "ext.lexical.number.separator": [
     "_"
   ],
@@ -1019,6 +1155,8 @@
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"
   ],
+  "ext.op.arithmetic.binary": true,
+  "ext.op.arithmetic.flags": true,
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="
@@ -1029,6 +1167,12 @@
   ],
   "ext.op.bit.and": [
     "&"
+  ],
+  "ext.op.bit.beyond": [
+    "OverflowError: too many digits in integer"
+  ],
+  "ext.op.bit.integer": [
+    "TypeError: bitwise operations require integers"
   ],
   "ext.op.bit.left": [
     "<<"
@@ -1049,6 +1193,7 @@
   "ext.op.bit.right": [
     ">>"
   ],
+  "ext.op.bit.unbounded": true,
   "ext.op.bit.whole": true,
   "ext.op.bit.whole.amiss": [
     "TypeError: bit operations require integers"
@@ -1085,6 +1230,9 @@
     "ValueError: comprehension target has the wrong number of values"
   ],
   "ext.op.contains": [],
+  "ext.op.div.zero": [
+    "ZeroDivisionError: division by zero"
+  ],
   "ext.op.eq.maps.unordered": true,
   "ext.op.identical": [
     "is"
@@ -1180,13 +1328,72 @@
   "ext.op.plus.non_number": [
     "TypeError: unary plus requires a number"
   ],
+  "ext.op.pow.nonreal": [
+    "NotImplementedError: complex powers are not supported"
+  ],
+  "ext.op.pow.overflow": [
+    "OverflowError: numerical result out of range"
+  ],
+  "ext.op.pow.real_exponent": true,
+  "ext.op.pow.zero": [
+    "ZeroDivisionError: 0.0 cannot be raised to a negative power"
+  ],
+  "ext.op.quot.real_zero": [
+    "ZeroDivisionError: float floor division by zero"
+  ],
+  "ext.op.quot.zero": [
+    "ZeroDivisionError: integer division or modulo by zero"
+  ],
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
+  ],
+  "ext.op.rem.format.character": [
+    "TypeError: %c requires int or char"
+  ],
+  "ext.op.rem.format.code": [
+    "ValueError: unsupported format character '",
+    "' (0x",
+    ") at index "
+  ],
+  "ext.op.rem.format.few": [
+    "TypeError: not enough arguments for format string"
+  ],
+  "ext.op.rem.format.incomplete": [
+    "ValueError: incomplete format"
+  ],
+  "ext.op.rem.format.infinity": [
+    "OverflowError: cannot convert float infinity to integer"
+  ],
+  "ext.op.rem.format.integer": [
+    "TypeError: %",
+    " format: an integer is required, not "
+  ],
+  "ext.op.rem.format.many": [
+    "TypeError: not all arguments converted during string formatting"
+  ],
+  "ext.op.rem.format.mapping": [
+    "TypeError: format requires a mapping"
+  ],
+  "ext.op.rem.format.nan": [
+    "ValueError: cannot convert float NaN to integer"
+  ],
+  "ext.op.rem.format.number": [
+    "TypeError: %",
+    " format: a real number is required, not "
+  ],
+  "ext.op.rem.format.real": [
+    "TypeError: must be real number, not "
+  ],
+  "ext.op.rem.format.star": [
+    "TypeError: * wants int"
   ],
   "ext.op.rem.format.unsupported": [
     "Unsupported string format"
   ],
   "ext.op.rem.formats_text": true,
+  "ext.op.rem.real_zero": [
+    "ZeroDivisionError: float modulo"
+  ],
   "ext.op.tuple": [
     ","
   ],
@@ -1198,6 +1405,9 @@
   ],
   "ext.stmt.annotation.amiss": [
     "invalid syntax"
+  ],
+  "ext.stmt.annotation.target.unready": [
+    "NotImplementedError: annotated attribute targets are not supported"
   ],
   "ext.stmt.assert": [
     "assert"
@@ -1264,6 +1474,61 @@
   ],
   "ext.stmt.class.property.setter": [
     "setter"
+  ],
+  "ext.stmt.class.reader": [
+    "__getattr__"
+  ],
+  "ext.stmt.class.special": [
+    "__str__",
+    "__repr__",
+    "__eq__",
+    "__ne__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__hash__",
+    "__bool__",
+    "__len__",
+    "__getitem__",
+    "__setitem__",
+    "__delitem__",
+    "__contains__",
+    "__iter__",
+    "__next__",
+    "__call__",
+    "__add__",
+    "__sub__",
+    "__mul__",
+    "__truediv__",
+    "__floordiv__",
+    "__mod__",
+    "__pow__",
+    "__neg__",
+    "__radd__",
+    "__rsub__",
+    "__rmul__",
+    "__rtruediv__",
+    "__rfloordiv__",
+    "__rmod__",
+    "__rpow__",
+    "__enter__",
+    "__exit__",
+    "__class__",
+    "__dict__",
+    "__name__"
+  ],
+  "ext.stmt.class.special.amiss": [
+    "TypeError: special method returned an invalid value"
+  ],
+  "ext.stmt.class.special.declined": [
+    "NotImplemented"
+  ],
+  "ext.stmt.class.special.stop": [
+    "StopIteration"
+  ],
+  "ext.stmt.class.special.unready": [
+    "NotImplementedError: this special operation cannot run yet"
   ],
   "ext.stmt.class.static": [
     "staticmethod"
@@ -1520,8 +1785,55 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.fault.attribute": [
+    "object has no attribute '",
+    "'"
+  ],
+  "ext.system.fault.class": [
+    "RuntimeError"
+  ],
+  "ext.system.fault.class.arithmetic": [
+    "ArithmeticError"
+  ],
+  "ext.system.fault.class.attribute": [
+    "AttributeError"
+  ],
+  "ext.system.fault.class.division": [
+    "ZeroDivisionError"
+  ],
+  "ext.system.fault.class.index": [
+    "IndexError"
+  ],
+  "ext.system.fault.class.key": [
+    "KeyError"
+  ],
+  "ext.system.fault.class.kind": [
+    "TypeError"
+  ],
+  "ext.system.fault.class.name": [
+    "NameError"
+  ],
+  "ext.system.fault.class.stop": [
+    "StopIteration"
+  ],
   "ext.system.fault.class.value": [
     "ValueError"
+  ],
+  "ext.system.fault.division": [
+    "division by zero"
+  ],
+  "ext.system.fault.index": [
+    "list index out of range"
+  ],
+  "ext.system.fault.kind": [
+    "unsupported operand types"
+  ],
+  "ext.system.fault.modulo": [
+    "ZeroDivisionError: integer modulo by zero"
+  ],
+  "ext.system.fault.name": [
+    "name '",
+    "' is not defined"
   ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
@@ -1532,8 +1844,92 @@
   "ext.system.module.name": [
     "__name__"
   ],
+  "ext.system.real.bits": 64,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.text.format": [
+    "format"
+  ],
+  "ext.text.format.align.string": [
+    "ValueError: '=' alignment not allowed in string format specifier"
+  ],
+  "ext.text.format.alternate.character": [
+    "ValueError: Alternate form (#) not allowed with integer format specifier 'c'"
+  ],
+  "ext.text.format.alternate.string": [
+    "ValueError: Alternate form (#) not allowed in string format specifier"
+  ],
+  "ext.text.format.brace.close": [
+    "ValueError: Single '}' encountered in format string"
+  ],
+  "ext.text.format.brace.open": [
+    "ValueError: expected '}' before end of string"
+  ],
+  "ext.text.format.character": [
+    "OverflowError: %c arg not in range(0x110000)"
+  ],
+  "ext.text.format.conversion": [
+    "ValueError: Unknown conversion specifier "
+  ],
+  "ext.text.format.index": [
+    "IndexError: Replacement index ",
+    " out of range for positional args tuple"
+  ],
+  "ext.text.format.invalid": [
+    "ValueError: Invalid format specifier"
+  ],
+  "ext.text.format.key": [
+    "KeyError: '",
+    "'"
+  ],
+  "ext.text.format.kinds": [
+    "int",
+    "float",
+    "str",
+    "bool",
+    "list",
+    "dict",
+    "NoneType",
+    "object"
+  ],
+  "ext.text.format.numbered.auto": [
+    "ValueError: cannot switch from manual field specification to automatic field numbering"
+  ],
+  "ext.text.format.numbered.manual": [
+    "ValueError: cannot switch from automatic field numbering to manual field specification"
+  ],
+  "ext.text.format.precision.integer": [
+    "ValueError: Precision not allowed in integer format specifier"
+  ],
+  "ext.text.format.precision.missing": [
+    "ValueError: Format specifier missing precision"
+  ],
+  "ext.text.format.recursion": [
+    "ValueError: Max string recursion exceeded"
+  ],
+  "ext.text.format.sign.character": [
+    "ValueError: Sign not allowed with integer format specifier 'c'"
+  ],
+  "ext.text.format.sign.string": [
+    "ValueError: Sign not allowed in string format specifier"
+  ],
+  "ext.text.format.spec.type": [
+    "TypeError: format() argument 2 must be str, not "
+  ],
+  "ext.text.format.unknown": [
+    "ValueError: Unknown format code '",
+    "' for object of type '",
+    "'"
+  ],
+  "ext.text.format.unready": [
+    "NotImplementedError: this format cannot be represented"
+  ],
+  "ext.text.format.zero.integer": [
+    "ValueError: Negative zero coercion (z) not allowed in integer format specifier"
+  ],
+  "ext.text.format.zero.string": [
+    "ValueError: Negative zero coercion (z) not allowed in string format specifier"
+  ]
 }

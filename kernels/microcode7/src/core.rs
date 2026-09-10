@@ -31,7 +31,7 @@ impl Value {
             Self::Flag(true) => String::from("True"), Self::Flag(false) => String::from("False"),
             Self::Vector(v) => surround(v, "[", "]"),
             Self::Tuple(v) | Self::Row(v) => surround(v, "(", if v.len() == 1 { ",)" } else { ")" }),
-            Self::Set(v) => if v.is_empty() { String::from("set()") } else { surround(v, "{", "}") },
+            Self::Set(v) => v.borrow().written(Value::quoted),
             Self::Dict(pairs) => {
                 let mut rendered = Vec::new();
                 for (key, value) in pairs.iter() { rendered.push(format!("{}: {}", key.quoted(), value.quoted())); }
