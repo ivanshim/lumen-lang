@@ -328,6 +328,8 @@ pub enum Builtin {
     StreamWrite,
     StreamRead,
     ReadInput,
+    Repr,
+    Strip,
     DeriveClass,
     CallOutcome,
     CopyValue,

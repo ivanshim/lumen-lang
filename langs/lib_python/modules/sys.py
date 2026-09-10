@@ -79,15 +79,15 @@ def setrecursionlimit(limit):
     raise 'NotImplementedError: setting the recursion limit is not supported'
 
 class _Output:
-    def write(self, text):
-        return __stream_write(text, False)
+    def write(self, *args, **keywords):
+        return __stream_write(*args, False, **keywords)
 
     def flush(self):
         pass
 
 class _Error:
-    def write(self, text):
-        return __stream_write(text, True)
+    def write(self, *args, **keywords):
+        return __stream_write(*args, True, **keywords)
 
     def flush(self):
         pass
@@ -109,10 +109,8 @@ __stdin__ = stdin
 def _input(prompt=''):
     print(prompt, end='', flush=True)
     line = stdin.readline()
-    if not isinstance(line, str):
-        raise 'TypeError: readline must return a string'
     if line == '':
-        raise 'EOFError: EOF when reading a line'
+        raise EOFError('EOF when reading a line')
     if line[-1:] == '\n':
         return line[:-1]
     return line

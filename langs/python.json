@@ -440,6 +440,9 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.repr": [
+    "repr"
+  ],
   "ext.builtin.stream.amiss": [
     "TypeError: invalid stream arguments"
   ],
@@ -457,6 +460,9 @@
   ],
   "ext.builtin.sum.non_number": [
     "TypeError: sum needs numbers"
+  ],
+  "ext.builtin.text.strip": [
+    "strip"
   ],
   "ext.builtin.to_int.base": [
     "base"
@@ -951,8 +957,14 @@
   "ext.system.args.list": [
     "__program_argv"
   ],
+  "ext.system.fault.class.input": [
+    "EOFError"
+  ],
   "ext.system.fault.class.key": [
     "KeyError"
+  ],
+  "ext.system.fault.class.value": [
+    "ValueError"
   ],
   "ext.system.module.cache": [
     "sys",

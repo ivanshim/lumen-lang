@@ -246,7 +246,12 @@ impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
-        if let Some(name) = table.single("ext.system.fault.class.key") {
+        let mut faults = table.strings("ext.system.fault.class.key").to_vec();
+        if !table.strings("ext.builtin.input.reader").is_empty() {
+            faults.extend_from_slice(table.strings("ext.system.fault.class.input"));
+            faults.extend_from_slice(table.strings("ext.system.fault.class.value"));
+        }
+        for name in &faults {
             if let Some(at) = idents.iter().position(|word| word == name) {
                 let class = Blueprint { name: name.to_string(), under: None, answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
@@ -2732,6 +2737,11 @@ impl<'a> Machine<'a> {
     }
 
     fn protocol_text(&mut self, item: &Value, quoted: bool) -> Result<String, String> {
+        if let Value::Thing(object) = item {
+            if !quoted && self.stream_fault_name(&object.of.name) {
+                return Ok(self.attribute(item, "message").unwrap_or_else(|| Value::text("")).render(self.wording()));
+            }
+        }
         if !self.table.strings("ext.op.object.protocol").is_empty() {
             match item {
                 Value::Vector(items) => {
@@ -2765,6 +2775,10 @@ impl<'a> Machine<'a> {
             given.push(Value::Thing(object.clone()));
             given.extend(args);
             self.invoke(body, self.outermost.clone(), given)?;
+        } else if self.stream_fault_name(&class.name) {
+            if args.len() > 1 { return Err(self.argument_fault("ext.builtin.stream.amiss", None).into()); }
+            let message = args.first().cloned().unwrap_or_else(|| Value::text(""));
+            object.holds.borrow_mut().push(("message".to_string(), message));
         } else if !args.is_empty() {
             return Err(format!("Class {} takes no arguments when it is made", class.name).into());
         }
@@ -2891,8 +2905,12 @@ impl<'a> Machine<'a> {
         self.argument_fault("ext.syntax.call.amiss.builtin", has_tail.then_some(name))
     }
 
-    /// Fit only the names the builtin owns. The print writer answers
-    /// here; the other calls go on with their places filled.
+    /// Invoke a held writer through the ordinary calling form.
+    fn stream_fault_name(&self, name: &str) -> bool {
+        !self.table.strings("ext.builtin.input.reader").is_empty() &&
+            (self.table.spells("ext.system.fault.class.value", name) || self.table.spells("ext.system.fault.class.input", name))
+    }
+
     fn stream_apply(&mut self, function: Value, values: Vec<Value>) -> Result<Value, String> {
         let expression = Form::Apply(Callee::Code(Box::new(Form::Const(function))), values.into_iter().map(Form::Const).collect());
         let scope = self.outermost.clone();
@@ -2906,6 +2924,7 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Fit the printer's names, or leave the other builtin's places filled.
     fn builtin_names(&mut self, op: Prim, name: &str, positional: &mut Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Option<Value>> {
         let table = self.table;
         let mut seen = std::collections::HashSet::new();
@@ -2955,6 +2974,7 @@ impl<'a> Machine<'a> {
             }
             written.push_str(&tail);
             if route.len() == 3 {
+                if !matches!(destination, Value::Thing(_) | Value::Blueprint(_)) { return Err(self.argument_fault("ext.builtin.print.file.unready", None).into()); }
                 let writer = self.attribute(&destination, &route[2]).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(&route[2])))?;
                 self.stream_apply(writer, vec![Value::text(&written)])?;
                 if drain {
@@ -3619,7 +3639,9 @@ impl<'a> Machine<'a> {
             return Ok(Value::text(&self.protocol_text(&v[0], false)?));
         }
         if matches!(op, Prim::Listed | Prim::Iterated) && v.len() == 1 {
-            if let Some(answer) = self.protocol_value(&v[0], 4, &[])? {
+            let supplied = if self.walks_itself(&v[0]).is_some() { Some(v[0].clone()) }
+                else { self.protocol_value(&v[0], 4, &[])? };
+            if let Some(answer) = supplied {
                 if self.walks_itself(&answer).is_none() { return Ok(answer); }
                 let mut collected = Vec::new();
                 let more = self.table.single("ext.op.walk.more").unwrap_or_default();
@@ -3641,11 +3663,33 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         Ok(match op {
+            Prim::Strip => {
+                if v.len() < 1 || v.len() > 2 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+                let Value::Text(word) = &v[0] else { return Err(self.argument_fault("ext.syntax.call.amiss", None)); };
+                let chosen = v.get(1);
+                if !matches!(chosen, None | Some(Value::Nil) | Some(Value::Text(_))) { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+                let omit = |letter: char| match chosen {
+                    Some(Value::Text(set)) => set.chars().any(|item| item == letter),
+                    _ => letter.is_whitespace() || matches!(letter as u32, 28..=31),
+                };
+                let letters: Vec<char> = word.chars().collect();
+                let left = letters.iter().position(|c| !omit(*c)).unwrap_or(letters.len());
+                let right = letters.iter().rposition(|c| !omit(*c)).map_or(left, |i| i + 1);
+                Value::text(&letters[left..right].iter().collect::<String>())
+            }
+            Prim::Repr => {
+                n(1)?;
+                match self.protocol_value(&v[0], 0, &[])? {
+                    Some(text) => text,
+                    None => Value::text(&self.quoted_remainder(&v[0])?),
+                }
+            }
             Prim::ReadInput => {
                 let words = self.table.strings("ext.builtin.input.reader");
                 let namespace = self.load_namespace(&words[0])?;
                 let function = self.attribute(&namespace, &words[1]).ok_or_else(|| self.argument_fault("ext.builtin.member.absent", Some(&words[1])))?;
-                self.stream_apply(function, v.to_vec())?
+                let answer = self.stream_apply(function, v.to_vec())?;
+                match answer { Value::Text(_) => answer, _ => return Err(self.argument_fault("ext.builtin.stream.amiss", None)) }
             }
             Prim::StreamWrite => {
                 use std::io::Write;
@@ -6308,7 +6352,12 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => Value::Unset,
+                    true => Value::text(path),
+                    false if self.stream_fault_name(name) => Value::Blueprint(Rc::new(Blueprint {
+                        name: name.clone(), under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
+                        methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                    })),
+                    false => Value::Unset,
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));

@@ -39,6 +39,8 @@ pub enum Prim {
     StreamWrite,
     StreamRead,
     ReadInput,
+    Repr,
+    Strip,
     MakeHeir,
     CallResult,
     CopyWorth,

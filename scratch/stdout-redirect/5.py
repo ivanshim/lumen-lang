@@ -20,4 +20,4 @@ for line in s:
     print(repr(line))
     break
 print(repr(s.read()))
-print(list(io.StringIO("x\ny\n")))
+print(repr(list(io.StringIO("x\ny\n"))))

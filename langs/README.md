@@ -509,6 +509,14 @@ only. The extension labels so far, all from PHP:
   annotated field names, and the class name. At this stage their type expressions are read
   and put aside; the map keeps an empty value for each name. Defaults
   remain ordinary shared members.
+- `ext.builtin.repr`: a builtin returning a quoted account of a value,
+  using its representation method when it has one. Text and collections
+  use the same quoting as the text remainder's representation conversion.
+- `ext.system.fault.class.input`: the class for the end of standard input.
+  When the input reader is spelled, this class and `.value` are available
+  at the outset. Each takes at most one message, kept for conversion to
+  text, and may be raised and caught as an ordinary class instance. The
+  fuller family of exception classes and their arguments is still wanting.
 - `ext.system.fault.class.key`: the class name for an absent map key.
   Where spelled, a plain class of that name is bound before the program
   starts, and context managers receive its object for such a fault.
@@ -2213,6 +2221,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -2228,6 +2237,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
+| `ext.builtin.text.strip` | - | - | `strip` | - | - | - | - | - | - | - |
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
@@ -2510,10 +2520,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
+| `ext.system.fault.class.input` | - | - | `EOFError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.key` | - | - | `KeyError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
-| `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
+| `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | - | - | `Unsupported operand types` | - | - | - | - | - |

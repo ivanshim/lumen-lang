@@ -215,7 +215,7 @@ impl<'a> Engine<'a> {
         Engine {
             lang,
             world: idents.iter().map(|name| {
-                if lang.fault_key.as_ref() != Some(name) { return Value::Blank; }
+                if lang.fault_key.as_ref() != Some(name) && (lang.input_reader.is_empty() || ![&lang.fault_input, &lang.fault_value].iter().any(|word| word.as_ref() == Some(name))) { return Value::Blank; }
                 Value::Class(Rc::new(Class { name: name.clone(), base: None, answers: vec![],
                     fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) }))
             }).collect(),
@@ -2106,6 +2106,12 @@ impl<'a> Engine<'a> {
                 return Ok(format!("[{}]", parts.join(", ")));
             }
         }
+        if let Value::Object(object) = value {
+            if !nested && self.stream_fault(&object.class.name) {
+                let message = object.fields.borrow().iter().find(|(name, _)| name == "message").map(|(_, v)| v.clone()).unwrap_or_else(|| Value::text(""));
+                return Ok(message.display(&self.wording()));
+            }
+        }
         if matches!(value, Value::Object(_)) {
             let answer = if nested { None } else { self.object_answer(value, 6, vec![])? };
             let answer = match answer { Some(value) => Some(value), None => self.object_answer(value, 0, vec![])? };
@@ -2487,7 +2493,8 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                if let Some(items) = self.object_answer(&source, 4, vec![])? { self.stream_gather(items)? }
+                if self.walker(&source).is_some() { self.stream_gather(source)? }
+                else if let Some(items) = self.object_answer(&source, 4, vec![])? { self.stream_gather(items)? }
                 else { Value::array(self.comprehension_items(&source)?) }
             }
             Action::UnpackCount(wanted) => {
@@ -2655,6 +2662,10 @@ impl<'a> Engine<'a> {
                         self.invoke(&maker, all)?;
                         // What the maker leaves is not the object.
                         self.drop_top()?;
+                    }
+                    None if self.stream_fault(&class.name) => {
+                        if args.len() > 1 { return Err(self.lang.stream_amiss[0].clone().into()); }
+                        object.fields.borrow_mut().push(("message".into(), args.first().cloned().unwrap_or_else(|| Value::text(""))));
                     }
                     None if !args.is_empty() => {
                         return Err(format!("Class {} takes no arguments when it is made", class.name).into());
@@ -4250,10 +4261,7 @@ impl<'a> Engine<'a> {
         values.iter().map(|v| v.display(&sp)).collect::<Vec<_>>().join(" ")
     }
 
-    /// Builtins take the same opened arguments as a declared routine,
-    /// but each names its own few places, where the definition spells them.
-    /// A stream's callable is kept until its call has returned, even if
-    /// the call gives the module another stream in its stead.
+    /// Gathering a text walk consumes the lines still before it.
     fn stream_gather(&mut self, source: Value) -> Res<Value> {
         if self.walker(&source).is_none() { return Ok(source); }
         let mut items = Vec::new();
@@ -4272,6 +4280,7 @@ impl<'a> Engine<'a> {
         Ok(Value::array(items))
     }
 
+    /// Keep the callable even when its call replaces the module member.
     fn stream_call(&mut self, callable: Value, arguments: Vec<Value>) -> Res<Value> {
         let depth = self.data.len();
         let count = arguments.len() + 1;
@@ -4293,6 +4302,10 @@ impl<'a> Engine<'a> {
         self.builtin(Builtin::MemberGet, "", &mut args)
     }
 
+    fn stream_fault(&self, name: &str) -> bool {
+        !self.lang.input_reader.is_empty() && [&self.lang.fault_input, &self.lang.fault_value].iter().any(|word| word.as_deref() == Some(name))
+    }
+
     fn stream_module(&mut self, name: &str) -> Res<Value> {
         match self.import_module(name) {
             Ok(value) => Ok(value),
@@ -4301,6 +4314,7 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Fit opened arguments to the places the builtin names.
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -4350,6 +4364,7 @@ impl<'a> Engine<'a> {
             for value in &args { pieces.push(self.object_text(value, false)?); }
             let text = pieces.join(&between) + &ending;
             if route.len() == 3 {
+                if !matches!(file, Value::Object(_) | Value::Class(_)) { return Err(self.lang.print_file_unready[0].clone()); }
                 let writer = self.stream_member(file.clone(), &route[2], false)?;
                 self.stream_call(writer, vec![Value::text(&text)])?;
                 if flush {
@@ -4427,11 +4442,28 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Strip => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
+                let Value::Text(text) = &args[0] else { return Err(self.lang.call_amiss[0].clone()); };
+                let wanted = match args.get(1) {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Text(chars)) => Some(chars.as_ref()),
+                    _ => return Err(self.lang.call_amiss[0].clone()),
+                };
+                Value::text(text.trim_matches(|c: char| wanted.map_or_else(|| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c), |chars| chars.contains(c))))
+            }
+            Builtin::Repr => {
+                arity(1)?;
+                if let Some(value) = self.object_answer(&args[0], 0, vec![])? { value }
+                else { Value::text(&self.rem_repr(&args[0])?) }
+            }
             Builtin::ReadInput => {
                 let route = self.lang.input_reader.clone();
                 let module = self.stream_module(&route[0])?;
                 let reader = self.stream_member(module, &route[1], false)?;
-                self.stream_call(reader, args.clone())?
+                let value = self.stream_call(reader, args.clone())?;
+                if !matches!(value, Value::Text(_)) { return Err(self.lang.stream_amiss[0].clone()); }
+                value
             }
             Builtin::StreamWrite => {
                 use std::io::Write;
@@ -5087,7 +5119,8 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                if let Some(values) = self.object_answer(&args[0], 4, vec![])? { self.stream_gather(values)? }
+                if self.walker(&args[0]).is_some() { self.stream_gather(args[0].clone())? }
+                else if let Some(values) = self.object_answer(&args[0], 4, vec![])? { self.stream_gather(values)? }
                 else { Value::array(self.comprehension_items(&args[0])?) }
             }
             Builtin::Any => {
@@ -6072,7 +6105,11 @@ impl Engine<'_> {
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { Value::Blank };
+            let initial = if self.lang.module_names.contains(name) { Value::text(path) }
+                else if self.stream_fault(name) {
+                    Value::Class(Rc::new(Class { name: name.clone(), base: None, answers: vec![], fields: vec![],
+                        reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) }))
+                } else { Value::Blank };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
             fields.push((name.clone(), shared));
