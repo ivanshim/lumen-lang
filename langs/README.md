@@ -566,6 +566,10 @@ only. The extension labels so far, all from PHP:
   Loop targets may likewise name several places, with further groups
   within them. Their source and body are read whole; reaching such a
   loop raises that same complaint before the source or body runs.
+  In a walk, the tuple mark also joins the source values and gathers
+  binding names, with nested brackets and starred names admitted.
+  Gathered loop bindings presently stop in `ext.system.scope.unready`
+  words; their execution awaits the fuller taking-apart account.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -574,9 +578,35 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.yield.from` precedes a source of further values. The reader
   keeps the whole expression. `ext.stmt.yield.unrun` stops the run when
   it reaches the handing-out, since suspended routines are still owed.
+- `ext.stmt.async` precedes a routine, context or walk whose progress may
+  be suspended. `ext.op.await` precedes a value to wait upon. Their whole
+  bodies and operands are read, then `ext.system.scope.unready` refuses
+  to run the form; no synchronous work is put in its stead.
+- `ext.stmt.type_alias` introduces a name and its assigned type expression.
+  It is a soft word: a following name distinguishes it from an ordinary
+  use. `ext.stmt.type_parameters` admits bracketed type names after a
+  routine name or alias, with bounds, defaults and gathering marks.
+  These declarations are read whole and refused by
+  `ext.system.scope.unready` when reached; type bindings are still owed.
+- `ext.stmt.match` introduces a subject and an indented suite of
+  `ext.stmt.match.case` arms. Value, sequence, mapping and class patterns,
+  and a following context-binding word, are read with their suites.
+  The head is distinguished from a call or assignment by its body mark.
+  Pattern binding is still owed: `ext.system.scope.unready` stops the run
+  before the subject or any arm is worked out.
+- `ext.lexical.number.imaginary` gives the suffix of an imaginary numeral.
+  The suffix stays with the number through reading; reaching it says
+  `ext.lexical.number.imaginary.unready`, since complex values are owed.
+- `ext.op.bit.whole` makes the bit operations work on whole numbers of
+  unbounded width, admitting booleans as nought and one. Two booleans
+  joined by and, or or exclusive-or give a boolean; mixed operands give
+  a whole number. Other kinds are refused in `ext.system.fault.operands`
+  words, and a negative shift in `ext.system.fault.shift` words.
 - `ext.stmt.with` reads a context expression and its suite;
   `ext.stmt.with.as` gives a name to what that context hands in. Further
-  contexts may be separated as arguments are. The suite is read whole,
+  contexts may be separated as arguments are. A binding may name an
+  attribute, indexed place, or bracketed gathering of places, including
+  one gathering mark within it. The suite is read whole,
   then `ext.system.scope.unready` refuses to run this form until entering
   and leaving the context can both be honoured.
 - `ext.stmt.del` reads the names or indexed places to be taken away.
@@ -881,6 +911,12 @@ only. The extension labels so far, all from PHP:
   bound to its name, so `new C`, `C::CONST` and `catch (C $e)` are
   ordinary reads of it. Objects are handles: naming one twice names one
   object.
+- `ext.op.pipe.attribute`: a switch; a bare name after the pipe denotes
+  an attribute, rather than a call with no further arguments. Indices
+  and slices may follow that attribute or a method call. Keeping an
+  attribute or bound method as a value is still owed, so reaching a
+  bare attribute says `ext.system.scope.unready`; in particular, a
+  builtin method named without call brackets is never called by mistake.
 - `ext.op.member` and `ext.op.scope`: `object->member` and
   `class::member`, each reading a property, a constant or a method, and
   `class::class` giving the class's name.
@@ -1835,7 +1871,8 @@ only. The extension labels so far, all from PHP:
   is mutable. The kernels' arrays and maps are values, so they cannot yet
   share a mutable default between calls as Python requires.
 - `ext.syntax.call.spread`: a sign before a call argument handing out its
-  items as positional arguments. Arrays, text and the keys of maps may
+  items as positional arguments. Quoted text spelling that sign remains
+  text, as does text spelling `ext.syntax.call.spread.pairs`. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
   `ext.syntax.call.spread.amiss`.
 - `ext.syntax.call.spread.pairs`: a sign before a call argument handing
@@ -2887,6 +2924,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
+| `ext.op.pipe.attribute` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
 | `ext.op.plus.non_number` | - | - | `TypeError: unary plus requires a number` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
@@ -3012,6 +3050,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.type_alias` | - | - | `type` | - | - | - | - | - | - | - |
+| `ext.stmt.type_parameters` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.type_params.close` | - | - | `]` | - | - | - | - | - | - | - |
 | `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |

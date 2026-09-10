@@ -742,6 +742,7 @@
     "."
   ],
   "ext.op.member.pipes": true,
+  "ext.op.pipe.attribute": true,
   "ext.op.plus": [
     "+"
   ],
@@ -945,6 +946,10 @@
     "try"
   ],
   "ext.stmt.try.else": true,
+  "ext.stmt.type_alias": [
+    "type"
+  ],
+  "ext.stmt.type_parameters": true,
   "ext.stmt.type_params.close": [
     "]"
   ],
