@@ -2178,7 +2178,10 @@ impl<'a> Machine<'a> {
                 let cell = nested.unwrap_or(cell);
                 let subject = cell.borrow().clone();
                 if self.keyed_method(&subject, "ext.op.index.delete", &[at.clone()])?.is_some() { return Ok(Value::Nil); }
-                let at = match at { Value::Span(bounds) => Value::Span(Rc::new(self.counted_bounds(&bounds)?)), key => key };
+                let at = match at {
+                    Value::Span(bounds) if matches!(subject, Value::Vector(_)) => Value::Span(Rc::new(self.counted_bounds(&bounds)?)),
+                    key => key,
+                };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     Value::Vector(items) if matches!(at, Value::Span(_)) => {
@@ -2734,6 +2737,7 @@ impl<'a> Machine<'a> {
                         if self.keyed_method(&subject, "ext.op.index.set", &[index.clone(), value.clone()])?.is_some() { return Ok(Value::Nil); }
                     }
                     if let Some(Value::Span(bounds)) = &key {
+                        if !matches!(subject.settled(), Value::Dict(_)) {
                         let counted = self.counted_bounds(bounds)?;
                         let bounds = &counted;
                         let gathered = self.core_collect(&value).map_err(|_| self.span_complaint("assign"))?;
@@ -2747,6 +2751,7 @@ impl<'a> Machine<'a> {
                             _ => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
                         }
                         return Ok(Value::Nil);
+                        }
                     }
                     // Worked out before the place is reached, since
                     // reaching it holds the frame the name lives in.
@@ -3212,15 +3217,20 @@ impl<'a> Machine<'a> {
             if arguments.len() != 1 || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             if let Value::Tuple(keys) = receiver {
                 let mut taken = Vec::with_capacity(keys.len());
-                for key in keys.iter() { taken.push(self.keyed_value(&arguments[0], key)?); }
+                for key in keys.iter() {
+                    let answer = self.keyed_value(&arguments[0], key);
+                    if let Some(escape) = self.got_away.take() { return Err(escape); }
+                    taken.push(answer?);
+                }
                 return Ok(match taken.len() { 1 => taken.pop().unwrap(), _ => Value::Tuple(Rc::new(taken)) });
             }
             return Err(self.method_fault("unready").into());
         }
         if let Value::Span(bounds) = receiver {
             if keywords.is_empty() && name == "indices" && arguments.len() == 1 {
-                let normalized = self.normalized_span(bounds, &arguments[0])?;
-                return Ok(Value::Tuple(Rc::new(normalized.into_iter().map(Value::from_big).collect())));
+                let normalized = self.normalized_span(bounds, &arguments[0]);
+                if let Some(escape) = self.got_away.take() { return Err(escape); }
+                return Ok(Value::Tuple(Rc::new(normalized?.into_iter().map(Value::from_big).collect())));
             }
             if keywords.is_empty() && name == "slice_hash" && arguments.is_empty() {
                 return self.span_hash_value(receiver).map_err(Escape::from);
@@ -6030,6 +6040,7 @@ impl<'a> Machine<'a> {
 
     fn keyed_value(&mut self, subject: &Value, key: &Value) -> Result<Value, String> {
         if let Some(answer) = self.keyed_method(subject, "ext.op.index.get", &[key.clone()])? { return Ok(answer); }
+        if matches!(subject, Value::Dict(_)) { return self.element(subject, key, Reading::Plain); }
         let Value::Span(bounds) = key else {
             if matches!(subject.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Text(_)) && matches!(key, Value::Ellipsis | Value::Tuple(_)) {
                 return Err(self.span_complaint("unsupported"));
@@ -6142,21 +6153,23 @@ impl<'a> Machine<'a> {
 
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if matches!(target, Value::Set(_)) { return Err(self.core_complaint("core.unindexable", &target.kind_word())); }
-        if let Value::Span(bounds) = at {
-            let row = match target {
-                Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => values.as_ref().clone(),
-                Value::Text(text) if self.table.flag("op.index.strings") => {
-                    text.chars().map(|letter| Value::text(&letter.to_string())).collect()
-                }
-                _ => return Err(self.span_complaint("unsupported")),
-            };
-            let (_, picked, _) = self.span_selection(bounds, row.len())?;
-            let selected: Vec<Value> = picked.iter().map(|&i| row[i].clone()).collect();
-            return Ok(if matches!(target, Value::Text(_)) {
-                Value::text(&selected.iter().map(Value::bare).collect::<String>())
-            } else if matches!(target, Value::Tuple(_)) {
-                Value::Tuple(Rc::new(selected))
-            } else { Value::Vector(Rc::new(selected)) });
+        if !matches!(target, Value::Dict(_)) {
+            if let Value::Span(bounds) = at {
+                let row = match target {
+                    Value::Vector(values) | Value::Tuple(values) | Value::Set(values) => values.as_ref().clone(),
+                    Value::Text(text) if self.table.flag("op.index.strings") => {
+                        text.chars().map(|letter| Value::text(&letter.to_string())).collect()
+                    }
+                    _ => return Err(self.span_complaint("unsupported")),
+                };
+                let (_, picked, _) = self.span_selection(bounds, row.len())?;
+                let selected: Vec<Value> = picked.iter().map(|&i| row[i].clone()).collect();
+                return Ok(if matches!(target, Value::Text(_)) {
+                    Value::text(&selected.iter().map(Value::bare).collect::<String>())
+                } else if matches!(target, Value::Tuple(_)) {
+                    Value::Tuple(Rc::new(selected))
+                } else { Value::Vector(Rc::new(selected)) });
+            }
         }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program.

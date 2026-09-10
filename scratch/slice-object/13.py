@@ -21,3 +21,12 @@ try:
     print(G()[1:2])
 except ValueError:
     print("key raised")
+try:
+    slice(Bound(), None).indices(3)
+except ValueError:
+    print("indices raised")
+import operator
+try:
+    operator.itemgetter(slice(1, 2))(G())
+except ValueError:
+    print("getter raised")

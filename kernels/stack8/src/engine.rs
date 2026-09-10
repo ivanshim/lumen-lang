@@ -2439,7 +2439,10 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
-                let at = if let Value::Slice(parts) = at { Value::Slice(Rc::new(self.slice_counted(&parts)?)) } else { at };
+                let at = match at {
+                    Value::Slice(parts) if matches!(held, Value::Array(_)) => Value::Slice(Rc::new(self.slice_counted(&parts)?)),
+                    other => other,
+                };
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     Value::Array(items) if matches!(at, Value::Slice(_)) => {
@@ -4503,6 +4506,7 @@ impl<'a> Engine<'a> {
             return self.read_index(&target.contents(), &key.contents());
         }
         if let Some(value) = self.index_method(target, "ext.op.index.get", vec![key.clone()])? { return Ok(value); }
+        if matches!(target, Value::Map(_)) { return self.element(target, key, Reading::Plain); }
         if let Value::Slice(parts) = key {
             if let Value::Counted(row) = target {
                 let [start, stop, step] = self.slice_indices(parts, &Value::of_big(row.length()))?;
@@ -4517,7 +4521,7 @@ impl<'a> Engine<'a> {
         if matches!(key, Value::Tuple(_) | Value::Ellipsis) && matches!(target.contents(), Value::Array(_) | Value::Tuple(_) | Value::Text(_)) {
             return Err(self.lang.slice_unsupported.clone().unwrap_or_default());
         }
-        self.element(target, key, Reading::Plain)
+        self.dyadic(&Action::At, target, key)
     }
 
     /// Bring the bounds within the row before walking it. A missing
@@ -4610,7 +4614,7 @@ impl<'a> Engine<'a> {
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         if matches!(target, Value::Set(_)) { return Err(self.core_fault("core.unindexable", &target.core_kind())); }
         if let Value::Slice(parts) = at {
-            return self.read_slice(target, parts);
+            if !matches!(target, Value::Map(_)) { return self.read_slice(target, parts); }
         }
         // A language may say that a place an array does not hold reads as
         // nothing rather than stopping the program, and one with a word
@@ -5785,9 +5789,11 @@ impl<'a> Engine<'a> {
                 let at = self.key(&args.pop().expect("the key"));
                 if self.index_method(&target, "ext.op.index.set", vec![at.clone(), v.clone()])?.is_some() { return Ok(target); }
                 if let Value::Slice(parts) = &at {
-                    let parts = self.slice_counted(parts)?;
-                    let given = self.core_members(&v).map_err(|_| self.lang.slice_assign.clone().unwrap_or_default())?;
-                    return self.write_slice(target, &parts, Value::array(given));
+                    if !matches!(target, Value::Map(_)) {
+                        let parts = self.slice_counted(parts)?;
+                        let given = self.core_members(&v).map_err(|_| self.lang.slice_assign.clone().unwrap_or_default())?;
+                        return self.write_slice(target, &parts, Value::array(given));
+                    }
                 }
                 // A language that makes a place on writing into it finds
                 // an array where nothing at all was there.
