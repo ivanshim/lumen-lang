@@ -134,6 +134,8 @@ pub enum Value {
     Nil,
     Ellipsis,
     Vector(Rc<Vec<Value>>),
+    Tuple(Rc<Vec<Value>>),
+    Generator(Rc<RefCell<crate::exec::Suspension>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -223,7 +225,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -238,6 +240,7 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
             _ => true,
         }
@@ -256,10 +259,10 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
@@ -309,6 +312,8 @@ impl Value {
             (Value::Method(p, a), Value::Method(q, b)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
+            (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
+            (Value::Tuple(x), Value::Tuple(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| a.equals(b)),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
@@ -358,6 +363,10 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
+            Value::Tuple(parts) => {
+                let inside = parts.iter().map(|part| part.in_field(w, "", "r").unwrap_or_else(|| part.bare())).collect::<Vec<_>>().join(", ");
+                format!("({}{})", inside, if parts.len() == 1 { "," } else { "" })
+            }
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
@@ -503,6 +512,8 @@ impl Value {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
+            Value::Generator(_) => "<generator>".into(),
+            Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
             Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => format!("<class {}>", b.name),

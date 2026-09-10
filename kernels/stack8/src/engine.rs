@@ -12,7 +12,7 @@ use num_traits::ToPrimitive;
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Class, Instance, Reach, Sort, Value, Wording};
+use crate::value::{Class, Instance, Reach, Sort, Value, Wording, Generator};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -1576,6 +1576,11 @@ impl<'a> Engine<'a> {
             }
         }
         for (at, cell) in &program.enclosed { frame[*at] = cell.clone(); }
+        if program.generator && self.lang.yield_suspends {
+            self.left_the_call(false, watching, noted);
+            self.data.push(Value::Generator(Rc::new(RefCell::new(Generator::new(Some(program.clone()), frame, Vec::new())))));
+            return Ok(());
+        }
         let base = self.data.len();
         // A routine written in a file of its own is run as being in it:
         // a complaint names that file, and a file the routine asks for
@@ -1767,8 +1772,68 @@ impl<'a> Engine<'a> {
         ending
     }
 
+    fn close_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
+        let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+        if let Some(Value::Generator(inner)) = state.delegate.take() { self.close_generator(&inner)?; }
+        state.closed = true;
+        state.current = None;
+        state.frame.clear();
+        state.stack.clear();
+        state.items.clear();
+        Ok(())
+    }
+
+    fn iterator(&mut self, source: Value) -> Flow<Value> {
+        if matches!(source, Value::Generator(_)) { return Ok(source); }
+        let items = self.comprehension_items(&source)?;
+        Ok(Value::Generator(Rc::new(RefCell::new(Generator::new(None, Vec::new(), items)))))
+    }
+
+    fn resume_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value) -> Flow<Option<Value>> {
+        let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+        if kept.closed { kept.returned = Value::Null; return Ok(None); }
+        if !kept.started && !matches!(sent, Value::Null) {
+            return Err(self.lang.yield_unstarted[0].clone().into());
+        }
+        if let Some(item) = kept.current.take() { return Ok(Some(item)); }
+        kept.started = true;
+        let Some(program) = kept.program.clone() else {
+            if !matches!(sent, Value::Null) { return Err(self.lang.yield_unsupported[0].clone().into()); }
+            let item = kept.items.get(kept.pc).cloned();
+            kept.pc += usize::from(item.is_some());
+            kept.closed = item.is_none();
+            return Ok(item);
+        };
+        let outer = std::mem::replace(&mut self.data, std::mem::take(&mut kept.stack));
+        let mut locals = std::mem::take(&mut kept.frame);
+        if kept.waiting { self.data.push(sent.clone()); kept.waiting = false; }
+        kept.sent = sent;
+        let source = self.source.clone();
+        let line = self.line;
+        if let Some(place) = &program.written_in { self.source = place.clone(); }
+        self.inside.push(program.within.clone());
+        let result = self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept));
+        self.inside.pop();
+        self.source = source;
+        self.line = line;
+        kept.frame = locals;
+        kept.stack = std::mem::replace(&mut self.data, outer);
+        if kept.handed.is_none() || result.is_err() {
+            kept.closed = true;
+            kept.returned = if result.is_err() { Value::Null } else { kept.stack.pop().unwrap_or(Value::Null) };
+            kept.stack.clear();
+            kept.frame.clear();
+        }
+        result?;
+        Ok(kept.handed.take())
+    }
+
     fn run_span(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize)) -> Flow<Passage> {
-        let mut pc = span.0;
+        self.run_portion(program, frame, instrs, span, None)
+    }
+
+    fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), mut suspended: Option<&mut Generator>) -> Flow<Passage> {
+        let mut pc = suspended.as_ref().map_or(span.0, |g| g.pc);
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
@@ -1841,6 +1906,31 @@ impl<'a> Engine<'a> {
                     let v = self.drop_top()?;
                     self.store_cell(slot, frame, v)?;
                 }
+                Instr::Act(Action::Suspend | Action::Delegate, _) => {
+                    let kept = suspended.as_deref_mut().ok_or_else(|| self.lang.yield_unsupported[0].clone())?;
+                    if matches!(&instrs[pc], Instr::Act(Action::Suspend, _)) {
+                        kept.handed = Some(self.drop_top()?);
+                        kept.pc = pc + 1;
+                        kept.waiting = true;
+                    } else {
+                        if kept.delegate.is_none() {
+                            let source = self.drop_top()?;
+                            kept.delegate = Some(self.iterator(source)?);
+                            kept.sent = Value::Null;
+                        }
+                        let Value::Generator(inner) = kept.delegate.as_ref().expect("delegated walk").clone() else { unreachable!() };
+                        match self.resume_generator(&inner, std::mem::replace(&mut kept.sent, Value::Null))? {
+                            Some(item) => { kept.handed = Some(item); kept.pc = pc; }
+                            None => {
+                                self.data.push(inner.borrow().returned.clone());
+                                kept.delegate = None;
+                                pc += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    return Ok(Passage::Along(pc));
+                }
                 Instr::Act(op, argc) => {
                     // Text read while the run goes is read where it
                     // stands: inside a routine it sees that routine's
@@ -1882,6 +1972,9 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Attempt(plan) => {
+                    if suspended.is_some() && instrs[plan.body.0..plan.after].iter().any(|i| matches!(i, Instr::Act(Action::Suspend | Action::Delegate, _))) {
+                        return Err(self.lang.yield_unsupported[0].clone().into());
+                    }
                     match self.run_attempt(program, frame, instrs, plan)? {
                         Passage::Along(at) => pc = at,
                         end @ Passage::Leaves { to, cycle } => {
@@ -2014,8 +2107,16 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::SkipCmp { op, a, b, to } => {
-                    let bt = if matches!(b, Operand::Top) { Some(self.drop_top()?) } else { None };
-                    let at = if matches!(a, Operand::Top) { Some(self.drop_top()?) } else { None };
+                    let bt = match b {
+                        Operand::Top => Some(self.drop_top()?),
+                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
+                        _ => None,
+                    };
+                    let at = match a {
+                        Operand::Top => Some(self.drop_top()?),
+                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
+                        _ => None,
+                    };
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
                     let holds = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
@@ -2037,8 +2138,16 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Dyad { op, a, b } => {
-                    let bt = if matches!(b, Operand::Top) { Some(self.drop_top()?) } else { None };
-                    let at = if matches!(a, Operand::Top) { Some(self.drop_top()?) } else { None };
+                    let bt = match b {
+                        Operand::Top => Some(self.drop_top()?),
+                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
+                        _ => None,
+                    };
+                    let at = match a {
+                        Operand::Top => Some(self.drop_top()?),
+                        Operand::Cell(slot) if self.shares_cell(slot, frame) => Some(self.load_cell(slot, frame)?),
+                        _ => None,
+                    };
                     let (av, bv) = self.both(a, b, &at, &bt, frame)?;
                     let fast = match (av, bv) {
                         (Value::Small(x), Value::Small(y)) => match op {
@@ -2489,11 +2598,22 @@ impl<'a> Engine<'a> {
                 let source = self.drop_top()?;
                 Value::array(self.comprehension_items(&source)?)
             }
-            Action::UnpackCount(wanted) => {
+            Action::UnpackCount(wanted) | Action::BindCount(wanted) => {
                 let source = self.drop_top()?;
-                let parts = self.comprehension_items(&source)?;
+                let parts = if let Value::Generator(walk) = &source {
+                    let mut parts = Vec::new();
+                    for _ in 0..=*wanted {
+                        match self.resume_generator(walk, Value::Null)? {
+                            Some(item) => parts.push(item),
+                            None => break,
+                        }
+                    }
+                    parts
+                } else { self.comprehension_items(&source)? };
                 if parts.len() != *wanted {
-                    return Err(self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()).into());
+                    let said = if matches!(op, Action::BindCount(_)) { self.lang.binding_unrun.clone() }
+                        else { self.lang.comprehension_unpack_amiss.first().cloned().unwrap_or_else(|| "Wrong number of parts in a comprehension target".to_string()) };
+                    return Err(said.into());
                 }
                 Value::array(parts)
             }
@@ -2516,6 +2636,8 @@ impl<'a> Engine<'a> {
                     Value::array(items)
                 }
             }
+            Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
+            Action::MakeTuple => Value::Tuple(Rc::new(self.drop_many(argc)?)),
             Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
             Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
             Action::Tie => {
@@ -2715,6 +2837,7 @@ impl<'a> Engine<'a> {
                         None => return Err(format!("Undefined property: {}::${}", o.class.name, name).into()),
                     }
                 }
+                Value::Routine(_) | Value::Method(..) if !self.lang.scope_unready.is_empty() => return Err(self.lang.scope_unready[0].clone().into()),
                 v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
             },
             // The property becomes a cell the object and the name that
@@ -2850,6 +2973,20 @@ impl<'a> Engine<'a> {
             Action::Send(name) => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
+                if let Value::Generator(held) = subject {
+                    let result = if Lang::spells(&self.lang.yield_close, name) && args.is_empty() {
+                        self.close_generator(&held)?;
+                        Value::Null
+                    } else if Lang::spells(&self.lang.yield_send, name) && args.len() == 1 {
+                        self.resume_generator(&held, args.remove(0))?.ok_or_else(|| self.lang.yield_exhausted[0].clone())?
+                    } else if Lang::spells(&self.lang.yield_throw, name) {
+                        return Err(self.lang.yield_throw_unavailable[0].clone().into());
+                    } else {
+                        return Err(self.lang.yield_unsupported[0].clone().into());
+                    };
+                    self.data.push(result);
+                    return Ok(());
+                }
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -3066,6 +3203,11 @@ impl<'a> Engine<'a> {
             // be walked in its stead. Either way the walk begins here.
             Action::WalkFrom => {
                 let mut handed = self.drop_top()?;
+                if self.lang.yield_suspends && !matches!(handed, Value::Object(_)) {
+                    let walk = self.iterator(handed)?;
+                    self.data.push(walk);
+                    return Ok(());
+                }
                 // One thing may hand over another that hands over a
                 // third, so the asking goes on until what comes back is
                 // no longer a thing that hands one over. A thing that
@@ -3129,6 +3271,13 @@ impl<'a> Engine<'a> {
             }
             Action::WalkMore => {
                 let pair = self.drop_many(2)?;
+                if let Value::Generator(held) = &pair[0] {
+                    let item = self.resume_generator(held, Value::Null)?;
+                    let more = item.is_some();
+                    held.borrow_mut().current = item;
+                    self.data.push(Value::Flag(more));
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
                     None if matches!(&pair[0], Value::Counted(_)) => {
@@ -3153,6 +3302,11 @@ impl<'a> Engine<'a> {
                     false => self.lang.walk_this.clone(),
                 };
                 let pair = self.drop_many(2)?;
+                if let Value::Generator(held) = &pair[0] {
+                    let item = if key { pair[1].clone() } else { held.borrow_mut().current.take().unwrap_or(Value::Null) };
+                    self.data.push(item);
+                    return Ok(());
+                }
                 match self.walk_asked(&pair[0], named)? {
                     Some(answer) => answer,
                     None => {
@@ -4242,9 +4396,14 @@ impl<'a> Engine<'a> {
     }
 
     /// The collections this reader can walk without asking a protocol.
-    fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
+    fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Generator(held) => {
+                let mut items = Vec::new();
+                while let Some(item) = self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? { items.push(item); }
+                Ok(items)
+            }
+            Value::Tuple(items) | Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
@@ -4398,7 +4557,7 @@ impl<'a> Engine<'a> {
         } else { held }
     }
 
-    fn map_from(&self, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+    fn map_from(&mut self, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         let positional: Vec<Value> = items.iter().filter_map(|(name, value)| name.is_none().then(|| collection_contents(value))).collect();
         if positional.len() > 1 {
             return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| "A map takes at most one source".into()));
@@ -4975,6 +5134,23 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::Next => {
+                if args.is_empty() || args.len() > 2 { return Err(self.lang.yield_unsupported[0].clone()); }
+                let Value::Generator(held) = &args[0] else { return Err(self.lang.collection_unwalkable[0].clone()); };
+                match self.resume_generator(held, Value::Null).map_err(|f| f.told(&self.wording()))? {
+                    Some(item) => item,
+                    None => args.get(1).cloned().ok_or_else(|| self.lang.yield_exhausted[0].clone())?,
+                }
+            }
+            Builtin::Iter => {
+                arity(1)?;
+                self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))?
+            }
+            Builtin::Tuple => {
+                if args.is_empty() { return Ok(Value::Tuple(Rc::new(Vec::new()))); }
+                arity(1)?;
+                Value::Tuple(Rc::new(self.comprehension_items(&args[0])?))
+            }
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -4982,12 +5158,27 @@ impl<'a> Engine<'a> {
             }
             Builtin::Any => {
                 arity(1)?;
+                if self.lang.yield_suspends {
+                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
+                    while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
+                        if self.truth(&item) { return Ok(Value::Flag(true)); }
+                    }
+                    return Ok(Value::Flag(false));
+                }
                 Value::Flag(self.comprehension_items(&args[0])?.iter().any(|v| self.truth(v)))
             }
             Builtin::Sum => {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
                 if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                if self.lang.yield_suspends {
+                    let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
+                    while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
+                        let number = match item { Value::Flag(flag) => Value::Small(i64::from(flag)), other => other };
+                        total = arith::calculate(Operation::Plus, &total, &number).ok_or_else(|| self.lang.sum_non_number[0].clone())??;
+                    }
+                    return Ok(total);
+                }
                 for item in self.comprehension_items(&args[0])? {
                     let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
                     total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;

@@ -337,6 +337,9 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.iter": [
+    "iter"
+  ],
   "ext.builtin.list": [
     "list"
   ],
@@ -348,6 +351,9 @@
   ],
   "ext.builtin.map.pair.amiss": [
     "ValueError: dictionary update sequence element must have length 2"
+  ],
+  "ext.builtin.next": [
+    "next"
   ],
   "ext.builtin.print.end": [
     "end"
@@ -433,6 +439,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.tuple": [
+    "tuple"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -1002,11 +1011,36 @@
   "ext.stmt.yield": [
     "yield"
   ],
+  "ext.stmt.yield.busy": [
+    "ValueError: generator already executing"
+  ],
+  "ext.stmt.yield.close": [
+    "close"
+  ],
+  "ext.stmt.yield.exhausted": [
+    "StopIteration"
+  ],
   "ext.stmt.yield.from": [
     "from"
   ],
+  "ext.stmt.yield.send": [
+    "send"
+  ],
+  "ext.stmt.yield.suspends": true,
+  "ext.stmt.yield.throw": [
+    "throw"
+  ],
+  "ext.stmt.yield.throw.unavailable": [
+    "NotImplementedError: generator throw is not supported"
+  ],
   "ext.stmt.yield.unrun": [
     "Generators cannot be run"
+  ],
+  "ext.stmt.yield.unstarted": [
+    "TypeError: cannot send a non-None value to a just-started generator"
+  ],
+  "ext.stmt.yield.unsupported": [
+    "NotImplementedError: suspension in this form is not supported"
   ],
   "ext.syntax.array.spread": [
     "*"

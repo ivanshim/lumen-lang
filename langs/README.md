@@ -542,12 +542,31 @@ only. The extension labels so far, all from PHP:
   function, for loop or with block and dropped. The latter hands back
   the value of its operand. Neither schedules nor suspends a run in
   this stage; an await may stand outside a function too.
+- `ext.stmt.yield.suspends`: a switch; calling a routine containing a
+  yield keeps its words and bindings unrun. Each asking runs to the next
+  yield, and the next asking begins where that one left off. A delegated
+  walk hands out its items and gives its return value to the outer yield.
+  Parenthesized comprehensions likewise keep their work for each asking;
+  their first source is found at once. List comprehensions still gather.
+  `ext.stmt.yield.exhausted` gives the words when no item remains.
+  `ext.stmt.yield.send`, `ext.stmt.yield.close` and `ext.stmt.yield.throw`
+  name the methods for handing a value in, ending the walk, and raising
+  into it. `ext.stmt.yield.unstarted` refuses a value before the first
+  yield; `ext.stmt.yield.busy` refuses a second asking while one runs.
+  `ext.stmt.yield.unsupported` refuses a form whose pending work cannot
+  yet be kept; `ext.stmt.yield.throw.unavailable` refuses raising into
+  a suspended body. A watched body containing a yield cannot yet keep
+  its pending clauses, and stops before that body begins. Enclosing
+  function cells and starred yield values likewise remain owed.
+  `ext.builtin.next`, `ext.builtin.iter` and `ext.builtin.tuple` name the
+  calls that ask for one item (with an optional answer at the end), make
+  a walk, and gather its items into a tuple.
 - `ext.stmt.yield` and `ext.stmt.yield.from`: read a yield with no value,
   with values, or with a source to yield from, wherever an expression
-  may stand. Defining such a function is allowed, but calling it stops
-  before its body runs, even when the yield lies in an untaken arm.
-  `ext.stmt.yield.unrun` holds the plain words said, since the kernels
-  cannot yet keep a generator's suspended run.
+  may stand. Where the suspension switch is absent, defining such a
+  function is allowed, but calling it stops before its body runs, even
+  when the yield lies in an untaken arm. `ext.stmt.yield.unrun` holds
+  the plain words said in that case.
 - `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close` enclose
   the expressions naming a class's bases. With these marks the body is
   read as an ordinary suite in a scope of its own, including functions
@@ -581,6 +600,10 @@ only. The extension labels so far, all from PHP:
   binding names, with nested brackets and starred names admitted.
   Gathered loop bindings presently stop in `ext.system.scope.unready`
   words; their execution awaits the fuller taking-apart account.
+  reading does not give arrays the name of tuples. General tuple
+  expressions still raise `ext.system.scope.unready`. Where suspension
+  is enabled, yielded tuples and tuples gathered by `ext.builtin.tuple`
+  are held as tuples, and binding targets may take their items apart.
 - `ext.stmt.nonlocal` declares a list of names belonging to an enclosing
   function. Every name is read; when the declaration is reached,
   `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
@@ -613,6 +636,8 @@ only. The extension labels so far, all from PHP:
   joined by and, or or exclusive-or give a boolean; mixed operands give
   a whole number. Other kinds are refused in `ext.system.fault.operands`
   words, and a negative shift in `ext.system.fault.shift` words.
+  keeps the whole expression. Without the suspension switch,
+  `ext.stmt.yield.unrun` stops the run at the handing-out.
 - `ext.stmt.with` reads a context expression and its suite;
   `ext.stmt.with.as` gives a name to what that context hands in. Further
   contexts may be separated as arguments are. A binding may name an
@@ -1271,8 +1296,9 @@ only. The extension labels so far, all from PHP:
   conditions hold. More than one walk or condition may follow. Names
   belong to the comprehension alone; a comma in its target takes an
   item apart into names, with optional grouping. Brackets gather a list,
-  braces with pairs gather a map, and parentheses gather eagerly into
-  an array, even where they stand as the sole argument of a call.
+  braces with pairs gather a map. Parentheses gather eagerly into an
+  array unless `ext.stmt.yield.suspends` is set, when they keep a lazy
+  walk, including when they stand as the sole argument of a call.
   A spread mark may lead the gathered expression too.
   `ext.op.comprehension.async` marks an asynchronous walk, read in full
   but refused when reached in the words of
@@ -2818,12 +2844,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
+| `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
+| `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
@@ -2871,6 +2899,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |
@@ -3159,8 +3188,17 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unrun` | - | - | `NotImplementedError: context managers cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.busy` | - | - | `ValueError: generator already executing` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.close` | - | - | `close` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw` | - | - | `throw` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.unavailable` | - | - | `NotImplementedError: generator throw is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unstarted` | - | - | `TypeError: cannot send a non-None value to a just-started generator` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |
 | `ext.syntax.array.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |

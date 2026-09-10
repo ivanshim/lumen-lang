@@ -165,6 +165,9 @@ pub enum Action {
     Match(Rc<Pattern>, Vec<String>, bool),
     /// Keep a real's point after a compound write.
     KeepPoint,
+    Suspend,
+    Delegate,
+    MakeTuple,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -215,6 +218,7 @@ pub enum Action {
     /// The values walked by a comprehension, with maps handing out keys.
     ComprehensionItems,
     UnpackCount(usize),
+    BindCount(usize),
     /// A map from the values above: every tie a pair, everything else
     /// keyed by its position among the untied.
     MakeMap,
@@ -420,6 +424,9 @@ pub enum Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     MapFrom,
+    Next,
+    Iter,
+    Tuple,
     Sum,
     List,
     Any,
@@ -686,6 +693,7 @@ pub enum Instr {
 /// A compiled program.
 #[derive(Clone, Debug)]
 pub struct Routine {
+    pub generator: bool,
     pub ident: String,
     pub formals: Vec<String>,
     /// Ordinary, positional, named, gathered items, or gathered pairs.

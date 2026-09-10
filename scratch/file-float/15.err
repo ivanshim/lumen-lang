@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: complex literals cannot be evaluated
+PythonError: NotImplementedError: complex arithmetic is not supported

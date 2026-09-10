@@ -116,6 +116,32 @@ impl Counted {
     }
 }
 
+/// A walk keeps its own cells and the part of the stack still wanted.
+#[derive(Debug)]
+pub struct Generator {
+    pub program: Option<Rc<Routine>>,
+    pub frame: Vec<Value>,
+    pub stack: Vec<Value>,
+    pub pc: usize,
+    pub started: bool,
+    pub closed: bool,
+    pub waiting: bool,
+    pub handed: Option<Value>,
+    pub returned: Value,
+    pub delegate: Option<Value>,
+    pub sent: Value,
+    pub items: Vec<Value>,
+    pub current: Option<Value>,
+}
+
+impl Generator {
+    pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
+        Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
+            closed: false, waiting: false, handed: None, returned: Value::Null,
+            delegate: None, sent: Value::Null, current: None }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Stream(bool),
@@ -131,6 +157,8 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    Tuple(Rc<Vec<Value>>),
+    Generator(Rc<RefCell<Generator>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -257,8 +285,9 @@ impl Value {
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
+            Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Generator(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -279,10 +308,10 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
+            Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
@@ -308,6 +337,8 @@ impl Value {
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
             (Value::SortOf(a), Value::SortOf(b)) => a == b,
+            (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -371,6 +402,10 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
+            Value::Tuple(items) => {
+                let shown = items.iter().map(|v| v.string_field(sp, "", "r").unwrap_or_else(|| v.plain())).collect::<Vec<_>>().join(", ");
+                format!("({}{})", shown, if items.len() == 1 { "," } else { "" })
+            }
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))
@@ -505,6 +540,8 @@ impl Value {
                 format!("[{}]", shown.join(", "))
             }
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
+            Value::Generator(_) => "<generator>".to_string(),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) => shared.borrow().plain(),
             Value::Class(c) => format!("<class {}>", c.name),
