@@ -24,6 +24,7 @@ enum Passage {
 }
 
 pub struct Engine<'a> {
+    property_class: Option<Rc<Class>>,
     class_root: Option<Rc<Class>>,
     function_members: Vec<(Value, Vec<(String, Value)>)>,
     lang: &'a Lang,
@@ -226,7 +227,7 @@ impl<'a> Engine<'a> {
             }
         }
         let mut engine = Engine {
-            class_root: None, function_members: Vec::new(),
+            property_class: None, class_root: None, function_members: Vec::new(),
             lang,
             world,
             data: Vec::new(),
@@ -267,10 +268,12 @@ impl<'a> Engine<'a> {
             registry,
         };
         if engine.fuller_classes() {
+            let property=engine.property_root();
             let root=engine.root_class();
             for (i,name) in engine.registry.idents.iter().enumerate() {
                 if name==engine.class_word("root"){engine.world[i]=Value::Class(root.clone());}
-                else if engine.lang.builtins.contains_key(name){engine.world[i]=Value::Adapter(Rc::new((8,vec![Value::text(name)])));}
+                else if engine.lang.builtins.get(name)==Some(&Builtin::ClassTool(11)){engine.world[i]=Value::Class(property.clone());}
+                else if let Some(b)=engine.lang.builtins.get(name){engine.world[i]=Value::Native(*b,Rc::from(name.as_str()));}
             }
         }
         engine
@@ -2290,11 +2293,11 @@ impl<'a> Engine<'a> {
         }
         if self.fuller_classes() {
             let result = match op {
-                Action::Grab(name) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Grab(name) if self.data.last().map_or(false,Self::class_subject) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
-                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) => {
+                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin,Builtin::SortOf) || argc==1 && self.data.last().map_or(false,|v|matches!(v,Value::Object(_))) || argc==3 => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     for (key,v) in self.call_items(supplied)? {
                         if key.is_some(){let words=&self.lang.call_builtin_amiss;return Err(format!("{}{}{}",words.first().map_or("",String::as_str),name,words.get(1).map_or("",String::as_str)).into());}
@@ -3171,7 +3174,7 @@ impl<'a> Engine<'a> {
                     self.data.push(result);
                     return Ok(());
                 }
-                if self.fuller_classes() {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
+                if self.fuller_classes() && Self::class_subject(&subject) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -6562,7 +6565,7 @@ impl Engine<'_> {
             return Ok(false);
         }
         if let Value::Class(class) = kind {
-            return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
+            return Ok(matches!(value, Value::Object(o) if Rc::ptr_eq(&o.class,class) || o.class.lineage.iter().any(|b|Rc::ptr_eq(b,class)) || o.class.named(&class.name, false)));
         }
         let b = match kind {
             Value::Native(b, _) => *b,
@@ -6585,6 +6588,10 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
+        if self.fuller_classes() && args.first().map_or(false,Self::class_subject) {
+            let op=match b {Builtin::GetAttr=>Some(3),Builtin::SetAttr=>Some(4),Builtin::DelAttr=>Some(5),Builtin::HasAttr=>Some(6),Builtin::Vars=>Some(7),Builtin::Callable=>Some(2),_=>None};
+            if let Some(op)=op {return self.class_work(op,args).map_err(|e|e.told(&self.wording()));}
+        }
         for value in &mut args { *value = value.contents(); }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;
@@ -6639,7 +6646,7 @@ impl Engine<'_> {
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
-                    Value::Native(b, _) => *b as u64 + 16,
+                    Value::Native(b, _) => self.lang.builtins.values().position(|known| known==b).unwrap_or(0) as u64 + 16,
                     Value::Huge(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Real(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),

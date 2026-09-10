@@ -1043,6 +1043,24 @@ only. The extension labels so far, all from PHP:
 - `ext.op.member` and `ext.op.scope`: `object->member` and
   `class::member`, each reading a property, a constant or a method, and
   `class::class` giving the class's name.
+- `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
+  `descriptor.delete` and `descriptor.name` name the descriptor's reader,
+  writer, remover and naming hook. Each is a list of words. The reader
+  receives an object (or nothing upon a class read) and the owning class.
+  Writers and removers take precedence over an object's own dictionary;
+  a reader alone gives way to that dictionary. The naming hook runs once
+  for each member declared in the class, before the inheritance hook.
+  `property.fget`, `property.fset`, `property.fdel`, `property.getter` and
+  `property.deleter` name the kept accessors and the calls which make a
+  fresh property. The earlier property `setter` names its writer's copy.
+  The property builtin is a class and may have descendants. Its first
+  string is the getter's first string unless another is given.
+  `property.unreadable`, `property.unwritable` and `property.undeletable`
+  give plain complaints for missing accessors; `descriptor.unready`
+  refuses a descriptor call whose working is not furnished. These too
+  are lists of words. Functions bind afresh whilst their bound methods
+  compare by function and receiver; the existing `receiver` and
+  `function` details name those two parts.
 - `ext.stmt.class.detail.*`: words for the fuller account of classes.
   `root` names the common forebear; `main` names the outermost module.
   `locals` marks a function in the full name of a nested function.
@@ -3469,6 +3487,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.get` | - | - | `__get__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.name` | - | - | `__set_name__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.set` | - | - | `__set__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.unready` | - | - | `TypeError: descriptor operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
@@ -3482,6 +3505,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.fdel` | - | - | `fdel` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.getter` | - | - | `getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.undeletable` | - | - | `AttributeError: property has no deleter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.unreadable` | - | - | `AttributeError: property has no getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.unwritable` | - | - | `AttributeError: property has no setter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.qualified` | - | - | `__qualname__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.receiver` | - | - | `__self__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.remove` | - | - | `__delattr__` | - | - | - | - | - | - | - |

@@ -2211,12 +2211,12 @@ impl<'a> Builder<'a> {
         while self.on_any("ext.stmt.decorator") {
             self.advance();
             let mut manner = 'd';
-            if self.glance(1).shape == Shape::LineEnd {
+            if !self.table.has_any("ext.stmt.class.detail.descriptor.get") && self.glance(1).shape == Shape::LineEnd {
                 for (label, mark) in [("ext.stmt.class.static", 's'), ("ext.stmt.class.classmethod", 'c'), ("ext.stmt.class.property", 'p')] {
                     if self.table.spells(label, &self.look().lexeme) { manner = mark; }
                 }
             }
-            let setter = self.table.spells("ext.op.member", &self.glance(1).lexeme)
+            let setter = !self.table.has_any("ext.stmt.class.detail.descriptor.get") && self.table.spells("ext.op.member", &self.glance(1).lexeme)
                 && self.table.spells("ext.stmt.class.property.setter", &self.glance(2).lexeme)
                 && self.glance(3).shape == Shape::LineEnd;
             let kept = match (manner, setter) {
@@ -2320,7 +2320,7 @@ impl<'a> Builder<'a> {
             if on_one_line && self.on_stmt_end() { break; }
             if self.on_any("ext.stmt.decorator") {
                 let (word, address) = self.member_adornments(&mut setup)?;
-                cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
+                cannot |= !table.has_any("ext.stmt.class.detail.descriptor.get") && table.single("ext.stmt.class.constructor") == Some(word.as_str());
                 methods.retain(|(n, _)| n != &word);
                 if let Some(index) = attributes.iter().position(|n| n == &word) {
                     attributes.remove(index);

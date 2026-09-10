@@ -1297,6 +1297,21 @@
   "ext.stmt.class.detail.defaults": [
     "__defaults__"
   ],
+  "ext.stmt.class.detail.descriptor.delete": [
+    "__delete__"
+  ],
+  "ext.stmt.class.detail.descriptor.get": [
+    "__get__"
+  ],
+  "ext.stmt.class.detail.descriptor.name": [
+    "__set_name__"
+  ],
+  "ext.stmt.class.detail.descriptor.set": [
+    "__set__"
+  ],
+  "ext.stmt.class.detail.descriptor.unready": [
+    "TypeError: descriptor operation is not supported"
+  ],
   "ext.stmt.class.detail.doc": [
     "__doc__"
   ],
@@ -1335,6 +1350,30 @@
   ],
   "ext.stmt.class.detail.order": [
     "mro"
+  ],
+  "ext.stmt.class.detail.property.deleter": [
+    "deleter"
+  ],
+  "ext.stmt.class.detail.property.fdel": [
+    "fdel"
+  ],
+  "ext.stmt.class.detail.property.fget": [
+    "fget"
+  ],
+  "ext.stmt.class.detail.property.fset": [
+    "fset"
+  ],
+  "ext.stmt.class.detail.property.getter": [
+    "getter"
+  ],
+  "ext.stmt.class.detail.property.undeletable": [
+    "AttributeError: property has no deleter"
+  ],
+  "ext.stmt.class.detail.property.unreadable": [
+    "AttributeError: property has no getter"
+  ],
+  "ext.stmt.class.detail.property.unwritable": [
+    "AttributeError: property has no setter"
   ],
   "ext.stmt.class.detail.qualified": [
     "__qualname__"

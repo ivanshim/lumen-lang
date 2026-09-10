@@ -430,7 +430,7 @@ impl Value {
             // of one class are not.
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             (Value::Class(a), Value::Class(b)) => if a.outline.is_some() { Rc::ptr_eq(a, b) } else { a.name == b.name },
-            (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
+            (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b) || a.0==3 && b.0==3 && a.1[0].equals(&b.1[0]) && a.1[1].equals(&b.1[1]),
             _ => false,
         }
     }

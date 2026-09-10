@@ -399,7 +399,7 @@ impl Value {
             (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
             (Value::Blueprint(a), Value::Blueprint(b)) => a.name == b.name,
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
-            (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
+            (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && (Rc::ptr_eq(x,y) || *k==3 && x[0].equals(&y[0]) && x[1].equals(&y[1])),
             (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,

@@ -142,6 +142,7 @@ impl Suspension {
 }
 
 pub struct Machine<'a> {
+    property_base: Option<Rc<Blueprint>>,
     ancestor: Option<Rc<Blueprint>>,
     routine_members: Vec<(Value, Vec<(String, Value)>)>,
     table: &'a Table,
@@ -297,7 +298,7 @@ impl<'a> Machine<'a> {
             }
         }
         Machine {
-            ancestor: None, routine_members: Vec::new(),
+            property_base: None, ancestor: None, routine_members: Vec::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -1615,7 +1616,8 @@ impl<'a> Machine<'a> {
         }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
-            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)])));}
+            if self.table.prims.get(slot.ident.as_ref())==Some(&Prim::ClassWork(11)){if let Some(p)=&self.property_base{return Ok(Value::Blueprint(p.clone()));}}
+            if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Intrinsic(Rc::from(slot.ident.as_ref())));}
         }
         Err(format!("Undefined variable: {}", slot.ident))
     }
@@ -1887,7 +1889,7 @@ impl<'a> Machine<'a> {
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
-        if self.has_class_order() && self.ancestor.is_none() { self.common_ancestor(); }
+        if self.has_class_order() && self.ancestor.is_none() { self.common_ancestor(); self.property_forebear(); }
         // A complaint raised where the run was only reading waits to be
         // handed over; here, before the next step, is where the run can
         // reach back into the program to hand it on.
@@ -2672,7 +2674,7 @@ impl<'a> Machine<'a> {
                         let fault = if self.table.spells("ext.stmt.yield.throw", &called) { "throw.unavailable" } else { "unsupported" };
                         return Err(self.generator_words(fault).into());
                     }
-                    if self.has_class_order(){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
+                    if self.has_class_order() && Self::ordered_subject(&subject){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
                     if self.table.flag("ext.op.member.pipes") {
                         let read = self.stands_for_property(Prim::Of, &[subject.clone(), Value::text(&called)])?;
                         if let Some(target) = read.or_else(|| self.attribute(&subject, &called)) {
@@ -2852,8 +2854,8 @@ impl<'a> Machine<'a> {
                     if self.has_class_order() {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
-                            Prim::SortOf=>return self.class_from_type(values),
-                            Prim::Of if values.len()==2=>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::SortOf if values.len()==3 || matches!(values.as_slice(),[Value::Thing(_)])=>return self.class_from_type(values),
+                            Prim::Of if values.len()==2 && Self::ordered_subject(&values[0])=>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false),
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -7083,6 +7085,11 @@ impl Machine<'_> {
         use num_traits::{Signed, Zero};
         use num_integer::Integer;
         use Prim::*;
+        if self.has_class_order() && input.first().map_or(false,Self::ordered_subject) {
+            let class_op=match op {GetMember=>Some(3),SetMember=>Some(4),DropMember=>Some(5),HasAttribute=>Some(6),MembersOf=>Some(7),CallableValue=>Some(2),_=>None};
+            if let Some(k)=class_op {return self.work_on_class(k,input).map_err(|e|self.suspension_fault(e));}
+        }
+
         let mut ordering = None;
         let mut descending = false;
         let mut fallback = None;

@@ -3300,7 +3300,7 @@ impl<'a> Compiler<'a> {
         while self.on_any(&lang.decorator_words) {
             self.take();
             let word = self.look().lexeme.clone();
-            let kind = if self.look_ahead(1).shape == Shape::LineEnd {
+            let kind = if lang.class_details.get("descriptor.get").map_or(false, |v| !v.is_empty()) { 0 } else if self.look_ahead(1).shape == Shape::LineEnd {
                 if Lang::spells(&lang.class_static, &word) { 1 }
                 else if Lang::spells(&lang.class_method, &word) { 2 }
                 else if Lang::spells(&lang.class_property, &word) { 3 }
@@ -3402,7 +3402,7 @@ impl<'a> Compiler<'a> {
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             if self.on_any(&lang.decorator_words) {
                 let (named, slot) = self.adorned_member()?;
-                if lang.constructor.as_ref() == Some(&named) { unready = true; }
+                if lang.constructor.as_ref() == Some(&named) && !lang.class_details.contains_key("descriptor.get") { unready = true; }
                 methods.retain(|(old, _)| old != &named);
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, slot));
