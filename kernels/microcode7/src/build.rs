@@ -2149,7 +2149,8 @@ impl<'a> Builder<'a> {
                     self.pos += 2;
                     attributes.push(member);
                     Some(self.expr(0)?)
-                } else if self.look().shape == Shape::Bare && table.spells("block.intro", &self.glance(1).lexeme) {
+                } else if self.look().shape == Shape::Bare && !self.key("ext.stmt.try")
+                    && self.glance(1).shape == Shape::Sign && table.spells("block.intro", &self.glance(1).lexeme) {
                     self.pos += 2;
                     let _annotation = self.expr(0)?;
                     if self.on_assign() { self.advance(); let _value = self.expr(0)?; }
@@ -3317,8 +3318,12 @@ impl<'a> Builder<'a> {
             (start, end)
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
-            let item = self.expr(tier + 1)?;
-            let start = self.comma_tail(item)?;
+            let start = if table.has_any("ext.op.tuple") && !table.has_any("op.range") {
+                self.comma_value()?
+            } else {
+                let item = self.expr(tier + 1)?;
+                self.comma_tail(item)?
+            };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().lexeme)) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -3651,6 +3656,8 @@ impl<'a> Builder<'a> {
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
         let table = self.table;
+        let generic = self.on_any("ext.stmt.type_params.open");
+        if generic { self.class_type_parameters()?; }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
@@ -3714,6 +3721,11 @@ impl<'a> Builder<'a> {
             Ok(sequence(items))
         })?;
         let mut items: Vec<Form> = said;
+        if generic {
+            if let Some(words) = table.single("ext.stmt.type_params.unready") {
+                items.insert(0, prim_call(Prim::Raise, vec![constant(Value::text(words))]));
+            }
+        }
         items.extend(self.statics.drain(statics_before..));
         // A routine written where a value stands is bound to no name and
         // stands for itself; one written out is bound to its name.
@@ -5091,11 +5103,11 @@ impl<'a> Builder<'a> {
             self.reading_yield = previous_yield;
             return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.yield.unrun").unwrap_or_default()))]));
         }
-        if table.spells("ext.literal.ellipsis", &t.lexeme) {
+        if self.on_any("ext.literal.ellipsis") {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
         }
-        if table.spells("ext.op.lambda", &t.lexeme) {
+        if self.key("ext.op.lambda") {
             self.advance();
             return self.lambda_form();
         }
@@ -5208,6 +5220,12 @@ impl<'a> Builder<'a> {
                     given.extend(self.arguments_of(&maker, "syntax.call.close", "syntax.call.separator")?);
                 }
                 prim_call(Prim::Spawn, given)
+            }
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit")
+                && table.spells("ext.stmt.class.parent", &t.lexeme)
+                && !table.single("syntax.call.open").map_or(false, |mark| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == mark) => {
+                self.advance();
+                self.read(&t.lexeme)
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme) => {
                 self.advance();
@@ -6360,7 +6378,7 @@ impl<'a> Builder<'a> {
             if label {
                 if bind { tag = Some(Value::text(&self.look().lexeme)); }
                 self.pos += 2;
-            } else if bind {
+            } else if bind && self.look().shape == Shape::Sign {
                 let word = &self.look().lexeme;
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }

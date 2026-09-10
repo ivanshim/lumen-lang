@@ -1,0 +1,6 @@
+# tests/python/test_set.py:1751
+if False:
+    def __iter__(self):
+        return self
+
+print('read')

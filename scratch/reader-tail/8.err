@@ -1,1 +1,1 @@
-Invalid assignment target before '='
+PythonError: Class MockContextManager cannot be built on that

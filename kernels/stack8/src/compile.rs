@@ -2727,8 +2727,12 @@ impl<'a> Compiler<'a> {
         } else {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let from = self.mark();
-            self.expr(tier + 1)?;
-            self.scope_tail(from)?;
+            if lang.range_marks.is_empty() && !lang.tuple_marks.is_empty() {
+                self.tuple_value()?;
+            } else {
+                self.expr(tier + 1)?;
+                self.scope_tail(from)?;
+            }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().lexeme)) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -3204,7 +3208,8 @@ impl<'a> Compiler<'a> {
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
-            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.block_intros, &self.look_ahead(1).lexeme) {
+            } else if self.look().shape == Shape::Instr && !self.on_keyword(&lang.try_words)
+                && self.look_ahead(1).shape == Shape::Sign && Lang::spells(&lang.block_intros, &self.look_ahead(1).lexeme) {
                 self.take();
                 self.take();
                 self.expr(0)?;
@@ -3760,6 +3765,14 @@ impl<'a> Compiler<'a> {
     fn function_value(&mut self, name: &str) -> Res<()> {
         let lang = self.lang;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        if self.on_any(&lang.type_params_open) {
+            self.class_type_parameters()?;
+            if let Some(words) = lang.type_params_unready.first() {
+                self.constant(Value::text(words));
+                self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                self.discard();
+            }
+        }
         let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
         let (formals, spares, _) = self.parameters(&name, &call)?;
@@ -5423,12 +5436,12 @@ impl<'a> Compiler<'a> {
             self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             return Ok(());
         }
-        if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
+        if self.on_any(&lang.ellipsis_words) {
             self.take();
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
-        if Lang::spells(&lang.lambda_words, &tok.lexeme) {
+        if self.on_keyword(&lang.lambda_words) {
             self.take();
             self.lambda_value()?;
             return Ok(());
@@ -5544,6 +5557,11 @@ impl<'a> Compiler<'a> {
                     _ => 0,
                 };
                 self.act(Action::Make, argc + 1);
+            }
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
+                && !lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open)) => {
+                self.take();
+                self.read(&tok.lexeme);
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme) => {
                 self.take();
@@ -6951,10 +6969,9 @@ impl<'a> Compiler<'a> {
                 && (Lang::spells(&self.lang.argument_labels, &self.look_ahead(1).lexeme)
                     || (self.lang.bind_names && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme)));
             let tagged = self.lang.bind_names && labelled;
-            let named_spread = Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme);
+            let named_spread = self.on_any(&self.lang.call_spread_pairs);
             let spread = self.lang.bind_names && !labelled
-                && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
-                    || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
+                && (self.on_any(&self.lang.call_spread) || named_spread);
             if tagged {
                 self.constant(Value::text(&self.look().lexeme));
             } else if spread {

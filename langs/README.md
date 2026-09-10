@@ -296,6 +296,8 @@ only. The extension labels so far, all from PHP:
   its methods and their bodies. Class member annotations are not local
   function annotations and await their own reader. This small reading
   defers the making of the class to the class piece.
+  A watched statement in the class body keeps its statement reading;
+  the colon after its head does not begin a member annotation.
 - `ext.stmt.class.unready`: the complaint when a class can be read but
   its making cannot yet be honoured by the run.
 - `ext.op.member.pipes`: a member mark may also spell the old pipe to a
@@ -310,6 +312,8 @@ only. The extension labels so far, all from PHP:
 - `ext.op.tuple`: the separator making a parenthesised sequence a
   tuple; empty parentheses make one too. A bare sequence of loop target
   names is also read. The tuple piece supplies the values and bindings.
+  A loop source may begin with a spread, as may any other comma value;
+  every spread is walked and joined in its written order.
 - `ext.op.tuple.unready`: the complaint upon reaching a tuple value or
   a multiple loop target that this small reading cannot yet run.
 - `ext.op.identical.negated`: the word following the identity operator
@@ -399,6 +403,14 @@ only. The extension labels so far, all from PHP:
   are refused. The class still raises `ext.stmt.class.unready` when
   reached. These labels also belong to the separate modern syntax piece;
   this reading supplies only the class head needed here.
+- `ext.stmt.type_params.unready`: words said upon reaching a routine
+  whose head bears type parameters. The existing opening and closing
+  marks admit the same parameter reading after a routine name as after
+  a class name. Bounds, defaults and the whole body are read before the
+  run refuses the declaration; no ordinary routine is made in its stead.
+- `ext.stmt.class.parent`: with an explicit receiver, a parent word
+  followed by call marks asks for the parent's method. Standing alone,
+  it is read as a binding, as when handed to a routine or put in a list.
 - `ext.stmt.class.bases.open` and `.close` enclose the expressions a
   class takes as bases. With `ext.stmt.class.unready` spelled, this small
   reading reads the head and every statement within, then refuses the
@@ -1770,6 +1782,8 @@ only. The extension labels so far, all from PHP:
   items as positional arguments. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
   `ext.syntax.call.spread.amiss`.
+  A quoted spelling of either spreading sign remains text, including
+  beside named arguments; only a sign token opens a spread.
 - `ext.syntax.call.spread.pairs`: a sign before a call argument handing
   out a map as keyword arguments. A value which is no map, or a key which
   is no string, is refused in `ext.syntax.call.spread.pairs.amiss` words.
@@ -2914,6 +2928,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.type_params.close` | - | - | `]` | - | - | - | - | - | - | - |
 | `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.unready` | - | - | `NotImplementedError: type parameters cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |

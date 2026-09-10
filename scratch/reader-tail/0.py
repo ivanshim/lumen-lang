@@ -1,2 +1,2 @@
-# test_print.py:89, the star passed as text.
+# test_print.py:95, reduced to the quoted-star call argument.
 print('*')

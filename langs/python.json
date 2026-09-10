@@ -915,6 +915,9 @@
   "ext.stmt.type_params.open": [
     "["
   ],
+  "ext.stmt.type_params.unready": [
+    "NotImplementedError: type parameters cannot be run"
+  ],
   "ext.stmt.unpack": [
     "["
   ],
