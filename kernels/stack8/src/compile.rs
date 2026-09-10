@@ -5702,6 +5702,7 @@ impl<'a> Compiler<'a> {
         match token.shape {
             Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
                 Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
+            Shape::Codepoints => self.constant(Value::points(token.lexeme.split_whitespace().map(|n| n.parse().expect("an ordinal")).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),
             Shape::StringFault => {
                 self.constant(Value::text(&token.lexeme));
@@ -5887,10 +5888,10 @@ impl<'a> Compiler<'a> {
                 let v = parse_number(&tok.lexeme, lang)?;
                 self.constant(v);
             }
-            Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault => {
+            Shape::Codepoints | Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault => {
                 let bytes = tok.shape == Shape::Bytes;
                 self.string_piece()?;
-                while lang.adjacent_strings && matches!(self.look().shape, Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault) {
+                while lang.adjacent_strings && matches!(self.look().shape, Shape::Codepoints | Shape::Bytes | Shape::Quote | Shape::StringBegin | Shape::StringFault) {
                     if bytes != (self.look().shape == Shape::Bytes) {
                         return Err(lang.byte_words["ext.lexical.string.bytes.mixed"][0].clone());
                     }
@@ -5961,6 +5962,8 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Stream(true));
                 } else if !self.writing_place && Lang::spells(&lang.print_file_output, &tok.lexeme) {
                     self.constant(Value::Stream(false));
+                } else if lang.builtins.get(&tok.lexeme) == Some(&Builtin::UnicodeMaximum) {
+                    self.constant(Value::Small(1114111));
                 } else if matches!(lang.builtins.get(&tok.lexeme), Some(Builtin::Bytes(0 | 1)))
                     && !lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)) {
                     let mutable = lang.builtins.get(&tok.lexeme) == Some(&Builtin::Bytes(1));

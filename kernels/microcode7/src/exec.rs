@@ -3660,6 +3660,20 @@ impl<'a> Machine<'a> {
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
         }
+        if op == Prim::Say {
+            for item in positional.iter() { if matches!(item, Value::Characters(_)) { self.octet_routine(2, std::slice::from_ref(item))?; } }
+        }
+        if matches!(op, Prim::Octets(2 | 3)) && table.flag("ext.system.text.unicode") && keywords.len() > 0 {
+            let original = positional.len();
+            for (name, value) in keywords {
+                let index = table.strings("ext.system.text.options").iter().position(|s| s == &name).map(|n| n + 1).ok_or_else(|| self.octet_error("arguments"))?;
+                if index < original { return Err(self.octet_error("arguments").into()); }
+                positional.resize_with((index + 1).max(positional.len()), || Value::text(&table.strings("ext.system.bytes.encodings")[0]));
+                positional[index] = value;
+            }
+            let Prim::Octets(code) = op else { unreachable!() };
+            return self.octet_routine(code, positional).map(Some).map_err(Escape::from);
+        }
         if let Prim::Octets(which @ (14 | 15)) = op {
             let mut negative_allowed = false;
             for (key, worth) in keywords {
@@ -4463,6 +4477,38 @@ impl<'a> Machine<'a> {
     }
 
     fn octet_work(&self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if operation == 2 && (1..=3).contains(&values.len()) {
+            if let Value::Characters(numbers) = &values[0] {
+                let alphabet = self.octet_encoding(values.get(1))?;
+                let how = if let Some(Value::Text(word)) = values.get(2) { self.table.strings("ext.system.text.errors").iter().position(|name| name == word.as_ref()).ok_or_else(|| self.octet_error("unready"))? } else if values.len() < 3 { 0 } else { return Err(self.octet_error("arguments")); };
+                let mut result = Vec::new();
+                for (position, &number) in numbers.iter().enumerate() {
+                    match char::from_u32(number) {
+                        Some(letter) => {
+                            let chars = String::from(letter);
+                            match crate::unicode::encode(&chars, alphabet > 0, how) {
+                                Some(bytes) => result.extend(bytes),
+                                None => return self.octets_from_text(&chars, alphabet).map(|v| self.octets(v, false)),
+                            }
+                        }
+                        None => match how {
+                            1 => continue,
+                            2 => result.push(63),
+                            3 => result.extend_from_slice(format!("\\u{:04x}", number).as_bytes()),
+                            5 => result.extend_from_slice(format!("&#{};", number).as_bytes()),
+                            4 if number >= 0xdc80 && number <= 0xdcff => result.push((number & 255) as u8),
+                            _ => {
+                                let count = numbers[position..].iter().take_while(|n| (0xd800..=0xdfff).contains(n)).count();
+                                let location = if count == 1 { format!("character '\\u{:04x}' in position {}", number, position) } else { format!("characters in position {}-{}", position, position + count - 1) };
+                                let why = if alphabet == 0 { "surrogates not allowed" } else { "ordinal not in range(128)" };
+                                return Err(format!("{}'{}' codec can't encode {}: {}", self.octet_error("encode"), self.table.strings("ext.system.bytes.encodings")[alphabet * 2], location, why));
+                            }
+                        },
+                    }
+                }
+                return Ok(self.octets(result, false));
+            }
+        }
         if self.table.flag("ext.system.text.unicode") && (operation == 2 || operation == 3) && values.len() == 3 {
             let handling = match &values[2] {
                 Value::Text(word) => self.table.strings("ext.system.text.errors").iter().position(|s| s == word.as_ref()),
@@ -5162,6 +5208,18 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if v.len() == 2 && v.iter().any(|x| matches!(x, Value::Characters(_))) {
+            if let (Some(one), Some(two)) = (v[0].ordinals(), v[1].ordinals()) {
+                let outcome = match op {
+                    Prim::Join | Prim::Plus => Some(Value::points(one.iter().chain(two.iter()).copied().collect())),
+                    Prim::Eq => Some(Value::Flag(one == two)), Prim::Ne => Some(Value::Flag(one != two)),
+                    Prim::Lt => Some(Value::Flag(one < two)), Prim::Le => Some(Value::Flag(one <= two)),
+                    Prim::Gt => Some(Value::Flag(one > two)), Prim::Ge => Some(Value::Flag(one >= two)),
+                    _ => None,
+                };
+                if let Some(answer) = outcome { return Ok(answer); }
+            }
+        }
         if matches!(op, Prim::Added | Prim::Placed) {
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
@@ -5530,6 +5588,7 @@ impl<'a> Machine<'a> {
             Prim::Extent => {
                 n(1)?;
                 match &v[0] {
+                    Value::Characters(row) => Value::Small(row.len() as i64),
                     Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
                     Value::Progression(walk) => Value::from_big(walk.count()),
                     Value::Set(set) => Value::Small(set.borrow().keys.len() as i64),
@@ -7015,6 +7074,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 if let Some(held) = self.check_set_walk(&v[0])? { return Ok(Value::Small(held.borrow().entries.len() as i64)); }
                 match &v[0] {
+                    Value::Characters(row) => Value::Small(row.len() as i64),
                     Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Vector(l) | Value::Tuple(l) => Value::Small(l.len() as i64),
@@ -7037,6 +7097,7 @@ impl<'a> Machine<'a> {
             }
             Prim::CodeOf => {
                 n(1)?;
+                if let Value::Characters(row) = &v[0] { return if row.len() == 1 { Ok(Value::Small(row[0] as i64)) } else { Err(self.method_fault("arguments")) }; }
                 match &v[0] {
                     Value::Text(s) => match s.chars().next() {
                         Some(c) => Value::Small(c as i64),
@@ -7057,6 +7118,7 @@ impl<'a> Machine<'a> {
                     _ => return Err(format!("{}() requires an integer argument", name)),
                 }
                 .ok_or_else(|| format!("{}() argument must be a non-negative integer within valid Unicode range", name))?;
+                if self.table.flag("ext.system.text.unicode") && (0xd800..=0xdfff).contains(&code) { return Ok(Value::points(vec![code])); }
                 match char::from_u32(code) {
                     Some(c) => Value::text(&c.to_string()),
                     None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
@@ -7380,6 +7442,12 @@ impl<'a> Machine<'a> {
     }
 
     fn element_within(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        if let Value::Characters(numbers) = target {
+            return if let Value::Span(bounds) = at {
+                let (_, chosen, _) = self.span_selection(bounds, numbers.len())?;
+                Ok(Value::points(chosen.iter().map(|&i| numbers[i]).collect()))
+            } else { Ok(Value::points(vec![numbers[self.octet_at(at, numbers.len())?]])) };
+        }
         if matches!(target, Value::Set(_)) { return Err(self.core_complaint("core.unindexable", &target.kind_word())); }
         if let Value::Octets { cell, changeable, .. } = target {
             let numbers = cell.borrow();
@@ -8573,6 +8641,7 @@ impl Machine<'_> {
         for item in &mut input { *item = item.settled(); }
         if keywords.is_empty() {
             match (op, input.as_slice()) {
+                (Prim::Quoted, [Value::Characters(row)]) => return Ok(Value::text(&crate::unicode::quoted_points(row, false))),
                 (Prim::Quoted, [Value::Text(t)]) if self.table.flag("ext.system.text.unicode") => return Ok(Value::text(&crate::unicode::quoted(t, false))),
                 (Prim::Belongs, [_, Value::OctetKind { .. }]) => return self.octet_routine(16, &input),
                 (Prim::Hashed, [Value::Octets { .. }]) => return self.octet_routine(17, &input),

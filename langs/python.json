@@ -2012,6 +2012,10 @@
     "surrogateescape",
     "xmlcharrefreplace"
   ],
+  "ext.system.text.options": [
+    "encoding",
+    "errors"
+  ],
   "ext.system.text.unicode": true,
   "ext.system.unicode.maximum": [
     "sys.maxunicode"

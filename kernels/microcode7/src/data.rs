@@ -141,6 +141,7 @@ pub enum IteratorKind {
 
 #[derive(Clone)]
 pub enum Value {
+    Characters(Rc<[u32]>),
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
@@ -282,6 +283,17 @@ pub struct Names<'a> {
 }
 
 impl Value {
+    pub fn ordinals(&self) -> Option<Vec<u32>> {
+        if let Self::Text(s) = self { return Some(s.chars().map(u32::from).collect()); }
+        if let Self::Characters(row) = self { return Some(row.to_vec()); }
+        None
+    }
+
+    pub fn points(numbers: Vec<u32>) -> Self {
+        let ordinary: Option<String> = numbers.iter().copied().map(char::from_u32).collect();
+        match ordinary { Some(chars) => Self::text(&chars), None => Self::Characters(Rc::from(numbers)) }
+    }
+
     pub fn point_kept(&self) -> bool {
         match self {
             Self::Frac(e) => e.pointed,
@@ -432,7 +444,7 @@ impl Value {
         Some(match self {
             Value::Small(_) | Value::Huge(_) => Kind::Whole,
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
-            Value::Text(_) => Kind::Chars,
+            Value::Text(_) | Value::Characters(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
             Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
@@ -462,6 +474,7 @@ impl Value {
             // Neither worth standing past the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Frac(e) => e.past_numbers() || !e.above.is_zero(),
+            Value::Characters(numbers) => numbers.len() > 0,
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(parts) => !parts.is_empty(),
             Value::Nil | Value::Unset => false,
@@ -481,6 +494,7 @@ impl Value {
             Value::Frac(_) => return Err("Cannot coerce rational to integer".to_string()),
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
+            Value::Characters(_) => return Err(String::from("Cannot coerce text to number")),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
@@ -532,6 +546,7 @@ impl Value {
                     _ => left.first == right.first && left.stride == right.stride,
                 }
             }
+            (Value::Characters(one), Value::Characters(two)) => one == two,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -757,6 +772,7 @@ impl Value {
                 Some(d) => decimal_string(&e.above, &e.beneath, d),
                 None => format!("{}/{}", e.above, e.beneath),
             },
+            Value::Characters(numbers) => crate::unicode::quoted_points(numbers, false),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),

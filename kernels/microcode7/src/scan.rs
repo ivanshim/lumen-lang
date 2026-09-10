@@ -11,6 +11,7 @@ pub enum Shape {
     Numeral,
     Quote,
     ByteQuote,
+    PointQuote,
     Woven,
     WovenEnd,
     Field,
@@ -568,11 +569,16 @@ impl Quotation<'_> {
     fn token(&mut self, kind: Shape, text: String) {
         self.made.push(Token { row: self.row, shape: kind, lexeme: text, span: 0 });
     }
-    fn flush(&mut self, text: &mut String, missing: &mut bool) {
-        let kind = if *missing { Shape::Unheld } else { Shape::Quote };
+    fn flush(&mut self, text: &mut String, missing: &mut bool, odd: &mut Vec<(usize, u32)>) {
+        let kind = if *missing { Shape::Unheld } else if odd.len() > 0 { Shape::PointQuote } else { Shape::Quote };
         let value = if *missing {
             self.table.single("ext.lexical.escape.unavailable").unwrap_or("Unicode escape cannot be represented").to_owned()
+        } else if odd.len() > 0 {
+            let mut row: Vec<u32> = text.chars().map(u32::from).collect();
+            for (place, number) in odd.iter() { row[*place] = *number; }
+            row.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
         } else { std::mem::take(text) };
+        odd.clear();
         self.token(kind, value);
         text.clear();
         *missing = false;
@@ -584,6 +590,7 @@ impl Quotation<'_> {
         if fields { self.token(Shape::Woven, String::new()); }
         let mut saved = String::new();
         let mut missing = false;
+        let mut odd = Vec::new();
         while !self.source[self.next..].starts_with(end) {
             let ch = self.here().ok_or_else(|| {
                 if end.len() > 1 && !fields { format!("Unterminated {} string", end[0]) } else { self.bad() }
@@ -593,14 +600,14 @@ impl Quotation<'_> {
             }
             match ch {
                 '\n' if end.len() == 1 => return Err(self.bad()),
-                '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing)?,
+                '\\' => self.slash(raw, fields, bytes, &mut saved, &mut missing, &mut odd)?,
                 '{' | '}' if fields => {
                     if self.source.get(self.next + 1) == Some(&ch) {
                         saved.push(ch);
                         self.forward(2);
                     } else {
                         if ch == '}' { return Err(self.bad()); }
-                        self.flush(&mut saved, &mut missing);
+                        self.flush(&mut saved, &mut missing, &mut odd);
                         self.field(raw)?;
                     }
                 }
@@ -608,11 +615,11 @@ impl Quotation<'_> {
             }
         }
         self.forward(end.len());
-        if bytes { self.token(Shape::ByteQuote, saved); } else { self.flush(&mut saved, &mut missing); }
+        if bytes { self.token(Shape::ByteQuote, saved); } else { self.flush(&mut saved, &mut missing, &mut odd); }
         if fields { self.token(Shape::WovenEnd, String::new()); }
         Ok(())
     }
-    fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool) -> Result<(), String> {
+    fn slash(&mut self, raw: bool, fields: bool, bytes: bool, text: &mut String, missing: &mut bool, odd: &mut Vec<(usize, u32)>) -> Result<(), String> {
         let begin = self.next;
         let ch = *self.source.get(begin + 1).ok_or_else(|| self.bad())?;
         if raw || fields && matches!(ch, '{' | '}') {
@@ -649,7 +656,7 @@ impl Quotation<'_> {
                 value = value.checked_mul(16).and_then(|n| n.checked_add(digit)).ok_or_else(|| beyond.to_owned())?;
             }
             if value > 0x10ffff { return Err(beyond.to_owned()); }
-            if let Some(ch) = char::from_u32(value) { text.push(ch); } else { *missing = true; }
+            if let Some(ch) = char::from_u32(value) { text.push(ch); } else if table.flag("ext.system.text.unicode") { odd.push((text.chars().count(), value)); text.push('\0'); } else { *missing = true; }
             self.forward(count + 2);
             return Ok(());
         }
@@ -763,19 +770,20 @@ impl Quotation<'_> {
         self.token(Shape::Woven, String::new());
         let mut specification = String::new();
         let mut missing = false;
+        let mut odd = Vec::new();
         if self.here() == Some(':') {
             self.forward(1);
             while self.here() != Some('}') {
                 match self.here().ok_or_else(|| self.bad())? {
-                    '{' => { self.flush(&mut specification, &mut missing); self.field(raw)?; }
-                    '\\' => self.slash(raw, true, false, &mut specification, &mut missing)?,
+                    '{' => { self.flush(&mut specification, &mut missing, &mut odd); self.field(raw)?; }
+                    '\\' => self.slash(raw, true, false, &mut specification, &mut missing, &mut odd)?,
                     c => { specification.push(c); self.forward(1); }
                 }
             }
         }
         if self.here() != Some('}') { return Err(self.bad()); }
         self.forward(1);
-        self.flush(&mut specification, &mut missing);
+        self.flush(&mut specification, &mut missing, &mut odd);
         self.token(Shape::WovenEnd, String::new());
         Ok(())
     }

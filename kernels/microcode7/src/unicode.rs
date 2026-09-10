@@ -6909,3 +6909,16 @@ pub fn decode(input: &[u8], restricted: bool, handling: usize) -> Option<String>
     }
     Some(result)
 }
+
+pub fn quoted_points(ordinals: &[u32], limited: bool) -> String {
+    let quotation = match (ordinals.contains(&0x27), ordinals.contains(&0x22)) { (true, false) => '"', _ => '\'' };
+    let middle: String = ordinals.iter().map(|&number| {
+        match char::from_u32(number) {
+            None => format!("\\u{:04x}", number),
+            Some(letter) if letter == quotation || letter == '\\' => format!("\\{}", letter),
+            Some('\'' | '"') => char::from_u32(number).unwrap().to_string(),
+            Some(letter) => { let escaped = quoted(&String::from(letter), limited); escaped[1..escaped.len()-1].to_owned() }
+        }
+    }).collect();
+    format!("{}{}{}", quotation, middle, quotation)
+}

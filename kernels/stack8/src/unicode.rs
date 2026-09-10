@@ -6901,3 +6901,20 @@ pub fn decode(bytes: &[u8], ascii: bool, policy: usize) -> Option<String> {
     }
     Some(out)
 }
+
+pub fn quoted_points(points: &[u32], ascii: bool) -> String {
+    let mark = if points.contains(&39) && !points.contains(&34) { '"' } else { '\'' };
+    let mut result = mark.to_string();
+    for &n in points {
+        if let Some(c) = char::from_u32(n) {
+            if c == mark || c == '\\' { result.push('\\'); result.push(c); }
+            else if c == '\'' || c == '"' { result.push(c); }
+            else {
+                let shown = quoted(&c.to_string(), ascii);
+                result.push_str(&shown[1..shown.len() - 1]);
+            }
+        } else { result.push_str(&format!("\\u{n:04x}")); }
+    }
+    result.push(mark);
+    result
+}

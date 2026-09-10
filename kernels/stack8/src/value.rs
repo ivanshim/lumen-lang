@@ -163,6 +163,7 @@ pub enum CursorSource {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Codepoints(Rc<Vec<u32>>),
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
     View(Rc<(Value, String)>),
@@ -310,6 +311,15 @@ pub struct Wording<'a> {
 }
 
 impl Value {
+    pub fn ordinals(&self) -> Option<Vec<u32>> {
+        match self { Value::Codepoints(row) => Some(row.as_ref().clone()), Value::Text(s) => Some(s.chars().map(|c| c as u32).collect()), _ => None }
+    }
+
+    pub fn points(row: Vec<u32>) -> Value {
+        if let Some(text) = row.iter().map(|n| char::from_u32(*n)).collect::<Option<String>>() { Value::text(&text) }
+        else { Value::Codepoints(Rc::new(row)) }
+    }
+
     pub fn keeps_point(&self) -> bool {
         match self {
             Value::Real(r) => r.point,
@@ -456,7 +466,7 @@ impl Value {
             Value::Small(_) | Value::Huge(_) => Sort::Integer,
             Value::Frac(_) => Sort::Rational,
             Value::Real(_) => Sort::Real,
-            Value::Text(_) => Sort::Text,
+            Value::Text(_) | Value::Codepoints(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
             Value::Array(_) | Value::Map(_) | Value::Tuple(_) => Sort::Array,
             Value::Collection(cell, _) => return cell.borrow().sort(),
@@ -506,6 +516,7 @@ impl Value {
             // Neither what stands outside the numbers is nought, so
             // both count as true, though the top of the one is nought.
             Value::Real(r) => r.outside() || !r.p.is_zero(),
+            Value::Codepoints(row) => !row.is_empty(),
             Value::Text(s) => !s.is_empty(),
             Value::Tuple(items) => !items.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
@@ -528,6 +539,7 @@ impl Value {
             Value::Real(r) => Ok(&r.p / &r.q),
             Value::Flag(b) => Ok(BigInt::from(*b as i64)),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
+            Value::Codepoints(_) => Err("Cannot coerce text to number".into()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
@@ -567,6 +579,7 @@ impl Value {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
             }
+            (Value::Codepoints(a), Value::Codepoints(b)) => a == b,
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
@@ -778,6 +791,7 @@ impl Value {
             Value::Frac(r) => format!("{}/{}", r.p, r.q),
             Value::Real(r) if r.outside() => r.spelled().to_string(),
             Value::Real(r) => decimal_string(&r.p, &r.q, r.places),
+            Value::Codepoints(row) => crate::unicode::quoted_points(row, false),
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => "null".to_string(),
