@@ -331,6 +331,9 @@
   "ext.builtin.call.outcome": [
     "__call_outcome"
   ],
+  "ext.builtin.class.beneath": [
+    "__class_beneath"
+  ],
   "ext.builtin.class.derive": [
     "__derive_class"
   ],

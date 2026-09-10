@@ -69,9 +69,9 @@ def dataclass(cls=None, frozen=False, **options):
     if frozen or len(options):
         raise 'NotImplementedError: these dataclass options are not supported'
     if cls is None:
-        def decorate(cls):
-            return dataclass(cls)
-        return decorate
+        return dataclass
+    if __class_beneath(cls) is not None:
+        raise 'NotImplementedError: dataclass inheritance is not supported'
     if len(__class_methods(cls)):
         raise 'NotImplementedError: dataclasses with custom methods are not supported'
     names = list(getattr(cls, '__annotations__', {}))
