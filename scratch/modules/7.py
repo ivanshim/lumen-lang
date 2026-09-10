@@ -25,3 +25,6 @@ original = Box(Box(1))
 cloned = deepcopy(original)
 cloned.value.value = 2
 print(original.value.value, cloned.value.value)
+import math
+print(operator.floordiv(-7, 3), operator.mod(-7, 3), operator.rshift(-7, 1))
+print(math.fabs(-0.0), math.copysign(2, -1))

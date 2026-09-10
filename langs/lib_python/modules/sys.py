@@ -97,5 +97,7 @@ class _Error:
 stdout = _Output()
 stderr = _Error()
 
+# Stub: the direct host spelling still raises a complaint. Numeric
+# process exit status and catchable SystemExit await exception support.
 def exit(status=0):
     sys.exit(status)

@@ -12,10 +12,13 @@ def truediv(a, b):
     return a / b
 
 def floordiv(a, b):
-    return a // b
+    quotient = a // b
+    if (b > 0 and quotient * b > a) or (b < 0 and quotient * b < a):
+        quotient -= 1
+    return quotient
 
 def mod(a, b):
-    return a % b
+    return a - floordiv(a, b) * b
 
 def pow(a, b):
     return a ** b
@@ -123,8 +126,8 @@ def _bits(a, b, operation):
     result = 0
     place = 1
     while a not in (0, -1) or b not in (0, -1):
-        left = a - (a // 2) * 2
-        right = b - (b // 2) * 2
+        left = a - floordiv(a, 2) * 2
+        right = b - floordiv(b, 2) * 2
         if operation == 'and':
             digit = left * right
         elif operation == 'or':
@@ -133,8 +136,8 @@ def _bits(a, b, operation):
             digit = (left + right) % 2
         result += digit * place
         place *= 2
-        a //= 2
-        b //= 2
+        a = floordiv(a, 2)
+        b = floordiv(b, 2)
     negative = (a == -1 and b == -1) if operation == 'and' else (a == -1 or b == -1)
     if operation == 'xor':
         negative = a != b
@@ -164,7 +167,7 @@ def rshift(a, b):
     a, b = index(a), index(b)
     if b < 0:
         raise 'ValueError: negative shift count'
-    return a // 2 ** b
+    return floordiv(a, 2 ** b)
 
 def concat(a, b):
     if type(a) == type([]) and type(b) == type([]):

@@ -6,6 +6,8 @@ def seed(a=None, version=2):
     if a is None:
         a = 1
     _state = int(a) % 2147483648
+    if _state < 0:
+        _state += 2147483648
 
 def _next():
     global _state

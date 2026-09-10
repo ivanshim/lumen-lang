@@ -10,6 +10,8 @@ def sqrt(x):
     return __math('sqrt', x)
 
 def fabs(x):
+    if x == 0:
+        return __math('fdiv', 0.0, 1.0)
     if x < 0:
         return __math('fdiv', -x, 1.0)
     return __math('fdiv', x, 1.0)
@@ -73,7 +75,7 @@ def isclose(a, b, rel_tol=0.000000001, abs_tol=0.0):
 def copysign(x, y):
     sign = __math('fdiv', 1.0, y)
     if y < 0 or sign < 0:
-        return -fabs(x)
+        return __math('fdiv', -fabs(x), 1.0)
     return fabs(x)
 
 def gcd(*integers):

@@ -112,7 +112,8 @@ class captured_stdout:
         return self.text
 
     def __exit__(self, kind, value, traceback):
-        self.text = __output_drop()
+        self.text = __output_held()
+        __output_drop()
         self.active = False
         return False
 
