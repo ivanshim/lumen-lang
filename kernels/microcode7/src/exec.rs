@@ -213,10 +213,6 @@ pub struct Machine<'a> {
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
     holding: RefCell<Vec<String>>,
-    /// The error channel's own keeping, innermost last: text sent that
-    /// way while it is kept is gathered here and never mixed with what
-    /// the ordinary keeping gathers, so each answers for itself alone.
-    error_buffers: RefCell<Vec<String>>,
     /// The routines to run once the program's last statement is done,
     /// each with what it is to be handed, in the order they were named.
     afterward: RefCell<Vec<(Value, Vec<Value>)>>,
@@ -403,7 +399,6 @@ impl<'a> Machine<'a> {
             silenced: 0,
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
-            error_buffers: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
@@ -3684,6 +3679,29 @@ impl<'a> Machine<'a> {
         Ok(sorted.into_iter().map(|entry| entry.1).collect())
     }
 
+    /// The namespace a builtin is routed through, loaded if it is not yet.
+    fn namespace_for(&mut self, path: &str) -> Result<Value, String> {
+        self.load_namespace(path)
+    }
+
+    /// Apply a value the program could apply, in the outermost scope,
+    /// handing on whatever it raises as the program would see it.
+    fn apply_held(&mut self, target: Value, arguments: Vec<Value>) -> Res {
+        let call = Form::Apply(Callee::Code(Box::new(Form::Const(target))), arguments.into_iter().map(Form::Const).collect());
+        let scope = self.outermost.clone();
+        self.value_of(&call, &scope)
+    }
+
+    /// As `apply_held`, for an operation that answers plain words: an
+    /// escape that is not words is put by to be raised once it returns.
+    fn apply_within(&mut self, target: Value, arguments: Vec<Value>) -> Result<Value, String> {
+        match self.apply_held(target, arguments) {
+            Ok(answer) => Ok(answer),
+            Err(Escape::Error(words)) => Err(words),
+            Err(away) => { self.got_away = Some(away); Err(self.argument_fault("ext.builtin.stream.failed", None)) }
+        }
+    }
+
     fn builtin_keyword_fault(&self, written: &str) -> String {
         let name = written.rsplit('.').next().unwrap_or(written);
         let has_tail = self.table.strings("ext.syntax.call.amiss.builtin").len() == 2;
@@ -3707,9 +3725,12 @@ impl<'a> Machine<'a> {
             return self.octet_work(which, positional, negative_allowed).map(Some).map_err(Into::into);
         }
         if op == Prim::Say && table.single("ext.builtin.print.sep").is_some() {
+            let route = table.strings("ext.builtin.print.redirect");
             let mut join = String::from(" ");
             let mut tail = String::from("\n");
             let mut channel = 1;
+            let mut sink = Value::Nil;
+            let mut drained = false;
             for (key, value) in keywords {
                 let joining = table.spells("ext.builtin.print.sep", &key);
                 if joining || table.spells("ext.builtin.print.end", &key) {
@@ -3722,14 +3743,42 @@ impl<'a> Machine<'a> {
                         }
                     }
                 } else if table.spells("ext.builtin.print.file", &key) {
+                    if route.len() == 3 { sink = value; continue; }
                     match value {
                         Value::Channel(port) => channel = port,
                         Value::Nil => channel = 1,
                         _ => return Err(self.argument_fault("ext.builtin.print.file.unready", None).into()),
                     }
-                } else if !table.spells("ext.builtin.print.flush", &key) {
+                } else if table.spells("ext.builtin.print.flush", &key) {
+                    drained = self.stands_true(&value);
+                } else {
                     return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)).into());
                 }
+            }
+            // Routed, the text goes to the writer of whatever the module
+            // holds as its stream just now, unless a file was named. A
+            // stream of nothing takes the print and shows nothing, and
+            // the values are not even put into words for it.
+            if route.len() == 3 {
+                if matches!(sink, Value::Nil) {
+                    let namespace = self.namespace_for(&route[0])?;
+                    sink = self.attribute(&namespace, &route[1]).unwrap_or(Value::Nil);
+                    if matches!(sink, Value::Nil) { return Ok(Some(Value::Nil)); }
+                }
+                let mut written = String::new();
+                for (at, item) in positional.iter().enumerate() {
+                    if at != 0 { written.push_str(&join); }
+                    written.push_str(&self.object_words(item, false)?);
+                }
+                written.push_str(&tail);
+                let writer = self.attribute(&sink, &route[2]).ok_or_else(|| self.argument_fault("ext.builtin.print.file.unready", None))?;
+                self.apply_held(writer, vec![Value::text(&written)])?;
+                if drained {
+                    if let Some(method) = table.single("ext.builtin.print.flush").and_then(|word| self.attribute(&sink, word)) {
+                        self.apply_held(method, Vec::new())?;
+                    }
+                }
+                return Ok(Some(Value::Nil));
             }
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
@@ -3738,12 +3787,7 @@ impl<'a> Machine<'a> {
             }
             written.push_str(&tail);
             match channel {
-                // On the error channel: into its keeping if one is
-                // open, otherwise straight out.
-                2 => match self.error_buffers.borrow_mut().last_mut() {
-                    None => eprint!("{}", written),
-                    Some(buffer) => buffer.push_str(&written),
-                },
+                2 => eprint!("{}", written),
                 _ => self.utter(&written),
             }
             return Ok(Some(Value::Nil));
@@ -5178,20 +5222,6 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
-        // Given the error channel as its first worth, a keeping word
-        // works the error channel's own keeping, where the table lets it.
-        if self.table.flag("ext.builtin.output.error") && matches!(v.first(), Some(Value::Channel(2))) {
-            let kept = match op {
-                Prim::KeepOut => { self.error_buffers.borrow_mut().push(String::new()); Some(Value::Flag(true)) }
-                Prim::LooseOut => Some(Value::Flag(self.error_buffers.borrow_mut().pop().is_some())),
-                Prim::KeptOut => Some(match self.error_buffers.borrow().last() {
-                    None => Value::Flag(false),
-                    Some(text) => Value::text(text),
-                }),
-                _ => None,
-            };
-            if let Some(value) = kept { return Ok(value); }
-        }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
@@ -7001,6 +7031,65 @@ impl<'a> Machine<'a> {
                     _ => return Err(format!("{}() requires a string argument", name)),
                 }
                 Value::Nil
+            }
+            // The line comes from the reader the table names, so a
+            // program that has put another source in the reader's place
+            // is answered from that source.
+            Prim::Inquire => {
+                let words = self.table.strings("ext.builtin.input.reader").to_vec();
+                if words.len() != 2 { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); }
+                let namespace = self.namespace_for(&words[0])?;
+                let reader = self.attribute(&namespace, &words[1]).ok_or_else(|| self.argument_fault("ext.builtin.stream.amiss", None))?;
+                match self.apply_within(reader, v.to_vec())? {
+                    line @ Value::Text(_) => line,
+                    _ => return Err(self.argument_fault("ext.builtin.stream.amiss", None)),
+                }
+            }
+            // Text and whether it is for the error channel; the count
+            // of characters poured is answered.
+            Prim::PourOut => {
+                use std::io::Write;
+                let (Some(Value::Text(content)), true) = (v.first(), v.len() == 2) else {
+                    return Err(self.argument_fault("ext.builtin.stream.amiss", None));
+                };
+                if self.stands_true(&v[1]) {
+                    let mut channel = std::io::stderr().lock();
+                    let poured = channel.write_all(content.as_bytes()).and_then(|_| channel.flush());
+                    if poured.is_err() { return Err(self.argument_fault("ext.builtin.stream.failed", None)); }
+                } else {
+                    self.utter(content);
+                }
+                Value::Small(content.chars().count() as i64)
+            }
+            // A count and whether to stop at a line's end. A count below
+            // nought means all there is. Each character is drawn whole:
+            // its first byte says how many more belong to it.
+            Prim::DrawIn => {
+                use std::io::Read;
+                let (Some(Value::Small(limit)), true) = (v.first(), v.len() == 2) else {
+                    return Err(self.argument_fault("ext.builtin.stream.amiss", None));
+                };
+                let (limit, stop_at_line) = (*limit, self.stands_true(&v[1]));
+                let failed = || self.argument_fault("ext.builtin.stream.failed", None);
+                let mut channel = std::io::stdin().lock();
+                let mut drawn: Vec<u8> = Vec::new();
+                let mut characters = 0;
+                while limit < 0 || characters < limit {
+                    let mut lead = [0u8];
+                    match channel.read(&mut lead) {
+                        Ok(0) => break,
+                        Ok(_) => (),
+                        Err(_) => return Err(failed()),
+                    }
+                    let more = match lead[0] { 0x00..=0x7f => 0, 0xc2..=0xdf => 1, 0xe0..=0xef => 2, 0xf0..=0xf4 => 3, _ => return Err(failed()) };
+                    let mut rest = vec![0u8; more];
+                    if channel.read_exact(&mut rest).is_err() { return Err(failed()); }
+                    drawn.push(lead[0]);
+                    drawn.extend(rest);
+                    characters += 1;
+                    if stop_at_line && lead[0] == b'\n' { break; }
+                }
+                Value::text(&String::from_utf8(drawn).map_err(|_| failed())?)
             }
             Prim::Say => {
                 self.utter(&format!("{}\n", self.show(v)));

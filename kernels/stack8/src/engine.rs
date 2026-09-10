@@ -103,11 +103,6 @@ pub struct Engine<'a> {
     /// let go, innermost last. A keeping within a keeping writes into
     /// the one around it when it is given up.
     holding: RefCell<Vec<String>>,
-    /// What the run has written to the error stream while that stream
-    /// was being kept rather than let go, innermost last, apart from
-    /// the ordinary keeping: a program may keep the one and not the
-    /// other, and each gives back only its own.
-    held_errors: RefCell<Vec<String>>,
     /// The routines to run once the program's own last statement is
     /// done, each with what it is to be handed, in the order they were
     /// named.
@@ -223,7 +218,7 @@ type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -325,7 +320,6 @@ impl<'a> Engine<'a> {
             muted: std::cell::Cell::new(0),
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
-            held_errors: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
             things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
@@ -5808,6 +5802,43 @@ impl<'a> Engine<'a> {
 
     /// Builtins take the same opened arguments as a declared routine,
     /// but each names its own few places, where the definition spells them.
+    /// A module the definition routes a builtin through, read in if it
+    /// has not been. A fault in the reading that is not plain words is
+    /// kept aside to be raised once the builtin has given way.
+    fn route_module(&mut self, path: &str) -> Res<Value> {
+        match self.import_module(path) {
+            Ok(module) => Ok(module),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
+        }
+    }
+
+    /// The member of a thing by name, or nothing where it has none.
+    fn member_of(&mut self, owner: Value, member: &str) -> Res<Option<Value>> {
+        let mut asked = vec![owner, Value::text(member), Value::Blank];
+        Ok(match self.builtin(Builtin::MemberGet, member, &mut asked)? {
+            Value::Blank => None,
+            found => Some(found),
+        })
+    }
+
+    /// Call a value the program could call, with these arguments, and
+    /// answer what it left. What the call raises, other than plain
+    /// words, is kept aside and raised once the builtin has given way.
+    fn call_held(&mut self, callee: Value, args: Vec<Value>) -> Res<Value> {
+        let floor = self.data.len();
+        let count = args.len() + 1;
+        self.data.extend(args);
+        self.data.push(callee);
+        let answered = match self.perform(&Action::Invoke(Rc::from("")), count) {
+            Ok(()) => self.drop_top(),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
+        };
+        self.data.truncate(floor);
+        answered
+    }
+
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
@@ -5828,9 +5859,12 @@ impl<'a> Engine<'a> {
             return self.byte_work(task, &args, signed);
         }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
+            let routed = self.lang.print_route.len() == 3;
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
             let mut error = false;
+            let mut destination = Value::Null;
+            let mut flushed = false;
             for (key, value) in named {
                 if Lang::spells(&self.lang.print_sep, &key) || Lang::spells(&self.lang.print_end, &key) {
                     let sep = Lang::spells(&self.lang.print_sep, &key);
@@ -5841,25 +5875,47 @@ impl<'a> Engine<'a> {
                     };
                     if sep { between = text; } else { ending = text; }
                 } else if Lang::spells(&self.lang.print_file, &key) {
+                    if routed { destination = value; continue; }
                     error = match value {
                         Value::Null | Value::Stream(false) => false,
                         Value::Stream(true) => true,
                         _ => return Err(self.lang.print_file_unready[0].clone()),
                     };
-                } else if !Lang::spells(&self.lang.print_flush, &key) {
+                } else if Lang::spells(&self.lang.print_flush, &key) {
+                    flushed = self.truth(&value);
+                } else {
                     return Err(Self::named_fault(&self.lang.call_unknown, &key));
                 }
+            }
+            // Routed, the printer hands its text to the writer of the
+            // stream the module holds at the moment of printing, or of
+            // the file it was given; a stream of nothing swallows the
+            // print whole, before the values are even rendered.
+            if routed {
+                let route = self.lang.print_route.clone();
+                if matches!(destination, Value::Null) {
+                    let module = self.route_module(&route[0])?;
+                    destination = self.member_of(module, &route[1])?.unwrap_or(Value::Null);
+                    if matches!(destination, Value::Null) { return Ok(Value::Null); }
+                }
+                let mut parts = Vec::new();
+                for value in &args { parts.push(self.special_text(value, false)?); }
+                let text = parts.join(&between) + &ending;
+                let writer = match self.member_of(destination.clone(), &route[2])? {
+                    Some(writer) => writer,
+                    None => return Err(self.lang.print_file_unready[0].clone()),
+                };
+                self.call_held(writer, vec![Value::text(&text)])?;
+                if flushed {
+                    let word = self.lang.print_flush[0].clone();
+                    if let Some(method) = self.member_of(destination, &word)? { self.call_held(method, Vec::new())?; }
+                }
+                return Ok(Value::Null);
             }
             let mut parts = Vec::new();
             for value in &args { parts.push(self.special_text(value, false)?); }
             let text = parts.join(&between) + &ending;
-            if error {
-                // Kept where the error stream is being kept, else let go.
-                match self.held_errors.borrow_mut().last_mut() {
-                    Some(held) => held.push_str(&text),
-                    None => eprint!("{}", text),
-                }
-            } else { self.utter(&text); }
+            if error { eprint!("{}", text); } else { self.utter(&text); }
             return Ok(Value::Null);
         }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args, named); }
@@ -6344,16 +6400,6 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
-        // Handed the error stream first, the keeping words keep that
-        // stream and not the ordinary one, where the definition allows.
-        if self.lang.output_error && matches!(args.first(), Some(Value::Stream(true))) {
-            match builtin {
-                Builtin::HoldOut => { self.held_errors.borrow_mut().push(String::new()); return Ok(Value::Flag(true)); }
-                Builtin::HeldOut => return Ok(self.held_errors.borrow().last().map_or(Value::Flag(false), |text| Value::text(text))),
-                Builtin::DropOut => return Ok(Value::Flag(self.held_errors.borrow_mut().pop().is_some())),
-                _ => (),
-            }
-        }
         if matches!(builtin, Builtin::Append | Builtin::Replace) {
             if let Some(original @ Value::Collection(..)) = args.last().cloned() {
                 let Value::Collection(cell, _) = &original else { unreachable!() };
@@ -6397,6 +6443,69 @@ impl<'a> Engine<'a> {
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
                 self.utter(s);
                 Value::Null
+            }
+            // The reader the definition routes to does the asking, so
+            // that a program which puts another stream in its place is
+            // answered from there.
+            Builtin::Ask => {
+                let route = self.lang.input_route.clone();
+                if route.len() != 2 { return Err(self.lang.stream_amiss[0].clone()); }
+                let module = self.route_module(&route[0])?;
+                let Some(reader) = self.member_of(module, &route[1])? else { return Err(self.lang.stream_amiss[0].clone()) };
+                match self.call_held(reader, args.clone())? {
+                    line @ Value::Text(_) => line,
+                    _ => return Err(self.lang.stream_amiss[0].clone()),
+                }
+            }
+            // Text and a flag: on the error stream when the flag holds,
+            // else out the ordinary way. Answers how many characters went.
+            Builtin::StreamPut => {
+                use std::io::Write;
+                let (Some(Value::Text(text)), Some(to_error), None) = (args.first(), args.get(1), args.get(2)) else {
+                    return Err(self.lang.stream_amiss[0].clone());
+                };
+                if self.truth(to_error) {
+                    let mut stream = std::io::stderr();
+                    if stream.write_all(text.as_bytes()).and_then(|_| stream.flush()).is_err() {
+                        return Err(self.lang.stream_failed[0].clone());
+                    }
+                } else {
+                    self.utter(text);
+                }
+                Value::Small(text.chars().count() as i64)
+            }
+            // A count and a flag: so many characters, all of them when the
+            // count is below nought, and no further than the end of the
+            // line when the flag holds. Bytes are gathered until they
+            // spell a character, so a character never comes back in part.
+            Builtin::StreamTake => {
+                use std::io::Read;
+                let (Some(Value::Small(wanted)), Some(by_line), None) = (args.first().cloned(), args.get(1).cloned(), args.get(2)) else {
+                    return Err(self.lang.stream_amiss[0].clone());
+                };
+                let by_line = self.truth(&by_line);
+                let mut source = std::io::stdin().lock();
+                let mut taken = String::new();
+                let mut pending: Vec<u8> = Vec::new();
+                let mut count = 0;
+                while wanted < 0 || count < wanted {
+                    let mut byte = [0u8];
+                    match source.read(&mut byte) {
+                        Ok(0) => break,
+                        Ok(_) => pending.push(byte[0]),
+                        Err(_) => return Err(self.lang.stream_failed[0].clone()),
+                    }
+                    let Ok(spelled) = std::str::from_utf8(&pending) else {
+                        if pending.len() >= 4 { return Err(self.lang.stream_failed[0].clone()); }
+                        continue;
+                    };
+                    taken.push_str(spelled);
+                    let ended = by_line && spelled == "\n";
+                    pending.clear();
+                    count += 1;
+                    if ended { break; }
+                }
+                Value::text(&taken)
             }
             // Source read while the program runs, assembled against
             // the same globals and run where it stands. A file that

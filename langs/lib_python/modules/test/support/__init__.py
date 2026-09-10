@@ -94,54 +94,28 @@ class swap_attr:
         setattr(self.obj, self.attr, self.old)
         return False
 
+# The printer follows whatever sys holds as its stream, so capturing is
+# putting a StringIO in the stream's place and taking it out again.
 class captured_stdout:
-    def __init__(self):
-        self.text = ''
-        self.active = False
-
     def __enter__(self):
-        __output_hold()
-        self.active = True
-        return self
-
-    def write(self, text):
-        print(text, end='')
-        return len(text)
-
-    def getvalue(self):
-        if self.active:
-            return __output_held()
-        return self.text
+        self.saved = sys.stdout
+        self.stream = StringIO()
+        sys.stdout = self.stream
+        return self.stream
 
     def __exit__(self, kind, value, traceback):
-        self.text = __output_held()
-        __output_drop()
-        self.active = False
+        sys.stdout = self.saved
         return False
 
 class captured_stderr:
-    def __init__(self):
-        self.text = ''
-        self.active = False
-
     def __enter__(self):
-        __output_hold(sys.stderr)
-        self.active = True
-        return self
-
-    def write(self, text):
-        print(text, end='', file=sys.stderr)
-        return len(text)
-
-    def getvalue(self):
-        if self.active:
-            return __output_held(sys.stderr)
-        return self.text
+        self.saved = sys.stderr
+        self.stream = StringIO()
+        sys.stderr = self.stream
+        return self.stream
 
     def __exit__(self, kind, value, traceback):
-        self.text = __output_held(sys.stderr)
-        __output_drop(sys.stderr)
-        self.active = False
+        sys.stderr = self.saved
         return False
 
 def check_impl_detail(**guards):

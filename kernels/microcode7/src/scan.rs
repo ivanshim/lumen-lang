@@ -1110,7 +1110,13 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut u32) -> R
             }
             let mut s: String = src[if led { pos + 1 } else { pos }..k].iter().collect();
             let mut longest = 0;
+            let routed = !table.strings("ext.builtin.print.redirect").is_empty();
             for name in table.prims.keys().chain(table.strings("ext.builtin.print.file.output").iter()).chain(table.strings("ext.builtin.print.file.error").iter()) {
+                // With the printer routed through the module, a stream
+                // name is a chain of members to be followed one at a
+                // time, and so is the writer spelled through it.
+                if routed && (table.prims.get(name) == Some(&crate::form::Prim::Echo)
+                    || table.spells("ext.builtin.print.file.output", name) || table.spells("ext.builtin.print.file.error", name)) { continue; }
                 if name.len() > s.len() && name.starts_with(s.as_str()) {
                     let tail: Vec<char> = name[s.len()..].chars().collect();
                     let same = tail.iter().enumerate().all(|(n, t)| src.get(k + n) == Some(t));

@@ -560,7 +560,8 @@
     "ImportError",
     "OSError",
     "RecursionError",
-    "UnicodeError"
+    "UnicodeError",
+    "EOFError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -591,6 +592,13 @@
   ],
   "ext.builtin.id": [
     "id"
+  ],
+  "ext.builtin.input": [
+    "input"
+  ],
+  "ext.builtin.input.reader": [
+    "sys",
+    "_input"
   ],
   "ext.builtin.instance": [
     "isinstance"
@@ -864,7 +872,6 @@
   "ext.builtin.output.held": [
     "__output_held"
   ],
-  "ext.builtin.output.error": true,
   "ext.builtin.output.hold": [
     "__output_hold"
   ],
@@ -905,6 +912,11 @@
     "TypeError: print option must be a string or None"
   ],
   "ext.builtin.print.real_point": true,
+  "ext.builtin.print.redirect": [
+    "sys",
+    "stdout",
+    "write"
+  ],
   "ext.builtin.print.sep": [
     "sep"
   ],
@@ -1052,6 +1064,18 @@
   ],
   "ext.builtin.staticmethod": [
     "staticmethod"
+  ],
+  "ext.builtin.stream.amiss": [
+    "TypeError: invalid stream arguments"
+  ],
+  "ext.builtin.stream.failed": [
+    "OSError: standard stream operation failed"
+  ],
+  "ext.builtin.stream.read": [
+    "__stream_read"
+  ],
+  "ext.builtin.stream.write": [
+    "__stream_write"
   ],
   "ext.builtin.sum": [
     "sum"

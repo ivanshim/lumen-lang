@@ -79,23 +79,41 @@ def setrecursionlimit(limit):
     raise 'NotImplementedError: setting the recursion limit is not supported'
 
 class _Output:
-    def write(self, text):
-        print(text, end='')
-        return len(text)
+    def write(self, *args, **keywords):
+        return __stream_write(*args, False, **keywords)
 
     def flush(self):
         pass
 
 class _Error:
-    def write(self, text):
-        print(text, end='', file=sys.stderr)
-        return len(text)
+    def write(self, *args, **keywords):
+        return __stream_write(*args, True, **keywords)
 
     def flush(self):
         pass
 
+class _Input:
+    def read(self, size=-1):
+        return __stream_read(size, False)
+
+    def readline(self, size=-1):
+        return __stream_read(size, True)
+
 stdout = _Output()
 stderr = _Error()
+stdin = _Input()
+__stdout__ = stdout
+__stderr__ = stderr
+__stdin__ = stdin
+
+def _input(prompt=''):
+    print(prompt, end='', flush=True)
+    line = stdin.readline()
+    if line == '':
+        raise EOFError('EOF when reading a line')
+    if line[-1:] == '\n':
+        return line[:-1]
+    return line
 
 # Stub: the direct host spelling still raises a complaint. Numeric
 # process exit status and catchable SystemExit await exception support.

@@ -433,6 +433,13 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    /// Ask the reader the definition routes to for a line of input.
+    Ask,
+    /// Put text straight out on the ordinary or the error stream.
+    StreamPut,
+    /// Take text straight from the input stream, so many characters or
+    /// up to the end of a line.
+    StreamTake,
     MapFrom,
     Next,
     Iter,

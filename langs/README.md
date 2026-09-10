@@ -269,7 +269,31 @@ only. The extension labels so far, all from PHP:
   may be held under another name and handed to the printer. These dotted
   words are read whole, as dotted builtin names are.
   `ext.builtin.print.file.unready` gives the complaint for any other file
-  value; calling a file object's writer is still wanting.
+  value where the printer is not routed (below).
+- `ext.builtin.print.redirect`: three words routing the printer through
+  a module — the module, its member holding the stream, and the writer
+  on that stream (`sys`, `stdout`, `write`). Routed, the printer reads
+  the member at the moment of printing and hands its text to that
+  writer, so a program that puts a file of its own in the member's place
+  is written to instead, and a member holding nothing swallows the print
+  before the values are put into words. A file named in the call takes
+  the member's place for that call, and asking to flush calls the file's
+  routine of that name where it has one. Routed, the stream names above
+  and the writer spelled through them are no longer read whole: they are
+  ordinary members of the module, reached one dot at a time.
+- `ext.builtin.stream.write` and `.read`: builtins the module's own
+  streams are written over. The writer takes text and whether it is for
+  the error stream, and answers how many characters went; the reader
+  takes a count and whether to stop at the end of a line, a count below
+  nought meaning all there is, and answers the text taken, never a
+  character in part. `ext.builtin.stream.amiss` is the complaint for the
+  wrong arguments, `ext.builtin.stream.failed` for a stream that would
+  not answer.
+- `ext.builtin.input` and `ext.builtin.input.reader`: the first names the
+  builtin asking for a line; the second is the module and the routine in
+  it the asking is routed through (`sys`, `_input`), so that the prompt
+  goes where the printer goes and the line comes from whatever the module
+  holds as its input stream. The routine must answer text.
 - `ext.builtin.print.sep.amiss` and `.end.amiss`: plain words for a joining
   or ending which is neither text nor nothing.
 - `ext.builtin.to_int.base`: a list naming the integer reader's base
@@ -2295,9 +2319,6 @@ only. The extension labels so far, all from PHP:
   apart by how they are written, as they were before. A class keeps the
   spelling it was declared with, which is what is answered when a
   program asks a thing what class it is of.
-- `ext.builtin.output.error`: a switch; the output keeping builtins may
-  take the error stream as their first argument, keeping its text apart
-  from ordinary output. With no argument their former meaning remains.
 - `ext.builtin.output.hold`, `.held`, `.drop` and `.depth`: keeping
   what the run writes out instead of letting it go. The first begins a
   keeping, the second answers with what has been kept since that
@@ -3477,7 +3498,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
@@ -3497,6 +3518,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
+| `ext.builtin.input.reader` | - | - | `sys` `_input` | - | - | - | - | - | - | - |
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
@@ -3591,7 +3614,6 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
-| `ext.builtin.output.error` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
@@ -3607,6 +3629,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.flush` | - | - | `flush` | - | - | - | - | - | - | - |
 | `ext.builtin.print.option.type` | - | - | `TypeError: print option must be a string or None` | - | - | - | - | - | - | - |
 | `ext.builtin.print.real_point` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.print.redirect` | - | - | `sys` `stdout` `write` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
@@ -3667,6 +3690,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
 | `ext.builtin.staticmethod` | - | - | `staticmethod` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.amiss` | - | - | `TypeError: invalid stream arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.failed` | - | - | `OSError: standard stream operation failed` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
+| `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
 | `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
 | `ext.builtin.text.capitalize` | - | - | `capitalize` `str.capitalize` | - | - | - | - | - | - | - |

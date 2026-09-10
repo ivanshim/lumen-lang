@@ -1001,6 +1001,12 @@ impl<'a> Cursor<'a> {
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
         for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
+            // Where the printer follows the module's own stream, the
+            // stream names and the writer reached through them are
+            // members read one dot at a time, not words of their own.
+            let stream_word = Lang::spells(&lang.print_file_error, name) || Lang::spells(&lang.print_file_output, name)
+                || lang.builtins.get(name) == Some(&crate::code::Builtin::Echo);
+            if stream_word && !lang.print_route.is_empty() { continue; }
             if name.len() <= s.len() || !name.starts_with(s.as_str()) {
                 continue;
             }

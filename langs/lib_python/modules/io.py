@@ -9,7 +9,7 @@ class StringIO:
 
     def write(self, text):
         if self.closed:
-            raise 'ValueError: I/O operation on closed file'
+            raise ValueError('I/O operation on closed file')
         while len(self.text) < self.position:
             self.text += "\0"
         self.text = self.text[:self.position] + text + self.text[self.position + len(text):]
@@ -63,7 +63,7 @@ class StringIO:
 
     def readline(self, size=-1):
         if self.closed:
-            raise 'ValueError: I/O operation on closed file'
+            raise ValueError('I/O operation on closed file')
         result = ''
         while self.position < len(self.text) and (size < 0 or len(result) < size):
             letter = self.read(1)
@@ -73,6 +73,36 @@ class StringIO:
         return result
 
 
+    def readlines(self, hint=-1):
+        self._check()
+        lines = []
+        length = 0
+        while True:
+            line = self.readline()
+            if line == '':
+                return lines
+            lines = [*lines, line]
+            length += len(line)
+            if hint > 0 and length > hint:
+                return lines
+
+    def __iter__(self):
+        self._check()
+        return self
+
+    def _line_more(self):
+        self._line = self.readline()
+        return self._line != ''
+
+    def _line_value(self):
+        return self._line
+
+    def __next__(self):
+        line = self.readline()
+        if line == '':
+            raise 'StopIteration'
+        return line
+
     def _check(self):
         if self.closed:
-            raise 'ValueError: I/O operation on closed file'
+            raise ValueError('I/O operation on closed file')
