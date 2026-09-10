@@ -5775,7 +5775,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.lexeme) {
+        if Lang::spells(&lang.special_stop, &tok.lexeme) && !lang.exceptions.contains(&tok.lexeme) {
             self.take();
             let class = crate::value::Class { name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()) };
             self.constant(Value::Class(Rc::new(class)));

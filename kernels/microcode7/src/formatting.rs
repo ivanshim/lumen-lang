@@ -35,7 +35,7 @@ impl Layout<'_> {
 
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
         Ok(match item {
-            Value::Shared(cell) => return self.quote(&cell.borrow(), escaped),
+            Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
             Value::Text(_) => {
                 let original = item.in_field(self.names, "", if escaped { "a" } else { "r" }).ok_or_else(|| self.refused())?;
                 original.chars().map(|letter| {
@@ -58,6 +58,10 @@ impl Layout<'_> {
                     Ok(format!("{}: {}", self.quote(a, escaped)?, self.quote(b, escaped)?))
                 }).collect::<Result<Vec<_>, String>>()?;
                 format!("{{{}}}", rendered.join(", "))
+            }
+            Value::Tuple(row) | Value::Row(row) | Value::Arguments(row) => {
+                let pieces = row.iter().map(|x| self.quote(x, escaped)).collect::<Result<Vec<_>, _>>()?;
+                format!("({}{})", pieces.join(", "), if row.len() == 1 { "," } else { "" })
             }
             Value::Vector(entries) => {
                 let mut rendered = Vec::with_capacity(entries.len());
@@ -130,7 +134,7 @@ impl Layout<'_> {
     }
 
     pub fn present(&self, item: &Value, pattern: &str, convert: &str) -> Answer {
-        if let Value::Shared(held) = item { return self.present(&held.borrow(), pattern, convert); }
+        if let Value::Shared(held) | Value::Mutable(held, _) = item { return self.present(&held.borrow(), pattern, convert); }
         if !convert.is_empty() {
             let rendered = match convert {
                 "a" => self.quote(item, true)?, "r" => self.quote(item, false)?, "s" => self.plain(item)?,
@@ -273,6 +277,7 @@ impl Layout<'_> {
         };
         let mut following = &field[first_end..];
         while !following.is_empty() {
+            selected = selected.settled();
             let bracket = following.starts_with('[');
             let tail = following.get(1..).ok_or_else(|| self.invalid())?;
             let end = if bracket { tail.find(']').ok_or_else(|| self.invalid())? }
@@ -282,7 +287,7 @@ impl Layout<'_> {
             let found = if bracket {
                 let numeric = asked.parse::<usize>().ok();
                 match &selected {
-                    Value::Vector(list) => numeric.and_then(|n| list.get(n)).cloned(),
+                    Value::Vector(list) | Value::Tuple(list) | Value::Row(list) | Value::Arguments(list) => numeric.and_then(|n| list.get(n)).cloned(),
                     Value::Text(chars) => numeric.and_then(|n| chars.chars().nth(n)).map(|c| Value::text(&c.to_string())),
                     Value::Dict(pairs) => {
                         let key = numeric.map_or_else(|| Value::text(asked), |n| Value::from_big(n.into()));
@@ -303,7 +308,9 @@ impl Layout<'_> {
     }
 
     pub fn remainder(&self, pattern: &str, supplied: &Value) -> Answer {
-        let positional = match supplied { Value::Vector(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
+        let stored = supplied.settled();
+        let supplied = &stored;
+        let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
         let mut used = 0usize;
         let mut named_seen = false;
         let mut input = pattern.chars().peekable();

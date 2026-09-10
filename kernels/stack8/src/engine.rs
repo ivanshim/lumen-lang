@@ -3661,7 +3661,7 @@ impl<'a> Engine<'a> {
                     }
                     Value::Object(o) => {
                         if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
-                            let row = match &value {
+                            let row = match &value.contents() {
                                 Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
                                 _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
                             };

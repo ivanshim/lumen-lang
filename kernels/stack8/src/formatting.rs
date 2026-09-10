@@ -70,6 +70,7 @@ impl Writer<'_> {
     }
 
     pub fn representation(&self, value: &Value, ascii: bool) -> Result<String> {
+        if matches!(value, Value::Collection(..) | Value::View(_)) { return self.representation(&value.contents(), ascii); }
         match value {
             Value::Text(_) => {
                 let quoted = value.string_field(&self.words, "", if ascii { "a" } else { "r" }).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?;
@@ -90,6 +91,10 @@ impl Writer<'_> {
                     }
                 }
                 Ok(out)
+            }
+            Value::Tuple(items) => {
+                let parts = items.iter().map(|v| self.representation(v, ascii)).collect::<Result<Vec<_>>>()?;
+                Ok(format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }))
             }
             Value::Array(items) => {
                 let parts = items.iter().map(|v| self.representation(v, ascii)).collect::<Result<Vec<_>>>()?;
@@ -113,7 +118,7 @@ impl Writer<'_> {
     }
 
     pub fn field(&self, value: &Value, spec: &str, conversion: &str) -> Result<String> {
-        if let Value::Bond(cell) = value { return self.field(&cell.borrow(), spec, conversion); }
+        if matches!(value, Value::Bond(_) | Value::Collection(..) | Value::View(_)) { return self.field(&value.contents(), spec, conversion); }
         if !conversion.is_empty() {
             let text = match conversion {
                 "r" | "a" => self.representation(value, conversion == "a")?,
@@ -300,6 +305,7 @@ impl Writer<'_> {
         };
         let mut rest = &name[end..];
         while !rest.is_empty() {
+            value = value.contents();
             if let Some(tail) = rest.strip_prefix('.') {
                 let end = tail.find(['.', '[']).unwrap_or(tail.len());
                 let member = &tail[..end];
@@ -317,7 +323,7 @@ impl Writer<'_> {
                         (Value::Text(s), None) => s.as_ref() == key,
                         (k, Some(n)) => k.equals(&Value::of_big(n.into())), _ => false,
                     }).map(|(_, v)| v.clone()),
-                    Value::Array(a) => index.and_then(|n| a.get(n).cloned()),
+                    Value::Array(a) | Value::Tuple(a) => index.and_then(|n| a.get(n).cloned()),
                     Value::Text(s) => index.and_then(|n| s.chars().nth(n)).map(|c| Value::text(&c.to_string())),
                     _ => None,
                 };
@@ -329,7 +335,9 @@ impl Writer<'_> {
     }
 
     pub fn percent(&self, text: &str, argument: &Value) -> Result<String> {
-        let args: Vec<&Value> = match argument { Value::Array(a) => a.iter().collect(), one => vec![one] };
+        let settled = argument.contents();
+        let argument = &settled;
+        let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
         let mut used = 0;
         let mut at = 0;
         let chars: Vec<char> = text.chars().collect();

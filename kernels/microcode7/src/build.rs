@@ -5420,7 +5420,7 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.stmt.class.special.stop", &t.lexeme) {
+        if table.spells("ext.stmt.class.special.stop", &t.lexeme) && !table.spells("ext.builtin.exceptions", &t.lexeme) {
             self.advance();
             let plan = crate::data::Blueprint {
                 name: t.lexeme.clone(), under: None, methods: vec![], shared: std::cell::RefCell::new(vec![]),
