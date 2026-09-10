@@ -1076,6 +1076,7 @@ impl<'a> Machine<'a> {
     }
 
     fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+        let rhs = &rhs.opened_sequence();
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
         let supplied = match rhs { Value::Vector(list) => list.as_slice(), _ => std::slice::from_ref(rhs) };
@@ -3640,6 +3641,23 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if v.len() == 2 && op == Prim::Erase {
+            if let Value::Mutable(storage) = &v[0] {
+                let input = [storage.borrow().clone(), v[1].clone()];
+                *storage.borrow_mut() = self.prim(op, name, &input)?;
+                return Ok(v[0].clone());
+            }
+        }
+        if !self.loose_equals && v.len() == 2 {
+            if let (Value::Text(a), Value::Text(b)) = (&v[0], &v[1]) {
+                let relation = a.cmp(b);
+                let compared = match op {
+                    Prim::Lt => Some(relation.is_lt()), Prim::Le => Some(!relation.is_gt()),
+                    Prim::Gt => Some(relation.is_gt()), Prim::Ge => Some(!relation.is_lt()), _ => None,
+                };
+                if let Some(compared) = compared { return Ok(Value::Flag(compared)); }
+            }
+        }
         if v.len() == 2 {
             let index = match op { Prim::Eq | Prim::Ne => Some(1), Prim::Fetch | Prim::At => Some(2), _ => None };
             if let Some(index) = index {
@@ -3719,7 +3737,10 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 match self.protocol_value(&v[0], 9, &v[1..])? {
                     Some(more) => more,
-                    None => Value::Flag(as_index(&v[1])? < self.gathered_members(&v[0])?.len()),
+                    None => {
+                        let length = self.prim(Prim::Length, "length", &v[..1])?;
+                        Value::Flag(v[1].as_big()? < length.as_big()?)
+                    },
                 }
             }
             Prim::FixedRow => Value::Row(Rc::new(self.gathered_members(&v[0])?)),
@@ -4950,7 +4971,8 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
-                    (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
+                    (Value::Vector(a), Value::Vector(b)) | (Value::Row(a), Value::Row(b)) => Rc::ptr_eq(a, b),
+                    (Value::Mutable(a), Value::Mutable(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
@@ -6496,7 +6518,7 @@ impl Machine<'_> {
 
 fn belongs_to(worth: &Value, kind: &Value) -> bool {
     match kind {
-        Value::Vector(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
+        Value::Vector(choices) | Value::Row(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
         Value::Blueprint(class) => {
             let Value::Thing(object) = worth else { return false };
             let mut current = object.of.clone();

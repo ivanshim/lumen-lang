@@ -1,6 +1,14 @@
 # Compact representations preserve sequence punctuation and quote nested text.
 from heapq import _ordered
 
+def _join(parts, separator):
+    text = ''
+    for part in parts:
+        if len(text):
+            text += separator
+        text += part
+    return text
+
 def pformat(object, indent=1, width=80, depth=None, compact=False, sort_dicts=True, underscore_numbers=False):
     if indent < 0 or width == 0 or (depth is not None and depth <= 0):
         raise 'ValueError: invalid formatting bounds'
@@ -11,9 +19,9 @@ def pformat(object, indent=1, width=80, depth=None, compact=False, sort_dicts=Tr
         if sort_dicts:
             keys = _ordered(keys)
         parts = [repr(k) + ': ' + repr(object[k]) for k in keys]
-        text = '{' + ', '.join(parts) + '}'
+        text = '{' + _join(parts, ', ') + '}'
         if len(text) > width:
-            text = '{' + (',\n' + ' ' * indent).join(parts) + '}'
+            text = '{' + _join(parts, ',\n' + ' ' * indent) + '}'
         return text
     return repr(object)
 

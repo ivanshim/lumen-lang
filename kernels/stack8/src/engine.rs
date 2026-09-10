@@ -2145,7 +2145,10 @@ impl<'a> Engine<'a> {
             Action::CollectionHas => {
                 let args = self.drop_many(2)?;
                 if let Some(answer) = self.object_answer(&args[0], 9, vec![args[1].clone()])? { answer }
-                else { Value::Flag(as_index(&args[1])? < self.comprehension_items(&args[0])?.len()) }
+                else {
+                    let length = self.builtin(Builtin::Length, "length", &mut vec![args[0].clone()])?;
+                    Value::Flag(args[1].as_big()? < length.as_big()?)
+                }
             }
             Action::KeepTuple => {
                 let source = self.drop_top()?;
@@ -2327,7 +2330,6 @@ impl<'a> Engine<'a> {
                     v => return Err(format!("Cannot take a place out of {}", v.plain()).into()),
                 };
                 *inside = left;
-                drop(inside);
                 Value::Null
             }
             Action::FastenNamed => {
@@ -3493,6 +3495,15 @@ impl<'a> Engine<'a> {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
         }
+        if !self.lang.loose_equality {
+            if let (Value::Text(left), Value::Text(right)) = (a, b) {
+                let answer = match op {
+                    Action::Lt => Some(left < right), Action::Le => Some(left <= right),
+                    Action::Gt => Some(left > right), Action::Ge => Some(left >= right), _ => None,
+                };
+                if let Some(answer) = answer { return Ok(Value::Flag(answer)); }
+            }
+        }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
         Ok(match op {
@@ -4466,6 +4477,14 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Erase && args.len() == 2 {
+            if let Value::List(cell) = &args[0] {
+                let mut plain = vec![cell.borrow().clone(), args[1].clone()];
+                let result = self.builtin(builtin, name, &mut plain)?;
+                *cell.borrow_mut() = result;
+                return Ok(args[0].clone());
+            }
+        }
         if builtin == Builtin::Length && args.len() == 1 {
             if let Some(length) = self.object_answer(&args[0], 8, vec![])? { return Ok(length); }
         }
