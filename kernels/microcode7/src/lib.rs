@@ -58,6 +58,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
         if let [first, last] = table.strings("ext.stmt.import.missing") {
             if e.starts_with(first) && e.ends_with(last) { return e; }
         }
+        if table.has_any("ext.builtin.exceptions") && e.starts_with('\0') { return e[1..].to_string(); }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

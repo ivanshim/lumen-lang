@@ -46,6 +46,9 @@ pub enum Prim {
     ProgramNames,
     BringModule,
     SpreadModule,
+    Repr,
+    Iterate,
+    NextOne,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Gather the parts naming a span within brackets.

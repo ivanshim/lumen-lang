@@ -337,11 +337,51 @@
   "ext.builtin.class.methods": [
     "__class_methods"
   ],
+  "ext.builtin.class.name": [
+    "__name__"
+  ],
   "ext.builtin.copy": [
     "__copy_value"
   ],
+  "ext.builtin.exceptions": [
+    "BaseException",
+    "Exception",
+    "ArithmeticError",
+    "ZeroDivisionError",
+    "OverflowError",
+    "LookupError",
+    "IndexError",
+    "KeyError",
+    "TypeError",
+    "ValueError",
+    "NameError",
+    "UnboundLocalError",
+    "AttributeError",
+    "RuntimeError",
+    "NotImplementedError",
+    "StopIteration",
+    "AssertionError",
+    "SystemExit",
+    "KeyboardInterrupt",
+    "ImportError",
+    "OSError",
+    "RecursionError",
+    "UnicodeError"
+  ],
+  "ext.builtin.exceptions.args": [
+    "args"
+  ],
+  "ext.builtin.exceptions.cause": [
+    "__cause__"
+  ],
+  "ext.builtin.exceptions.unready": [
+    "NotImplementedError: this exception operation cannot run yet"
+  ],
   "ext.builtin.instance": [
     "isinstance"
+  ],
+  "ext.builtin.iter": [
+    "iter"
   ],
   "ext.builtin.list": [
     "list"
@@ -365,6 +405,9 @@
   ],
   "ext.builtin.module.load": [
     "__load_module"
+  ],
+  "ext.builtin.next": [
+    "next"
   ],
   "ext.builtin.output.drop": [
     "__output_drop"
@@ -420,6 +463,9 @@
   ],
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
+  ],
+  "ext.builtin.repr": [
+    "repr"
   ],
   "ext.builtin.sum": [
     "sum"
@@ -897,6 +943,53 @@
   "ext.syntax.set": true,
   "ext.system.args.list": [
     "__program_argv"
+  ],
+  "ext.system.fault.attribute": [
+    "object has no attribute '",
+    "'"
+  ],
+  "ext.system.fault.class": [
+    "RuntimeError"
+  ],
+  "ext.system.fault.class.arithmetic": [
+    "ArithmeticError"
+  ],
+  "ext.system.fault.class.attribute": [
+    "AttributeError"
+  ],
+  "ext.system.fault.class.division": [
+    "ZeroDivisionError"
+  ],
+  "ext.system.fault.class.index": [
+    "IndexError"
+  ],
+  "ext.system.fault.class.key": [
+    "KeyError"
+  ],
+  "ext.system.fault.class.kind": [
+    "TypeError"
+  ],
+  "ext.system.fault.class.name": [
+    "NameError"
+  ],
+  "ext.system.fault.class.stop": [
+    "StopIteration"
+  ],
+  "ext.system.fault.class.value": [
+    "ValueError"
+  ],
+  "ext.system.fault.division": [
+    "division by zero"
+  ],
+  "ext.system.fault.index": [
+    "list index out of range"
+  ],
+  "ext.system.fault.kind": [
+    "unsupported operand types"
+  ],
+  "ext.system.fault.name": [
+    "name '",
+    "' is not defined"
   ],
   "ext.system.module.cache": [
     "sys",
