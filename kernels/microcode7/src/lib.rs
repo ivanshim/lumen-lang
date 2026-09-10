@@ -202,7 +202,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
     let read = scan::scan_at(source, table).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
-    let shaped = indent::indent(read?, table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
+    let scanned = read?;
+    let shaped = indent::indent(scanned.clone(), table, ahead).map_err(|(said, row)| cannot_read(table, &said, row, request, ahead, false));
     let tokens = shaped?;
     let system = ["system.args", "ext.system.args.list", "ext.system.args.count", "system.memoization", "system.real_default_precision", "system.entry", "system.kind.integer",
         "system.kind.rational", "system.kind.real", "system.kind.string", "system.kind.boolean", "system.kind.array", "system.kind.null",
@@ -352,6 +353,12 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // asked how much room it has taken answers for what it has taken
     // itself and not for what it cost to be made ready.
     lumen_room::mark();
+    let filename = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file").map(|(.., file, _)| file.as_str()).unwrap_or("");
+    machine.tell_reader(&scanned, filename, ahead).map_err(|over| match over {
+        exec::Escape::Error(said) => said,
+        exec::Escape::Thrown(value) => format!("\0{}", value.bare()),
+        _ => table.single("ext.builtin.exceptions.unready").unwrap_or_default().to_string(),
+    })?;
     if let Err(told) = machine.run_main(&reduced.program.body) {
         let _ = machine.run_afterward();
         machine.let_things_go();

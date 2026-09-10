@@ -1,19 +1,7 @@
 # Assertions and the test lifecycle live beside the modules they serve.
-class AssertionError:
-    def __init__(self, message):
-        self.message = str(message)
-        self.args = (message,)
+class SkipTest(Exception):
+    pass
 
-    def __str__(self):
-        return self.message
-
-class SkipTest:
-    def __init__(self, message):
-        self.message = str(message)
-        self.args = (message,)
-
-    def __str__(self):
-        return self.message
 
 class _Context:
     def __enter__(self):
@@ -390,21 +378,13 @@ class _ExpectedFailure:
             raise _Expected('expected failure')
         raise _Unexpected('unexpected success')
 
-class _Expected:
-    def __init__(self, message):
-        self.message = str(message)
-        self.args = (message,)
+class _Expected(Exception):
+    pass
 
-    def __str__(self):
-        return self.message
 
-class _Unexpected:
-    def __init__(self, message):
-        self.message = str(message)
-        self.args = (message,)
+class _Unexpected(Exception):
+    pass
 
-    def __str__(self):
-        return self.message
 
 def expectedFailure(function):
     def expected(*args, _function=function, **kwargs):

@@ -1102,7 +1102,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::SharedList(_) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2616,6 +2616,10 @@ impl<'a> Engine<'a> {
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
+                    Value::SharedList(items) => {
+                        let found = items.borrow().get(at).cloned().ok_or_else(|| self.lang.index_words.clone().unwrap_or_default())?;
+                        if key { Value::Small(at as i64) } else { found }
+                    }
                     Value::Array(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
                         Some(_) => Value::Small(at as i64),
@@ -3311,6 +3315,7 @@ impl<'a> Engine<'a> {
                     }
                     None => {
                         let reach = match &pair[0] {
+                            Value::SharedList(items) => items.borrow().len(),
                             Value::Array(items) => items.len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
@@ -3343,6 +3348,7 @@ impl<'a> Engine<'a> {
             }
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
+                Value::SharedList(items) => Value::Small(items.borrow().len() as i64),
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
@@ -5209,7 +5215,7 @@ impl<'a> Engine<'a> {
                 if let Value::Object(o) = &args[0] {
                     if o.fields.borrow().iter().any(|(n, _)| n == "\0walk-source") { return Ok(args[0].clone()); }
                 }
-                if !matches!(&args[0], Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
+                if !matches!(&args[0], Value::SharedList(_) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
                     return Err(self.lang.exception_unready.clone().unwrap_or_default());
                 }
                 let class = Rc::new(Class { name: name.to_string(), base: None, fields: Vec::new(),
@@ -5226,6 +5232,7 @@ impl<'a> Engine<'a> {
                 let source = fields.iter().find(|(n, _)| n == "\0walk-source").map(|(_, v)| v.clone()).ok_or_else(|| self.lang.exception_unready.clone().unwrap_or_default())?;
                 let (_, Value::Small(place)) = fields.iter_mut().find(|(n, _)| n == "\0walk-place").ok_or_else(|| self.lang.exception_unready.clone().unwrap_or_default())? else { return Err(self.lang.exception_unready.clone().unwrap_or_default()) };
                 let item = match source {
+                    Value::SharedList(row) => row.borrow().get(*place as usize).cloned(),
                     Value::Array(row) | Value::Tuple(row) => row.get(*place as usize).cloned(),
                     Value::Map(row) => row.get(*place as usize).map(|(k, _)| k.clone()),
                     Value::Text(text) => text.chars().nth(*place as usize).map(|c| Value::text(&c.to_string())),
@@ -5365,6 +5372,10 @@ impl<'a> Engine<'a> {
                     held => held,
                 };
                 match target {
+                    Value::SharedList(items) => {
+                        items.borrow_mut().push(v);
+                        Value::SharedList(items)
+                    }
                     Value::Array(mut items) => {
                         Rc::make_mut(&mut items).push(v);
                         Value::Array(items)
@@ -6169,10 +6180,12 @@ impl Engine<'_> {
         };
         let parent = path.rsplit_once('.');
         if let Some((above, _)) = parent { self.import_module(above)?; }
+        let scanned = crate::lex::lex(&source, self.lang)?;
+        self.reader_warnings(&scanned, path, 0)?;
         let mut local = crate::compile::Registry::default();
         let offset = self.registry.idents.len();
         for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
-        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?;
+        let tokens = crate::layout::layout(scanned, self.lang, 0).map_err(|(said, _)| said)?;
         let program = crate::compile::compile(&tokens, self.lang, &mut local, 0)?;
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
@@ -6266,6 +6279,20 @@ fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, 
 }
 
 impl Engine<'_> {
+    pub fn reader_warnings(&mut self, tokens: &[crate::lex::Token], file: &str, before: u32) -> Flow<()> {
+        let [module_name, routine_name, category_name] = self.lang.reader_warning.as_slice() else { return Ok(()) };
+        let (module_name, routine_name, category_name) = (module_name.clone(), routine_name.clone(), category_name.clone());
+        for token in tokens.iter().filter(|t| t.shape == crate::lex::Shape::Warning) {
+            let module = self.import_module(&module_name)?;
+            let callable = self.import_member(&module, &module_name, &routine_name)?;
+            let Value::Routine(program) = callable else { return Err(self.lang.module_helper_amiss.clone().into()); };
+            let category = self.native_exceptions.get(&category_name).cloned().ok_or_else(|| self.lang.module_helper_amiss.clone())?;
+            self.invoke(&program, vec![Value::text(&token.lexeme), category, Value::text(file), Value::Small((token.row as u32).saturating_sub(before).max(1) as i64)])?;
+            self.drop_top()?;
+        }
+        Ok(())
+    }
+
     fn refresh_module_cache(&self) {
         let [owner, member] = self.lang.module_cache.as_slice() else { return };
         let Some(Value::Object(module)) = self.modules.get(owner) else { return };

@@ -6,6 +6,7 @@ use crate::table::Table;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
+    Caution,
     Bare,
     Quoted,
     Numeral,
@@ -515,7 +516,27 @@ fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
 /// page names the rows of the page and not its own.
 fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Token>, (String, u32)> {
     let mut ended = first;
-    scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended))
+    let mut tokens = scan_code_from(source, table, first, &mut ended).map_err(|said| (said, ended))?;
+    let words = table.strings("ext.op.identical.warning");
+    if words.len() == 2 {
+        let is_literal = |t: &Token| matches!(t.shape, Shape::Quote | Shape::Numeral);
+        let is_edge = |t: &Token| matches!(t.shape, Shape::Finish | Shape::Lead | Shape::LineEnd)
+            || ["syntax.group.open", "syntax.group.close", "block.intro", "syntax.call.separator"].iter().any(|label| table.spells(label, &t.lexeme));
+        let mut notices = vec![];
+        for index in 0..tokens.len() {
+            if !matches!(tokens[index].shape, Shape::Bare | Shape::Sign) { continue; }
+            if !table.spells("ext.op.identical", &tokens[index].lexeme) { continue; }
+            let negative = tokens.get(index + 1).map_or(false, |t| table.spells("ext.op.identical.negated", &t.lexeme));
+            let after = index + if negative { 2 } else { 1 };
+            let on_left = index.checked_sub(1).map_or(false, |n| is_literal(&tokens[n]) && (n == 0 || is_edge(&tokens[n - 1])));
+            let on_right = tokens.get(after).map_or(false, &is_literal) && tokens.get(after + 1).map_or(true, &is_edge);
+            if on_left || on_right {
+                notices.push(Token { row: tokens[index].row, span: 0, shape: Shape::Caution, lexeme: words[if negative { 1 } else { 0 }].clone() });
+            }
+        }
+        tokens.extend(notices);
+    }
+    Ok(tokens)
 }
 
 /// The marks and letters opening a string, found before names are cut.
@@ -611,6 +632,14 @@ impl Quotation<'_> {
         }
         let table = self.table;
         let letter = ch.to_string();
+        if let [opening, between, closing] = table.strings("ext.lexical.escape.warning") {
+            let listed = ["lexical.string_escapes", "ext.lexical.escape.controls", "ext.lexical.escape.named",
+                "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide", "ext.lexical.escape.byte",
+                "lexical.string_quotes"].iter().any(|label| table.spells(label, &letter));
+            if !listed && !ch.is_digit(8) && !matches!(ch, '\\' | '\r' | '\n') {
+                self.token(Shape::Caution, [opening, &letter, between, &letter, closing].concat());
+            }
+        }
         if bytes && ["ext.lexical.escape.named", "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter().any(|key| table.spells(key, &letter)) {
             text.extend(['\\', ch]);
             self.forward(2);

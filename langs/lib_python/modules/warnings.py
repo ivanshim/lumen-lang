@@ -1,6 +1,12 @@
 # Filters belong to the module; each entered context keeps its former
 # list, and the records are shared with the caller who asked for them.
-filters = []
+filters = [
+    ['default', '', DeprecationWarning, '__main__', 0],
+    ['ignore', '', DeprecationWarning, '', 0],
+    ['ignore', '', PendingDeprecationWarning, '', 0],
+    ['ignore', '', ImportWarning, '', 0],
+    ['ignore', '', ResourceWarning, '', 0],
+]
 
 class _State:
     def __init__(self):
@@ -92,8 +98,8 @@ def _location(stacklevel):
     return [frame['file'], frame['line']]
 
 
-def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=()):
-    if len(skip_file_prefixes) != 0:
+def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=None):
+    if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
         raise NotImplementedError('warning frame prefix selection cannot run yet')
     if isinstance(message, Warning):
         category = type(message)
@@ -111,6 +117,9 @@ def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixe
             module = filename[position + 1:]
     if module[-3:] == '.py':
         module = module[:-3]
+    import sys
+    if filename == sys.argv[0]:
+        module = '__main__'
     _warn(message, category, filename, place[1], module, source)
 
 

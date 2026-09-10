@@ -7,6 +7,7 @@ use crate::lang::Lang;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
+    Warning,
     Instr,
     /// A name between name quotes: data for the word after it.
     Quoted,
@@ -525,6 +526,15 @@ impl<'a> Cursor<'a> {
             return Ok(());
         }
         let lang = self.lang;
+        let known = lang.escape_letters.contains(&next) || lang.control_escapes.contains(&next)
+            || lang.quotes.contains(&next) || next == '\\' || next.is_digit(8)
+            || [lang.named_letter, lang.codepoint_letter, lang.wide_letter, lang.byte_letter].contains(&Some(next))
+            || matches!(next, '\n' | '\r');
+        if !known {
+            if let [head, middle, tail] = lang.escape_warning.as_slice() {
+                self.push(Shape::Warning, format!("{head}{next}{middle}{next}{tail}"), 0, self.row, self.column);
+            }
+        }
         if bytes && [lang.named_letter, lang.codepoint_letter, lang.wide_letter].contains(&Some(next)) {
             text.push(self.step()); text.push(self.step());
             return Ok(());
@@ -1113,6 +1123,26 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
                 depth == 0 || !matches!(token.shape, Shape::Lead | Shape::LineEnd)
             });
         }
+    }
+    if lang.identity_warning.len() == 2 {
+        let boundary = |token: &Token| matches!(token.shape, Shape::LineEnd | Shape::Lead | Shape::Finish)
+            || lang.grouping.as_ref().map_or(false, |g| token.lexeme == g.open || token.lexeme == g.close)
+            || Lang::spells(&lang.block_intros, &token.lexeme)
+            || lang.calling.as_ref().and_then(|b| b.between.as_deref()).map_or(false, |s| token.lexeme == s);
+        let literal = |token: &Token| matches!(token.shape, Shape::Numeral | Shape::Quote);
+        let mut warnings = Vec::new();
+        for (at, token) in out.iter().enumerate() {
+            if !matches!(token.shape, Shape::Instr | Shape::Sign) { continue; }
+            if !lang.dyadic.get(&token.lexeme).map_or(false, |op| matches!(op.action, crate::code::Action::Same)) { continue; }
+            let negated = out.get(at + 1).map_or(false, |t| Lang::spells(&lang.identity_not, &t.lexeme));
+            let right = at + 1 + usize::from(negated);
+            let left_literal = at > 0 && literal(&out[at - 1]) && (at < 2 || boundary(&out[at - 2]));
+            let right_literal = out.get(right).map_or(false, &literal) && out.get(right + 1).map_or(true, &boundary);
+            if left_literal || right_literal {
+                warnings.push(Token { shape: Shape::Warning, lexeme: lang.identity_warning[usize::from(negated)].clone(), row: token.row, column: token.column, width: 0 });
+            }
+        }
+        out.extend(warnings);
     }
     out.push(Token { shape: Shape::Finish, lexeme: "EOF".to_string(), width: 0, row: 1, column: 1 });
     Ok(out)

@@ -1585,6 +1585,16 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.class.title`: the member naming a class itself. Where the
   native exception classes are furnished, the kind builtin returns an
   object's class, so this member can name it.
+- `ext.op.identical.warning`: two complaints for identity and its negation
+  beside a literal. A plainly bounded number or string is known at reading
+  time; names, singleton literals and computed values are left alone.
+- `ext.lexical.escape.warning`: three pieces of a warning for an unknown
+  backslash escape; its following character stands between each pair.
+  Raw strings keep quiet. The reader carries the warning beside its tokens.
+- `ext.system.warning.reader`: the module, routine and warning class which
+  receive warnings found while reading. The routine takes the message,
+  class, filename and line; thus imported source obeys the filters already
+  in force, and an outer program warns before its first statement runs.
 - `ext.builtin.list.shared` and `.append`: builtins making an empty list
   whose holders see additions together, and adding one value to its end.
   The latter takes the list first and returns nothing. Such lists can be
@@ -2291,6 +2301,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.escape.named` | - | - | `N` | - | - | - | - | - | - | - |
 | `ext.lexical.escape.octal` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.lexical.escape.unavailable` | - | - | `Unicode escape cannot be represented` | - | - | - | - | - | - | - |
+| `ext.lexical.escape.warning` | - | - | `"\` `" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\` `"? A raw string is also an option.` | - | - | - | - | - | - | - |
 | `ext.lexical.heredoc` | - | - | - | - | `<<<` | - | - | - | - | - |
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
@@ -2343,6 +2354,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
 | `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
 | `ext.op.identical.unsupported` | - | - | `Identity of these values is not supported` | - | - | - | - | - | - | - |
+| `ext.op.identical.warning` | - | - | `"is" with a literal. Did you mean "=="?` `"is not" with a literal. Did you mean "!="?` | - | - | - | - | - | - | - |
 | `ext.op.if_else` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
@@ -2598,4 +2610,5 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
+| `ext.system.warning.reader` | - | - | `warnings` `warn_explicit` `SyntaxWarning` | - | - | - | - | - | - | - |
 <!-- table:end -->

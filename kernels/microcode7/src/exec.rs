@@ -558,6 +558,7 @@ impl<'a> Machine<'a> {
                     }
                     None => {
                         let far = match &v[0] {
+                            Value::Ledger(items) => items.borrow().len(),
                             Value::Vector(items) => items.len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
@@ -610,7 +611,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::Ledger(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -3810,6 +3811,10 @@ impl<'a> Machine<'a> {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
                     }
+                    Value::Ledger(row) => {
+                        let record = row.borrow().get(at).cloned().ok_or_else(|| self.argument_fault("ext.system.fault.index", None))?;
+                        if wants_key { Value::Small(at as i64) } else { record }
+                    }
                     Value::Vector(items) => match items.get(at) {
                         Some(_) if wants_key => Value::Small(at as i64),
                         Some(x) => x.clone(),
@@ -3838,6 +3843,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
+                    Value::Ledger(items) => Value::Small(items.borrow().len() as i64),
                     Value::Arguments(items) | Value::Vector(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
@@ -4224,6 +4230,7 @@ impl<'a> Machine<'a> {
             Prim::Added => {
                 n(2)?;
                 match &v[0] {
+                    Value::Ledger(row) => { row.borrow_mut().push(v[1].clone()); v[0].clone() }
                     Value::Vector(items) => {
                         let mut all = items.as_ref().clone();
                         all.push(v[1].clone());
@@ -5259,7 +5266,7 @@ impl<'a> Machine<'a> {
                 if let Value::Thing(thing) = &source {
                     if thing.holds.borrow().iter().any(|(k, _)| k == "\0walked") { return Ok(source); }
                 }
-                if !matches!(source, Value::Vector(_) | Value::Arguments(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_)) {
+                if !matches!(source, Value::Ledger(_) | Value::Vector(_) | Value::Arguments(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_)) {
                     return Err(self.argument_fault("ext.builtin.exceptions.unready", None));
                 }
                 let kind = Blueprint { name: name.into(), under: None, answers: vec![], reaches: vec![],
@@ -5280,6 +5287,7 @@ impl<'a> Machine<'a> {
                     Value::Progression(p) => p.item(&BigInt::from(*position)),
                     Value::Text(t) => t.chars().nth(*position as usize).map(|x| Value::text(&x.to_string())),
                     Value::Dict(d) => d.get(*position as usize).map(|entry| entry.0.clone()),
+                    Value::Ledger(r) => r.borrow().get(*position as usize).cloned(),
                     Value::Vector(r) | Value::Arguments(r) => r.get(*position as usize).cloned(),
                     _ => return Err(refuse()),
                 };
@@ -6417,6 +6425,24 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
 }
 
 impl Machine<'_> {
+    pub fn tell_reader(&mut self, scanned: &[crate::scan::Token], file: &str, ahead: u32) -> Res<()> {
+        let words = self.table.strings("ext.system.warning.reader").to_vec();
+        if words.len() != 3 { return Ok(()); }
+        for note in scanned {
+            if !matches!(note.shape, crate::scan::Shape::Caution) { continue; }
+            let space = self.load_namespace(&words[0])?;
+            let target = self.namespace_item(&space, &words[0], &words[1])?;
+            let category = self.fault_kinds.get(&words[2]).cloned().ok_or_else(|| self.argument_fault("ext.builtin.module.helper.amiss", None))?;
+            let arguments = vec![Value::text(&note.lexeme), category, Value::text(file), Value::Small(note.row.saturating_sub(ahead).max(1) as i64)];
+            match target {
+                Value::Bound(body, scope) => { self.invoke(body, scope, arguments)?; }
+                Value::Routine(body) => { self.invoke(body, self.outermost.clone(), arguments)?; }
+                _ => return Err(self.argument_fault("ext.builtin.module.helper.amiss", None).into()),
+            }
+        }
+        Ok(())
+    }
+
     /// Imported text is built above the world's old addresses. The new
     /// names are then filed away, while its forms still reach their cells.
     fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
@@ -6430,9 +6456,13 @@ impl Machine<'_> {
         })?;
         let split = path.rsplit_once('.');
         if let Some((owner, _)) = split { self.load_namespace(owner)?; }
+        let scanned = crate::scan::scan(&text, self.table)?;
+        if let Err(over) = self.tell_reader(&scanned, path, 0) {
+            self.got_away = Some(over);
+            return Err("reading raised a warning".into());
+        }
         let beginning = self.idents.len();
         let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
-        let scanned = crate::scan::scan(&text, self.table)?;
         let ready = crate::indent::indent(scanned, self.table, 0).map_err(|(words, _)| words)?;
         let built = crate::build::build(&ready, self.table, &hidden, HashMap::new(), false, 0)?;
         let exported = &built.globals[beginning..];

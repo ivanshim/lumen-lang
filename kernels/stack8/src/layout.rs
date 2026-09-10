@@ -54,6 +54,7 @@ impl Lang {
 /// which the mark opening code puts there, are none of the program's:
 /// a line the language names is counted from the program's own first.
 pub fn layout(tokens: Vec<Token>, lang: &Lang, before: usize) -> Result<Vec<Token>, (String, usize)> {
+    let tokens: Vec<Token> = tokens.into_iter().filter(|token| token.shape != Shape::Warning).collect();
     let mut pairs: Vec<&crate::lang::Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets].into_iter().flatten().collect();
     if lang.set_literals {
         pairs.extend(lang.map_brackets.as_ref());

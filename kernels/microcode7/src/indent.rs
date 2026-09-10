@@ -45,6 +45,8 @@ fn never_shut(table: &Table, opener: &str, from: u32, upto: u32) -> String {
 /// The line count a text carries ahead of the program itself, put there
 /// by the mark that opens code, belongs to no line the language names.
 pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token>, (String, u32)> {
+    let mut tokens = tokens;
+    tokens.retain(|part| !matches!(part.shape, Shape::Caution));
     let by_indent = table.blocks == Blocks::Indented;
     let unit = table.count("block.indent_size").unwrap_or(4);
     let mut opens: Vec<&str> = ["syntax.group.open", "syntax.call.open", "syntax.array.open"].iter().filter_map(|k| table.single(k)).collect();

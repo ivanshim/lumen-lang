@@ -301,6 +301,9 @@ pub struct Lang {
     pub exception_args: Option<String>,
     pub exception_cause: Option<String>,
     pub class_name: Option<String>,
+    pub identity_warning: Vec<String>,
+    pub reader_warning: Vec<String>,
+    pub escape_warning: Vec<String>,
     pub shared_list: Option<String>,
     pub shared_append: Option<String>,
     pub exception_unready: Option<String>,
@@ -877,7 +880,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.list.shared | w ext.builtin.list.shared.append | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.class.title | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.op.identical.warning | w ext.system.warning.reader | w ext.lexical.escape.warning | w ext.builtin.list.shared | w ext.builtin.list.shared.append | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.class.title | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1606,6 +1609,9 @@ impl Lang {
             exceptions: r.strings("ext.builtin.exceptions")?,
             exception_args: r.head("ext.builtin.exceptions.args")?,
             exception_cause: r.head("ext.builtin.exceptions.cause")?,
+            identity_warning: r.strings("ext.op.identical.warning")?,
+            reader_warning: r.strings("ext.system.warning.reader")?,
+            escape_warning: r.strings("ext.lexical.escape.warning")?,
             shared_list: r.head("ext.builtin.list.shared")?,
             shared_append: r.head("ext.builtin.list.shared.append")?,
             class_name: r.head("ext.builtin.class.title")?,

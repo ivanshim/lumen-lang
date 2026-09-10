@@ -181,7 +181,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
     let read = lex::lex_at(&source, lang).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
-    let shaped = layout::layout(read?, lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
+    let scanned = read?;
+    let shaped = layout::layout(scanned.clone(), lang, before as usize).map_err(|(said, row)| cannot_read(lang, &said, row, request, before, false));
     let tokens = shaped?;
     let mut registry = compile::Registry::default();
     // The system names are globals whether or not the program mentions them.
@@ -327,6 +328,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     lumen_room::mark();
     // A value raised and never caught is a fault like any other, told
     // in the language's own words.
+    let filename = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file").map(|(.., file, _)| file.as_str()).unwrap_or("");
+    machine.reader_warnings(&scanned, filename, before).map_err(|fault| fault.told(&machine.names()))?;
     if let Err(fault) = machine.invoke(&program, Vec::new()) {
         // A run the program itself said was over came out right, and
         // what was named to run at the end runs even then.

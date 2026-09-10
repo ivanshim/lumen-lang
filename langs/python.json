@@ -588,6 +588,11 @@
   "ext.lexical.escape.unavailable": [
     "Unicode escape cannot be represented"
   ],
+  "ext.lexical.escape.warning": [
+    "\"\\",
+    "\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\",
+    "\"? A raw string is also an option."
+  ],
   "ext.lexical.number.separator": [
     "_"
   ],
@@ -670,6 +675,10 @@
   ],
   "ext.op.identical.unsupported": [
     "Identity of these values is not supported"
+  ],
+  "ext.op.identical.warning": [
+    "\"is\" with a literal. Did you mean \"==\"?",
+    "\"is not\" with a literal. Did you mean \"!=\"?"
   ],
   "ext.op.if_else": [
     "if",
@@ -1037,5 +1046,10 @@
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],
-  "ext.system.untrue.empty_array": true
+  "ext.system.untrue.empty_array": true,
+  "ext.system.warning.reader": [
+    "warnings",
+    "warn_explicit",
+    "SyntaxWarning"
+  ]
 }
