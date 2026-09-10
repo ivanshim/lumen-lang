@@ -888,7 +888,8 @@ impl<'a> Engine<'a> {
 
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let found = self.class_named(&named).or_else(|| if self.lang.explicit_this { self.lookup(&named) } else { None });
+        let Some(Value::Class(class)) = found.cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();

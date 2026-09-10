@@ -13,7 +13,7 @@ class _Member:
         return self.owner.__name__ + '.' + self.name
 
     def __repr__(self):
-        return '<' + self.owner.__name__ + '.' + self.name + ': ' + f'{self.value!r}' + '>'
+        return '<' + self.owner.__name__ + '.' + self.name + ': ' + ('%r' % (self.value,)) + '>'
 
     def __eq__(self, other):
         return self is other
@@ -27,7 +27,7 @@ class Enum:
                 value = attributes[name]
                 if isinstance(value, auto):
                     value = next_value
-                if type(value) == type(0):
+                if type(value) == type(0) and (len(members) == 0 or value >= next_value):
                     next_value = value + 1
                 member = None
                 for held in members:

@@ -1181,7 +1181,10 @@ impl<'a> Machine<'a> {
 
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
-        let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
+        let class = self.class_bound(&named).or_else(|| {
+            if self.table.flag("ext.stmt.class.this.explicit") { self.lookup(&named) } else { None }
+        });
+        let Some(Value::Blueprint(of)) = class else { return None };
         self.made += 1;
         let mut holds = of.every_field();
         // A fault of the kernel's own carries the words said and the

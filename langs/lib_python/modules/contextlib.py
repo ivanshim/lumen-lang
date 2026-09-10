@@ -64,10 +64,25 @@ class _GeneratorContextManager:
     def __exit__(self, kind, value, traceback):
         return False
 
+class _ContextFactory:
+    def __init__(self, function):
+        self.function = function
+
+    def call(self, *args, **keywords):
+        return _GeneratorContextManager(self.function, args, keywords)
+
 def contextmanager(function):
-    def decorate(*args, **keywords):
-        return _GeneratorContextManager(function, args, keywords)
-    return decorate
+    return _ContextFactory(function).call
+
+class _ExitCallback:
+    def __init__(self, function, args, keywords):
+        self.function = function
+        self.args = args
+        self.keywords = keywords
+
+    def leave(self, kind, value, traceback):
+        self.function(*self.args, **self.keywords)
+        return False
 
 class ExitStack:
     def __init__(self):
@@ -86,10 +101,8 @@ class ExitStack:
         return exit
 
     def callback(self, function, *args, **keywords):
-        def leave(kind, value, traceback):
-            function(*args, **keywords)
-            return False
-        self.push(leave)
+        held = _ExitCallback(function, args, keywords)
+        self.push(held.leave)
         return function
 
     def pop_all(self):

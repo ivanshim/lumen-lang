@@ -49,7 +49,7 @@ class _Record:
             if isinstance(value, _Record):
                 value = value.__repr__()
             else:
-                value = f'{value!r}'
+                value = '%r' % (value,)
             result += name + '=' + value
         return result + ')'
 
