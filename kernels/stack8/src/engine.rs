@@ -4352,7 +4352,7 @@ impl<'a> Engine<'a> {
     }
 
     fn map_from(&self, items: Vec<(Option<String>, Value)>) -> Res<Value> {
-        let positional: Vec<&Value> = items.iter().filter_map(|(name, value)| name.is_none().then_some(value)).collect();
+        let positional: Vec<Value> = items.iter().filter_map(|(name, value)| name.is_none().then(|| collection_contents(value))).collect();
         if positional.len() > 1 {
             return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| "A map takes at most one source".into()));
         }

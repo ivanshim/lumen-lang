@@ -6391,7 +6391,7 @@ impl<'a> Builder<'a> {
             if label {
                 if bind { tag = Some(Value::text(&self.look().lexeme)); }
                 self.pos += 2;
-            } else if bind {
+            } else if bind && matches!(self.look().shape, Shape::Bare | Shape::Sign) {
                 let word = &self.look().lexeme;
                 if self.table.spells("ext.syntax.call.spread.pairs", word) { tag = Some(Value::Flag(true)); }
                 else if self.table.spells("ext.syntax.call.spread", word) { tag = Some(Value::Flag(false)); }

@@ -3509,6 +3509,7 @@ impl<'a> Machine<'a> {
     }
 
     fn dictionary(&self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        let positional: Vec<Value> = positional.iter().map(collection_read).collect();
         if positional.len() > 1 {
             return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or("A map takes at most one source").to_string());
         }

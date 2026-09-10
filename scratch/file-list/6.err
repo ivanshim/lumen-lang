@@ -1,1 +1,1 @@
-PythonError: OverflowError: shift count is too large
+PythonError: OverflowError: too many digits in integer
