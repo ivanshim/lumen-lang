@@ -165,6 +165,9 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
+    let opened: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect();
+    let args = opened.as_slice();
+
     use TextOp::*;
     if op == Maketrans {
         return translated_table(args,lang);

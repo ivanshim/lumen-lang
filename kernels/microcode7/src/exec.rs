@@ -3153,7 +3153,7 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.of.presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some()) || matches!(&values[0], Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.of.presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some()) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false),
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -3564,12 +3564,37 @@ impl<'a> Machine<'a> {
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         let actual = receiver.settled();
+        if name == "encode" && matches!(&actual, Value::Text(_)) {
+            let mut options = arguments;
+            for (key, value) in keywords {
+                let place = match key.as_str() { "encoding"=>0, "errors"=>1, _=>return Err(self.octet_error("unready").into()) };
+                if options.len() > place { return Err(self.octet_error("arguments").into()); }
+                while options.len() < place { options.push(Value::text("utf-8")); }
+                options.push(value);
+            }
+            if options.len() > 2 { return Err(self.octet_error("arguments").into()); }
+            if let Some(error_mode) = options.get(1) { if !matches!(error_mode, Value::Text(s) if s.as_ref()=="strict") { return Err(self.octet_error("unready").into()); } }
+            options.truncate(1); options.insert(0, actual);
+            return self.octet_routine(2, &options).map_err(Escape::from);
+        }
+        if let Value::Octets { cell, changeable: true, .. } = &actual {
+            if name == "append" && arguments.len() == 1 && keywords.is_empty() { cell.borrow_mut().push(self.octet_item(&arguments[0])?); return Ok(Value::Nil); }
+        }
         if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_)) {
             let operation = match name { "encode"=>Some(2), "decode"=>Some(3), "hex"=>Some(4), "upper"=>Some(6), "lower"=>Some(7), "split"=>Some(8), "join"=>Some(9), "startswith"=>Some(10), "replace"=>Some(11), "strip"=>Some(12), "find"=>Some(13), _=>None };
             if let Some(operation) = operation {
                 if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
                 let mut values = vec![actual]; values.extend(arguments);
                 return self.octet_routine(operation, &values).map_err(Escape::from);
+            }
+        }
+        if matches!(&actual, Value::Text(_)) {
+            let key = format!("ext.builtin.text.{}", name);
+            if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
+                let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| match v.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }));
+                if *work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(Rc::new(self.gathered_members(&given[1])?)); }
+                crate::text::fit_names(self.table, *work, &mut given, keywords)?;
+                return crate::text::apply(self.table, *work, name, &given, self.wording()).map_err(Escape::from);
             }
         }
         if matches!(receiver.settled(), Value::Set(_)) {
@@ -4468,6 +4493,8 @@ impl<'a> Machine<'a> {
     }
 
     fn octet_routine(&self, operation: u8, values: &[Value]) -> Result<Value, String> {
+        let normalized: Vec<Value> = values.iter().map(Value::settled).collect();
+        let values = normalized.as_slice();
         self.octet_work(operation, values, false)
     }
 
@@ -5318,7 +5345,7 @@ impl<'a> Machine<'a> {
                     _ => changed,
                 }
             }
-            Prim::ClassWork(_) => return Err(self.detail("unready").to_owned()),
+            Prim::ClassWork(work) => return self.work_on_class(work, v.to_vec()).map_err(|e| self.suspension_fault(e)),
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::NumberAlone => match &v[0] {
                 Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
@@ -5346,7 +5373,7 @@ impl<'a> Machine<'a> {
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::StartContext | Prim::DistinctObjects => return Err(self.bad_answer()),
-            Prim::Textual(work) => crate::text::apply(self.table, work, name, v, self.wording())?,
+            Prim::Textual(work) => { let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect(); crate::text::apply(self.table, work, name, &values, self.wording())? },
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -5653,6 +5680,7 @@ impl<'a> Machine<'a> {
                         _ => return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()),
                     }
                 }
+                if self.has_class_order() { return self.build_class_value(title, vec![ancestor], holdings).map_err(|e| self.suspension_fault(e)); }
                 let heir = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
                     under: Some(ancestor), name: title, shared: RefCell::new(holdings),
                     methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![],
@@ -6250,7 +6278,7 @@ impl<'a> Machine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     let names: Vec<String> = match op {
-                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).collect(),
+                        Prim::ClassMethods => class.methods.iter().map(|(called, _)| called.clone()).chain(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Adorned(_) | Value::Wrapped(..))).map(|(n,_)| n.clone())).collect(),
                         _ => class.fields.iter().map(|(called, _)| crate::data::holder_of(called).0.to_string()).collect(),
                     };
                     for called in names {
@@ -6647,7 +6675,7 @@ impl<'a> Machine<'a> {
                             }
                         }
                     },
-                    (needle, Value::Vector(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
+                    (needle, Value::Vector(hay) | Value::Tuple(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k)),
                     (item, Value::Set(hay)) => hay.borrow().keys.contains(&self.hash_for_set(item)?),
                     (item, Value::Octets { cell, .. }) => {
@@ -8813,6 +8841,7 @@ impl Machine<'_> {
                     Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
                     Some(Prim::AsReal) => matches!(item, Value::Frac(r) if r.places.is_some()),
                     Some(Prim::AsText) => matches!(item, Value::Text(_)),
+                    Some(Prim::SortOf) => matches!(item, Value::Blueprint(_) | Value::Intrinsic(_) | Value::OctetKind { .. }),
                     Some(Prim::Truthful) => matches!(item, Value::Flag(_)),
                     Some(Prim::Listed) => matches!(item, Value::Vector(_)),
                     Some(Prim::Tupling) => matches!(item, Value::Tuple(_)),
@@ -8828,6 +8857,15 @@ impl Machine<'_> {
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         for item in &mut input { *item = item.settled(); }
+        if keywords.is_empty() {
+            if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
+            if op == Prim::Belongs && matches!(input.get(1), Some(Value::OctetKind { .. })) { return self.octet_routine(16, &input); }
+            if op == Prim::Quoted && matches!(input.first(), Some(Value::Text(_))) { return crate::text::apply(self.table, crate::text::Work::REPR, name, &input, self.wording()); }
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) {
+                let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
+                if let Some(job) = job { return self.work_on_class(job, input).map_err(|e| self.suspension_fault(e)); }
+            }
+        }
         if keywords.is_empty() { if let Some(value) = self.user_operation(op, &input)? { return Ok(value); } }
         if op == Prim::Dictionary && input.len() > 1 { return Err(self.table.single("ext.builtin.map.arguments.amiss").unwrap_or_default().to_owned()); }
         use num_traits::{Signed, Zero};

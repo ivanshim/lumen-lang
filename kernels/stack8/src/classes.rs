@@ -247,6 +247,7 @@ impl<'a> Engine<'a> {
         fits||c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_allow(b,name))
     }
     pub(super) fn class_type(&mut self,args:Vec<Value>)->Flow<Value> {
+        let args: Vec<Value> = args.iter().map(Value::contents).collect();
         match args.as_slice() {
             [Value::Object(o)]=>Ok(Value::Class(o.class.clone())),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
@@ -258,6 +259,8 @@ impl<'a> Engine<'a> {
         }
     }
     fn beneath(&self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+        if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
+        if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
         if let Value::Class(c)=wanted {
             if c.name==self.class_word("root"){

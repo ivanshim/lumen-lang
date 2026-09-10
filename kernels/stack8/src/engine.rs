@@ -5878,9 +5878,37 @@ impl<'a> Engine<'a> {
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         let contents = receiver.contents();
+        if operation == "encode" && matches!(&contents, Value::Text(_)) {
+            let mut supplied = args;
+            for (key, value) in named {
+                let at = match key.as_str() { "encoding"=>0, "errors"=>1, _=>return Err(self.byte_fault("unready")) };
+                if supplied.len() > at { return Err(self.byte_fault("arguments")); }
+                while supplied.len() < at { supplied.push(Value::text("utf-8")); }
+                supplied.push(value);
+            }
+            if supplied.len() > 2 { return Err(self.byte_fault("arguments")); }
+            if let Some(errors) = supplied.get(1) { if !matches!(errors, Value::Text(s) if s.as_ref()=="strict") { return Err(self.byte_fault("unready")); } }
+            supplied.truncate(1); supplied.insert(0, contents);
+            return self.byte_call(2, &supplied);
+        }
+        if let Value::Bytes(cell, mutable, _) = &contents {
+            if operation == "append" && *mutable && args.len() == 1 && named.is_empty() { cell.borrow_mut().push(self.byte_number(&args[0])?); return Ok(Value::Null); }
+        }
         if matches!(&contents, Value::Bytes(..)) || operation == "encode" && matches!(&contents, Value::Text(_)) {
             let task = match operation { "encode"=>Some(2), "decode"=>Some(3), "hex"=>Some(4), "upper"=>Some(6), "lower"=>Some(7), "split"=>Some(8), "join"=>Some(9), "startswith"=>Some(10), "replace"=>Some(11), "strip"=>Some(12), "find"=>Some(13), _=>None };
             if let Some(task) = task { let mut given = vec![contents]; given.extend(args); return self.builtin_call(Builtin::Bytes(task), operation, given.into_iter().map(|v| (None,v)).chain(named.into_iter().map(|(k,v)| (Some(k),v))).collect()); }
+        }
+        if matches!(&contents, Value::Text(_)) {
+            let label = format!("ext.builtin.text.{}", operation);
+            if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
+                let operation = match operation { "split"=>Some(crate::strings::TextOp::Split), "rsplit"=>Some(crate::strings::TextOp::Rsplit), "join"=>Some(crate::strings::TextOp::Join), "strip"=>Some(crate::strings::TextOp::Strip), "lstrip"=>Some(crate::strings::TextOp::Lstrip), "rstrip"=>Some(crate::strings::TextOp::Rstrip), "replace"=>Some(crate::strings::TextOp::Replace), "startswith"=>Some(crate::strings::TextOp::Startswith), "endswith"=>Some(crate::strings::TextOp::Endswith), "find"=>Some(crate::strings::TextOp::Find), "rfind"=>Some(crate::strings::TextOp::Rfind), "index"=>Some(crate::strings::TextOp::Index), "count"=>Some(crate::strings::TextOp::Count), "upper"=>Some(crate::strings::TextOp::Upper), "lower"=>Some(crate::strings::TextOp::Lower), _=>None };
+                if let Some(op) = operation {
+                    let mut given = vec![contents]; given.extend(args.into_iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }));
+                    if op == crate::strings::TextOp::Join && given.len() == 2 { given[1] = Value::array(self.comprehension_items(&given[1])?); }
+                    crate::strings::keywords(op, &mut given, named, self.lang)?;
+                    return crate::strings::run(op, "", &given, self.lang, &self.wording());
+                }
+            }
         }
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None };
@@ -6340,8 +6368,8 @@ impl<'a> Engine<'a> {
                 Value::text(&writer.field(&args[0], spec, "")?)
             }
             Builtin::Bytes(task) => return self.byte_call(task, args),
-            Builtin::Text(op) => crate::strings::run(op, name, args, self.lang, &sp)?,
-            Builtin::ClassTool(_) => return Err(self.class_word("unready").to_string()),
+            Builtin::Text(op) => { let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect(); crate::strings::run(op, name, &normalized, self.lang, &sp)? },
+            Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -6627,6 +6655,7 @@ impl<'a> Engine<'a> {
                     let Value::Text(word) = key else { return Err(self.lang.module_helper_amiss.clone()); };
                     shared.push((word.to_string(), value.clone()));
                 }
+                if self.fuller_classes() { return self.form_class(title.to_string(), vec![parent.clone()], shared).map_err(|f| f.told(&self.wording())); }
                 Value::Class(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                     name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
@@ -6737,7 +6766,7 @@ impl<'a> Engine<'a> {
                 let mut here = of;
                 while let Some(class) = here {
                     match builtin {
-                        Builtin::ClassMethods => named.extend(class.methods.iter().map(|(n, _)| n.clone())),
+                        Builtin::ClassMethods => { named.extend(class.methods.iter().map(|(n, _)| n.clone())); named.extend(class.shared.borrow().iter().filter(|(_,v)| matches!(v,Value::Routine(_) | Value::Descriptor(_) | Value::Adapter(_))).map(|(n,_)| n.clone())); },
                         _ => named.extend(class.fields.iter().map(|(n, _)| crate::value::who_keeps(n).0.to_string())),
                     }
                     here = class.base.clone();
@@ -8095,6 +8124,7 @@ impl Engine<'_> {
             Builtin::Bool => matches!(value, Value::Flag(_)),
             Builtin::List => matches!(value, Value::Array(_)),
             Builtin::Tuple => matches!(value, Value::Tuple(_)),
+            Builtin::SortOf => matches!(value, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)),
             Builtin::Set => matches!(value, Value::Set(_)),
             Builtin::Dict => matches!(value, Value::Map(_)),
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
@@ -8105,6 +8135,15 @@ impl Engine<'_> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
         for value in &mut args { *value = value.contents(); }
+        if named.is_empty() {
+            if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
+            if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
+            if b == Builtin::Repr && matches!(args.first(), Some(Value::Text(_))) { return crate::strings::run(crate::strings::TextOp::Repr, name, &args, self.lang, &self.wording()); }
+            if self.fuller_classes() && args.first().map_or(false, |v| matches!(v, Value::Class(_) | Value::Object(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) {
+                let work = match b { Builtin::Callable=>Some(2), Builtin::GetAttr=>Some(3), Builtin::SetAttr=>Some(4), Builtin::DelAttr=>Some(5), Builtin::HasAttr=>Some(6), Builtin::Vars=>Some(7), _=>None };
+                if let Some(work) = work { return self.class_work(work, args).map_err(|f| f.told(&self.wording())); }
+            }
+        }
         if named.is_empty() { if let Some(value) = self.special_builtin(b, &args)? { return Ok(value); } }
         if b == Builtin::Dict && args.len() > 1 { return Err(self.lang.map_argument_amiss.clone().unwrap_or_else(|| self.core_fault("core.arity", name))); }
         let mut key = Value::Null;

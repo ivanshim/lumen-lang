@@ -183,6 +183,9 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
 }
 
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
+    let settled: Vec<Value> = input.iter().map(|v| match v.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect();
+    let input = settled.as_slice();
+
     use Work::*;
     if work==MAKETRANS {
         return make_table(input,table);

@@ -227,6 +227,7 @@ impl<'a> Machine<'a> {
         if success{Ok(Value::Nil)}else{Err(self.absent_attribute(&subject,key))}
     }
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
+        let values: Vec<Value> = values.iter().map(Value::settled).collect();
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.of.clone()));}}
         if let [Value::Text(title),sequence,Value::Dict(entries)]=values.as_slice(){
             let bases=match sequence{Value::Vector(v)|Value::Tuple(v)=>v,_=>return Err(self.class_unready())};
@@ -237,6 +238,8 @@ impl<'a> Machine<'a> {
         Err(self.class_unready())
     }
     fn is_beneath(&self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        if let Value::Intrinsic(word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)])), choice, class_only); }
+        if let Value::Intrinsic(word) = choice { return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(word)])), class_only); }
         match choice {
             Value::Tuple(options)|Value::Vector(options)=>{for option in options.iter(){if self.is_beneath(subject,option,class_only)?{return Ok(true);}}Ok(false)},
             Value::Blueprint(c)=>{
