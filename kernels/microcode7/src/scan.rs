@@ -637,7 +637,7 @@ impl Quotation<'_> {
                 "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide", "ext.lexical.escape.byte",
                 "lexical.string_quotes"].iter().any(|label| table.spells(label, &letter));
             if !listed && !ch.is_digit(8) && !matches!(ch, '\\' | '\r' | '\n') {
-                self.token(Shape::Caution, [opening, &letter, between, &letter, closing].concat());
+                self.token(Shape::Caution, format!("{opening}{letter}{between}{letter}{closing}"));
             }
         }
         if bytes && ["ext.lexical.escape.named", "ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter().any(|key| table.spells(key, &letter)) {
