@@ -909,6 +909,10 @@ only. The extension labels so far, all from PHP:
   `.clear` empties the receiver, and `.copy` makes a fresh shallow copy.
   `ext.builtin.map.pairs.amiss` gives plain words for a source whose
   items are not pairs. The receiver stands before the other arguments.
+  `ext.builtin.map.keys` and `.values` yield live views of the map's
+  keys and values. Their `.view` labels name the views when shown.
+  A view keeps its map, so a later write is seen by its length,
+  membership, gathering and walks; a walk guards the map's length.
 - `ext.syntax.map.value_keys`: a switch; maps compare their keys by value,
   whole numbers and equal flags naming the same place. Their equality
   disregards insertion order, and the bitwise union sign joins maps,
@@ -917,7 +921,8 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.map.unhashable` holds the words before and after the kind
   of such a key; `ext.syntax.map.key.unready` gives plain words where
   the key's kind has no means of hashing yet. `ext.syntax.map.missing`
-  encloses the representation of a key that was not found.
+  precedes the representation of a key that was not found, with an
+  optional second piece following it.
   `ext.syntax.map.ordering` encloses the comparison sign where two
   maps are asked to stand before or after one another.
   `ext.syntax.map.resized` gives plain words for a map whose length
@@ -2247,12 +2252,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map.copy` | - | - | `copy` | - | - | - | - | - | - | - |
 | `ext.builtin.map.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.map.get` | - | - | `get` | - | - | - | - | - | - | - |
+| `ext.builtin.map.keys` | - | - | `keys` | - | - | - | - | - | - | - |
+| `ext.builtin.map.keys.view` | - | - | `dict_keys` | - | - | - | - | - | - | - |
 | `ext.builtin.map.new` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pairs.amiss` | - | - | `ValueError: dictionary update requires pairs` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pop` | - | - | `pop` | - | - | - | - | - | - | - |
 | `ext.builtin.map.popitem` | - | - | `popitem` | - | - | - | - | - | - | - |
 | `ext.builtin.map.setdefault` | - | - | `setdefault` | - | - | - | - | - | - | - |
 | `ext.builtin.map.update` | - | - | `update` | - | - | - | - | - | - | - |
+| `ext.builtin.map.values` | - | - | `values` | - | - | - | - | - | - | - |
+| `ext.builtin.map.values.view` | - | - | `dict_values` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
@@ -2568,7 +2577,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: value is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.key.unready` | - | - | `NotImplementedError: dictionary keys of this kind are not supported` | - | - | - | - | - | - | - |
-| `ext.syntax.map.missing` | - | - | `KeyError: ` `` | - | - | - | - | - | - | - |
+| `ext.syntax.map.missing` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
 | `ext.syntax.map.ordering` | - | - | `TypeError: '` `' not supported between instances of 'dict' and 'dict'` | - | - | - | - | - | - | - |
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |

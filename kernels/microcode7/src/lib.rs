@@ -55,6 +55,9 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        if let Some(prefix) = table.single("ext.syntax.map.missing") {
+            if e.starts_with(prefix) { return e; }
+        }
         for label in ["ext.syntax.map.resized", "ext.syntax.map.key.unready", "ext.syntax.map.ordering",
             "ext.syntax.map.unhashable", "ext.syntax.map.missing", "ext.syntax.call.amiss.builtin"] {
             let words = table.strings(label);

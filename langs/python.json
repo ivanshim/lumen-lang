@@ -352,6 +352,12 @@
   "ext.builtin.map.get": [
     "get"
   ],
+  "ext.builtin.map.keys": [
+    "keys"
+  ],
+  "ext.builtin.map.keys.view": [
+    "dict_keys"
+  ],
   "ext.builtin.map.new": [
     "dict"
   ],
@@ -369,6 +375,12 @@
   ],
   "ext.builtin.map.update": [
     "update"
+  ],
+  "ext.builtin.map.values": [
+    "values"
+  ],
+  "ext.builtin.map.values.view": [
+    "dict_values"
   ],
   "ext.builtin.print.collections": true,
   "ext.builtin.print.end": [
@@ -965,8 +977,7 @@
     "NotImplementedError: dictionary keys of this kind are not supported"
   ],
   "ext.syntax.map.missing": [
-    "KeyError: ",
-    ""
+    "KeyError: "
   ],
   "ext.syntax.map.ordering": [
     "TypeError: '",

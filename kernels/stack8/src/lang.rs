@@ -40,6 +40,11 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub map_keys: Vec<String>,
+    pub map_values: Vec<String>,
+    pub map_keys_view: Vec<String>,
+    pub map_values_view: Vec<String>,
+
     pub map_new: Vec<String>,
     pub map_fromkeys: Vec<String>,
     pub map_get: Vec<String>,
@@ -849,6 +854,7 @@ w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step
 
+w ext.builtin.map.keys | w ext.builtin.map.values | w ext.builtin.map.keys.view | w ext.builtin.map.values.view
 w ext.builtin.map.new | w ext.builtin.map.fromkeys | w ext.builtin.map.get | w ext.builtin.map.setdefault | w ext.builtin.map.pop | w ext.builtin.map.popitem | w ext.builtin.map.update | w ext.builtin.map.clear | w ext.builtin.map.copy | w ext.builtin.map.pairs.amiss
 b ext.syntax.map.value_keys | w ext.syntax.map.resized | w ext.syntax.map.missing | w ext.syntax.map.unhashable | w ext.syntax.map.key.unready | w ext.syntax.map.ordering
 w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any
@@ -1353,6 +1359,8 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.map.keys", Builtin::Dictionary(9)),
+            ("ext.builtin.map.values", Builtin::Dictionary(10)),
             ("ext.builtin.map.new", Builtin::Dictionary(0)),
             ("ext.builtin.map.fromkeys", Builtin::Dictionary(1)),
             ("ext.builtin.map.get", Builtin::Dictionary(2)),
@@ -1913,6 +1921,10 @@ impl Lang {
             map_clear: r.strings("ext.builtin.map.clear")?,
             map_copy: r.strings("ext.builtin.map.copy")?,
             map_pairs_amiss: r.strings("ext.builtin.map.pairs.amiss")?,
+            map_keys: r.strings("ext.builtin.map.keys")?,
+            map_values: r.strings("ext.builtin.map.values")?,
+            map_keys_view: r.strings("ext.builtin.map.keys.view")?,
+            map_values_view: r.strings("ext.builtin.map.values.view")?,
             map_value_keys: r.flag("ext.syntax.map.value_keys")?,
             map_missing: r.strings("ext.syntax.map.missing")?,
             map_unhashable: r.strings("ext.syntax.map.unhashable")?,

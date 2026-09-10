@@ -992,7 +992,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_) | Value::MapView(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2485,13 +2485,22 @@ impl<'a> Engine<'a> {
             }
             Action::MapSize => {
                 let held = collection_contents(&self.drop_top()?);
-                match held { Value::Map(entries) => Value::Small(entries.len() as i64), _ => Value::Small(-1) }
+                match held {
+                    Value::Map(entries) => Value::Small(entries.len() as i64),
+                    Value::MapView(view) => Value::Small(view.0.map_projection(view.1).len() as i64),
+                    _ => Value::Small(-1),
+                }
             }
             Action::MapCheck => {
                 let size = self.drop_top()?;
                 let held = collection_contents(&self.drop_top()?);
-                if let (Value::Small(was), Value::Map(entries)) = (size, held) {
-                    if was >= 0 && was as usize != entries.len() {
+                let length = match held {
+                    Value::Map(entries) => Some(entries.len()),
+                    Value::MapView(view) => Some(view.0.map_projection(view.1).len()),
+                    _ => None,
+                };
+                if let (Value::Small(was), Some(length)) = (size, length) {
+                    if was >= 0 && was as usize != length {
                         return Err(self.lang.map_resized.first().cloned().unwrap_or_default().into());
                     }
                 }
@@ -2517,6 +2526,8 @@ impl<'a> Engine<'a> {
                         Some(_) => Value::Small(at as i64),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len()).into()),
                     },
+                    Value::MapView(view) => view.0.map_projection(view.1).get(at).cloned()
+                        .ok_or_else(|| self.lang.map_resized.first().cloned().unwrap_or_default())?,
                     Value::Map(pairs) => match pairs.get(at) {
                         Some((k, v)) => if key || self.lang.map_value_keys { k.clone() } else { v.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, pairs.len()).into()),
@@ -3117,6 +3128,7 @@ impl<'a> Engine<'a> {
                     None => {
                         let reach = match &pair[0] {
                             Value::Array(items) => items.len(),
+                            Value::MapView(view) => view.0.map_projection(view.1).len(),
                             Value::Map(pairs) => pairs.len(),
                             Value::Object(o) => o.fields.borrow().len(),
                             _ => 0,
@@ -3149,6 +3161,7 @@ impl<'a> Engine<'a> {
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
                 Value::Array(items) => Value::Small(items.len() as i64),
+                Value::MapView(view) => Value::Small(view.0.map_projection(view.1).len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
                 // A language with a word for a warning is told a value
@@ -3261,6 +3274,7 @@ impl<'a> Engine<'a> {
                 out.push(quote);
                 out
             }
+            Value::MapView(view) => format!("{}({})", view.2, self.rem_repr(&Value::array(view.0.map_projection(view.1)))?),
             Value::Array(items) => {
                 let parts = items.iter().map(|v| self.rem_repr(v)).collect::<Res<Vec<_>>>()?;
                 format!("[{}]", parts.join(", "))
@@ -3413,6 +3427,11 @@ impl<'a> Engine<'a> {
             8 => {
                 if args.len() != 1 { return Err(bad()); }
                 self.keep_collection(Value::Map(Rc::new(pairs.clone())))
+            }
+            9 | 10 => {
+                if args.len() != 1 { return Err(bad()); }
+                let words = if operation == 9 { &self.lang.map_keys_view } else { &self.lang.map_values_view };
+                Value::MapView(Rc::new((receiver.clone(), operation == 9, words.first().cloned().unwrap_or_default())))
             }
             _ => unreachable!(),
         };
@@ -3569,6 +3588,10 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::MapView(view) => {
+                        if view.1 { self.map_key(a)?; }
+                        view.0.map_projection(view.1).iter().any(|v| self.map_equal(a, v))
+                    }
                     Value::Array(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => {
                         self.map_key(a)?;
@@ -4320,6 +4343,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::MapView(view) => Ok(view.0.map_projection(view.1)),
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
@@ -4343,7 +4367,7 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            if self.lang.print_collections && matches!(collection_contents(v), Value::Array(_) | Value::Map(_)) {
+            if self.lang.print_collections && matches!(collection_contents(v), Value::Array(_) | Value::Map(_) | Value::MapView(_)) {
                 return self.rem_repr(v).unwrap_or_else(|_| v.display(&sp));
             }
             let mut said = v.display(&sp);
@@ -5113,6 +5137,7 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::MapView(view) => Value::Small(view.0.map_projection(view.1).len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),

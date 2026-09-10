@@ -488,6 +488,7 @@ impl<'a> Machine<'a> {
                     None => {
                         let far = match &v[0] {
                             Value::Vector(items) => items.len(),
+                            Value::Projection(source, keys, _) => source.projected(*keys).len(),
                             Value::Dict(pairs) => pairs.len(),
                             Value::Thing(thing) => thing.holds.borrow().len(),
                             _ => 0,
@@ -539,7 +540,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_) | Value::Projection(..)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -1068,6 +1069,11 @@ impl<'a> Machine<'a> {
                     write_back = true;
                     Value::Nil
                 }
+                9 | 10 => {
+                    if given.len() != 1 { return Err(bad()); }
+                    let label = if code == 9 { "ext.builtin.map.keys.view" } else { "ext.builtin.map.values.view" };
+                    Value::Projection(Rc::new(receiver.clone()), code == 9, Rc::from(self.table.single(label).unwrap_or_default()))
+                }
                 7 | 8 => {
                     if given.len() != 1 { return Err(bad()); }
                     if code == 8 { self.collection_cell(Value::Dict(Rc::new(entries.clone()))) }
@@ -1130,6 +1136,10 @@ impl<'a> Machine<'a> {
             return self.quoted_remainder(&held.borrow());
         }
         match item {
+            Value::Projection(source, keys, title) => {
+                let row = Value::Vector(Rc::new(source.projected(*keys)));
+                return Ok(format!("{title}({})", self.quoted_remainder(&row)?));
+            }
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
                 for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
@@ -3827,12 +3837,18 @@ impl<'a> Machine<'a> {
                 Value::Dict(Rc::new(result))
             }
             Prim::MapLength => match &v[0] {
+                Value::Projection(source, keys, _) => Value::Small(source.projected(*keys).len() as i64),
                 Value::Dict(entries) => Value::Small(entries.len() as i64),
                 _ => Value::Small(-1),
             },
             Prim::MapUnchanged => {
-                if let (Value::Dict(now), Value::Small(before)) = (&v[0], &v[1]) {
-                    if *before != -1 && *before != now.len() as i64 {
+                let size = match &v[0] {
+                    Value::Dict(now) => now.len() as i64,
+                    Value::Projection(source, keys, _) => source.projected(*keys).len() as i64,
+                    _ => -1,
+                };
+                if let Value::Small(before) = &v[1] {
+                    if *before != -1 && *before != size {
                         return Err(self.argument_fault("ext.syntax.map.resized", None));
                     }
                 }
@@ -3857,6 +3873,8 @@ impl<'a> Machine<'a> {
                         Some(x) => x.clone(),
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, items.len())),
                     },
+                    Value::Projection(source, keys, _) => source.projected(*keys).get(at).cloned()
+                        .ok_or_else(|| self.argument_fault("ext.syntax.map.resized", None))?,
                     Value::Dict(entries) => match entries.get(at) {
                         Some((k, x)) => if wants_key || self.table.flag("ext.syntax.map.value_keys") { k.clone() } else { x.clone() },
                         None => return Err(format!("Array index {} out of bounds (length: {})", at, entries.len())),
@@ -3881,6 +3899,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
                     Value::Vector(items) => Value::Small(items.len() as i64),
+                    Value::Projection(source, keys, _) => Value::Small(source.projected(*keys).len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
                     // A language with a word for a warning hears that a
@@ -4798,6 +4817,10 @@ impl<'a> Machine<'a> {
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
+                    (key, Value::Projection(source, keys, _)) => {
+                        if *keys { self.admits_key(key)?; }
+                        source.projected(*keys).iter().any(|value| Self::equal_contents(key, value))
+                    }
                     (key, Value::Dict(entries)) => {
                         self.admits_key(key)?;
                         entries.iter().any(|(k, _)| if self.table.flag("ext.syntax.map.value_keys") { Self::equal_contents(key, k) } else { key.equals(k) })
@@ -5163,6 +5186,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Projection(source, keys, _) => Value::Small(source.projected(*keys).len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -5566,6 +5590,7 @@ impl<'a> Machine<'a> {
         Ok(match source {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Vector(values) => values.to_vec(),
+            Value::Projection(source, keys, _) => source.projected(*keys),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
             Value::Progression(walk) => {
                 let mut values = Vec::new();
@@ -5586,7 +5611,7 @@ impl<'a> Machine<'a> {
         let w = self.wording();
         let argument = |x: &Value| {
             if self.table.flag("ext.builtin.print.collections") {
-                if matches!(collection_read(x), Value::Dict(_) | Value::Vector(_)) {
+                if matches!(collection_read(x), Value::Dict(_) | Value::Vector(_) | Value::Projection(..)) {
                     return self.quoted_remainder(x).unwrap_or_else(|_| x.render(w));
                 }
             }

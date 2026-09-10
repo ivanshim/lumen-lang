@@ -117,6 +117,7 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
+        if lang.map_missing.first().map_or(false, |word| e.starts_with(word)) { return e; }
         let own = [&lang.call_builtin_amiss, &lang.map_missing, &lang.map_unhashable, &lang.map_ordering,
             &lang.map_key_unready, &lang.map_resized];
         if own.iter().any(|words| match words.as_slice() {

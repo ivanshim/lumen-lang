@@ -138,6 +138,7 @@ pub enum Value {
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
     Dict(Rc<Vec<(Value, Value)>>),
+    Projection(Rc<Value>, bool, Rc<str>),
     /// A key written together with its value (`k => v`), until a
     /// literal takes it in.
     Couple(Rc<(Value, Value)>),
@@ -202,6 +203,17 @@ impl Value {
         self
     }
 
+    pub fn projected(&self, want_keys: bool) -> Vec<Value> {
+        let entries = match self {
+            Value::Shared(cell) => return cell.borrow().projected(want_keys),
+            Value::Dict(pairs) => pairs,
+            _ => return Vec::new(),
+        };
+        let mut result = Vec::with_capacity(entries.len());
+        for pair in entries.iter() { result.push(if want_keys { pair.0.clone() } else { pair.1.clone() }); }
+        result
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -223,13 +235,14 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Projection(..) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
+            Value::Projection(source, keys, _) => !source.projected(*keys).is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -256,7 +269,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Projection(..) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -487,6 +500,7 @@ impl Value {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
                 format!("{}({}, {}{})", p.word, p.first, p.limit, tail)
             }
+            Value::Projection(_, _, title) => format!("<{title}>"),
             Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),

@@ -135,6 +135,7 @@ pub enum Value {
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
     Map(Rc<Vec<(Value, Value)>>),
+    MapView(Rc<(Value, bool, String)>),
     /// A cell two or more names share: a write through any of them is a
     /// write all of them see. Where calls bind by name, it also holds
     /// a collection whose items may change whilst its names stay apart.
@@ -200,6 +201,14 @@ impl Value {
         Value::Text(Rc::from(s))
     }
 
+    pub fn map_projection(&self, keys: bool) -> Vec<Value> {
+        match self {
+            Value::Bond(cell) => cell.borrow().map_projection(keys),
+            Value::Map(entries) => entries.iter().map(|(k, v)| if keys { k.clone() } else { v.clone() }).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn of_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -258,6 +267,7 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
+            Value::MapView(view) => !view.0.map_projection(view.1).is_empty(),
             Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
@@ -279,7 +289,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::MapView(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -487,6 +497,7 @@ impl Value {
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
+            Value::MapView(view) => format!("<{}>", view.2),
             Value::Ellipsis => "Ellipsis".to_string(),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),
