@@ -52,7 +52,11 @@ class _Path:
         while at > 0 and path[at - 1] != '/':
             at -= 1
         head = path[:at]
-        if head != '/' * len(head):
+        named = False
+        for letter in list(head):
+            if letter != '/':
+                named = True
+        if named:
             while head[-1:] == '/':
                 head = head[:-1]
         return (head, path[at:])
@@ -91,7 +95,7 @@ class _Path:
         parts = []
         words = []
         word = ''
-        for letter in path + '/':
+        for letter in list(path + '/'):
             if letter == '/':
                 words.append(word)
                 word = ''

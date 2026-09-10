@@ -2655,7 +2655,7 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(field || self.module_fallback(&held).is_some() || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
                 Value::Class(c) if self.lang.member_pipes => {
@@ -3965,6 +3965,17 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if self.lang.read_from_end {
+            if let Value::Small(index) = at {
+                if *index < 0 {
+                    let size = match target { Value::Array(items) => Some(items.len()), Value::Text(text) => Some(text.chars().count()), _ => None };
+                    if let Some(size) = size {
+                        let index = size as i64 + index;
+                        if index >= 0 { return self.element(target, &Value::Small(index), how); }
+                    }
+                }
+            }
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {

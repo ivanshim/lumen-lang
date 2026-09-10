@@ -1,1 +1,1 @@
-NotImplementedError: pickle.dumps is not supported
+PythonError: Uncaught NotImplementedError: pickle.dumps is not supported

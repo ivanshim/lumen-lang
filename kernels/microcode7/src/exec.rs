@@ -3888,7 +3888,7 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(result))
             }
             Prim::IsDictionary => { n(1)?; Value::Flag(if let Value::Dict(_) = &v[0] { true } else { false }) }
-            Prim::HasMember => {
+            Prim::HasMember | Prim::ResolvesMember => {
                 n(2)?;
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
@@ -3896,7 +3896,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag(own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(own || (matches!(op, Prim::ResolvesMember) && self.namespace_answers(&v[0])) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -5302,6 +5302,16 @@ impl<'a> Machine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
+        match (self.table.flag("ext.op.index.from_end"), target, at) {
+            (true, Value::Vector(values), Value::Small(n)) if *n < 0 && n.unsigned_abs() <= values.len() as u64 => {
+                return self.element(target, &Value::Small(values.len() as i64 + n), how);
+            }
+            (true, Value::Text(chars), Value::Small(n)) if *n < 0 => {
+                let count = chars.chars().count() as i64;
+                if count + n >= 0 { return self.element(target, &Value::Small(count + n), how); }
+            }
+            _ => (),
+        }
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
@@ -6227,6 +6237,12 @@ impl Machine<'_> {
         }
         self.refresh_import_table();
         Ok(value)
+    }
+
+    fn namespace_answers(&self, value: &Value) -> bool {
+        let Value::Thing(space) = value else { return false };
+        self.table.single("ext.system.module.getattr").and_then(|name| self.attribute(value, name)).is_some()
+            && self.imported.values().any(|other| matches!(other, Value::Thing(held) if Rc::ptr_eq(space, held)))
     }
 
     fn ask_namespace(&mut self, value: &Value, missing: &str) -> Result<Option<Value>, String> {

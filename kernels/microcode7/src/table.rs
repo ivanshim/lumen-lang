@@ -87,7 +87,7 @@ ext.lexical.epilogue:L ext.builtin.echo:L ext.syntax.call.bare:B ext.op.incremen
 ext.lexical.interpolating_quotes:L ext.lexical.heredoc:L ext.stmt.for.c:L ext.op.assign.compound:B ext.stmt.static:L ext.stmt.global:L \
 ext.stmt.import.value:B ext.stmt.import.missing:L ext.stmt.import.member.missing:L ext.stmt.import.relative.unready:L \
 ext.builtin.program.namespace:L \
-ext.builtin.text.lines:L ext.builtin.map.test:L ext.system.module.getattr:L ext.builtin.member.has:L ext.system.fault.division:L ext.system.fault.bases:L ext.builtin.fault.current:L ext.builtin.host.info:L ext.builtin.file.kind:L \
+ext.op.index.from_end:B ext.builtin.text.lines:L ext.builtin.map.test:L ext.system.module.getattr:L ext.builtin.member.has:L ext.system.fault.division:L ext.system.fault.bases:L ext.builtin.fault.current:L ext.builtin.host.info:L ext.builtin.file.kind:L \
 ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \

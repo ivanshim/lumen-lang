@@ -626,6 +626,7 @@
   "ext.op.in.unsupported": [
     "Membership requires an array, string or map"
   ],
+  "ext.op.index.from_end": true,
   "ext.op.index.slice": [
     ":"
   ],

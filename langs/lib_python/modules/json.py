@@ -5,14 +5,23 @@ class JSONDecodeError(ValueError):
         self.doc = doc
         self.pos = pos
         self.lineno = 1
-        self.colno = pos + 1
-        self.message = msg
+        self.colno = 1
+        for letter in list(doc[:pos]):
+            if letter == '\n':
+                self.lineno += 1
+                self.colno = 1
+            else:
+                self.colno += 1
+        self.message = self.__str__()
+
+    def __str__(self):
+        return self.msg + ': line ' + str(self.lineno) + ' column ' + str(self.colno) + ' (char ' + str(self.pos) + ')'
 
 
 def _quote(text, ascii):
     result = '"'
     digits = '0123456789abcdef'
-    for c in text:
+    for c in list(text):
         n = ord(c)
         if c == '"' or c == '\\':
             result += '\\' + c
@@ -43,7 +52,7 @@ def dumps(obj, *, skipkeys=False, ensure_ascii=True, check_circular=True, allow_
         raise 'NotImplementedError: json.dumps custom encoders are not supported'
     gap = None
     if indent is not None:
-        gap = indent if type(indent) == type('') else ' ' * (indent if indent > 0 else 0)
+        gap = indent if type(indent) == type('') else _repeat(' ', indent)
     comma = ', ' if gap is None else ','
     colon = ': '
     if separators is not None:
@@ -77,7 +86,7 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
             for i in range(1, len(keys)):
                 key = keys[i]
                 j = i
-                while j > 0 and keys[j - 1] > key:
+                while j > 0 and _greater(keys[j - 1], key):
                     keys[j] = keys[j - 1]
                     j -= 1
                 keys[j] = key
@@ -112,9 +121,9 @@ def _encode(obj, gap, comma, colon, ascii, ordered, default, allow_nan, skipkeys
         return opening + closing
     separator = comma
     if gap is not None:
-        opening += '\n' + gap * (depth + 1)
-        separator += '\n' + gap * (depth + 1)
-        closing = '\n' + gap * depth + closing
+        opening += '\n' + _repeat(gap, depth + 1)
+        separator += '\n' + _repeat(gap, depth + 1)
+        closing = '\n' + _repeat(gap, depth) + closing
     result = opening + pieces[0]
     for part in pieces[1:]:
         result += separator + part
@@ -226,6 +235,10 @@ class _Reader:
                     return result
                 if c != ',':
                     self.bad('Expecting comma delimiter')
+        for special in ['NaN', 'Infinity', '-Infinity']:
+            if self.text[self.at:self.at + len(special)] == special:
+                self.at += len(special)
+                return float(special)
         for word, answer in [('null', None), ('true', True), ('false', False)]:
             if self.text[self.at:self.at + len(word)] == word:
                 self.at += len(word)
@@ -283,3 +296,26 @@ def dump(obj, fp, **kw):
 
 def load(fp, **kw):
     return loads(fp.read(), **kw)
+
+
+def _repeat(text, count):
+    result = ''
+    while count > 0:
+        result += text
+        count -= 1
+    return result
+
+
+def _greater(left, right):
+    if isinstance(left, type('')) and isinstance(right, type('')):
+        at = 0
+        while at < len(left) and at < len(right):
+            a = ord(left[at])
+            b = ord(right[at])
+            if a != b:
+                return a > b
+            at += 1
+        return len(left) > len(right)
+    if isinstance(left, type('')) or isinstance(right, type('')) or left is None or right is None:
+        raise 'TypeError: JSON keys cannot be compared'
+    return left > right

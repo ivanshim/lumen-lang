@@ -9,11 +9,17 @@ LC_ALL = 6
 CHAR_MAX = 127
 
 def setlocale(category, locale=None):
+    if category < 0 or category > 6:
+        raise 'ValueError: invalid locale category'
     if locale is not None and locale != 'C' and locale != 'POSIX' and locale != '':
         raise 'NotImplementedError: locale.setlocale supports only C'
     return 'C'
 
 def getlocale(category=0):
+    if category == LC_ALL:
+        raise 'TypeError: category LC_ALL is not supported'
+    if category < 0 or category > 6:
+        raise 'ValueError: invalid locale category'
     return (None, None)
 
 def localeconv():

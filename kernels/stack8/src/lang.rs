@@ -41,6 +41,7 @@ pub enum Complaint {
 
 pub struct Lang {
     pub fault_bases: Vec<String>,
+    pub read_from_end: bool,
     pub module_getattr: Option<String>,
     pub division_message: Option<String>,
     pub ident: String,
@@ -823,7 +824,7 @@ w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc 
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
 w ext.builtin.program.namespace
-w ext.builtin.text.lines | w ext.builtin.map.test | w ext.system.module.getattr | w ext.builtin.member.has | w ext.system.fault.division | w ext.system.fault.bases | w ext.builtin.fault.current | w ext.builtin.host.info | w ext.builtin.file.kind
+b ext.op.index.from_end | w ext.builtin.text.lines | w ext.builtin.map.test | w ext.system.module.getattr | w ext.builtin.member.has | w ext.system.fault.division | w ext.system.fault.bases | w ext.builtin.fault.current | w ext.builtin.host.info | w ext.builtin.file.kind
 w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
@@ -1667,6 +1668,7 @@ impl Lang {
             member_absent: r.strings("ext.builtin.member.absent")?,
             module_cache: r.strings("ext.system.module.cache")?,
             fault_bases: r.strings("ext.system.fault.bases")?,
+            read_from_end: r.flag("ext.op.index.from_end")?,
             module_getattr: r.head("ext.system.module.getattr")?,
             division_message: r.head("ext.system.fault.division")?,
             module_names: r.strings("ext.system.module.name")?,

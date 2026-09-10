@@ -25,8 +25,8 @@ def name(c, default=None):
 
 def lookup(name):
     folded = ''
-    for letter in name:
-        if letter >= 'a' and letter <= 'z':
+    for letter in list(name):
+        if ord(letter) >= 97 and ord(letter) <= 122:
             letter = chr(ord(letter) - 32)
         folded += letter
     name = folded
@@ -39,7 +39,7 @@ def normalize(form, text):
     if form not in _forms:
         raise 'ValueError: invalid normalization form'
     result = ''
-    for c in text:
+    for c in list(text):
         result += _forms[form][_index(c)]
     # Adjacent combining marks need canonical ordering and composition.
     # Latin-1 input has no such marks; its decompositions do.

@@ -1616,6 +1616,9 @@ only. The extension labels so far, all from PHP:
   answer or raised value, and the complaint's text. A library can thus
   count failures and errors itself. An ending of the run or exhaustion
   of its allotted time or room is carried onward, never counted as a test.
+- `ext.op.index.from_end`: a switch; a negative index reading a list or
+  text counts back from its end. Map keys retain their signs. This switch
+  does not yet extend writing or removal through negative indices.
 - `ext.builtin.text.lines`: a builtin dividing text at line endings,
   taking a carriage return followed by a line feed as one ending. A true
   second value keeps the endings. An ending at the end adds no empty line.
@@ -2305,6 +2308,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
 | `ext.op.index.absent` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.append` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.index.from_end` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.index.makes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.nothing` | - | - | - | - | `Using null as an array offset is deprecated, use an empty string instead` | - | - | - | - | - |
 | `ext.op.index.plain_keys` | - | - | - | - | `true` | - | - | - | - | - |
