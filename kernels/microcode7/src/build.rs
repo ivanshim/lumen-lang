@@ -5077,7 +5077,8 @@ impl<'a> Builder<'a> {
                 // A plus sign leaves its operand as it is, bound like a negation.
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
-                return self.expr(tier);
+                let held = self.expr(tier)?;
+                return Ok(if table.strings("ext.lexical.number.imaginary").is_empty() { held } else { prim_call(Prim::Positive, vec![held]) });
             }
         }
         let node = match t.shape {
@@ -6887,6 +6888,7 @@ fn unreadable_numeral(text: &str, table: &Table) -> String {
 }
 
 pub fn numeral(text: &str, table: &Table) -> Res<Value> {
+    if table.flag("ext.lexical.number.separator.strict") { crate::scan::check_numeral(text, table)?; }
     let marks = table.letters("ext.lexical.number.separator");
     let powers = table.letters("ext.lexical.number.exponent");
     let bare = table.letter("lexical.number.decimal_point").map_or(false, |p| text.starts_with(p) || text.ends_with(p));
@@ -6920,6 +6922,14 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             }
         }
         return read_numeral(&plain, table);
+    }
+    let imaginary = table.letters("ext.lexical.number.imaginary");
+    if let Some(letter) = text.chars().next_back().filter(|c| imaginary.contains(c)) {
+        let coefficient: f64 = text[..text.len() - letter.len_utf8()].parse().map_err(|_| unreadable_numeral(text, table))?;
+        return Ok(Value::Imaginary {
+            coefficient,
+            unready: Rc::from(table.single("ext.lexical.number.imaginary.unready").unwrap_or("Imaginary arithmetic is not ready")),
+        });
     }
     for (key, radix) in [
         ("lexical.number.hex_prefix", 16u32),
@@ -6962,7 +6972,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
             let (w, f) = (&text[..dot], &text[dot + p.len_utf8()..]);
             let scale = BigInt::from(10).pow(f.len() as u32);
             let w: BigInt = if w.is_empty() { BigInt::from(0) } else { w.parse().map_err(|_| unreadable_numeral(text, table))? };
-            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.bare")) {
+            let f: BigInt = match (f.is_empty(), table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge")) {
                 (true, true) => BigInt::from(0),
                 _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
             };

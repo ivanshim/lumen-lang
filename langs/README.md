@@ -652,6 +652,26 @@ only. The extension labels so far, all from PHP:
   (`0x_ff`). The separators still count for nothing.
 - `ext.lexical.number.exponent`: the letters that open a decimal exponent
   in a number (`1e9`, `2.5E-3`), always a real.
+- `ext.lexical.number.imaginary`: letters following a decimal number
+  which make it imaginary (`1j`, `2.5J`). The value keeps its own kind
+  and may be held and written out. `ext.lexical.number.imaginary.unready`
+  gives the plain words said when arithmetic asks for complex numbers;
+  the full kernels do not yet work with such numbers.
+- `ext.lexical.number.point_edge`: a switch; a decimal point may have
+  digits on either side alone (`.5`, `5.`), as well as on both sides.
+- `ext.lexical.number.separator.strict`: a switch; each separating mark
+  must stand between digits, save one just after a base prefix. A base
+  prefix must have digits, and letters cannot trail a number except
+  where another number label gives them meaning.
+- `ext.lexical.number.amiss.leading_zero`: the words said of a decimal
+  whole number beginning with nought yet worth more than nought. Reals
+  and imaginary numbers may begin with as many noughts as they please.
+- `ext.lexical.number.amiss.binary`, `ext.lexical.number.amiss.octal`
+  and `ext.lexical.number.amiss.hex`: plain words for a number badly
+  written in twos, eights or sixteens. The sister labels
+  `ext.lexical.number.amiss.binary.digit` and
+  `ext.lexical.number.amiss.octal.digit` hold two pieces, before and
+  after the first decimal digit that the base cannot hold.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
   tightly as negation.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
@@ -2260,13 +2280,23 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | `invalid numeric literal` | - | `Invalid numeric literal` | - | - | - | - | - |
+| `ext.lexical.number.amiss.binary` | - | - | `SyntaxError: invalid binary literal` | - | - | - | - | - | - | - |
+| `ext.lexical.number.amiss.binary.digit` | - | - | `SyntaxError: invalid digit '` `' in binary literal` | - | - | - | - | - | - | - |
+| `ext.lexical.number.amiss.hex` | - | - | `SyntaxError: invalid hexadecimal literal` | - | - | - | - | - | - | - |
+| `ext.lexical.number.amiss.leading_zero` | - | - | `SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers` | - | - | - | - | - | - | - |
+| `ext.lexical.number.amiss.octal` | - | - | `SyntaxError: invalid octal literal` | - | - | - | - | - | - | - |
+| `ext.lexical.number.amiss.octal.digit` | - | - | `SyntaxError: invalid digit '` `' in octal literal` | - | - | - | - | - | - | - |
 | `ext.lexical.number.binary_prefix` | - | - | `0b` `0B` | - | `0b` `0B` | - | - | - | - | - |
 | `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
+| `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
+| `ext.lexical.number.imaginary.unready` | - | - | `NotImplementedError: complex arithmetic is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | `0o` `0O` | - | `0o` `0O` | - | - | - | - | - |
 | `ext.lexical.number.point.bare` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.number.point_edge` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.number.separator` | - | - | `_` | - | `_` | - | - | - | - | - |
 | `ext.lexical.number.separator.after_prefix` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.lexical.number.separator.strict` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.prologue.brief` | - | - | - | - | `<?` | - | - | - | - | - |
 | `ext.lexical.prologue.brief.setting` | - | - | - | - | `short_open_tag` | - | - | - | - | - |
 | `ext.lexical.prologue.echo` | - | - | - | - | `<?=` | - | - | - | - | - |

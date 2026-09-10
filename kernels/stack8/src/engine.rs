@@ -2279,9 +2279,15 @@ impl<'a> Engine<'a> {
                     _ => Value::Small(!self.bits_said(&v)?),
                 }
             }
+            Action::Positive => {
+                let value = self.drop_top()?;
+                if let Value::Imaginary(_, words) = &value { return Err(words.to_string().into()); }
+                value
+            }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                if let Value::Imaginary(_, words) = &v { return Err(words.to_string().into()); }
                 // Text turned about is text taken times minus one, which
                 // is how a language that reads a number out of text does
                 // it: the number the text opens with is turned about, and
@@ -3304,6 +3310,10 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = b {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
+        }
+        if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
+            if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
+            if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
         }
         let sp = self.wording();
         let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));

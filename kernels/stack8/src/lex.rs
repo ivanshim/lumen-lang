@@ -906,7 +906,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    fn number(&mut self) {
+    fn number(&mut self) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
         let lang = self.lang;
         let mut s = String::new();
@@ -921,14 +921,14 @@ impl<'a> Cursor<'a> {
             let mut it = prefix.chars();
             let (Some(digit), Some(letter)) = (it.next(), it.next()) else { return false };
             s.len() == 1 && s.starts_with(digit) && self.look(0) == Some(letter)
-                && (self.look(1).map_or(false, |c| c.is_digit(*base))
+                && (lang.number_strict || self.look(1).map_or(false, |c| c.is_digit(*base))
                     || (lang.separator_after_prefix && self.look(1).map_or(false, |c| broken(&c))
                         && self.look(2).map_or(false, |c| c.is_digit(*base))))
         });
         if let Some((prefix, base)) = in_base.cloned() {
             s.push(prefix.chars().nth(1).expect("a letter after the digit"));
             self.step();
-            while let Some(c) = self.look(0).filter(|c| c.is_digit(base) || broken(c)) {
+            while let Some(c) = self.look(0).filter(|c| c.is_digit(base) || broken(c) || (lang.number_strict && lang.extends_name(*c))) {
                 s.push(c);
                 self.step();
             }
@@ -946,7 +946,7 @@ impl<'a> Cursor<'a> {
                 self.step();
             }
         } else {
-            if lang.point.is_some() && self.look(0) == lang.point && (lang.bare_number_point || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
+            if lang.point.is_some() && self.look(0) == lang.point && (lang.bare_number_point || lang.number_point_edge || self.look(1).map_or(false, |c| c.is_ascii_digit())) {
                 s.push(self.step());
                 while let Some(c) = self.look(0).filter(|c| c.is_ascii_digit() || broken(c)) {
                     s.push(c);
@@ -957,7 +957,7 @@ impl<'a> Cursor<'a> {
             let letter = self.look(0).filter(|c| lang.exponent_letters.contains(c));
             let signed = matches!(self.look(1), Some('+') | Some('-'));
             let digits_at = if signed { 2 } else { 1 };
-            if letter.is_some() && self.look(digits_at).map_or(false, |c| c.is_ascii_digit()) {
+            if letter.is_some() && (lang.number_strict || self.look(digits_at).map_or(false, |c| c.is_ascii_digit())) {
                 for _ in 0..digits_at {
                     s.push(self.step());
                 }
@@ -967,7 +967,17 @@ impl<'a> Cursor<'a> {
                 }
             }
         }
+        if self.look(0).map_or(false, |c| lang.imaginary_letters.contains(&c)) {
+            s.push(self.step());
+        }
+        if lang.number_strict {
+            while self.look(0).map_or(false, |c| lang.extends_name(c)) {
+                s.push(self.step());
+            }
+            number_spelling(&s, lang)?;
+        }
         self.push(Shape::Numeral, s, 0, line, col);
+        Ok(())
     }
 
     fn word(&mut self, prefixed: bool) {
@@ -1099,9 +1109,9 @@ impl<'a> Cursor<'a> {
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
             } else if c.is_ascii_digit()
-                || (lang.bare_number_point && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit()))
+                || ((lang.bare_number_point || lang.number_point_edge) && Some(c) == lang.point && self.look(1).map_or(false, |d| d.is_ascii_digit()))
             {
-                self.number();
+                self.number()?;
             } else if lang.quote_for_names == Some(c) {
                 self.quoted_name(c)?;
             } else if lang.name_leads.contains(&c) && self.look(1).map_or(false, |n| lang.begins_name(n)) {
@@ -1332,4 +1342,71 @@ fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
 /// stands nowhere after it.
 fn word_at(chars: &[char], from: usize, mark: &str) -> Option<usize> {
     (from..chars.len()).find(|at| at_word(chars, *at, mark))
+}
+
+/// Check the places where digits and separating marks may stand before
+/// the marks are taken away. The words of a complaint belong to the table.
+pub fn number_spelling(text: &str, lang: &Lang) -> Result<(), String> {
+    let amiss = || lang.number_amiss.clone().unwrap_or_else(|| format!("Invalid number: {}", text));
+    let separated = |s: &str, radix: u32, after_prefix: bool| {
+        let chars: Vec<char> = s.chars().collect();
+        !chars.is_empty() && chars.iter().enumerate().all(|(i, c)| {
+            c.is_digit(radix) || (lang.digit_separators.contains(c)
+                && (i == 0 && after_prefix || i > 0 && chars[i - 1].is_digit(radix))
+                && chars.get(i + 1).map_or(false, |d| d.is_digit(radix)))
+        })
+    };
+    for (prefix, radix) in &lang.base_prefixes {
+        if let Some(body) = text.strip_prefix(prefix.as_str()) {
+            let (plain, pieces) = match radix {
+                2 => (&lang.binary_amiss, &lang.binary_digit_amiss),
+                8 => (&lang.octal_amiss, &lang.octal_digit_amiss),
+                _ => (&lang.hex_amiss, &lang.binary_digit_amiss),
+            };
+            let mut may_separate = true;
+            for c in body.chars() {
+                if c.is_digit(*radix) {
+                    may_separate = true;
+                } else if lang.digit_separators.contains(&c) && may_separate {
+                    may_separate = false;
+                } else {
+                    if *radix < 10 && pieces.len() == 2 && c.is_ascii_digit() {
+                        return Err(format!("{}{}{}", pieces[0], c, pieces[1]));
+                    }
+                    return Err(plain.clone().unwrap_or_else(amiss));
+                }
+            }
+            return if separated(body, *radix, true) { Ok(()) } else { Err(plain.clone().unwrap_or_else(amiss)) };
+        }
+    }
+    let imaginary = text.chars().last().filter(|c| lang.imaginary_letters.contains(c));
+    let bare = imaginary.map_or(text, |c| &text[..text.len() - c.len_utf8()]);
+    let (mantissa, power) = match bare.find(|c| lang.exponent_letters.contains(&c)) {
+        Some(at) => (&bare[..at], Some(&bare[at + 1..])),
+        None => (bare, None),
+    };
+    if let Some(exponent) = power {
+        if !separated(exponent.trim_start_matches(['+', '-']), 10, false)
+            || exponent.starts_with("++") || exponent.starts_with("--") || exponent.starts_with("+-") || exponent.starts_with("-+") {
+            return Err(amiss());
+        }
+    }
+    let point = lang.point.and_then(|c| mantissa.find(c).map(|at| (at, c.len_utf8())));
+    if let Some((at, width)) = point {
+        let (left, right) = (&mantissa[..at], &mantissa[at + width..]);
+        if left.is_empty() && right.is_empty()
+            || !left.is_empty() && !separated(left, 10, false)
+            || !right.is_empty() && !separated(right, 10, false) {
+            return Err(amiss());
+        }
+    } else if !separated(mantissa, 10, false) {
+        return Err(amiss());
+    }
+    if point.is_none() && power.is_none() && imaginary.is_none() && bare.starts_with('0')
+        && bare.chars().any(|c| c.is_ascii_digit() && c != '0') {
+        if let Some(words) = &lang.number_leading_zero {
+            return Err(words.clone());
+        }
+    }
+    Ok(())
 }

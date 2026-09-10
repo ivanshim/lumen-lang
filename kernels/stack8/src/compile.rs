@@ -5397,7 +5397,9 @@ impl<'a> Compiler<'a> {
                 // A plus sign leaves its operand alone, bound as tightly as a negation.
                 self.take();
                 let tier = lang.monadic.values().map(|m| m.level).max().unwrap_or(0);
-                return self.expr(tier);
+                self.expr(tier)?;
+                if !lang.imaginary_letters.is_empty() { self.put(Instr::Act(Action::Positive, 1)); }
+                return Ok(());
             }
         }
         match tok.shape {
@@ -7539,6 +7541,7 @@ fn unreadable_number(text: &str, lang: &Lang) -> String {
 }
 
 fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
+    if lang.number_strict { crate::lex::number_spelling(text, lang)?; }
     let newer = text.chars().any(|c| lang.digit_separators.contains(&c) || lang.exponent_letters.contains(&c))
         || lang.point.map_or(false, |p| text.starts_with(p) || text.ends_with(p));
     Ok(within_width(read_number(text, lang)?, lang).with_point(lang.print_real_point && newer))
@@ -7562,6 +7565,11 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
             }
         }
         return read_number(&plain, lang);
+    }
+    if let Some(last) = text.chars().last().filter(|c| lang.imaginary_letters.contains(c)) {
+        let coefficient = text[..text.len() - last.len_utf8()].parse::<f64>().map_err(|_| unreadable_number(text, lang))?;
+        let words = lang.imaginary_unready.as_deref().unwrap_or("Imaginary arithmetic is not ready");
+        return Ok(Value::Imaginary(coefficient, Rc::from(words)));
     }
     for (prefix, base) in &lang.base_prefixes {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {
@@ -7600,7 +7608,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let (whole, frac) = (&text[..at], &text[at + point.len_utf8()..]);
         let scale = BigInt::from(10).pow(frac.len() as u32);
         let whole = if whole.is_empty() { BigInt::from(0) } else { decimal(whole, text)? };
-        return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && lang.bare_number_point { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
+        return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && (lang.bare_number_point || lang.number_point_edge) { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
     }
     Ok(Value::of_big(decimal(text, text)?))
 }

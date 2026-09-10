@@ -194,6 +194,7 @@ pub enum Action {
     SliceUnavailable,
     Not,
     Negate,
+    Positive,
     /// Whether a value is true, as a boolean.
     AsBool,
     /// Run the program on top with the arguments under it; a function

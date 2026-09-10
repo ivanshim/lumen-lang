@@ -124,6 +124,8 @@ pub enum Value {
     Huge(Rc<BigInt>),
     Frac(Rc<Frac>),
     Real(Rc<Real>),
+    /// An imaginary literal and the words for working with it too soon.
+    Imaginary(f64, Rc<str>),
     Text(Rc<str>),
     Flag(bool),
     Null,
@@ -244,6 +246,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Imaginary(n, _) => *n != 0.0,
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -264,6 +267,7 @@ impl Value {
     /// text is parsed, the rest refuse.
     pub fn as_big(&self) -> Result<BigInt, String> {
         match self {
+            Value::Imaginary(_, words) => Err(words.to_string()),
             Value::Small(n) => Ok(BigInt::from(*n)),
             Value::Huge(n) => Ok((**n).clone()),
             // What stands outside the numbers has no whole part; such
@@ -292,6 +296,8 @@ impl Value {
             return order == std::cmp::Ordering::Equal;
         }
         match (self, other) {
+            (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
+            (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -476,6 +482,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
@@ -952,3 +959,16 @@ fn laid_flat(figures: &str, power: i32) -> String {
     format!("{}.{}", &figures[..point], &figures[point..])
 }
 
+
+/// Write an imaginary coefficient in the fewest figures, with a sign
+/// and two places at least for the power of ten.
+fn shortest_real(x: f64) -> String {
+    if !x.is_finite() { return x.to_string().to_ascii_lowercase(); }
+    let scientific = format!("{:e}", x);
+    let (mantissa, exponent) = scientific.split_once('e').expect("a power follows");
+    let power: i32 = exponent.parse().expect("a whole power");
+    if x != 0.0 && !(-4..16).contains(&power) {
+        return format!("{}e{}{:02}", mantissa, if power < 0 { "-" } else { "+" }, power.unsigned_abs());
+    }
+    x.to_string()
+}

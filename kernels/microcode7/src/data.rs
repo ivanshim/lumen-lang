@@ -127,6 +127,8 @@ pub enum Value {
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Ratio>),
+    /// The coefficient of an imaginary literal, with its unready words.
+    Imaginary { coefficient: f64, unready: Rc<str> },
     Text(Rc<str>),
     Flag(bool),
     Nil,
@@ -220,12 +222,13 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -241,6 +244,7 @@ impl Value {
 
     pub fn as_big(&self) -> Result<BigInt, String> {
         Ok(match self {
+            Value::Imaginary { unready, .. } => return Err(unready.to_string()),
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => (**n).clone(),
             // A worth past the numbers has no whole part; a language
@@ -278,6 +282,10 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Imaginary { coefficient: x, .. }, Value::Imaginary { coefficient: y, .. }) => x == y,
+            (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
+                *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
+            }
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -472,6 +480,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
@@ -905,4 +914,21 @@ pub fn spelled_out(x: f64, figures: Option<usize>) -> String {
 /// one, else to the fewest figures that read back as the number itself.
 pub fn figured(x: f64, figures: Option<usize>) -> String {
     spelled_out(x, figures.or_else(|| figures_asked(true).flatten()))
+}
+
+/// The figures before an imaginary mark, with a signed two-place
+/// exponent beyond the plain range.
+fn brief_decimal(number: f64) -> String {
+    if number.is_nan() { return "nan".into(); }
+    if number.is_infinite() { return if number.is_sign_negative() { "-inf" } else { "inf" }.into(); }
+    let written = format!("{number:e}");
+    let split = written.find('e').expect("the exponent's letter");
+    let scale = written[split + 1..].parse::<i32>().expect("the exponent's figures");
+    match scale {
+        -4..=15 => format!("{number}"),
+        _ => {
+            let signed = format!("{scale:+03}");
+            format!("{}e{}", &written[..split], signed)
+        }
+    }
 }

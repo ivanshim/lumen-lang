@@ -475,6 +475,26 @@
   "ext.lexical.number.amiss": [
     "invalid numeric literal"
   ],
+  "ext.lexical.number.amiss.binary": [
+    "SyntaxError: invalid binary literal"
+  ],
+  "ext.lexical.number.amiss.binary.digit": [
+    "SyntaxError: invalid digit '",
+    "' in binary literal"
+  ],
+  "ext.lexical.number.amiss.hex": [
+    "SyntaxError: invalid hexadecimal literal"
+  ],
+  "ext.lexical.number.amiss.leading_zero": [
+    "SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers"
+  ],
+  "ext.lexical.number.amiss.octal": [
+    "SyntaxError: invalid octal literal"
+  ],
+  "ext.lexical.number.amiss.octal.digit": [
+    "SyntaxError: invalid digit '",
+    "' in octal literal"
+  ],
   "ext.lexical.number.binary_prefix": [
     "0b",
     "0B"
@@ -483,15 +503,24 @@
     "e",
     "E"
   ],
+  "ext.lexical.number.imaginary": [
+    "j",
+    "J"
+  ],
+  "ext.lexical.number.imaginary.unready": [
+    "NotImplementedError: complex arithmetic is not supported"
+  ],
   "ext.lexical.number.octal_prefix": [
     "0o",
     "0O"
   ],
   "ext.lexical.number.point.bare": true,
+  "ext.lexical.number.point_edge": true,
   "ext.lexical.number.separator": [
     "_"
   ],
   "ext.lexical.number.separator.after_prefix": true,
+  "ext.lexical.number.separator.strict": true,
   "ext.lexical.string.adjacent": true,
   "ext.lexical.string.amiss": [
     "invalid string literal"
