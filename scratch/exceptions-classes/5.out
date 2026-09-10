@@ -1,0 +1,7 @@
+function finally
+caught across call
+outer finally
+reraised again
+else
+else finally
+else fault

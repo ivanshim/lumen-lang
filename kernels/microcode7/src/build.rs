@@ -235,7 +235,11 @@ type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String
 type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
-    let top = Layer { holds: Holds::Every, idents: seeded.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let mut beginnings = seeded.to_vec();
+    for word in table.strings("ext.builtin.exceptions") {
+        if !beginnings.contains(word) { beginnings.push(word.clone()); }
+    }
+    let top = Layer { holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -1380,12 +1384,13 @@ impl<'a> Builder<'a> {
                 {
                     return Ok(Form::Again);
                 }
-                let raised = self.expr(0)?;
+                let mut values = vec![self.expr(0)?];
                 if self.key("ext.stmt.throw.from") {
                     self.advance();
-                    let _cause = self.expr(0)?;
+                    let cause = self.expr(0)?;
+                    if self.table.has_any("ext.builtin.exceptions") { values.push(cause); }
                 }
-                return Ok(prim_call(Prim::Hurl, vec![raised]));
+                return Ok(prim_call(Prim::Hurl, values));
             }
             if self.key("ext.stmt.assert") {
                 self.advance();

@@ -419,6 +419,9 @@ pub enum Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     MapFrom,
+    Repr,
+    Iter,
+    Next,
     Sum,
     List,
     Any,

@@ -1029,7 +1029,8 @@ only. The extension labels so far, all from PHP:
   clauses, and its body runs only when the watched body ended of its own
   accord. A value raised there is not offered to those clauses.
 - `ext.stmt.throw.from`: the word before a cause. The cause is read whole
-  and set aside. Where spelled, a throw without a value raises again what
+  and set aside unless native exception classes are furnished, when it
+  is worked out and kept as the cause. Where spelled, a throw without a value raises again what
   the innermost clause is holding. `ext.stmt.throw.empty` gives the words
   said when there is no such value.
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
@@ -2032,6 +2033,46 @@ only. The extension labels so far, all from PHP:
   run that passes it is stopped and told with the word for the end of a
   run; nothing may take it back, since it is the run itself that ended
   and not a value raised within it.
+- `ext.builtin.exceptions`: the classes furnished before the program begins,
+  in this order: the root, ordinary faults, arithmetic, division, overflow,
+  lookup, index, key, type, value, name, local name, attribute, runtime,
+  unimplemented, exhausted walk, assertion, exit, interruption, import,
+  operating system, recursion and Unicode. Ordinary faults stand upon the
+  root, arithmetic children upon arithmetic, lookup children upon lookup,
+  local names upon name, unimplemented and recursion upon runtime, and
+  Unicode upon value. Exit and interruption stand directly upon the root;
+  the rest stand upon ordinary faults. The spellings belong wholly to the
+  definition. A program may call these classes or stand a class upon one.
+  Catching follows the classes themselves and their bases: a new class
+  bearing an old name is still another class.
+- `ext.builtin.exceptions.args` and `.cause`: names of the argument tuple
+  and the explicit cause held by an exception. A class raised alone is
+  made with no arguments. A cause is worked out and kept where these
+  classes are furnished. Argument tuples can be shown, counted and indexed;
+  ordinary tuple expressions still heed their own label.
+- `ext.builtin.exceptions.unready`: words said when an exception operation
+  asks for means the kernel does not yet possess.
+- `ext.builtin.class.name`: the member naming a class itself. Where the
+  native exception classes are furnished, the kind builtin returns an
+  object's class, so this member can name it.
+- `ext.builtin.iter` and `ext.builtin.next`: a walk over a sequence, text,
+  a counted range or the keys of a map, and its next value. A second
+  argument to the latter stands when the walk ends; without one the
+  class named by `ext.system.fault.class.stop` is raised. Other walkers
+  heed `ext.builtin.exceptions.unready`, as do exception constructors
+  with methods of their own, whose initialization and rendering require
+  the fuller account of special methods.
+- `ext.builtin.repr`: a builtin showing text within quotes and exceptions
+  as their class followed by their arguments within parentheses.
+- `ext.system.fault.class.index`, `.key`, `.name`, `.attribute` and `.stop`:
+  classes for an index beyond the row, an absent key, an unbound name,
+  an absent member and a walk that has ended. These extend the fault
+  classes below; a language spelling none keeps its former account.
+- `ext.system.fault.division`, `.index` and `.kind`: plain words for
+  division by nought, an index beyond a row and operands of wrong kinds.
+  `ext.system.fault.name` and `.attribute` each hold two pieces, before
+  and after the absent name. Native exceptions nobody takes are told on
+  one line, with the class, a colon and the message.
 - `ext.system.fault.class`: the class a fault of the kernel's own is
   raised as, where a language names one. A statement written to take a
   raised value then takes a fault as it takes anything else, and one
@@ -2707,6 +2748,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
+| `ext.builtin.class.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
@@ -2718,6 +2760,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.empty` | - | - | - | - | `empty` | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
@@ -2728,12 +2774,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
+| `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
+| `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
 | `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
@@ -2759,6 +2807,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -3100,14 +3149,24 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
-| `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
-| `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
-| `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
-| `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
+| `ext.system.fault.attribute` | - | - | `object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.system.fault.class` | - | - | `RuntimeError` | - | `Error` | - | - | - | - | - |
+| `ext.system.fault.class.arithmetic` | - | - | `ArithmeticError` | - | `ArithmeticError` | - | - | - | - | - |
+| `ext.system.fault.class.attribute` | - | - | `AttributeError` | - | - | - | - | - | - | - |
+| `ext.system.fault.class.division` | - | - | `ZeroDivisionError` | - | `DivisionByZeroError` | - | - | - | - | - |
+| `ext.system.fault.class.index` | - | - | `IndexError` | - | - | - | - | - | - | - |
+| `ext.system.fault.class.key` | - | - | `KeyError` | - | - | - | - | - | - | - |
+| `ext.system.fault.class.kind` | - | - | `TypeError` | - | `TypeError` | - | - | - | - | - |
+| `ext.system.fault.class.name` | - | - | `NameError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
-| `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
+| `ext.system.fault.class.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.system.fault.class.value` | - | - | `ValueError` | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
+| `ext.system.fault.division` | - | - | `division by zero` | - | - | - | - | - | - | - |
+| `ext.system.fault.index` | - | - | `list index out of range` | - | - | - | - | - | - | - |
+| `ext.system.fault.kind` | - | - | `unsupported operand types` | - | - | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
+| `ext.system.fault.name` | - | - | `name '` `' is not defined` | - | - | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |

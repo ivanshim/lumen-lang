@@ -122,6 +122,7 @@ impl Progression {
 
 #[derive(Clone)]
 pub enum Value {
+    Arguments(Rc<Vec<Value>>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -202,6 +203,56 @@ impl Value {
         self
     }
 
+    pub fn representation(&self, words: Names) -> String {
+        if let Value::Text(text) = self {
+            let mark = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+            let letters = text.chars().map(|ch| match ch {
+                '\n' => "\\n".into(), '\t' => "\\t".into(), '\r' => "\\r".into(),
+                '\\' => "\\\\".into(),
+                x if x == mark => format!("\\{x}"),
+                x if x.is_control() => format!("\\x{:02x}", x as u32),
+                x => x.to_string(),
+            }).collect::<String>();
+            return format!("{mark}{letters}{mark}");
+        }
+        match self {
+            Value::Arguments(row) => Self::argument_text(row, words),
+            Value::Thing(thing) => match self.arguments_held() {
+                Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                None => self.render(words),
+            },
+            Value::Vector(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+            _ => self.render(words),
+        }
+    }
+
+    fn argument_text(row: &[Value], words: Names) -> String {
+        let contents = row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ");
+        if row.len() == 1 { format!("({contents},)") } else { format!("({contents})") }
+    }
+
+    fn arguments_held(&self) -> Option<Vec<Value>> {
+        if let Value::Thing(thing) = self {
+            if thing.of.every_field().iter().any(|(key, _)| key == "\0fault-kind") {
+                let holds = thing.holds.borrow();
+                return Some(match holds.iter().find(|(key, _)| key == "\0raised-values") {
+                    Some((_, Value::Arguments(row))) => row.to_vec(),
+                    _ => holds.iter().filter(|(key, value)| key == "message" && !matches!(value, Value::Text(s) if s.is_empty())).map(|(_, value)| value.clone()).collect(),
+                });
+            }
+        }
+        None
+    }
+
+    pub fn raised_words(&self, words: Names) -> Option<String> {
+        let row = self.arguments_held()?;
+        let Value::Thing(thing) = self else { return None };
+        Some(if row.is_empty() { String::new() }
+            else if row.len() > 1 { Self::argument_text(&row, words) }
+            else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
+            else { row[0].render(words) })
+    }
+
     pub fn from_big(n: BigInt) -> Value {
         match n.to_i64() {
             Some(i) => Value::Small(i),
@@ -222,7 +273,7 @@ impl Value {
             Value::Vector(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
-            Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
+            Value::Arguments(_) | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
             Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
@@ -230,6 +281,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
+            Value::Arguments(row) => !row.is_empty(),
             Value::Progression(walk) => walk.count() != BigInt::zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -256,7 +308,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Arguments(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -287,6 +339,7 @@ impl Value {
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
+            (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
             (Value::Channel(left), Value::Channel(right)) => left == right,
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
@@ -350,7 +403,9 @@ impl Value {
     }
 
     pub fn render(&self, w: Names) -> String {
+        if let Some(words) = self.raised_words(w) { return words; }
         match self {
+            Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
@@ -482,6 +537,7 @@ impl Value {
     pub fn bare(&self) -> String {
         match self {
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
+            Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };

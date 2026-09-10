@@ -38,6 +38,9 @@ pub enum Callee {
 pub enum Prim {
     /// A compound write may ask a real to retain its point.
     Pointed,
+    Repr,
+    Iterate,
+    NextOne,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.

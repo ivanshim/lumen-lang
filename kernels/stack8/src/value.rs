@@ -118,6 +118,7 @@ impl Counted {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Tuple(Rc<Vec<Value>>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -196,6 +197,57 @@ impl Value {
         self
     }
 
+    fn tuple_text(items: &[Value], sp: &Wording) -> String {
+        format!("({}{})", items.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })
+    }
+
+    pub fn repr(&self, sp: &Wording) -> String {
+        match self {
+            Value::Text(s) => {
+                let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+                let mut out = String::from(quote);
+                for c in s.chars() {
+                    match c {
+                        '\\' => out.push_str("\\\\"), '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"), '\t' => out.push_str("\\t"),
+                        c if c == quote => { out.push('\\'); out.push(c); }
+                        c if c.is_control() => { let _ = write!(out, "\\x{:02x}", c as u32); }
+                        c => out.push(c),
+                    }
+                }
+                out.push(quote);
+                out
+            }
+            Value::Object(o) => {
+                if let Some(args) = self.raised_arguments() {
+                    return format!("{}({})", o.class.name, args.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "));
+                }
+                self.display(sp)
+            }
+            Value::Tuple(items) => Self::tuple_text(items, sp),
+            Value::Array(items) => format!("[{}]", items.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", ")),
+            _ => self.display(sp),
+        }
+    }
+
+    fn raised_arguments(&self) -> Option<Vec<Value>> {
+        let Value::Object(object) = self else { return None };
+        if !object.class.all_fields().iter().any(|(n, _)| n == "\0exception") { return None; }
+        let fields = object.fields.borrow();
+        if let Some((_, Value::Tuple(args))) = fields.iter().find(|(n, _)| n == "\0arguments") { return Some(args.as_ref().clone()); }
+        Some(fields.iter().filter(|(n, _)| n == "message").map(|(_, v)| v.clone()).collect())
+    }
+
+    pub fn exception_message(&self, sp: &Wording) -> Option<String> {
+        let args = self.raised_arguments()?;
+        let Value::Object(o) = self else { return None };
+        Some(match args.as_slice() {
+            [] => String::new(),
+            [one] if o.class.all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),
+            [one] => one.display(sp),
+            many => Self::tuple_text(many, sp),
+        })
+    }
     pub fn text(s: &str) -> Value {
         Value::Text(Rc::from(s))
     }
@@ -248,6 +300,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
+            Value::Tuple(items) => !items.is_empty(),
             Value::Stream(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
@@ -279,7 +332,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -299,6 +352,7 @@ impl Value {
         match (self, other) {
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
+            (Value::Tuple(a), Value::Tuple(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Stream(a), Value::Stream(b)) => a == b,
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
@@ -358,7 +412,9 @@ impl Value {
     /// What print shows: the language's words for the literals, the
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
+        if let Some(told) = self.exception_message(sp) { return told; }
         match self {
+            Value::Tuple(items) => Self::tuple_text(items, sp),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
@@ -484,6 +540,7 @@ impl Value {
     pub fn plain(&self) -> String {
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
+            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },

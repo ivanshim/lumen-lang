@@ -25,6 +25,7 @@ enum Passage {
 
 pub struct Engine<'a> {
     lang: &'a Lang,
+    native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
@@ -190,6 +191,10 @@ impl Fault {
         match self {
             Fault::Note(note) => note,
             Fault::Thrown(Value::Object(o)) => {
+                if let Some((_, Value::Text(original))) = o.fields.borrow().iter().find(|(n, _)| n == "\0uncaught-words") { return original.to_string(); }
+                if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
+                    return if message.is_empty() { format!("\0{}:", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
+                }
                 let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
                 match told {
                     Some(told) => format!("Uncaught {}: {}", o.class.name, told),
@@ -207,12 +212,70 @@ impl Fault {
 type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
+    fn exception_classes(names: &[String]) -> HashMap<String, Value> {
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9)];
+        let mut classes: Vec<Rc<Class>> = Vec::new();
+        for (at, name) in names.iter().enumerate() {
+            let mut fields = Vec::new();
+            if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
+            if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
+            classes.push(Rc::new(Class {
+                name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
+                fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                constants: Vec::new(), shared: RefCell::new(Vec::new()),
+            }));
+        }
+        classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
+    }
+
+    fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
+        let mut fields = class.all_fields();
+        let args = Value::Tuple(Rc::new(args));
+        fields.push(("\0arguments".into(), args.clone()));
+        if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
+        if let Some(name) = &self.lang.exception_cause { fields.push((name.clone(), cause)); }
+        self.made += 1;
+        Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made }))
+    }
+
+    fn exception_class(&self, class: &Class) -> bool {
+        !self.lang.exceptions.is_empty() && class.all_fields().iter().any(|(n, _)| n == "\0exception")
+    }
+
+    fn exception_beneath(actual: &Rc<Class>, wanted: &Rc<Class>) -> bool {
+        let mut class = Some(actual);
+        while let Some(current) = class {
+            if Rc::ptr_eq(current, wanted) { return true; }
+            class = current.base.as_ref();
+        }
+        false
+    }
+
+    fn exception_has_methods(class: &Class) -> bool {
+        !class.methods.is_empty() || class.base.as_ref().map_or(false, |parent| Self::exception_has_methods(parent))
+    }
+
+    fn prepare_raised(&mut self, value: Value) -> Flow<Value> {
+        if let Value::Class(class) = value {
+            if self.exception_class(&class) {
+                self.data.push(Value::Class(class));
+                self.perform(&Action::Make, 1)?;
+                return self.drop_top().map_err(Fault::from);
+            }
+            return Err(self.lang.catch_invalid.clone().unwrap_or_default().into());
+        }
+        Ok(value)
+    }
+
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
+        let native_exceptions = Self::exception_classes(&lang.exceptions);
+        let world = idents.iter().map(|n| native_exceptions.get(n).cloned().unwrap_or(Value::Blank)).collect();
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            native_exceptions,
+            world,
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -831,6 +894,18 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        let told = told.trim_start_matches('\0');
+        if !self.lang.exceptions.is_empty() {
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
+                else if told.starts_with("Undefined variable") { &self.lang.fault_name }
+                else if told.starts_with("Undefined array key") { &self.lang.fault_key }
+                else if told.contains("index") && told.contains("out of bounds") { &self.lang.fault_index }
+                else if told.starts_with("Undefined property") || told.starts_with("Cannot read property") { &self.lang.fault_attribute }
+                else if told.starts_with("Cannot") || told.contains("requires") || told.contains("must be") || told.starts_with("Cannot coerce") { &self.lang.fault_kind }
+                else { &None };
+            if kind.is_some() { return kind.clone(); }
+        }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -875,9 +950,48 @@ impl<'a> Engine<'a> {
         openings.into_iter().flatten().any(|word| told.starts_with(&word))
     }
 
+    fn exception_words(&self, told: &str, class: &str) -> String {
+        let told = told.trim_start_matches('\0');
+        if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
+        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) { return rest.to_string(); }
+        if self.lang.fault_division.as_deref() == Some(class) { return self.lang.division_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_index.as_deref() == Some(class) { return self.lang.index_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_kind.as_deref() == Some(class) { return self.lang.kind_words.clone().unwrap_or_else(|| told.into()); }
+        if self.lang.fault_name.as_deref() == Some(class) && self.lang.name_words.len() == 2 {
+            let name = told.trim_start_matches("Undefined variable").trim_start_matches(':').trim().trim_matches('\'');
+            return format!("{}{}{}", self.lang.name_words[0], name, self.lang.name_words[1]);
+        }
+        if self.lang.fault_key.as_deref() == Some(class) { return told.trim_start_matches("Undefined array key ").to_string(); }
+        if self.lang.fault_attribute.as_deref() == Some(class) && self.lang.attribute_words.len() == 2 {
+            let name = told.split("::$").nth(1).or_else(|| told.split("'").nth(1)).unwrap_or(told);
+            return format!("{}{}{}", self.lang.attribute_words[0], name, self.lang.attribute_words[1]);
+        }
+        told.to_string()
+    }
+
     fn as_fault(&mut self, told: &str) -> Option<Value> {
+        if let Some(key) = told.strip_prefix("\0key-text:") {
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            return Some(self.exception_instance(class, vec![Value::text(key)], Value::Null));
+        }
+        if let Some(key) = told.strip_prefix("\0key-number:") {
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            let number = key.parse::<BigInt>().ok()?;
+            return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
+        }
         let named = self.class_for(told)?;
-        let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
+        let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
+        if self.exception_class(&class) {
+            let message = self.exception_words(told, &named);
+            let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
+            let value = self.exception_instance(class, args, Value::Null);
+            if self.lang.catch_invalid.as_deref() == Some(told) {
+                if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
+            }
+            return Some(value);
+        }
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
@@ -1096,6 +1210,10 @@ impl<'a> Engine<'a> {
     /// name however the name is written, a name nothing answers to is
     /// tried again with every letter made small.
     fn class_named(&self, name: &str) -> Option<&Value> {
+        if !self.lang.exceptions.is_empty() {
+            if let found @ Some(Value::Class(_)) = self.lookup(name) { return found; }
+            if let Some(value) = self.native_exceptions.get(name) { return Some(value); }
+        }
         let filed = format!("{}{}", name, crate::code::OF_A_CLASS);
         if let found @ Some(_) = self.lookup(&filed) {
             return found;
@@ -1653,7 +1771,12 @@ impl<'a> Engine<'a> {
         if outcome.is_err() {
             self.hushed.set(quiet);
         }
-        outcome
+        match outcome {
+            Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() && (told.starts_with('\0') || told.starts_with("Division by zero") || told.starts_with("Undefined property") || told.starts_with("Cannot read property") || told.starts_with("Array index")) => {
+                match self.as_fault(&told) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)) }
+            }
+            other => other,
+        }
     }
 
     fn run_body(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[crate::code::Instr]) -> Flow<()> {
@@ -1668,7 +1791,12 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() => match self.as_fault(&told) {
+                Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)),
+            },
+            other => other,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -1689,8 +1817,10 @@ impl<'a> Engine<'a> {
                             match kind {
                                 Value::Blank => {},
                                 Value::Class(class) => {
+                                    if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
                                     if let Value::Object(object) = &raised {
-                                        takes |= object.class.named(&class.name, self.lang.classes_folded);
+                                        takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
+                                            else { Self::exception_beneath(&object.class, &class) };
                                     }
                                 }
                                 _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
@@ -1715,6 +1845,14 @@ impl<'a> Engine<'a> {
             }
             other => other,
         };
+        if !self.lang.exceptions.is_empty() {
+            ending = match ending {
+                Err(Fault::Note(words)) => match self.as_fault(&words) {
+                    Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)),
+                },
+                other => other,
+            };
+        }
         if let Some(last) = plan.last {
             if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
             let saved = self.data.len();
@@ -2583,6 +2721,12 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = stands else {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
+                if self.exception_class(&class) {
+                    if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+                    let object = self.exception_instance(class, args, Value::Null);
+                    self.data.push(object);
+                    return Ok(());
+                }
                 self.made += 1;
                 let object = Rc::new(Instance { class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 if self.lang.destructor.is_some() {
@@ -2615,9 +2759,10 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag((!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -2627,7 +2772,15 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::Object(o) => {
-                    let found = {
+                    let found = if self.exception_class(&o.class) && self.lang.exception_cause.as_deref() == Some(name.as_ref()) {
+                        Some(o.fields.borrow().iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).unwrap_or(Value::Null))
+                    } else if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
+                        let held = o.fields.borrow();
+                        held.iter().find(|(n, _)| n == name.as_ref()).map(|(_, v)| v.clone()).or_else(|| {
+                            let args = held.iter().find(|(n, _)| n == "message").map(|(_, v)| vec![v.clone()]).unwrap_or_default();
+                            Some(Value::Tuple(Rc::new(args)))
+                        })
+                    } else {
                         let held = o.fields.borrow();
                         self.member_at(&held, name).map(|at| held[at].1.clone())
                     };
@@ -2734,6 +2887,20 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     Value::Object(o) => {
+                        if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
+                            let row = match &value {
+                                Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
+                                _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
+                            };
+                            let mut fields = o.fields.borrow_mut();
+                            for key in [name.as_ref(), "\0arguments"] {
+                                match fields.iter_mut().find(|(n, _)| n == key) {
+                                    Some((_, value)) => *value = row.clone(), None => fields.push((key.into(), row.clone())),
+                                }
+                            }
+                            self.data.push(Value::Null);
+                            return Ok(());
+                        }
                         let taken = {
                             let fields = o.fields.borrow();
                             self.member_at(&fields, name)
@@ -2945,6 +3112,9 @@ impl<'a> Engine<'a> {
                     answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
                     methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
                 });
+                let class = match self.lang.assert_kind.as_ref().and_then(|n| self.native_exceptions.get(n)) {
+                    Some(Value::Class(native)) => native.clone(), _ => class,
+                };
                 self.made += 1;
                 let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
                     Vec::new()
@@ -2957,7 +3127,21 @@ impl<'a> Engine<'a> {
             }
             Action::Hurl => {
                 self.hurled_at.set(self.line);
-                return Err(Fault::Thrown(self.drop_top()?));
+                let cause = if argc == 2 { Some(self.drop_top()?) } else { None };
+                let value = self.drop_top()?;
+                let value = if self.lang.exceptions.is_empty() { value } else { self.prepare_raised(value)? };
+                if let (Value::Object(object), Some(cause)) = (&value, cause) {
+                    let cause = self.prepare_raised(cause)?;
+                    if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class)) {
+                        return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
+                    }
+                    if let Some(name) = &self.lang.exception_cause {
+                        let mut fields = object.fields.borrow_mut();
+                        if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = cause; }
+                        else { fields.push((name.clone(), cause)); }
+                    }
+                }
+                return Err(Fault::Thrown(value));
             }
             Action::Titled => match self.drop_top()? {
                 Value::Object(o) => Value::text(&o.class.name),
@@ -3987,6 +4171,24 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if !self.lang.exceptions.is_empty() {
+            if let Value::Map(pairs) = target {
+                if !pairs.iter().any(|(key, _)| key.equals(at)) {
+                    return Err(match at {
+                        Value::Text(key) => format!("\0key-text:{key}"),
+                        Value::Small(_) | Value::Huge(_) => format!("\0key-number:{}", at.plain()),
+                        _ => self.lang.exception_unready.clone().unwrap_or_default(),
+                    });
+                }
+            }
+        }
+        if let Value::Tuple(items) = target {
+            let index = match at {
+                Value::Small(n) if *n < 0 => usize::try_from(items.len() as i128 + i128::from(*n)).ok(),
+                _ => as_index(at).ok(),
+            };
+            return index.and_then(|i| items.get(i)).cloned().ok_or_else(|| format!("\0{}: {}", self.lang.fault_index.as_deref().unwrap_or(""), self.lang.index_words.as_deref().unwrap_or("")));
+        }
         if let Value::Counted(r) = target {
             if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
             let index = match at {
@@ -4986,6 +5188,44 @@ impl<'a> Engine<'a> {
             }
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
+            Builtin::Iter => {
+                arity(1)?;
+                if let Value::Object(o) = &args[0] {
+                    if o.fields.borrow().iter().any(|(n, _)| n == "\0walk-source") { return Ok(args[0].clone()); }
+                }
+                if !matches!(&args[0], Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
+                    return Err(self.lang.exception_unready.clone().unwrap_or_default());
+                }
+                let class = Rc::new(Class { name: name.to_string(), base: None, fields: Vec::new(),
+                    answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) });
+                self.made += 1;
+                Value::Object(Rc::new(Instance { class, mark: self.made, fields: RefCell::new(vec![
+                    ("\0walk-source".into(), args[0].clone()), ("\0walk-place".into(), Value::Small(0)),
+                ]) }))
+            }
+            Builtin::Next => {
+                if args.len() != 1 && args.len() != 2 { return Err(self.lang.exception_unready.clone().unwrap_or_default()); }
+                let Value::Object(o) = &args[0] else { return Err(self.lang.exception_unready.clone().unwrap_or_default()) };
+                let mut fields = o.fields.borrow_mut();
+                let source = fields.iter().find(|(n, _)| n == "\0walk-source").map(|(_, v)| v.clone()).ok_or_else(|| self.lang.exception_unready.clone().unwrap_or_default())?;
+                let (_, Value::Small(place)) = fields.iter_mut().find(|(n, _)| n == "\0walk-place").ok_or_else(|| self.lang.exception_unready.clone().unwrap_or_default())? else { return Err(self.lang.exception_unready.clone().unwrap_or_default()) };
+                let item = match source {
+                    Value::Array(row) | Value::Tuple(row) => row.get(*place as usize).cloned(),
+                    Value::Map(row) => row.get(*place as usize).map(|(k, _)| k.clone()),
+                    Value::Text(text) => text.chars().nth(*place as usize).map(|c| Value::text(&c.to_string())),
+                    Value::Counted(row) => row.at(BigInt::from(*place)),
+                    _ => return Err(self.lang.exception_unready.clone().unwrap_or_default()),
+                };
+                match item {
+                    Some(value) => { *place += 1; value }
+                    None if args.len() == 2 => args[1].clone(),
+                    None => return Err(format!("\0{}:", self.lang.fault_stop.as_deref().unwrap_or(""))),
+                }
+            }
+            Builtin::Repr => {
+                arity(1)?;
+                Value::text(&args[0].repr(&sp))
+            }
             Builtin::ToText => {
                 arity(1)?;
                 Value::text(&args[0].display(&sp))
@@ -5014,7 +5254,7 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 match &args[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::Tuple(items) | Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -5063,6 +5303,9 @@ impl<'a> Engine<'a> {
             }
             Builtin::SortOf => {
                 arity(1)?;
+                if !self.lang.exceptions.is_empty() {
+                    if let Value::Object(o) = &args[0] { return Ok(Value::Class(o.class.clone())); }
+                }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {

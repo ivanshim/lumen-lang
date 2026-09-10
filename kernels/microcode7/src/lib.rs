@@ -55,6 +55,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        if table.has_any("ext.builtin.exceptions") && e.starts_with('\0') { return e[1..].to_string(); }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
