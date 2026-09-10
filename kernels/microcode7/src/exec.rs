@@ -2754,6 +2754,12 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::Receiver(binding) = &stands {
+                    let values = self.value_list(args, frame)?;
+                    let call = Form::Apply(Callee::Code(Box::new(Form::Const(stands.clone()))), values.into_iter().map(Form::Const).collect());
+                    if matches!(binding.1, Value::Nil) { return Err("Unbound class method".to_string().into()); }
+                    return self.value_of(&call, frame).map(Next::Value);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));

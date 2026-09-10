@@ -874,6 +874,9 @@ impl<'a> Builder<'a> {
                 if let Some(slot) = names.get(name) { return Form::Read(slot.clone()); }
             }
         }
+        if self.table.prims.get(name) == Some(&Prim::BindClass) {
+            return constant(Value::text(name));
+        }
         if self.outside_lambda.iter().any(|word| word == name) {
             let local = self.layers.iter().rev().find(|scope| scope.holds == Holds::Every)
                 .map_or(false, |scope| scope.idents.iter().any(|word| word == name));

@@ -612,6 +612,10 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Read(slot));
             return;
         }
+        if self.lang.builtins.get(name) == Some(&Builtin::ClassBind) {
+            self.constant(Value::text(name));
+            return;
+        }
         if self.refuse_uncarried(name) { return; }
         // The name a language gives the line it is written on stands
         // for that line itself, known while assembling.
