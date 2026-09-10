@@ -134,6 +134,9 @@ pub enum Value {
     List(Rc<RefCell<Vec<Value>>>),
     Tuple(Rc<Vec<Value>>),
     Set(Rc<Vec<Value>>),
+    /// The members yet to come from a backward walk, next one first.
+    /// Every copy holds the same walk, so a member is yielded once.
+    Backward(Rc<RefCell<Vec<Value>>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -226,6 +229,7 @@ impl Value {
             Value::Array(_) | Value::List(_) => "list",
             Value::Tuple(_) => "tuple",
             Value::Set(_) => "set",
+            Value::Backward(_) => "reversed",
             Value::Text(_) => "str",
             Value::Map(_) => "dict",
             Value::Null => "NoneType",
@@ -287,6 +291,7 @@ impl Value {
                 Rc::ptr_eq(left, right) || left.len() == right.len() && left.iter().all(|item| right.iter().any(|value| item.sequence_member_equal(value)))
             }
             (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+            (Value::Backward(left), Value::Backward(right)) => Rc::ptr_eq(left, right),
             (Value::Class(left), Value::Class(right)) => Rc::ptr_eq(left, right),
             (Value::Routine(left), Value::Routine(right)) => Rc::ptr_eq(left, right),
             (Value::Counted(_), Value::Counted(_)) => self.equals(other),
@@ -319,6 +324,7 @@ impl Value {
         match self {
             Value::Bond(cell) => cell.borrow().sequence_items(),
             Value::List(items) => Some(items.borrow().clone()),
+            Value::Backward(remaining) => Some(std::mem::take(&mut *remaining.borrow_mut())),
             Value::Array(items) | Value::Tuple(items) | Value::Set(items) => Some(items.as_ref().clone()),
             Value::Text(text) => Some(text.chars().map(|letter| Value::text(&letter.to_string())).collect()),
             Value::Map(pairs) => Some(pairs.iter().map(|(key, _)| key.clone()).collect()),
@@ -339,7 +345,7 @@ impl Value {
         let fix = |number: i64| if number == -1 { -2 } else { number };
         match self {
             Value::Bond(cell) => cell.borrow().sequence_hash(),
-            Value::Array(_) | Value::List(_) | Value::Map(_) | Value::Set(_) => Err(()),
+            Value::Array(_) | Value::List(_) | Value::Map(_) | Value::Set(_) | Value::Backward(_) => Err(()),
             Value::Tuple(items) => {
                 let mut hash = 2_870_177_450_012_600_261_u64;
                 for item in items.iter() {
@@ -449,7 +455,7 @@ impl Value {
         match self {
             Value::List(items) => !items.borrow().is_empty(),
             Value::Tuple(items) | Value::Set(items) => !items.is_empty(),
-            Value::Stream(_) => true,
+            Value::Stream(_) | Value::Backward(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -483,7 +489,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Stream(_) | Value::Counted(_) | Value::Backward(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -499,6 +505,7 @@ impl Value {
         match (self, other) {
             (Value::List(_), Value::List(_)) | (Value::Tuple(_), Value::Tuple(_)) | (Value::Set(_), Value::Set(_)) => self.sequence_equal(other),
             (Value::Stream(a), Value::Stream(b)) => a == b,
+            (Value::Backward(a), Value::Backward(b)) => Rc::ptr_eq(a, b),
             (Value::Counted(a), Value::Counted(b)) => {
                 let length = a.length();
                 length == b.length() && (length.is_zero() || a.start == b.start && (length.is_one() || a.step == b.step))
@@ -661,6 +668,7 @@ impl Value {
     pub fn plain(&self) -> String {
         match self {
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
+            Value::Backward(_) => "<reversed>".to_string(),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
             Value::Ellipsis => "Ellipsis".to_string(),
@@ -705,6 +713,9 @@ impl Value {
     /// A key for the call cache: kind and content, nested for arrays.
     pub fn memo_key(&self, into: &mut String) {
         match self {
+            Value::Backward(remaining) => {
+                let _ = write!(into, "backward{:p}:{}", Rc::as_ptr(remaining), remaining.borrow().len());
+            }
             Value::List(items) => {
                 into.push_str("list[");
                 for item in items.borrow().iter() { item.memo_key(into); }

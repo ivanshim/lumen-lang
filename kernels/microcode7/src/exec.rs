@@ -575,6 +575,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
+        if matches!(x, Value::Reverse(..)) { return Err(self.sequence_fault("unready", &[]).into()); }
         if matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) || (self.table.flag("ext.op.sequence.values") && matches!(x, Value::Text(_))) {
             return Ok(());
         }
@@ -1070,6 +1071,8 @@ impl<'a> Machine<'a> {
             if !within.insert(identity) { return Ok(mark.to_string()); }
         }
         match item {
+            Value::Thing(_) if self.table.flag("ext.op.sequence.values") => return Err(self.sequence_fault("unready", &[])),
+            Value::Reverse(..) => return Err(self.sequence_fault("unready", &[])),
             Value::Shared(cell) => return self.quoted_within(&cell.borrow(), &within),
             Value::List(elements) => {
                 let mut parts = Vec::new();
@@ -2983,7 +2986,7 @@ impl<'a> Machine<'a> {
             let mut written = String::new();
             for (at, item) in positional.iter().enumerate() {
                 if at != 0 { written.push_str(&join); }
-                written.push_str(&self.show(std::slice::from_ref(item)));
+                written.push_str(&self.show(std::slice::from_ref(item))?);
             }
             written.push_str(&tail);
             match channel {
@@ -3632,6 +3635,10 @@ impl<'a> Machine<'a> {
         if self.table.flag("ext.op.sequence.values") {
             if matches!(op, Prim::Frozen | Prim::Fingerprint | Prim::Locate | Prim::Occurrences | Prim::Least | Prim::Greatest | Prim::Ordered | Prim::Backwards | Prim::Listed) {
                 return self.sequence_builtin(op, v);
+            }
+            if v.iter().any(|value| matches!(value, Value::Reverse(..)))
+                && !matches!(op, Prim::MakeArray | Prim::MakeList | Prim::MakeTuple | Prim::Couple | Prim::ExtendLiteral(..)) {
+                return Err(self.sequence_fault("unready", &[]));
             }
             if v.len() == 2 {
                 if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Contains | Prim::Absent)
@@ -5042,11 +5049,11 @@ impl<'a> Machine<'a> {
                 Value::Nil
             }
             Prim::Say => {
-                self.utter(&format!("{}\n", self.show(v)));
+                self.utter(&format!("{}\n", self.show(v)?));
                 Value::Nil
             }
             Prim::Out => {
-                self.utter(&self.show(v));
+                self.utter(&self.show(v)?);
                 Value::Nil
             }
             Prim::Tell => {
@@ -5123,6 +5130,9 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
+                if self.table.flag("ext.op.sequence.values") && matches!(v[0], Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_)) {
+                    return Ok(Value::text(&self.quoted_remainder(&v[0])?));
+                }
                 if let Value::Thing(raised) = &v[0] {
                     if raised.of.fields.iter().any(|(key, _)| key == SEQUENCE_FAULT_MARK) {
                         return Ok(raised.holds.borrow().iter().find(|(key, _)| key == "message").map(|(_, text)| text.clone()).unwrap_or_else(|| Value::text("")));
@@ -5581,7 +5591,7 @@ impl<'a> Machine<'a> {
     fn sequence_deferred(value: &Value, depth: usize) -> bool {
         if depth > 128 { return true; }
         match value {
-            Value::Thing(_) => true,
+            Value::Thing(_) | Value::Reverse(..) => true,
             Value::List(row) => row.borrow().iter().any(|v| Self::sequence_deferred(v, depth + 1)),
             Value::Tuple(row) | Value::Set(row) | Value::Vector(row) => row.iter().any(|v| Self::sequence_deferred(v, depth + 1)),
             Value::Dict(row) => row.iter().any(|(k, v)| Self::sequence_deferred(k, depth + 1) || Self::sequence_deferred(v, depth + 1)),
@@ -5832,9 +5842,12 @@ impl<'a> Machine<'a> {
                 Ok(best)
             }
             Prim::Ordered | Prim::Backwards if values.len() == 1 => {
+                if op == Prim::Backwards && !matches!(values[0], Value::Tuple(_) | Value::Text(_)) { return Err(refusal()); }
                 let mut row = self.gathered_members(&values[0])?;
-                if op == Prim::Backwards { row.reverse(); }
-                else {
+                if op == Prim::Backwards {
+                    row.reverse();
+                    return Ok(Value::Reverse(Rc::new(RefCell::new(row)), Rc::from(refusal())));
+                } else {
                     for i in 1..row.len() {
                         let mut j = i;
                         while j > 0 && self.sequence_order(&row[j], &row[j-1], "<")?.map_or(false, |rank| rank.is_lt()) { row.swap(j, j-1); j -= 1; }
@@ -5848,6 +5861,7 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&self, source: &Value) -> Result<Vec<Value>, String> {
         Ok(match source {
+            Value::Reverse(remaining, _) => std::mem::take(&mut *remaining.borrow_mut()),
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::List(values) => values.borrow().clone(),
             Value::Tuple(values) | Value::Set(values) => values.to_vec(),
@@ -5868,14 +5882,14 @@ impl<'a> Machine<'a> {
         })
     }
 
-    fn show(&self, v: &[Value]) -> String {
+    fn show(&self, v: &[Value]) -> Result<String, String> {
         let w = self.wording();
-        let argument = |x: &Value| {
-            let text = if self.table.flag("ext.op.sequence.values") && matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_)) { self.quoted_remainder(x).unwrap_or_else(|e| e) } else { x.render(w) };
-            match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
+        let argument = |x: &Value| -> Result<String, String> {
+            let text = if self.table.flag("ext.op.sequence.values") && matches!(x, Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_) | Value::Reverse(..)) { self.quoted_remainder(x)? } else { x.render(w) };
+            Ok(match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
-            }
+            })
         };
         let holes = self.table.strings("builtin.print.placeholder");
         let find = |s: &str| holes.iter().filter_map(|h| s.find(h.as_str()).map(|p| (p, h.len()))).min();
@@ -5887,16 +5901,16 @@ impl<'a> Machine<'a> {
                 while let Some((p, k)) = find(s) {
                     out.push_str(&s[..p]);
                     match rest.next() {
-                        Some(x) => out.push_str(&argument(x)),
+                        Some(x) => out.push_str(&argument(x)?),
                         None => out.push_str(&s[p..p + k]),
                     }
                     s = &s[p + k..];
                 }
                 out.push_str(s);
-                return out;
+                return Ok(out);
             }
         }
-        v.iter().map(argument).collect::<Vec<_>>().join(" ")
+        Ok(v.iter().map(argument).collect::<Result<Vec<_>, _>>()?.join(" "))
     }
 }
 

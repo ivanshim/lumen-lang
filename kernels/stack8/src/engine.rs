@@ -1002,6 +1002,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
+        if matches!(held, Value::Backward(_)) { return Err(self.lang.sequence_unready[0].clone().into()); }
         if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_)) || self.lang.sequence_values && matches!(held, Value::Text(_)) {
             return Ok(());
         }
@@ -2474,6 +2475,7 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
+                if matches!(source, Value::Backward(_)) { return Err(self.lang.sequence_unready[0].clone().into()); }
                 Value::array(self.comprehension_items(&source)?)
             }
             Action::UnpackCount(wanted) => {
@@ -3206,6 +3208,7 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
+                if self.lang.sequence_values && Self::sequence_unshown(&value, 0) { return Err(self.lang.sequence_unready[0].clone().into()); }
                 Value::text(&value.string_field(&self.wording(), &specification, &conversion))
             }
             Action::Builtin(builtin, name) => {
@@ -3271,6 +3274,7 @@ impl<'a> Engine<'a> {
     }
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
+        if self.lang.sequence_values && Self::sequence_unshown(value, 0) { return Err(self.lang.sequence_unready[0].clone()); }
         Ok(match value {
             Value::List(_) | Value::Tuple(_) | Value::Set(_) => value.display(&self.wording()),
             Value::Text(s) => {
@@ -3366,9 +3370,22 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
+    fn sequence_unshown(value: &Value, depth: usize) -> bool {
+        if depth > 128 { return false; }
+        match value {
+            Value::Backward(_) => true,
+            Value::Object(_) if depth != 0 => true,
+            Value::List(items) => items.borrow().iter().any(|item| Self::sequence_unshown(item, depth + 1)),
+            Value::Array(items) | Value::Tuple(items) | Value::Set(items) => items.iter().any(|item| Self::sequence_unshown(item, depth + 1)),
+            Value::Map(items) => items.iter().any(|(k, v)| Self::sequence_unshown(k, depth + 1) || Self::sequence_unshown(v, depth + 1)),
+            Value::Bond(cell) => Self::sequence_unshown(&cell.borrow(), depth + 1),
+            _ => false,
+        }
+    }
+
     fn sequence_needs_protocol(value: &Value, seen: &mut Vec<usize>) -> bool {
         let pointer = match value {
-            Value::Object(_) => return true,
+            Value::Object(_) | Value::Backward(_) => return true,
             Value::List(items) => Rc::as_ptr(items) as usize,
             Value::Tuple(items) | Value::Set(items) | Value::Array(items) => Rc::as_ptr(items) as usize,
             Value::Map(items) => Rc::as_ptr(items) as usize,
@@ -3416,8 +3433,8 @@ impl<'a> Engine<'a> {
                 if !choose && args.len() != 1 { return Err(unready()); }
                 let mut items = if args.len() == 1 { self.comprehension_items(&args[0])? } else { args.to_vec() };
                 if matches!(which, Builtin::SequenceReversed) {
-                    if !matches!(args[0], Value::List(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_)) { return Err(unready()); }
-                    items.reverse(); return Ok(Value::list(items));
+                    if !matches!(args[0], Value::Tuple(_) | Value::Text(_)) { return Err(unready()); }
+                    items.reverse(); return Ok(Value::Backward(Rc::new(RefCell::new(items))));
                 }
                 if choose {
                     let Some(mut best) = items.first().cloned() else {
@@ -3594,6 +3611,7 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(a, Value::Backward(_)) || matches!(b, Value::Backward(_)) { return Err(self.lang.sequence_unready[0].clone()); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4239,6 +4257,7 @@ impl<'a> Engine<'a> {
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if matches!(target, Value::Backward(_)) { return Err(self.lang.sequence_unready[0].clone()); }
         if self.lang.sequence_values && !matches!(at, Value::Slice(_)) {
             if matches!(target, Value::List(_) | Value::Tuple(_) | Value::Text(_)) {
                 let items = self.comprehension_items(target)?;
@@ -4458,6 +4477,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
+            Value::Backward(items) => Ok(std::mem::take(&mut *items.borrow_mut())),
             Value::Tuple(items) | Value::Set(items) => Ok(items.as_ref().clone()),
             Value::List(items) => Ok(items.borrow().clone()),
             Value::Array(items) => Ok(items.as_ref().clone()),
@@ -4530,6 +4550,7 @@ impl<'a> Engine<'a> {
             return Err(self.lang.sequence_unready[0].clone());
         }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
+            if self.lang.sequence_values && args.iter().any(|v| Self::sequence_unshown(v, 0)) { return Err(self.lang.sequence_unready[0].clone()); }
             let mut between = " ".to_string();
             let mut ending = "\n".to_string();
             let mut error = false;
@@ -4610,6 +4631,8 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if self.lang.sequence_values && !matches!(builtin, Builtin::List | Builtin::SequenceTuple)
+            && args.iter().any(|v| Self::sequence_unshown(v, 0)) { return Err(self.lang.sequence_unready[0].clone()); }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {

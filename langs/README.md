@@ -1778,7 +1778,10 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.count` counts matches. Text asks for whole substrings.
   `ext.builtin.min` and `ext.builtin.max` choose the least or greatest
   item; `ext.builtin.sorted` gathers items in order, and
-  `ext.builtin.reversed` gathers them from last to first.
+  `ext.builtin.reversed` keeps a tuple's or text's items from last to
+  first for one gathering by a list or tuple. Further gatherings are
+  empty. A walk or another use which needs the whole iterator protocol
+  gives `ext.op.sequence.unready` until those means are present.
 - `ext.op.sequence.concat` holds three pieces of a complaint: before
   the receiving kind, before the other kind, and before the receiving
   kind once more. `ext.op.sequence.order` holds four pieces surrounding

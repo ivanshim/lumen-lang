@@ -135,6 +135,8 @@ pub enum Value {
     List(Rc<RefCell<Vec<Value>>>),
     Tuple(Rc<Vec<Value>>),
     Set(Rc<Vec<Value>>),
+    /// A backward walk gives up each held member once.
+    Reverse(Rc<RefCell<Vec<Value>>>, Rc<str>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -223,7 +225,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Reverse(..) | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -246,6 +248,7 @@ impl Value {
 
     pub fn as_big(&self) -> Result<BigInt, String> {
         Ok(match self {
+            Value::Reverse(_, complaint) => return Err(complaint.to_string()),
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => (**n).clone(),
             // A worth past the numbers has no whole part; a language
@@ -448,6 +451,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Reverse(_, complaint) => complaint.to_string(),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
