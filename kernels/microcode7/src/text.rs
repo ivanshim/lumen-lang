@@ -22,7 +22,11 @@ pub fn complaint(table: &Table, reason: &str) -> String {
 }
 
 pub fn bears_kind(table: &Table, message: &str) -> bool {
-    table.strings("ext.builtin.text.complaint").iter().any(|prefix| message.starts_with(prefix))
+    if !table.strings("ext.builtin.text.complaint").iter().any(|prefix| message.starts_with(prefix)) { return false; }
+    "index arguments codepoint encode fill format format.brace format.positional integer join key maketrans.key maketrans.length maketrans.type mapping missing receiver room separator string surrogate translation walk".split_whitespace().any(|reason| {
+        let words = complaint(table, reason);
+        !words.is_empty() && if reason == "key" { message.starts_with(&words) } else { message == words }
+    })
 }
 
 fn count(value: &Value, table: &Table) -> Result<i64, String> {
@@ -153,16 +157,16 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
     match input {
         [Value::Dict(mapping)]=>{
             for (key,replacement) in mapping.iter() {
-                let number=match key {
+                let transformed=match key {
                     Value::Text(word)=>{
                         let mut it=word.chars(); let a=it.next();
                         if a.is_none() || it.next().is_some() {return Err(complaint(table,"maketrans.key"));}
-                        a.unwrap() as i64
+                        Value::Small(a.unwrap() as i64)
                     }
-                    Value::Small(_)|Value::Huge(_)|Value::Flag(_)=>count(key,table)?,
+                    Value::Small(_)|Value::Huge(_)|Value::Flag(_)=>key.clone(),
                     _=>return Err(complaint(table,"maketrans.type")),
                 };
-                insert(Value::Small(number),replacement.clone());
+                insert(transformed,replacement.clone());
             }
         }
         [_,_] | [_,_,_]=>{
@@ -178,10 +182,9 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
     Ok(Value::Dict(Rc::new(entries)))
 }
 
-pub fn apply(table: &Table, work: Work, name: &str, input: &[Value], names: Names) -> Result<Value,String> {
+pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
     use Work::*;
     if work==MAKETRANS {
-        let input=if !name.contains('.') && input.len()>2 && matches!(input[0],Value::Text(_)) {&input[1..]} else {input};
         return make_table(input,table);
     }
     if work==REPR {

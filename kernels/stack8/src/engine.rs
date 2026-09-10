@@ -992,7 +992,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Words(..) | Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2310,6 +2310,14 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::TextMethod(subject, op, called) => {
+                        let mut args = self.drop_many(argc - 1)?;
+                        if op != crate::strings::TextOp::Maketrans { args.insert(0, Value::Text(subject)); }
+                        let opened = self.call_items(args)?;
+                        let answer = self.builtin_call(Builtin::Text(op), &called, opened)?;
+                        self.data.push(answer);
+                        Ok(())
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -2402,7 +2410,7 @@ impl<'a> Engine<'a> {
             Action::Unpack(count, rest) => {
                 let source = self.drop_top()?;
                 let mut items = match source {
-                    Value::Counted(_) => self.comprehension_items(&source)?,
+                    Value::Words(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
@@ -2467,6 +2475,10 @@ impl<'a> Engine<'a> {
                 match &pair[0] {
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
+                    },
+                    Value::Words(items, _) => match items.get(at) {
+                        Some(s) => if key { Value::Small(at as i64) } else { Value::text(s) },
+                        None => return Err(self.lang.slice_bounds.clone().unwrap_or_default().into()),
                     },
                     Value::Array(items) => match items.get(at) {
                         Some(v) if !key => v.clone(),
@@ -2597,9 +2609,14 @@ impl<'a> Engine<'a> {
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
-                Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
+                Value::Flag(text_method || field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
+                    let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
+                    Value::TextMethod(subject, op, name.clone())
+                }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -3108,6 +3125,7 @@ impl<'a> Engine<'a> {
             }
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
+                Value::Words(items, _) => Value::Small(items.len() as i64),
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
@@ -4049,6 +4067,14 @@ impl<'a> Engine<'a> {
     }
 
     fn element_held(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
+        if let (Value::Text(s), true) = (target, self.lang.text_negative_index) {
+            if !matches!(at, Value::Slice(_)) {
+                let index = match at { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().ok_or_else(||crate::strings::fault(self.lang,"index"))?, _ => return Err(crate::strings::fault(self.lang,"integer")) };
+                let length = s.chars().count() as i64;
+                let offset = if index < 0 { index.saturating_add(length) } else { index };
+                return s.chars().nth(offset as usize).map(|c|Value::text(&c.to_string())).ok_or_else(||crate::strings::fault(self.lang,"index"));
+            }
+        }
         if let Value::Words(words, tuple) = target {
             if let Value::Slice(parts) = at {
                 let (_, _, _, places) = self.slice_places(parts, words.len())?;

@@ -6283,6 +6283,10 @@ impl<'a> Builder<'a> {
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         match self.table.prims.get(name).copied() {
+            Some(Prim::Textual(work)) if work != crate::text::Work::REPR && !name.contains('.') => {
+                let declared = self.read(name);
+                Ok(invoke(declared, args))
+            }
             // What is put in front of may be a name standing for a
             // shared cell, since the library of a language may spell it
             // as a routine taking one, so the place it names is looked

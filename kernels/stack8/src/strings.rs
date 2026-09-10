@@ -23,7 +23,12 @@ pub fn fault(lang: &Lang, key: &str) -> String {
 }
 
 pub fn already_named(lang: &Lang, said: &str) -> bool {
-    lang.text_words.get("ext.builtin.text.complaint")
+    let own = lang.text_words.iter().any(|(key, words)| {
+        key.starts_with("ext.builtin.text.fault.") && words.first().map_or(false, |w| {
+            if key.ends_with(".key") { said.starts_with(w) } else { said == w }
+        })
+    });
+    own && lang.text_words.get("ext.builtin.text.complaint")
         .map_or(false, |words| words.iter().any(|w| said.starts_with(w)))
 }
 
@@ -137,7 +142,7 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
             let key = match key {
                 Value::Text(s) if s.chars().count() == 1 => Value::Small(s.chars().next().unwrap() as i64),
                 Value::Text(_) => return Err(fault(lang,"maketrans.key")),
-                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Value::Small(integer(key, lang)?),
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => key.clone(),
                 _ => return Err(fault(lang,"maketrans.type")),
             };
             if let Some(at) = table.iter().position(|(k, _): &(Value, Value)| k.equals(&key)) { table[at] = (key, value.clone()); }
@@ -159,11 +164,10 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
     Ok(Value::Map(Rc::new(pairs)))
 }
 
-pub fn run(op: TextOp, name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
+pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
     use TextOp::*;
     if op == Maketrans {
-        let skip = usize::from(!name.contains('.') && matches!(args.first(), Some(Value::Text(_))) && args.len() > 2);
-        return translated_table(&args[skip..],lang);
+        return translated_table(args,lang);
     }
     if op == Repr {
         if args.len() != 1 { return Err(fault(lang,"arguments")); }

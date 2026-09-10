@@ -407,7 +407,8 @@
     "ValueError:",
     "NotImplementedError:",
     "KeyError:",
-    "OverflowError:"
+    "OverflowError:",
+    "IndexError:"
   ],
   "ext.builtin.text.count": [
     "count",
@@ -445,6 +446,9 @@
   ],
   "ext.builtin.text.fault.format.positional": [
     "ValueError: Format string contains positional fields"
+  ],
+  "ext.builtin.text.fault.index": [
+    "IndexError: string index out of range"
   ],
   "ext.builtin.text.fault.integer": [
     "TypeError: integer argument expected"
@@ -888,6 +892,7 @@
   "ext.op.index.slice.zero": [
     "slice step cannot be zero"
   ],
+  "ext.op.index.text.negative": true,
   "ext.op.lambda": [
     "lambda"
   ],

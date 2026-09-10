@@ -129,6 +129,7 @@ pub enum Value {
     Frac(Rc<Ratio>),
     Text(Rc<str>),
     TextRow(Rc<Vec<String>>, bool),
+    TextCall { subject: Rc<str>, work: crate::text::Work, name: Rc<str> },
     Flag(bool),
     Nil,
     Ellipsis,
@@ -221,7 +222,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::TextCall { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -256,7 +257,7 @@ impl Value {
             Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
-            Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
+            Value::TextCall { .. } | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
@@ -481,6 +482,7 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::TextCall { name, .. } => format!("<built-in method {}>", name),
             Value::TextRow(words, closed) => crate::text::written_row(words, *closed),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {

@@ -282,14 +282,18 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.text.keyword.keepends`, `.tabsize`, `.maxsplit`, `.sep`,
   `.encoding` and `.errors`: lists naming the keyword places admitted by
   the corresponding text operation. Other names are refused at the run.
+- `ext.op.index.text.negative`: a switch letting a text index below
+  nought count from the end, in characters. A place outside the text
+  raises `ext.builtin.text.fault.index`.
 - `ext.builtin.text.repeat`: a switch admitting repetition of text by a
   whole number; nought and numbers below it yield empty text.
 - `ext.builtin.text.fault.*`: plain complaints for ill-shaped arguments,
   wrong kinds, empty separators, absent substrings, invalid translation
   tables and character numbers, or a part of the run still wanting.
   `.key` stands before the quoted key absent from a format mapping.
-  `ext.builtin.text.complaint` lists complaint beginnings already bearing
-  their own kind, which need no further banner before them.
+  `ext.builtin.text.complaint` lists beginnings borne by these text
+  complaints, which need no further banner before them. Complaints
+  belonging to other operations keep their former telling.
   Unicode properties and case mappings follow the Unicode 16.0 data;
   lone surrogate code points remain outside the kernels' text values.
 - `ext.builtin.range.value`: a switch making the range builtin a value
@@ -2252,7 +2256,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.capitalize` | - | - | `capitalize` `str.capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.text.casefold` | - | - | `casefold` `str.casefold` | - | - | - | - | - | - | - |
 | `ext.builtin.text.center` | - | - | `center` `str.center` | - | - | - | - | - | - | - |
-| `ext.builtin.text.complaint` | - | - | `TypeError:` `ValueError:` `NotImplementedError:` `KeyError:` `OverflowError:` | - | - | - | - | - | - | - |
+| `ext.builtin.text.complaint` | - | - | `TypeError:` `ValueError:` `NotImplementedError:` `KeyError:` `OverflowError:` `IndexError:` | - | - | - | - | - | - | - |
 | `ext.builtin.text.count` | - | - | `count` `str.count` | - | - | - | - | - | - | - |
 | `ext.builtin.text.encode` | - | - | `encode` `str.encode` | - | - | - | - | - | - | - |
 | `ext.builtin.text.endswith` | - | - | `endswith` `str.endswith` | - | - | - | - | - | - | - |
@@ -2264,6 +2268,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.fault.format` | - | - | `NotImplementedError: this mapping format is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.format.brace` | - | - | `ValueError: unmatched brace in format string` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.format.positional` | - | - | `ValueError: Format string contains positional fields` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.index` | - | - | `IndexError: string index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.integer` | - | - | `TypeError: integer argument expected` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.join` | - | - | `TypeError: sequence item must be str` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.key` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
@@ -2435,6 +2440,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.index.slice.zero` | - | - | `slice step cannot be zero` | - | - | - | - | - | - | - |
 | `ext.op.index.text` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.index.text.first` | - | - | - | - | `Only the first byte will be assigned to the string offset` | - | - | - | - | - |
+| `ext.op.index.text.negative` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
 | `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
