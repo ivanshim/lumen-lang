@@ -3452,7 +3452,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.upper` | - | - | `upper` | - | - | - | - | - | - | - |
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
-| `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
+| `ext.builtin.calls` | - | - | `__warning_calls` | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
 | `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
@@ -3503,11 +3503,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
-| `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
+| `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
 | `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |

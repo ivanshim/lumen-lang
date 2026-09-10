@@ -406,6 +406,9 @@
   "ext.builtin.callable": [
     "callable"
   ],
+  "ext.builtin.calls": [
+    "__warning_calls"
+  ],
   "ext.builtin.class.derive": [
     "__derive_class"
   ],
@@ -541,6 +544,9 @@
   "ext.builtin.enumerate": [
     "enumerate"
   ],
+  "ext.builtin.exit": [
+    "__finish"
+  ],
   "ext.builtin.exceptions": [
     "BaseException",
     "Exception",
@@ -565,7 +571,19 @@
     "OSError",
     "RecursionError",
     "UnicodeError",
-    "EOFError"
+    "EOFError",
+    "Warning",
+    "UserWarning",
+    "DeprecationWarning",
+    "SyntaxWarning",
+    "RuntimeWarning",
+    "FutureWarning",
+    "PendingDeprecationWarning",
+    "ImportWarning",
+    "UnicodeWarning",
+    "BytesWarning",
+    "ResourceWarning",
+    "EncodingWarning"
   ],
   "ext.builtin.exceptions.args": [
     "args"

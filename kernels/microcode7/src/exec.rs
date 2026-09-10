@@ -291,7 +291,7 @@ impl<'a> Machine<'a> {
             let parent = match number {
                 0 => None, 1 | 17 | 18 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), _ => Some(1),
+                22 => Some(9), 25..=35 => Some(24), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {

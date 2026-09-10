@@ -1,0 +1,13 @@
+Warning True True word
+UserWarning True True word
+DeprecationWarning True True word
+SyntaxWarning True True word
+RuntimeWarning True True word
+FutureWarning True True word
+PendingDeprecationWarning True True word
+ImportWarning True True word
+UnicodeWarning True True word
+BytesWarning True True word
+ResourceWarning True True word
+EncodingWarning True True word
+Special custom
