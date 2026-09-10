@@ -833,6 +833,7 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        if told.starts_with("Undefined variable: ") && self.lang.fault_unbound.is_some() { return self.lang.fault_unbound.clone(); }
         for pair in self.lang.exception_classes.chunks_exact(2) {
             if told.starts_with(&format!("{}: ", pair[0])) { return Some(pair[0].clone()); }
         }
@@ -939,6 +940,21 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = value else { return };
         let parts = &self.lang.exception_parts;
         if parts.len() != 4 { return; }
+        if let Some(Value::Object(previous)) = self.caught.last() {
+            if !Rc::ptr_eq(previous, object) {
+                let mut here = previous.clone();
+                let mut seen = std::collections::HashSet::new();
+                while seen.insert(Rc::as_ptr(&here) as usize) {
+                    let next = here.fields.borrow().iter().find(|(name, _)| name == &parts[0]).map(|(_, value)| value.clone());
+                    let Some(Value::Object(next)) = next else { break };
+                    if Rc::ptr_eq(&next, object) {
+                        if let Some(field) = here.fields.borrow_mut().iter_mut().find(|(name, _)| name == &parts[0]) { field.1 = Value::Null; }
+                        break;
+                    }
+                    here = next;
+                }
+            }
+        }
         let mut fields = object.fields.borrow_mut();
         let mut put = |name: &str, value: Value| {
             if let Some(field) = fields.iter_mut().find(|(key, _)| key == name) { field.1 = value; }
@@ -960,16 +976,32 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn exception_result<T>(&mut self, result: Flow<T>) -> Flow<T> {
+        if self.lang.exception_classes.is_empty() { return result; }
+        match result {
+            Err(Fault::Note(words)) => match self.as_fault(&words) {
+                Some(value) => Err(Fault::Thrown(value)),
+                None => Err(Fault::Note(words)),
+            },
+            result => result,
+        }
+    }
+
     fn as_fault(&mut self, told: &str) -> Option<Value> {
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.class_named(&named).cloned() else { return None };
         self.hurled_at.set(self.line);
         self.made += 1;
         let mut fields = class.all_fields();
+        let message = match (told.strip_prefix("Undefined variable: "), self.lang.unbound_words.as_slice()) {
+            (Some(name), [before, after]) => format!("{before}{name}{after}"),
+            _ if !self.lang.exception_classes.is_empty() => told.split_once(": ").map_or(told, |(_, rest)| rest).to_string(),
+            _ => told.to_string(),
+        };
         // What a fault of the kernel's own holds: the words said, and
         // where in the program it was raised.
         for (named, held) in [
-            ("message", Value::text(if self.lang.exception_classes.is_empty() { told } else { told.split_once(": ").map_or(told, |(_, rest)| rest) })),
+            ("message", Value::text(&message)),
             ("file", Value::text(&self.source)),
             ("line", Value::Small(self.line as i64)),
         ] {
@@ -1561,7 +1593,7 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        if !program.body_of_all && self.lang.recursion_limit.map_or(false, |limit| self.calls.len() + 1 >= limit) {
+        if !program.body_of_all && self.lang.recursion_limit.map_or(false, |limit| self.calls.len() + 2 >= limit) {
             return Err(self.lang.recursion_exceeded.clone().unwrap_or_default().into());
         }
         let n = if let Some(rules) = &program.parameter_rules {
@@ -1800,6 +1832,7 @@ impl<'a> Engine<'a> {
                         self.entering = None;
                         if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
                         let outcome = self.run_span(program, frame, instrs, arm.body);
+                        let outcome = self.exception_result(outcome);
                         if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
                         return outcome.map(|end| match end {
                             Passage::Along(at) if at == arm.body.1 => Passage::Along(plan.after),
@@ -1818,6 +1851,7 @@ impl<'a> Engine<'a> {
             let raised = match &ending { Err(Fault::Thrown(value)) => Some(value), _ => None };
             if let Some(value) = raised { self.caught.push(value.clone()); }
             let cleared = self.leave_context(manager, raised);
+            let cleared = self.exception_result(cleared);
             self.caught.truncate(active);
             match cleared {
                 Ok(true) if raised.is_some() => {
@@ -1832,6 +1866,7 @@ impl<'a> Engine<'a> {
             if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
             let saved = self.data.len();
             let finished = self.run_span(program, frame, instrs, last);
+            let finished = self.exception_result(finished);
             self.caught.truncate(active);
             match finished {
                 Ok(Passage::Along(at)) if at == last.1 => self.data.truncate(saved),
@@ -2724,6 +2759,10 @@ impl<'a> Engine<'a> {
             }
             Action::HasMember(name) => {
                 let held = self.drop_top()?;
+                if self.lang.kind_name.as_deref() == Some(name.as_ref()) && matches!(held, Value::Class(_) | Value::SortOf(_)) {
+                    self.data.push(Value::Flag(true));
+                    return Ok(());
+                }
                 let class = match &held {
                     Value::Object(o) => Some(&o.class),
                     Value::Class(c) => Some(c),

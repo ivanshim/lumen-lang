@@ -5366,6 +5366,9 @@ impl<'a> Builder<'a> {
                 Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                     let at = args.pop().unwrap();
                     match args.pop().unwrap() {
+                        Form::Read(slot) if self.table.flag("ext.syntax.call.bind_names") => {
+                            Form::ForgetWithin(Box::new(Form::Read(slot)), Box::new(at))
+                        }
                         Form::Read(slot) => {
                             let held = slot.ident.to_string();
                             let array = self.read(&held);

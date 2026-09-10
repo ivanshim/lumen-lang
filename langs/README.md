@@ -853,6 +853,11 @@ only. The extension labels so far, all from PHP:
   required parent class. Other exceptions leave the loop through its
   surrounding last parts and contexts. Lists keep their own storage
   while the walk counts places, so additions and removals are seen.
+- `ext.system.fault.class.name`: the class raised when a name is read
+  with no binding. `ext.system.fault.name` gives the words before and
+  after that name in the complaint. Within a handler or last part it
+  keeps the exception
+  already held there as context, just as a value raised outright does.
 - `ext.system.recursion.limit`: the greatest number of routine frames a
   run may hold at once, the outermost frame included. A call that would
   reach this count says `ext.system.recursion.exceeded`; a tail call is
@@ -2588,10 +2593,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
+| `ext.system.fault.class.name` | - | - | `NameError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | - | - | `Modulo by zero` | - | - | - | - | - |
+| `ext.system.fault.name` | - | - | `name '` `' is not defined` | - | - | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
 | `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |

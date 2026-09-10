@@ -993,6 +993,13 @@
     "__suppress_context__",
     "__traceback__"
   ],
+  "ext.system.fault.class.name": [
+    "NameError"
+  ],
+  "ext.system.fault.name": [
+    "name '",
+    "' is not defined"
+  ],
   "ext.system.fault.operands": [
     "unsupported operand type(s)"
   ],

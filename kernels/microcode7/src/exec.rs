@@ -1166,6 +1166,9 @@ impl<'a> Machine<'a> {
     /// its own faults are of which kind, being the one that words them.
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
+        if told.starts_with("Undefined variable: ") {
+            if let Some(class) = self.table.single("ext.system.fault.class.name") { return Some(class.to_owned()); }
+        }
         if let Some((kind, _)) = told.split_once(": ") {
             if self.table.strings("ext.system.exception.classes").chunks_exact(2).any(|pair| pair[0] == kind) {
                 return Some(kind.to_owned());
@@ -1263,6 +1266,26 @@ impl<'a> Machine<'a> {
         let (Value::Thing(thing), [context, cause, suppressed, trace]) =
             (value, self.table.strings("ext.system.exception.parts")) else { return };
         let mut additions = Vec::new();
+        if let Some(Value::Thing(active)) = self.holding_fault.last() {
+            if !Rc::ptr_eq(active, thing) {
+                let mut chain = Vec::new();
+                let mut cursor = active.clone();
+                loop {
+                    if chain.iter().any(|prior| Rc::ptr_eq(prior, &cursor)) { break; }
+                    chain.push(cursor.clone());
+                    let after = cursor.holds.borrow().iter().find(|(key, _)| key == context).map(|(_, item)| item.clone());
+                    match after {
+                        Some(Value::Thing(next)) if Rc::ptr_eq(&next, thing) => {
+                            let mut fields = cursor.holds.borrow_mut();
+                            fields.iter_mut().find(|(key, _)| key == context).expect("the context just read").1 = Value::Nil;
+                            break;
+                        }
+                        Some(Value::Thing(next)) => cursor = next,
+                        _ => break,
+                    }
+                }
+            }
+        }
         if let Some(Value::Thing(earlier)) = self.holding_fault.last() {
             if !Rc::ptr_eq(thing, earlier) { additions.push((context.clone(), Value::Thing(earlier.clone()))); }
         }
@@ -1286,15 +1309,31 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn keep_exception<T>(&mut self, answer: Res<T>) -> Res<T> {
+        if !self.table.has_any("ext.system.exception.parts") { return answer; }
+        if let Err(Escape::Error(words)) = answer {
+            return match self.as_raised(&words) {
+                Some(exception) => Err(Escape::Thrown(exception)),
+                _ => Err(Escape::Error(words)),
+            };
+        }
+        answer
+    }
+
     fn as_raised(&mut self, told: &str) -> Option<Value> {
         let named = self.class_of_fault(told)?;
         let Some(Value::Blueprint(of)) = self.class_bound(&named) else { return None };
         self.made += 1;
         let mut holds = of.every_field();
+        let message = if let (Some(name), Some((head, tail))) = (told.strip_prefix("Undefined variable: "), self.table.around("ext.system.fault.name")) {
+            format!("{head}{name}{tail}")
+        } else if self.table.has_any("ext.system.exception.classes") {
+            told.split_once(": ").map(|(_, words)| words).unwrap_or(told).to_owned()
+        } else { told.to_owned() };
         // A fault of the kernel's own carries the words said and the
         // place in the program they were said of.
         let carried = [
-            ("message", Value::text(if self.table.has_any("ext.system.exception.classes") { told.split_once(": ").map(|(_, words)| words).unwrap_or(told) } else { told })),
+            ("message", Value::text(&message)),
             ("file", Value::text(&self.written_in)),
             ("line", Value::Small(self.row as i64)),
         ];
@@ -2137,6 +2176,7 @@ impl<'a> Machine<'a> {
                     self.holding_fault.push(Value::Thing(raised.clone()));
                 }
                 let leaving_result = self.invoke(leaving, self.outermost.clone(), handed);
+                let leaving_result = self.keep_exception(leaving_result);
                 self.holding_fault.truncate(depth);
                 match leaving_result {
                     Ok(value) if matches!(&answer, Err(Escape::Thrown(_))) && self.stands_true(&value) => Ok(Value::Nil),
@@ -2219,6 +2259,7 @@ impl<'a> Machine<'a> {
                                     self.entering = None;
                                     if let Some(place) = &clause.held { self.store(place, frame, raised.clone())?; }
                                     let answer = self.value_of(&clause.body, frame);
+                                    let answer = self.keep_exception(answer);
                                     if clause.choices.is_some() {
                                         if let Some(place) = &clause.held { self.store(place, frame, Value::Unset)?; }
                                     }
@@ -2235,6 +2276,7 @@ impl<'a> Machine<'a> {
                 if let Some(limb) = last {
                     if let Err(Escape::Thrown(value)) = &ending { self.holding_fault.push(value.clone()); }
                     let final_result = self.value_of(limb, frame);
+                    let final_result = self.keep_exception(final_result);
                     self.holding_fault.truncate(preceding);
                     final_result?;
                 }
@@ -3945,6 +3987,9 @@ impl<'a> Machine<'a> {
             Prim::HasMember => {
                 n(2)?;
                 let word = v[1].bare();
+                if self.table.single("ext.system.kind.name") == Some(word.as_str()) && matches!(v[0], Value::KindOf(_) | Value::Blueprint(_)) {
+                    return Ok(Value::Flag(true));
+                }
                 let (class, own) = match &v[0] {
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
                     Value::Blueprint(c) => (Some(c), false),

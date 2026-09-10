@@ -54,3 +54,21 @@ except ValueError:
         raise
     except ValueError as e:
         print(e is saved)
+def break_return():
+    while True:
+        try:
+            return 7
+        finally:
+            break
+    return 9
+print(break_return())
+def continue_return():
+    n = 0
+    while n < 2:
+        n += 1
+        try:
+            return n
+        finally:
+            continue
+    return 4
+print(continue_return())

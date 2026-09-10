@@ -57,6 +57,8 @@ pub struct Lang {
     pub traceback_class: Option<String>,
     pub walk_next: Option<String>,
     pub walk_end: Option<String>,
+    pub fault_unbound: Option<String>,
+    pub unbound_words: Vec<String>,
     pub recursion_limit: Option<usize>,
     pub recursion_exceeded: Option<String>,
 
@@ -923,7 +925,7 @@ w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.th
 b ext.op.member.pipes | w ext.stmt.class.unready
 b ext.stmt.function.own_names | b ext.stmt.static.read_in
 
-w ext.stmt.with.enter | w ext.stmt.with.exit | w ext.stmt.with.invalid | w ext.system.exception.classes | w ext.system.exception.parts | w ext.system.exception.arguments.unsupported | w ext.system.exception.invalid | w ext.system.exception.cause.invalid | w ext.system.kind.name | w ext.system.kind.names | w ext.system.kind.type | w ext.system.traceback.class | w ext.op.walk.next | w ext.op.walk.end | n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.stmt.with.unready
+w ext.stmt.with.enter | w ext.stmt.with.exit | w ext.stmt.with.invalid | w ext.system.exception.classes | w ext.system.exception.parts | w ext.system.exception.arguments.unsupported | w ext.system.exception.invalid | w ext.system.exception.cause.invalid | w ext.system.kind.name | w ext.system.kind.names | w ext.system.kind.type | w ext.system.traceback.class | w ext.op.walk.next | w ext.op.walk.end | w ext.system.fault.class.name | w ext.system.fault.name | n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.stmt.with.unready
 b ext.op.member.pipes
 w ext.op.tuple.unready
 w ext.lexical.string.prefix.bytes.unready
@@ -1456,6 +1458,8 @@ impl Lang {
             traceback_class: r.head("ext.system.traceback.class")?,
             walk_next: r.head("ext.op.walk.next")?,
             walk_end: r.head("ext.op.walk.end")?,
+            fault_unbound: r.head("ext.system.fault.class.name")?,
+            unbound_words: r.strings("ext.system.fault.name")?,
             recursion_limit: r.count("ext.system.recursion.limit")?,
             recursion_exceeded: r.head("ext.system.recursion.exceeded")?,
             with_as: r.strings("ext.stmt.with.as")?,
