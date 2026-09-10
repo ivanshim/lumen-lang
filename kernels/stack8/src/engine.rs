@@ -3397,6 +3397,12 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::Counted(range) => a.as_big().ok().filter(|n| Self::member_matches(a, &Value::of_big(n.clone()))).map_or(false, |n| {
+                        let delta = &n - &range.start;
+                        let inside = if range.step > BigInt::from(0) { n >= range.start && n < range.stop }
+                            else { n <= range.start && n > range.stop };
+                        inside && delta % &range.step == BigInt::from(0)
+                    }),
                     Value::Array(items) => items.iter().any(|v| Self::member_matches(a, v)),
                     Value::Map(items) => items.iter().any(|(key, _)| Self::member_matches(a, key)),
                     Value::Text(haystack) => match a {
@@ -4142,6 +4148,8 @@ impl<'a> Engine<'a> {
 
     /// Membership asks identity before equality, and counts truth as one.
     fn member_matches(a: &Value, b: &Value) -> bool {
+        if let Value::Bond(cell) = a { return Self::member_matches(&cell.borrow(), b); }
+        if let Value::Bond(cell) = b { return Self::member_matches(a, &cell.borrow()); }
         match (a, b) {
             (Value::Flag(x), _) => Self::member_matches(&Value::Small(i64::from(*x)), b),
             (_, Value::Flag(y)) => Self::member_matches(a, &Value::Small(i64::from(*y))),

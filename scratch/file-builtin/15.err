@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: nonlocal bindings are not supported
+PythonError: Nonlocal bindings cannot be run without enclosing function cells

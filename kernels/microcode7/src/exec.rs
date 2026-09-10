@@ -4618,6 +4618,17 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
+                    (needle, Value::Progression(sequence)) => {
+                        match needle.as_big().ok().filter(|whole| contained_equal(needle, &Value::from_big(whole.clone()))) {
+                            None => false,
+                            Some(whole) => {
+                                let offset = &whole - &sequence.first;
+                                let position = &offset / &sequence.stride;
+                                (&offset % &sequence.stride) == BigInt::from(0)
+                                    && position >= BigInt::from(0) && position < sequence.count()
+                            }
+                        }
+                    },
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -6133,6 +6144,14 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
 
 /// A container's comparison keeps a shared nonreflexive item findable.
 fn contained_equal(near: &Value, far: &Value) -> bool {
+    match near {
+        Value::Shared(storage) => return contained_equal(&storage.borrow(), far),
+        _ => {},
+    }
+    match far {
+        Value::Shared(storage) => return contained_equal(near, &storage.borrow()),
+        _ => {},
+    }
     if let Value::Flag(bit) = near { return contained_equal(&Value::Small(if *bit { 1 } else { 0 }), far); }
     if let Value::Flag(bit) = far { return contained_equal(near, &Value::Small(if *bit { 1 } else { 0 })); }
     match (near, far) {

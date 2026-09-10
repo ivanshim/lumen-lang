@@ -4052,7 +4052,12 @@ impl<'a> Builder<'a> {
         if cuts.is_empty() && !array {
             self.pos = lo;
             self.place_depth += 1;
-            let reading = self.monadic_expr();
+            let reading = if hi == lo + 1 && self.look().shape == Shape::Bare {
+                let word = self.advance().lexeme;
+                if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) {
+                    Err("Invalid assignment target before '='".to_string())
+                } else { Ok(self.read(&word)) }
+            } else { self.monadic_expr() };
             self.place_depth -= 1;
             let place = reading?;
             if self.pos != hi { return Err(bad); }
@@ -4182,7 +4187,11 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let expr = self.expr_at(0, false)?;
+        let writing = !self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty();
+        self.place_depth += usize::from(writing);
+        let read = self.expr_at(0, false);
+        self.place_depth -= usize::from(writing);
+        let expr = read?;
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
             && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
         if self.table.flag("ext.stmt.assign.chain") && follows(self) {
@@ -4299,11 +4308,11 @@ impl<'a> Builder<'a> {
         loop {
             if self.look().shape != Shape::Bare
                 || !self.table.spells("stmt.assign", &self.glance(1).lexeme) { break; }
-            let target = self.expr_at(0, false)?;
-            let Form::Read(slot) = target else {
+            let target_name = self.advance().lexeme;
+            if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &target_name)) {
                 return Err("Invalid assignment target before '='".to_string());
-            };
-            targets.push(self.address_to_write(&slot.ident));
+            }
+            targets.push(self.address_to_write(&target_name));
             self.advance();
         }
         let value = self.comma_value()?;
@@ -5233,9 +5242,9 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
-                } else if table.spells("ext.builtin.print.file.output", &t.lexeme) {
+                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.output", &t.lexeme) {
                     constant(Value::Channel(1))
-                } else if table.spells("ext.builtin.print.file.error", &t.lexeme) {
+                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.error", &t.lexeme) {
                     constant(Value::Channel(2))
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
                     && (table.flag("ext.syntax.call.bind_names") || table.single("syntax.call.open").map_or(false, |o| self.sign(o)))
@@ -5907,9 +5916,6 @@ impl<'a> Builder<'a> {
             if !reaching && !owning {
                 return Ok(node);
             }
-            let pipe_call = self.glance(2).shape == Shape::Sign && table.spells("syntax.call.open", &self.glance(2).lexeme);
-            if !owning && table.flag("ext.op.member.pipes") && pipe_call
-                && table.prims.contains_key(&self.glance(1).lexeme) && matches!(&node, Form::Read(_)) { return Ok(node); }
             self.advance();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.

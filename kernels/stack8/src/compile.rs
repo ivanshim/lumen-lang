@@ -3244,6 +3244,7 @@ impl<'a> Compiler<'a> {
 
     fn class_type_parameters(&mut self) -> Res<()> {
         let lang = self.lang;
+        let from = self.mark();
         self.take();
         let mut names = std::collections::HashSet::new();
         loop {
@@ -3256,7 +3257,9 @@ impl<'a> Compiler<'a> {
             self.take();
             if self.on_any(&lang.type_params_close) { break; }
         }
-        self.want_sign(&lang.type_params_close[0], "after the type parameters")
+        self.want_sign(&lang.type_params_close[0], "after the type parameters")?;
+        self.piece().instrs.truncate(from);
+        Ok(())
     }
 
     fn class_decl(&mut self) -> Res<()> {
@@ -4213,7 +4216,15 @@ impl<'a> Compiler<'a> {
             self.pos = begin;
             let from = self.mark();
             let reading = std::mem::replace(&mut self.writing_place, true);
-            let place = self.prefix();
+            let place = if end == begin + 1 && self.look().shape == Shape::Instr {
+                let name = self.take().lexeme;
+                if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|words| Lang::spells(words, &name)) {
+                    Err("Invalid assignment target before '='".into())
+                } else {
+                    self.read(&name);
+                    Ok(())
+                }
+            } else { self.prefix() };
             self.writing_place = reading;
             place?;
             if self.pos != end { return Err(amiss.clone()); }
@@ -4303,7 +4314,11 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.lexeme)))
         };
-        self.expr_at(0, false)?;
+        let writing_target = !self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty();
+        let saved_place = std::mem::replace(&mut self.writing_place, writing_target);
+        let expression = self.expr_at(0, false);
+        self.writing_place = saved_place;
+        expression?;
         if self.lang.assign_chain && self.on_assign()
             && self.look_ahead(1).shape == Shape::Instr
             && self.look_ahead(2).shape == Shape::Sign
@@ -4403,13 +4418,10 @@ impl<'a> Compiler<'a> {
         let mut names = vec![first.to_string()];
         while self.look().shape == Shape::Instr
             && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).lexeme) {
-            let began = self.mark();
-            self.expr_at(0, false)?;
-            let named = match &self.piece().instrs[began..] {
-                [Instr::Read(cell)] => cell.ident.to_string(),
-                _ => return Err("Invalid assignment target before '='".into()),
-            };
-            self.piece().instrs.truncate(began);
+            let named = self.take().lexeme;
+            if [&self.lang.true_words, &self.lang.false_words, &self.lang.null_words].iter().any(|words| Lang::spells(words, &named)) {
+                return Err("Invalid assignment target before '='".into());
+            }
             self.cell_to_write(&named);
             names.push(named);
             self.take();
@@ -5571,9 +5583,9 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Flag(false));
                 } else if Lang::spells(&lang.null_words, &tok.lexeme) {
                     self.constant(Value::Null);
-                } else if Lang::spells(&lang.print_file_error, &tok.lexeme) {
+                } else if !self.writing_place && Lang::spells(&lang.print_file_error, &tok.lexeme) {
                     self.constant(Value::Stream(true));
-                } else if Lang::spells(&lang.print_file_output, &tok.lexeme) {
+                } else if !self.writing_place && Lang::spells(&lang.print_file_output, &tok.lexeme) {
                     self.constant(Value::Stream(false));
                 } else if lang.short_function.as_ref().map_or(false, |(word, _)| word == &tok.lexeme)
                     && (lang.bind_names || lang.calling.as_ref().map_or(false, |c| self.at_symbol(&c.open)))
@@ -6468,11 +6480,6 @@ impl<'a> Compiler<'a> {
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {
                 break;
-            }
-            if member && lang.member_pipes && lang.builtins.contains_key(&self.look_ahead(1).lexeme)
-                && lang.calling.as_ref().map_or(false, |pair| self.look_ahead(2).is_lexeme(Shape::Sign, &pair.open))
-                && matches!(&self.piece().instrs[from..], [Instr::Read(_)]) {
-                return Ok(());
             }
             self.take();
             // A value may stand where a member's name stands: the
