@@ -340,6 +340,21 @@
   "ext.builtin.copy": [
     "__copy_value"
   ],
+  "ext.builtin.fault.current": [
+    "__current_fault"
+  ],
+  "ext.builtin.file.exists": [
+    "__file_exists"
+  ],
+  "ext.builtin.file.kind": [
+    "__file_kind"
+  ],
+  "ext.builtin.file.remove": [
+    "__remove_file"
+  ],
+  "ext.builtin.host.info": [
+    "__host_info"
+  ],
   "ext.builtin.instance": [
     "isinstance"
   ],
@@ -897,6 +912,33 @@
   "ext.syntax.set": true,
   "ext.system.args.list": [
     "__program_argv"
+  ],
+  "ext.system.fault.bases": [
+    "BaseException",
+    "",
+    "Exception",
+    "BaseException",
+    "ArithmeticError",
+    "Exception",
+    "ZeroDivisionError",
+    "ArithmeticError",
+    "ImportError",
+    "Exception",
+    "ModuleNotFoundError",
+    "ImportError",
+    "ValueError",
+    "Exception",
+    "TypeError",
+    "Exception",
+    "AttributeError",
+    "Exception",
+    "NotImplementedError",
+    "Exception",
+    "OSError",
+    "Exception"
+  ],
+  "ext.system.fault.class.division": [
+    "ZeroDivisionError"
   ],
   "ext.system.module.cache": [
     "sys",

@@ -1616,6 +1616,19 @@ only. The extension labels so far, all from PHP:
   answer or raised value, and the complaint's text. A library can thus
   count failures and errors itself. An ending of the run or exhaustion
   of its allotted time or room is carried onward, never counted as a test.
+- `ext.system.fault.bases`: pairs of class names, each followed by its
+  parent, an empty parent beginning a root. They provide the fault classes
+  before source runs. A complaint beginning with one of these names and
+  a colon belongs to that class, so a guarded import may take it.
+- `ext.builtin.fault.current`: a builtin returning the innermost fault
+  being handled as its class name and message, or two empty values when
+  no clause is handling a fault.
+- `ext.builtin.host.info`: a builtin returning the working directory,
+  operating system, machine architecture and environment, in that order.
+  A directory which cannot be read is an empty value.
+- `ext.builtin.file.kind`: a builtin returning one for an ordinary file,
+  two for a directory, and nought for anything else or an absent path.
+
 - `ext.builtin.module.load`: a builtin fetching the module named by its
   text argument, through the same source store and cache as an import.
 - `ext.builtin.copy`: a builtin copying a value; its second argument says
@@ -2129,10 +2142,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.eval` | - | - | - | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | - | - | `exit` `die` | - | - | - | - | - |
-| `ext.builtin.file.exists` | - | - | - | - | `file_exists` | - | - | - | - | - |
+| `ext.builtin.fault.current` | - | - | `__current_fault` | - | - | - | - | - | - | - |
+| `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
+| `ext.builtin.file.kind` | - | - | `__file_kind` | - | - | - | - | - | - | - |
 | `ext.builtin.file.read` | - | - | - | - | `__file_read` | - | - | - | - | - |
-| `ext.builtin.file.remove` | - | - | - | - | `unlink` | - | - | - | - | - |
+| `ext.builtin.file.remove` | - | - | `__remove_file` | - | `unlink` | - | - | - | - | - |
 | `ext.builtin.file.write` | - | - | - | - | `file_put_contents` | - | - | - | - | - |
+| `ext.builtin.host.info` | - | - | `__host_info` | - | - | - | - | - | - | - |
 | `ext.builtin.include` | - | - | - | - | `include` `require` | - | - | - | - | - |
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
@@ -2458,9 +2474,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
+| `ext.system.fault.bases` | - | - | `BaseException` `` `Exception` `BaseException` `ArithmeticError` `Exception` `ZeroDivisionError` `ArithmeticError` `ImportError` `Exception` `ModuleNotFoundError` `ImportError` `ValueError` `Exception` `TypeError` `Exception` `AttributeError` `Exception` `NotImplementedError` `Exception` `OSError` `Exception` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
-| `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
+| `ext.system.fault.class.division` | - | - | `ZeroDivisionError` | - | `DivisionByZeroError` | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |

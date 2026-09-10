@@ -126,6 +126,7 @@ pub struct Machine<'a> {
     /// was raised on.
     row: u32,
     holding_fault: Vec<Value>,
+    fault_roots: HashMap<String, Value>,
     raised_on: u32,
     written_in: Rc<str>,
     /// Where the language keeps its own pages, as the run was
@@ -245,11 +246,32 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
 impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let mut fault_roots = HashMap::new();
+        let words = table.strings("ext.system.fault.bases");
+        let mut at = 0;
+        while at + 1 < words.len() {
+            let under = if let Some(Value::Blueprint(parent)) = fault_roots.get(&words[at + 1]) { Some(Rc::clone(parent)) } else { None };
+            let name = words[at].clone();
+            let shape = Blueprint {
+                shared: RefCell::new(vec![("__name__".to_string(), Value::text(&name))]),
+                constants: vec![], methods: vec![], reaches: vec![], fields: vec![], answers: vec![],
+                under, name: name.clone(),
+            };
+            fault_roots.insert(name, Value::Blueprint(Rc::new(shape)));
+            at += 2;
+        }
+        let outermost = Env::make(idents.len(), None);
+        for (position, word) in idents.iter().enumerate() {
+            if let Some(value) = fault_roots.get(word.trim_end_matches(crate::form::OF_A_CLASS)) {
+                outermost.cells.borrow_mut()[position] = value.clone();
+            }
+        }
         Machine {
             library_sources: HashMap::new(),
             imported: HashMap::new(),
             table,
-            outermost: Env::make(idents.len(), None),
+            outermost,
+            fault_roots,
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
@@ -707,6 +729,7 @@ impl<'a> Machine<'a> {
     /// the names are written, a name nothing stands under is asked for
     /// again with its letters written small.
     fn class_bound(&self, name: &str) -> Option<Value> {
+        if self.fault_roots.contains_key(name) { return self.fault_roots.get(name).cloned(); }
         let filed = format!("{}{}", name, crate::form::OF_A_CLASS);
         if let found @ Some(_) = self.lookup(&filed) {
             return found;
@@ -1120,6 +1143,9 @@ impl<'a> Machine<'a> {
     /// its own faults are of which kind, being the one that words them.
     /// Where the language names none for the kind, the plain class does.
     fn class_of_fault(&self, told: &str) -> Option<String> {
+        for name in self.fault_roots.keys() {
+            if told.starts_with(&format!("{name}: ")) { return Some(name.clone()); }
+        }
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
             // Words the definition itself gave for a place outside the
@@ -3724,6 +3750,41 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::FaultHeld => {
+                n(0)?;
+                let pair = if let Some(value) = self.holding_fault.last() {
+                    if let Value::Thing(thing) = value {
+                        let holds = thing.holds.borrow();
+                        let said = holds.iter().find_map(|(key, held)| (key == "message").then(|| held.clone())).unwrap_or(Value::Nil);
+                        vec![Value::text(&thing.of.name), said]
+                    } else { vec![Value::Nil, value.clone()] }
+                } else { vec![Value::Nil; 2] };
+                Value::Vector(Rc::new(pair))
+            }
+            Prim::HostFacts => {
+                n(0)?;
+                let mut facts = vec![];
+                facts.push(match std::env::current_dir() {
+                    Err(_) => Value::Nil,
+                    Ok(directory) => Value::text(&directory.to_string_lossy()),
+                });
+                facts.extend([Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH)]);
+                let mut variables = Vec::new();
+                for (key, value) in std::env::vars_os() {
+                    variables.push((Value::text(&key.to_string_lossy()), Value::text(&value.to_string_lossy())));
+                }
+                facts.push(Value::Dict(Rc::new(variables)));
+                Value::Vector(Rc::new(facts))
+            }
+            Prim::FileSort => {
+                n(1)?;
+                let metadata = std::fs::metadata(v[0].render(w));
+                Value::Small(match metadata {
+                    Ok(details) if details.is_dir() => 2,
+                    Ok(details) if details.is_file() => 1,
+                    _ => 0,
+                })
+            }
             Prim::LoadModule => { n(1)?; self.load_namespace(&v[0].bare())? }
             Prim::MakeHeir => {
                 n(3)?;
@@ -6105,7 +6166,7 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => Value::Unset,
+                    true => Value::text(path), false => self.fault_roots.get(name.trim_end_matches(crate::form::OF_A_CLASS)).cloned().unwrap_or(Value::Unset),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));

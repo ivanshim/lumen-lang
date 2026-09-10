@@ -33,6 +33,7 @@ pub struct Engine<'a> {
     registry: crate::compile::Registry,
     data: Vec<Value>,
     caught: Vec<Value>,
+    native_faults: HashMap<String, Value>,
     memo: HashMap<String, Value>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
@@ -212,9 +213,23 @@ impl<'a> Engine<'a> {
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
         let idents = &registry.idents;
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
+        let mut native_faults = HashMap::new();
+        for pair in lang.fault_bases.chunks_exact(2) {
+            let base = match native_faults.get(&pair[1]) {
+                Some(Value::Class(parent)) => Some(parent.clone()), _ => None,
+            };
+            let class = Class {
+                name: pair[0].clone(), base, answers: Vec::new(), fields: Vec::new(),
+                reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+                shared: RefCell::new(vec![("__name__".into(), Value::text(&pair[0]))]),
+            };
+            native_faults.insert(pair[0].clone(), Value::Class(Rc::new(class)));
+        }
+        let world = idents.iter().map(|name| native_faults.get(name.trim_end_matches(crate::code::OF_A_CLASS)).cloned().unwrap_or(Value::Blank)).collect();
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world,
+            native_faults,
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -835,6 +850,9 @@ impl<'a> Engine<'a> {
     /// them. Where the language names none for the kind, the plain class
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
+        if let Some((name, _)) = told.split_once(": ") {
+            if self.native_faults.contains_key(name) { return Some(name.into()); }
+        }
         let named = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -1094,6 +1112,7 @@ impl<'a> Engine<'a> {
     /// name however the name is written, a name nothing answers to is
     /// tried again with every letter made small.
     fn class_named(&self, name: &str) -> Option<&Value> {
+        if let Some(value) = self.native_faults.get(name) { return Some(value); }
         let filed = format!("{}{}", name, crate::code::OF_A_CLASS);
         if let found @ Some(_) = self.lookup(&filed) {
             return found;
@@ -1664,7 +1683,12 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
-        let ending = self.run_span(program, frame, instrs, plan.body);
+        let ending = match self.run_span(program, frame, instrs, plan.body) {
+            Err(Fault::Note(words)) => match self.as_fault(&words) {
+                Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)),
+            },
+            outcome => outcome,
+        };
         let mut ending = match ending {
             Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
                 Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
@@ -4543,6 +4567,29 @@ impl<'a> Engine<'a> {
             // The routine every complaint is to be handed to, or none.
             // What the run has bound under a name, by name: the
             // classes, and the routines.
+            Builtin::CurrentFault => {
+                arity(0)?;
+                match self.caught.last() {
+                    Some(Value::Object(object)) => {
+                        let message = object.fields.borrow().iter().find(|(name, _)| name == "message").map(|(_, value)| value.clone()).unwrap_or(Value::Null);
+                        Value::array(vec![Value::text(&object.class.name), message])
+                    }
+                    Some(value) => Value::array(vec![Value::Null, value.clone()]),
+                    None => Value::array(vec![Value::Null, Value::Null]),
+                }
+            }
+            Builtin::HostInfo => {
+                arity(0)?;
+                let directory = std::env::current_dir().ok().map(|path| Value::text(&path.to_string_lossy())).unwrap_or(Value::Null);
+                let environment = std::env::vars_os().map(|(key, value)| (Value::text(&key.to_string_lossy()), Value::text(&value.to_string_lossy()))).collect();
+                Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(environment))])
+            }
+            Builtin::FileKind => {
+                arity(1)?;
+                let path = args[0].display(&sp);
+                let kind = std::fs::metadata(path).map(|entry| if entry.is_file() { 1 } else if entry.is_dir() { 2 } else { 0 }).unwrap_or(0);
+                Value::Small(kind)
+            }
             Builtin::ModuleLoad => {
                 arity(1)?;
                 match self.import_module(&args[0].display(&sp)) {
@@ -5866,7 +5913,7 @@ impl Engine<'_> {
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let mut fields = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { Value::Blank };
+            let initial = if self.lang.module_names.contains(name) { Value::text(path) } else { self.native_faults.get(name.trim_end_matches(crate::code::OF_A_CLASS)).cloned().unwrap_or(Value::Blank) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
             fields.push((name.clone(), shared));
