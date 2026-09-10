@@ -4613,8 +4613,8 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
-                    (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
-                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
+                    (needle, Value::Vector(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
@@ -6123,4 +6123,29 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
         }
     }
     Ok(Some(gathered))
+}
+
+
+/// A container's comparison keeps a shared nonreflexive item findable.
+fn contained_equal(near: &Value, far: &Value) -> bool {
+    if let Value::Flag(bit) = near { return contained_equal(&Value::Small(if *bit { 1 } else { 0 }), far); }
+    if let Value::Flag(bit) = far { return contained_equal(near, &Value::Small(if *bit { 1 } else { 0 })); }
+    match (near, far) {
+        (Value::Frac(x), Value::Frac(y)) if Rc::ptr_eq(x, y) => return true,
+        (Value::Vector(left), Value::Vector(right)) => {
+            if Rc::ptr_eq(left, right) { return true; }
+            if left.len() != right.len() { return false; }
+            return left.iter().zip(right.iter()).all(|(l, r)| contained_equal(l, r));
+        }
+        (Value::Dict(left), Value::Dict(right)) => {
+            if Rc::ptr_eq(left, right) { return true; }
+            if left.len() != right.len() { return false; }
+            for (key, value) in left.iter() {
+                if !right.iter().any(|(k, v)| contained_equal(key, k) && contained_equal(value, v)) { return false; }
+            }
+            return true;
+        }
+        _ => {}
+    }
+    near.equals(far)
 }

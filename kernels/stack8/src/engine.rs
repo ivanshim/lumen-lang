@@ -3397,8 +3397,8 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
-                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
-                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
+                    Value::Array(items) => items.iter().any(|v| Self::member_matches(a, v)),
+                    Value::Map(items) => items.iter().any(|(key, _)| Self::member_matches(a, key)),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
                         _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
@@ -4139,6 +4139,20 @@ impl<'a> Engine<'a> {
     }
 
     // ---------- builtins ----------
+
+    /// Membership asks identity before equality, and counts truth as one.
+    fn member_matches(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Flag(x), _) => Self::member_matches(&Value::Small(i64::from(*x)), b),
+            (_, Value::Flag(y)) => Self::member_matches(a, &Value::Small(i64::from(*y))),
+            (Value::Real(x), Value::Real(y)) if Rc::ptr_eq(x, y) => true,
+            (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y)
+                || (x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| Self::member_matches(p, q))),
+            (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y)
+                || (x.len() == y.len() && x.iter().all(|(k, v)| y.iter().any(|(l, w)| Self::member_matches(k, l) && Self::member_matches(v, w)))),
+            _ => a.equals(b),
+        }
+    }
 
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {

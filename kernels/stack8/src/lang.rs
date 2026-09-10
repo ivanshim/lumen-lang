@@ -848,17 +848,7 @@ w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stm
 w ext.builtin.var_dump | w ext.stmt.switch | w ext.stmt.case | w ext.stmt.default
 w ext.stmt.case.mark | w ext.stmt.case.mark.instead | w ext.op.ternary | b ext.block.lone_statement | b ext.stmt.function.hoisted | b ext.stmt.function.outermost
 w ext.system.request.amiss | w ext.system.request.amiss.boundary | w ext.system.request.amiss.boundary.wrong | w ext.system.request.amiss.part | w ext.system.request.amiss.body.large | w ext.system.request.body
-w ext.lexical.number.imaginary
-w ext.lexical.number.imaginary.unready
-b ext.lexical.number.point_edge
-b ext.lexical.number.separator.strict
-w ext.lexical.number.amiss.leading_zero
-w ext.lexical.number.amiss.binary
-w ext.lexical.number.amiss.binary.digit
-w ext.lexical.number.amiss.octal
-w ext.lexical.number.amiss.octal.digit
-w ext.lexical.number.amiss.hex
-w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments
+w ext.lexical.number.imaginary | w ext.lexical.number.imaginary.unready | b ext.lexical.number.point_edge | b ext.lexical.number.separator.strict | w ext.lexical.number.amiss.leading_zero | w ext.lexical.number.amiss.binary | w ext.lexical.number.amiss.binary.digit | w ext.lexical.number.amiss.octal | w ext.lexical.number.amiss.octal.digit | w ext.lexical.number.amiss.hex | w ext.op.if_else | w ext.op.lambda.unsupported | w ext.op.lambda.enclosing | w ext.op.identical.negated | w ext.op.identical.unsupported | w ext.op.in | w ext.op.in.negated | w ext.op.in.unsupported | b ext.op.compare.chained | w ext.op.assign.expression | w ext.literal.ellipsis | b ext.op.rem.formats_text | w ext.op.rem.format.unsupported | w ext.op.rem.format.arguments | b ext.stmt.loop.else | b ext.lexical.string.adjacent | w ext.lexical.string.prefix.bytes | w ext.lexical.string.bytes.unready
 w ext.lexical.number.exponent | w ext.op.plus | b ext.stmt.break.levels
 w ext.builtin.array | b ext.op.index.append | b ext.stmt.for.collection | w ext.builtin.print_r
 w ext.stmt.terminator | w ext.stmt.annotation | w ext.stmt.annotation.amiss | w ext.stmt.annotation.target.unready | w ext.stmt.function.returns | w ext.stmt.class | w ext.stmt.class.extends | w ext.stmt.class.new

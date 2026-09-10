@@ -3319,8 +3319,12 @@ impl<'a> Builder<'a> {
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                let source = match table.single("ext.op.comprehension.for") {
+                    Some(_) => prim_call(Prim::Iterated, vec![start]),
+                    None => start,
+                };
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None, place);
+                return self.walk(source, None, var, None, place);
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -4856,7 +4860,11 @@ impl<'a> Builder<'a> {
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
-                left = self.named_call(&name, args)?;
+                let mutation = matches!(table.prims.get(&name), Some(Prim::Append) | Some(Prim::Replace));
+                left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
+                    self.scope_unrun("ext.system.scope.unready")
+                } else { self.named_call(&name, args)? };
+                if table.has_any("ext.system.scope.unready") { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {

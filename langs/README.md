@@ -778,7 +778,10 @@ only. The extension labels so far, all from PHP:
   array or a map, written like a call (`array(1, 2)`, `array("a" => 1)`).
 - `ext.op.index.append`: a switch; `a[] = v` appends.
 - `ext.stmt.for.collection`: a switch; `for v in a`, where a is not a
-  range, walks what a holds. Python's `for x in [1, 2]`.
+  range, walks what a holds. Python's `for x in [1, 2]`. Where
+  `ext.op.comprehension.for` is spelled too, it gathers the source as
+  a comprehension does: array items, text letters, or map keys. A
+  source with no such members says `ext.syntax.collection.unwalkable`.
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
@@ -1015,6 +1018,9 @@ only. The extension labels so far, all from PHP:
   the last a nonzero step. A loop walks that value by the collection
   path, so one bound and a descending step are read there too. Without
   it the range remains loop syntax.
+  the last a nonzero step. A for loop reads this call as a collection
+  too, keeping its single bound or its backward step. Without the
+  switch the range remains loop syntax.
   `ext.builtin.list` gathers one collection into an array;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.
@@ -2060,6 +2066,96 @@ only. The extension labels so far, all from PHP:
   `ext.stmt.annotation`, the whole expression after it is read and
   discarded, even where it names things the run does not know.
 
+- `ext.op.identical.negated`: the word directly after the identity
+  operator that turns it about (`is not`). With this spelling, equality
+  keeps its ordinary meaning; it does not take the looser rules above.
+  Arrays, maps and objects ask whether both names hold the same thing.
+  Nothing, ellipsis, flags and the small whole numbers from -5 through
+  256 have fixed identities. Unlike values cannot be identical. For
+  other alike values the kernels keep no identity that answers this
+  question; `ext.op.identical.unsupported` gives the plain complaint,
+  rather than answering equality in its stead.
+- `ext.op.if_else`: two words, the first before the condition and the
+  second before the other arm (`a if c else b`). It binds below every
+  binary operator and above a lambda. The condition runs first, and
+  only the arm it chooses runs; a further conditional belongs to the
+  other arm unless brackets say otherwise.
+- `ext.op.in`: membership of the left value among an array's items, a
+  map's keys, or the substrings of text on the right. `ext.op.in.negated`
+  is a word before the operator that turns the answer about (`not in`).
+  `ext.op.in.unsupported` holds the plain complaint where the right
+  value cannot be searched, or the left of a text search is not text.
+- `ext.op.compare.chained`: a switch; comparisons beside one another
+  ask each adjacent pair in turn. A middle value is worked out once
+  and kept; after a false comparison no further operand runs. Equality,
+  ordering, identity and membership may be mixed in one chain.
+
+- `ext.stmt.loop.else`: a switch; the last arm of a for or while loop
+  runs when the loop has no further pass. A break goes beyond that arm;
+  a continue still reaches it upon exhaustion. The two kernels keep
+  this distinction in their own loop shapes.
+- `ext.lexical.number.imaginary`: letters after a numeral that make it
+  imaginary. The numeral is read whole; `ext.lexical.number.imaginary.unready`
+  gives the words said when the run reaches it, for complex arithmetic
+  remains wanting. Ordinary whole numbers and decimal exponents keep
+  their accustomed reading.
+- `ext.lexical.string.adjacent`: a switch; neighbouring quoted tokens
+  join into one string, including quoted parts on separate lines within
+  brackets. Outside brackets a line end still parts statements.
+
+The iteration reader borrows the small scope readers already used above.
+Grouped loop targets and comma-separated loop sources are read whole;
+where they require tuple values or unpacking, `ext.system.scope.unready`
+says what is still owed when the run reaches them. Attribute assignments
+and mutations through a member are likewise read before their running is
+provided. The common class, tuple, block and expression work supplies the
+full forms; these narrow readings do not stand in for their execution.
+
+Membership in the ordinary collections asks whether an item is the same
+one before comparing its worth. Truth counts as one and falsehood as
+nought in that comparison, including within nested array items; maps
+compare their pairs without regard to order. Class-defined membership
+awaits the class and iterator work. `ext.lexical.number.separator` and
+`ext.lexical.number.exponent` are also spelled for the iteration bounds:
+the former parts long figures with underscores, the latter reads the
+power of ten whole instead of leaving its letter as another name.
+
+- `ext.lexical.string.prefix.bytes`: a prefix adjoining a quoted run
+  marks bytes. `ext.lexical.string.bytes.unready` gives the complaint
+  raised on reaching that value; the ordinary text value is not given
+  in its stead. Adjacent byte runs are read together.
+
+A decorated class is read with all its decorators and its body, and says
+`ext.stmt.class.unready` when reached. Chained assignments are also read
+through their last value and say `ext.system.scope.unready`; their shared
+bindings await the common tuple and binding work. The class grammar with
+base brackets requires both closing brackets and the unready complaint;
+the older class grammar keeps its member and constructor requirements.
+
+- `ext.lexical.number.point_edge`: a switch; the decimal point may
+  stand at either end of a numeral, as in `.5` or `1.`. Either spelling
+  makes a real, so a range bound written thus is still turned down by
+  `ext.builtin.range.non_integer` when the run reaches it.
+
+A member read may be followed by an index or a slice. The deferred scope
+reader keeps these attached to that member, including bounds which are
+member reads themselves, instead of beginning another array literal.
+This narrow reading uses `ext.system.scope.unready` alongside the common
+index and slice labels.
+
+An indexed collection-loop target uses the ordinary indexed assignment
+on each pass, with the item already at hand. Its brackets are read before
+the collection word, which cannot become part of the target. This is
+`ext.stmt.for.collection` with the common index labels; grouped targets
+remain deferred as stated above. A deferred context body discards its
+outgoing returns, breaks and continues together with its other work, so
+no later loop or routine tries to mend a jump that no longer stands.
+
+A routine containing `ext.stmt.yield` is marked while its own body is
+read. Until suspension is provided, calling it says `ext.stmt.yield.unrun`
+before any of its body runs, even when the yield lies in an unchosen arm.
+A yield within a nested routine marks that routine alone.
+
 ## The web
 
 A program may be run for a web request. The host gathers the request the
@@ -2476,6 +2572,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.string.amiss` | - | - | `invalid string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |

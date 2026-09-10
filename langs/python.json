@@ -532,6 +532,9 @@
   "ext.lexical.string.bytes.unavailable": [
     "bytes literals are not supported"
   ],
+  "ext.lexical.string.bytes.unready": [
+    "NotImplementedError: bytes values are not supported"
+  ],
   "ext.lexical.string.format.unavailable": [
     "this formatted value is not supported"
   ],

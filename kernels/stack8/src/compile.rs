@@ -2735,6 +2735,9 @@ impl<'a> Compiler<'a> {
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
                     self.put(w);
                 }
+                if !lang.comprehension_for.is_empty() {
+                    self.act(Action::ComprehensionItems, 1);
+                }
                 self.write(&bag);
                 return self.walk(&bag, None, &var, false, target);
             }
@@ -5073,6 +5076,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.take();
                 self.pipe_target(from)?;
+                if !lang.scope_unready.is_empty() { self.indexing(from)?; }
                 continue;
             }
             if lang.otherwise_mark.as_ref().map_or(false, |m| self.at_symbol(m)) {
@@ -5253,6 +5257,16 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         let native = self.lang.builtins.get(&name).copied();
+        if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace))
+            && !self.lang.scope_unready.is_empty()
+            && !matches!(&self.piece().instrs[left..], [Instr::Read(cell)] if !cell.moving) {
+            let call = self.lang.calling.clone().ok_or("A member call needs brackets")?;
+            self.want_sign(&call.open, "after the method name")?;
+            self.arguments(&call)?;
+            self.piece().instrs.truncate(left);
+            self.scope_fault(&self.lang.scope_unready.clone());
+            return Ok(());
+        }
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
             // arr.push(x): the piped value must be the array's name.
             let target = match &self.piece().instrs[left..] {
