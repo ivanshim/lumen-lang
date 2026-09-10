@@ -422,7 +422,7 @@ impl<'a> Engine<'a> {
     fn truth(&self, v: &Value) -> bool {
         match v {
             Value::Bond(shared) => self.truth(&shared.borrow()),
-            Value::Array(items) if self.lang.untrue_empty => !items.is_empty(),
+            Value::Array(items) | Value::Listed(items) | Value::Row(items) | Value::Bag(items) if self.lang.untrue_empty => !items.is_empty(),
             Value::Map(pairs) if self.lang.untrue_empty => !pairs.is_empty(),
             Value::Text(s) if self.lang.untrue_text.iter().any(|w| w == s.as_ref()) => false,
             other => other.is_true(),
@@ -1125,6 +1125,7 @@ impl<'a> Engine<'a> {
         let word = |list: &'a [String], fallback: &'a str| list.first().map_or(fallback, String::as_str);
         let nothing = if self.lang.null_silent { "" } else { word(&self.lang.null_words, "null") };
         Wording {
+            set_word: self.lang.iterator_words.get("ext.builtin.set").and_then(|w| w.first()).map(String::as_str).unwrap_or(""),
             true_word: word(&self.lang.true_words, "true"),
             false_word: word(&self.lang.false_words, "false"),
             null_word: nothing,
@@ -2057,7 +2058,12 @@ impl<'a> Engine<'a> {
         }
         if !self.cursor_word("ext.builtin.iter").is_empty() {
             match op {
-                Action::WalkFrom => { let source = self.drop_top()?; let cursor = self.cursor_from(&source)?; self.data.push(cursor); return Ok(()); }
+                Action::WalkFrom => {
+                    let source = self.drop_top()?;
+                    let mut cursor = self.cursor_from(&source)?;
+                    if !matches!(cursor, Value::Cursor(_)) { cursor = self.cursor_make(7, self.cursor_kind(&cursor), vec![cursor], Value::Null, Value::Null, BigInt::from(0)); }
+                    self.data.push(cursor); return Ok(());
+                }
                 Action::WalkMore => {
                     let pair = self.drop_many(2)?;
                     let next = self.cursor_next(&pair[0])?;
@@ -2435,7 +2441,7 @@ impl<'a> Engine<'a> {
                 let source = collection_contents(&self.drop_top()?);
                 let mut items = match source {
                     Value::Counted(_) | Value::Cursor(_) => self.comprehension_items(&source)?,
-                    Value::Array(items) | Value::Row(items) => items.as_ref().clone(),
+                    Value::Array(items) | Value::Listed(items) | Value::Row(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
                     _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
@@ -3136,7 +3142,7 @@ impl<'a> Engine<'a> {
             }
             Action::Extent => match self.drop_top()? {
                 Value::Counted(r) => Value::of_big(r.length()),
-                Value::Array(items) => Value::Small(items.len() as i64),
+                Value::Array(items) | Value::Listed(items) | Value::Row(items) | Value::Bag(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
                 // A language with a word for a warning is told a value
@@ -3258,6 +3264,7 @@ impl<'a> Engine<'a> {
                 for (key, worth) in entries.iter() { parts.push(format!("{}: {}", self.rem_repr(key)?, self.rem_repr(worth)?)); }
                 format!("{{{}}}", parts.join(", "))
             }
+            Value::Cursor(_) | Value::Row(_) | Value::Listed(_) | Value::Bag(_) | Value::View(_) => value.display(&self.wording()),
             Value::Real(real) => {
                 let mut text = value.display(&self.wording());
                 if !real.outside() && !text.contains(['.', 'e', 'E']) { text.push_str(".0"); }
@@ -3323,7 +3330,11 @@ impl<'a> Engine<'a> {
         Ok(out)
     }
 
-    fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+    fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if matches!(op, Action::Contains | Action::Lacks) && matches!(collection_contents(b), Value::Cursor(_)) {
+            let found = (|| -> Flow<bool> { while let Some(value) = self.cursor_next(b)? { if a.equals(&value) { return Ok(true); } } Ok(false) })();
+            return match found { Ok(found) => Ok(Value::Flag(found != matches!(op, Action::Lacks))), Err(Fault::Note(note)) => Err(note), Err(e) => { self.carried = Some(e); Err(String::new()) } };
+        }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4158,6 +4169,9 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if !self.cursor_word("ext.builtin.iter").is_empty() {
+            if !matches!(collection_contents(value), Value::Array(_) | Value::Listed(_) | Value::Row(_) | Value::Bag(_) | Value::Map(_) | Value::View(_) | Value::Counted(_) | Value::Text(_) | Value::Cursor(_) | Value::Object(_)) {
+                return Err(self.lang.collection_unwalkable.first().cloned().unwrap_or_default());
+            }
             let result = (|| -> Flow<Vec<Value>> {
                 let cursor = self.cursor_from(value)?;
                 let mut gathered = Vec::new();
@@ -4319,15 +4333,15 @@ impl<'a> Engine<'a> {
     /// Collections kept by a routine remain the same thing when read,
     /// passed on, or bound to another name.
     fn keep_collection(&self, held: Value) -> Value {
-        if self.lang.bind_names && matches!(held, Value::Array(_) | Value::Map(_)) {
+        if self.lang.bind_names && matches!(held, Value::Array(_) | Value::Listed(_) | Value::Map(_)) {
             Value::Bond(Rc::new(RefCell::new(held)))
         } else { held }
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
-        if matches!(builtin, Builtin::Iterate | Builtin::Next | Builtin::MapLazy | Builtin::FilterLazy | Builtin::ZipLazy | Builtin::EnumerateLazy | Builtin::ReverseLazy) {
+        if !self.cursor_word("ext.builtin.iter").is_empty() && matches!(builtin, Builtin::Any | Builtin::Sum) || matches!(builtin, Builtin::KeysView | Builtin::ValuesView | Builtin::ItemsView | Builtin::TupleLazy | Builtin::SetLazy | Builtin::SortedLazy | Builtin::AllLazy | Builtin::MinLazy | Builtin::MaxLazy | Builtin::DictLazy | Builtin::ReprLazy | Builtin::JoinLazy | Builtin::Iterate | Builtin::Next | Builtin::MapLazy | Builtin::FilterLazy | Builtin::ZipLazy | Builtin::EnumerateLazy | Builtin::ReverseLazy) {
             return match self.cursor_builtin(builtin, name, args) {
-                Ok(v) => Ok(v), Err(Fault::Note(words)) => Err(words), Err(other) => { self.carried = Some(other); Err(String::new()) }
+                Ok(v) => Ok(self.keep_collection(v)), Err(Fault::Note(words)) => Err(words), Err(other) => { self.carried = Some(other); Err(String::new()) }
             };
         }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
@@ -4365,7 +4379,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
-            Builtin::Iterate | Builtin::Next | Builtin::MapLazy | Builtin::FilterLazy | Builtin::ZipLazy | Builtin::EnumerateLazy | Builtin::ReverseLazy => unreachable!(),
+            Builtin::KeysView | Builtin::ValuesView | Builtin::ItemsView | Builtin::TupleLazy | Builtin::SetLazy | Builtin::SortedLazy | Builtin::AllLazy | Builtin::MinLazy | Builtin::MaxLazy | Builtin::DictLazy | Builtin::ReprLazy | Builtin::JoinLazy | Builtin::Iterate | Builtin::Next | Builtin::MapLazy | Builtin::FilterLazy | Builtin::ZipLazy | Builtin::EnumerateLazy | Builtin::ReverseLazy => unreachable!(),
             Builtin::Echo => {
                 arity(1)?;
                 let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
@@ -4879,7 +4893,8 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                Value::array(self.comprehension_items(&args[0])?)
+                let gathered = self.comprehension_items(&args[0])?;
+                if self.cursor_word("ext.builtin.iter").is_empty() { Value::array(gathered) } else { Value::Listed(Rc::new(gathered)) }
             }
             Builtin::Any => {
                 arity(1)?;
@@ -4963,7 +4978,7 @@ impl<'a> Engine<'a> {
                 match &args[0] {
                     Value::Cursor(_) => return Err(self.cursor_fault("ext.op.iterator.unsized", &args[0])),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Array(items) => Value::Small(items.len() as i64),
+                    Value::Array(items) | Value::Listed(items) | Value::Row(items) | Value::Bag(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),

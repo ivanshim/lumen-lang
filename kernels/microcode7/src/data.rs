@@ -124,6 +124,7 @@ impl Progression {
 #[derive(Clone)]
 pub enum PendingWalk {
     Places(Value, BigInt, bool),
+    Stepping(Value),
     Calls(Value, Value),
     Map(Value, Vec<Value>),
     Filter(Value, Value),
@@ -137,12 +138,16 @@ pub struct LazyWalk {
     pub title: String,
     pub finished: bool,
     pub saved: Option<Value>,
+    pub extent: Option<usize>,
 }
 
 #[derive(Clone)]
 pub enum Value {
     Lazy(Rc<RefCell<LazyWalk>>),
     Tuple(Rc<Vec<Value>>),
+    Set(Rc<Vec<Value>>),
+    List(Rc<Vec<Value>>),
+    Window(Rc<(Value, u8, String)>),
     Channel(u8),
     Progression(Rc<Progression>),
     Small(i64),
@@ -177,6 +182,18 @@ pub enum Value {
     Unset,
 }
 
+pub fn window_members(source: &Value, mode: u8) -> Vec<Value> {
+    match source {
+        Value::Shared(held) => window_members(&held.borrow(), mode),
+        Value::Dict(entries) => entries.iter().map(|pair| {
+            if mode == 0 { pair.0.clone() }
+            else if mode == 1 { pair.1.clone() }
+            else { Value::Tuple(Rc::new(vec![pair.0.clone(), pair.1.clone()])) }
+        }).collect(),
+        _ => vec![],
+    }
+}
+
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.bare())
@@ -185,6 +202,7 @@ impl std::fmt::Debug for Value {
 
 #[derive(Clone, Copy)]
 pub struct Names<'a> {
+    pub empty_set: &'a str,
     pub truth: &'a str,
     pub falsity: &'a str,
     pub nil: &'a str,
@@ -244,7 +262,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Tuple(_) | Value::Lazy(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::List(_) | Value::Window(_) | Value::Set(_) | Value::Tuple(_) | Value::Lazy(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
         })
     }
 
@@ -277,7 +295,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::List(_) | Value::Window(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -371,6 +389,28 @@ impl Value {
         }
     }
 
+    pub fn cited(&self, names: Names) -> String {
+        let (open, values, close) = match self {
+            Value::Shared(cell) => return cell.borrow().cited(names),
+            Value::Text(word) => {
+                let mut text = String::from("'");
+                for c in word.chars() {
+                    match c { '\\' => text.push_str("\\\\"), '\'' => text.push_str("\\'"), '\n' => text.push_str("\\n"), '\t' => text.push_str("\\t"), '\r' => text.push_str("\\r"), c => text.push(c) }
+                }
+                text.push('\'');
+                return text;
+            }
+            Value::Dict(pairs) => return format!("{{{}}}", pairs.iter().map(|(key, val)| format!("{}: {}", key.cited(names), val.cited(names))).collect::<Vec<_>>().join(", ")),
+            Value::Window(view) => return format!("{}({})", view.2, Value::Vector(Rc::new(window_members(&view.0, view.1))).cited(names)),
+            Value::Set(v) if v.is_empty() => return format!("{}()", names.empty_set),
+            Value::Set(v) => ("{", v, "}"),
+            Value::Tuple(v) => ("(", v, if v.len() == 1 { ",)" } else { ")" }),
+            Value::List(v) | Value::Vector(v) => ("[", v, "]"),
+            _ => return self.render(names),
+        };
+        format!("{}{}{}", open, values.iter().map(|x| x.cited(names)).collect::<Vec<_>>().join(", "), close)
+    }
+
     pub fn render(&self, w: Names) -> String {
         match self {
             // A cell that names share is written as what it holds.
@@ -380,22 +420,7 @@ impl Value {
             Value::Flag(true) => w.truth.to_string(),
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
-            Value::Tuple(parts) => {
-                let mut text = String::from("(");
-                for (position, part) in parts.iter().enumerate() {
-                    if position > 0 { text.push_str(", "); }
-                    if let Value::Text(chars) = part {
-                        text.push('\'');
-                        for c in chars.chars() {
-                            match c { '\\' => text.push_str("\\\\"), '\'' => text.push_str("\\'"), '\n' => text.push_str("\\n"), c => text.push(c) }
-                        }
-                        text.push('\'');
-                    } else { text.push_str(&part.render(w)); }
-                }
-                if parts.len() == 1 { text.push(','); }
-                text.push(')');
-                text
-            }
+            Value::List(_) | Value::Window(_) | Value::Tuple(_) | Value::Set(_) => self.cited(w),
             Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
             Value::Dict(entries) => {
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
@@ -519,6 +544,9 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::List(members) => format!("[{}]", members.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Window(view) => format!("{}({})", view.2, Value::Vector(Rc::new(window_members(&view.0, view.1))).bare()),
+            Value::Set(members) => format!("{{{}}}", members.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             Value::Tuple(parts) => format!("({}{})", parts.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if parts.len() == 1 { "," } else { "" }),
             Value::Lazy(held) => format!("<{} object at 0x1>", held.borrow().title),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",

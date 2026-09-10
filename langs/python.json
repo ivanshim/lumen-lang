@@ -1037,5 +1037,49 @@
   ],
   "ext.builtin.enumerate.start": [
     "start"
+  ],
+  "ext.builtin.tuple": [
+    "tuple"
+  ],
+  "ext.builtin.set": [
+    "set"
+  ],
+  "ext.builtin.sorted": [
+    "sorted"
+  ],
+  "ext.builtin.all": [
+    "all"
+  ],
+  "ext.builtin.min": [
+    "min"
+  ],
+  "ext.builtin.max": [
+    "max"
+  ],
+  "ext.builtin.dict": [
+    "dict"
+  ],
+  "ext.builtin.repr": [
+    "repr"
+  ],
+  "ext.builtin.join": [
+    "join"
+  ],
+  "ext.builtin.dict.keys": [
+    "keys"
+  ],
+  "ext.builtin.dict.values": [
+    "values"
+  ],
+  "ext.builtin.dict.items": [
+    "items"
+  ],
+  "ext.op.iterator.changed": [
+    "RuntimeError: dictionary changed size during iteration"
+  ],
+  "ext.op.iterator.views": [
+    "dict_keys",
+    "dict_values",
+    "dict_items"
   ]
 }

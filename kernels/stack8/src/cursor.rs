@@ -31,7 +31,14 @@ impl<'a> Engine<'a> {
         Self::named_fault(self.cursor_words(label), &self.cursor_kind(value))
     }
 
-    fn cursor_make(&self, way: u8, name: String, sources: Vec<Value>, function: Value, sentinel: Value, at: BigInt) -> Value {
+    fn cursor_make(&self, way: u8, name: String, sources: Vec<Value>, function: Value, mut sentinel: Value, at: BigInt) -> Value {
+        if way == 0 {
+            match sources.first().map(collection_contents) {
+                Some(Value::Map(m)) => sentinel = Value::Small(m.len() as i64),
+                Some(Value::View(v)) => sentinel = Value::Small(v.members().len() as i64),
+                _ => ()
+            }
+        }
         Value::Cursor(Rc::new(RefCell::new(crate::value::Cursor {
             way, name, sources, function, sentinel, at, ended: false, waiting: None,
         })))
@@ -63,10 +70,10 @@ impl<'a> Engine<'a> {
             return Err(self.cursor_fault("ext.op.iterator.unnextable", &given).into());
         }
         let kind = match &held {
-            Value::Array(_) | Value::Row(_) => 0,
+            Value::Array(_) | Value::Listed(_) | Value::Row(_) | Value::Bag(_) => 0,
             Value::Text(_) => 1,
             Value::Counted(_) => 2,
-            Value::Map(_) => 3,
+            Value::Map(_) | Value::View(_) => 3,
             Value::Object(o) if o.class.method(&self.cursor_word("ext.op.iterator.item")).is_some() => 4,
             _ => return Err(self.cursor_fault("ext.op.iterator.unwalkable", &held).into()),
         };
@@ -104,10 +111,15 @@ impl<'a> Engine<'a> {
                 if state.at < BigInt::from(0) { None } else {
                     let source = collection_contents(&state.sources[0]);
                     let at = state.at.to_usize();
+                    let size = match &source { Value::Map(pairs) => Some(pairs.len()), Value::View(view) => Some(view.members().len()), _ => None };
+                    if let (Some(size), Value::Small(was)) = (size, &state.sentinel) {
+                        if *was < 0 || size != *was as usize { cell.borrow_mut().sentinel = Value::Small(-1); return Err(self.cursor_word("ext.op.iterator.changed").into()); }
+                    }
                     let found = match &source {
-                        Value::Array(a) | Value::Row(a) => at.and_then(|n| a.get(n).cloned()),
+                        Value::Array(a) | Value::Listed(a) | Value::Row(a) | Value::Bag(a) => at.and_then(|n| a.get(n).cloned()),
                         Value::Map(m) => at.and_then(|n| m.get(n).map(|(k, _)| k.clone())),
                         Value::Text(t) => at.and_then(|n| t.chars().nth(n).map(|c| Value::text(&c.to_string()))),
+                        Value::View(view) => at.and_then(|n| view.members().get(n).cloned()),
                         Value::Counted(r) => r.at(state.at.clone()),
                         _ => match self.cursor_method(&source, "ext.op.iterator.item", vec![Value::of_big(state.at.clone())]) {
                             Ok(answer) => answer,
@@ -156,13 +168,89 @@ impl<'a> Engine<'a> {
                 None => None,
                 Some(v) => { cell.borrow_mut().at += 1; Some(Value::Row(Rc::new(vec![Value::of_big(state.at), v]))) }
             },
+            7 => self.cursor_next(&state.sources[0])?,
             _ => return Err(self.cursor_word("ext.op.iterator.unready").into()),
         };
         if answer.is_none() { cell.borrow_mut().ended = true; }
         Ok(answer)
     }
 
+    fn cursor_consume(&mut self, builtin: Builtin, args: &[Value]) -> Flow<Value> {
+        if builtin == Builtin::ReprLazy {
+            if args.len() != 1 { return Err(self.lang.call_amiss[0].clone().into()); }
+            return Ok(Value::text(&self.rem_repr(&args[0])?));
+        }
+
+        if args.is_empty() {
+            return match builtin {
+                Builtin::SetLazy => Ok(Value::Bag(Rc::new(Vec::new()))),
+                Builtin::TupleLazy => Ok(Value::Row(Rc::new(Vec::new()))),
+                Builtin::DictLazy => Ok(Value::Map(Rc::new(Vec::new()))),
+                _ => Err(self.lang.call_amiss[0].clone().into()),
+            };
+        }
+        if builtin == Builtin::DictLazy && args.len() == 1 && matches!(collection_contents(&args[0]), Value::Map(_)) { return Ok(collection_contents(&args[0])); }
+        let mut items = Vec::new();
+        let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
+        let source = if matches!(builtin, Builtin::MinLazy | Builtin::MaxLazy) && args.len() > 1 { Value::array(args.to_vec()) } else { args[0].clone() };
+        let cursor = self.cursor_from(&source)?;
+        while let Some(item) = self.cursor_next(&cursor)? {
+            if builtin == Builtin::Any && self.truth(&item) { return Ok(Value::Flag(true)); }
+            if builtin == Builtin::AllLazy && !self.truth(&item) { return Ok(Value::Flag(false)); }
+            if builtin == Builtin::Sum {
+                let number = |v: Value| match v { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
+                total = arith::calculate(Operation::Plus, &number(total), &number(item)).ok_or_else(|| self.lang.sum_non_number[0].clone())??;
+            } else { items.push(item); }
+        }
+        Ok(match builtin {
+            Builtin::Any => Value::Flag(false),
+            Builtin::AllLazy => Value::Flag(true),
+            Builtin::Sum => total,
+            Builtin::SetLazy => {
+                let mut unique = Vec::new();
+                for value in items {
+                    if matches!(collection_contents(&value), Value::Array(_) | Value::Listed(_) | Value::Map(_) | Value::Bag(_)) { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
+                    if !unique.iter().any(|prior: &Value| prior.equals(&value)) { unique.push(value); }
+                }
+                Value::Bag(Rc::new(unique))
+            }
+            Builtin::TupleLazy => Value::Row(Rc::new(items)),
+            Builtin::SortedLazy | Builtin::MinLazy | Builtin::MaxLazy => {
+                for place in 1..items.len() {
+                    let mut at = place;
+                    while at > 0 && self.dyadic(&Action::Lt, &items[at], &items[at - 1])?.is_true() { items.swap(at, at - 1); at -= 1; }
+                }
+                if builtin == Builtin::SortedLazy { Value::Listed(Rc::new(items)) }
+                else if items.is_empty() { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
+                else if builtin == Builtin::MinLazy { items.remove(0) } else { items.pop().unwrap() }
+            }
+            Builtin::JoinLazy => {
+                let Some(Value::Text(separator)) = args.get(1) else { return Err(self.cursor_word("ext.op.iterator.unready").into()) };
+                let text = items.iter().map(|v| match collection_contents(v) { Value::Text(s) => Ok(s.to_string()), _ => Err(self.cursor_word("ext.op.iterator.unready")) }).collect::<Result<Vec<_>, _>>()?;
+                Value::text(&text.join(separator))
+            }
+            Builtin::DictLazy => {
+                let mut pairs: Vec<(Value, Value)> = Vec::new();
+                for item in items {
+                    let part = self.comprehension_items(&item)?;
+                    if part.len() != 2 { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
+                    if let Some(place) = pairs.iter_mut().find(|(key, _)| key.equals(&part[0])) { place.1 = part[1].clone(); }
+                    else { pairs.push((part[0].clone(), part[1].clone())); }
+                }
+                Value::Map(Rc::new(pairs))
+            }
+            _ => return Err(self.cursor_word("ext.op.iterator.unready").into()),
+        })
+    }
+
     fn cursor_builtin(&mut self, builtin: Builtin, name: &str, args: &[Value]) -> Flow<Value> {
+        if matches!(builtin, Builtin::KeysView | Builtin::ValuesView | Builtin::ItemsView) {
+            let [source] = args else { return Err(self.lang.call_amiss[0].clone().into()) };
+            if !matches!(collection_contents(source), Value::Map(_)) { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
+            let which = if builtin == Builtin::KeysView { 0 } else if builtin == Builtin::ValuesView { 1 } else { 2 };
+            return Ok(Value::View(Rc::new(crate::value::View { source: source.clone(), which, name: self.cursor_words("ext.op.iterator.views")[which as usize].clone() })));
+        }
+        if matches!(builtin, Builtin::TupleLazy | Builtin::SetLazy | Builtin::SortedLazy | Builtin::AllLazy | Builtin::MinLazy | Builtin::MaxLazy | Builtin::DictLazy | Builtin::ReprLazy | Builtin::JoinLazy | Builtin::Any | Builtin::Sum) { return self.cursor_consume(builtin, args); }
         let amiss = || self.lang.call_amiss.first().cloned().unwrap_or_default();
         if builtin == Builtin::Next {
             if !(1..=2).contains(&args.len()) { return Err(amiss().into()); }
@@ -192,7 +280,7 @@ impl<'a> Engine<'a> {
             if let Some(answer) = self.cursor_method(&sources[0], "ext.op.iterator.reverse", Vec::new())? { return Ok(answer); }
             let source = collection_contents(&sources[0]);
             at = match &source {
-                Value::Array(a) | Value::Row(a) => BigInt::from(a.len()),
+                Value::Array(a) | Value::Listed(a) | Value::Row(a) => BigInt::from(a.len()),
                 Value::Text(s) => BigInt::from(s.chars().count()),
                 Value::Counted(r) => r.length(),
                 Value::Object(_) => self.cursor_method(&source, "ext.op.iterator.length", Vec::new())?.ok_or_else(|| self.cursor_word("ext.op.iterator.unready"))?.as_big()?,

@@ -28,8 +28,16 @@ impl<'a> Machine<'a> {
     }
 
     fn suspend(&self, title: String, work: crate::data::PendingWalk) -> Value {
+        let extent = match &work {
+            crate::data::PendingWalk::Places(source, _, _) => match collection_read(source) {
+                Value::Dict(pairs) => Some(pairs.len()),
+                Value::Window(view) => Some(crate::data::window_members(&view.0, view.1).len()),
+                _ => None,
+            },
+            _ => None,
+        };
         Value::Lazy(Rc::new(RefCell::new(crate::data::LazyWalk {
-            title, work, saved: None, finished: false,
+            title, work, saved: None, finished: false, extent,
         })))
     }
 
@@ -76,10 +84,10 @@ impl<'a> Machine<'a> {
             return if has_next { Ok(answer) } else { Err(self.no_walk("ext.op.iterator.unnextable", &answer).into()) };
         }
         let title_index = match &content {
-            Value::Vector(_) | Value::Tuple(_) => Some(0),
+            Value::Vector(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) => Some(0),
             Value::Text(_) => Some(1),
             Value::Progression(_) => Some(2),
-            Value::Dict(_) => Some(3),
+            Value::Dict(_) | Value::Window(_) => Some(3),
             Value::Thing(o) if o.of.program(&self.walk_word("ext.op.iterator.item")).is_some() => Some(4),
             _ => None,
         };
@@ -115,13 +123,24 @@ impl<'a> Machine<'a> {
         if let Some(saved) = shared.borrow_mut().saved.take() { return Ok(Some(saved)); }
         let work = shared.borrow().work.clone();
         let result = match work {
+            Stepping(object) => self.take_walk(&object)?,
             Places(sequence, index, backwards) => {
                 if index < BigInt::from(0) { None } else {
                     let plain = collection_read(&sequence);
+                    let length = match &plain {
+                        Value::Dict(pairs) => Some(pairs.len()),
+                        Value::Window(view) => Some(crate::data::window_members(&view.0, view.1).len()),
+                        _ => None,
+                    };
+                    if length != shared.borrow().extent {
+                        shared.borrow_mut().extent = Some(usize::MAX);
+                        return Err(self.walk_word("ext.op.iterator.changed").into());
+                    }
                     let found = match plain {
-                        Value::Vector(items) | Value::Tuple(items) => index.to_usize().and_then(|n| items.get(n).cloned()),
+                        Value::Vector(items) | Value::List(items) | Value::Tuple(items) | Value::Set(items) => index.to_usize().and_then(|n| items.get(n).cloned()),
                         Value::Dict(pairs) => index.to_usize().and_then(|n| pairs.get(n).map(|p| p.0.clone())),
                         Value::Text(text) => index.to_usize().and_then(|n| text.chars().nth(n)).map(|c| Value::text(&String::from(c))),
+                        Value::Window(view) => index.to_usize().and_then(|at| crate::data::window_members(&view.0, view.1).get(at).cloned()),
                         Value::Progression(p) => if index < p.count() { Some(Value::from_big(&p.first + &index * &p.stride)) } else { None },
                         object => match self.walk_message(&object, "ext.op.iterator.item", vec![Value::from_big(index.clone())]) {
                             Err(e) if self.end_of_walk(&e, true) => None,
@@ -182,8 +201,100 @@ impl<'a> Machine<'a> {
         Ok(result)
     }
 
+    fn finish_walk(&mut self, operation: Prim, supplied: &[Value]) -> Res<Value> {
+        if operation == Prim::Represented {
+            return match supplied { [value] => Ok(Value::text(&self.quoted_remainder(value)?)), _ => Err(self.argument_fault("ext.syntax.call.amiss", None).into()) };
+        }
+
+        if supplied.is_empty() {
+            return match operation {
+                Prim::Unique => Ok(Value::Set(Rc::new(vec![]))),
+                Prim::Tupled => Ok(Value::Tuple(Rc::new(vec![]))),
+                Prim::Dictionary => Ok(Value::Dict(Rc::new(vec![]))),
+                _ => Err(self.argument_fault("ext.syntax.call.amiss", None).into()),
+            };
+        }
+        if operation == Prim::Dictionary && supplied.len() == 1 {
+            if let Value::Dict(_) = collection_read(&supplied[0]) { return Ok(collection_read(&supplied[0])); }
+        }
+        let many = matches!(operation, Prim::Least | Prim::Greatest) && supplied.len() > 1;
+        let argument = if many { Value::Vector(Rc::new(supplied.to_vec())) } else { supplied[0].clone() };
+        let iterator = self.start_walk(&argument)?;
+        let mut contents = vec![];
+        let mut sum = supplied.get(1).cloned().unwrap_or(Value::Small(0));
+        loop {
+            let Some(member) = self.take_walk(&iterator)? else { break };
+            match operation {
+                Prim::SomeTrue if self.stands_true(&member) => return Ok(Value::Flag(true)),
+                Prim::EveryTrue if !self.stands_true(&member) => return Ok(Value::Flag(false)),
+                Prim::Total => {
+                    let numeric = |x: Value| if let Value::Flag(yes) = x { Value::Small(yes as i64) } else { x };
+                    sum = math::compute(Calc::Plus, &numeric(sum), &numeric(member)).ok_or_else(|| self.walk_word("ext.builtin.sum.non_number"))??;
+                }
+                _ => contents.push(member),
+            }
+        }
+        match operation {
+            Prim::Total => Ok(sum),
+            Prim::SomeTrue => Ok(Value::Flag(false)),
+            Prim::EveryTrue => Ok(Value::Flag(true)),
+            Prim::Unique => {
+                let mut seen: Vec<Value> = Vec::new();
+                for member in contents {
+                    if matches!(collection_read(&member), Value::Vector(_) | Value::List(_) | Value::Dict(_) | Value::Set(_)) { return Err(self.walk_word("ext.op.iterator.unready").into()); }
+                    if seen.iter().all(|prior| !prior.equals(&member)) { seen.push(member); }
+                }
+                Ok(Value::Set(Rc::new(seen)))
+            }
+            Prim::Tupled => Ok(Value::Tuple(Rc::new(contents))),
+            Prim::Ordered | Prim::Least | Prim::Greatest => {
+                let mut ordered = Vec::new();
+                for value in contents {
+                    let mut position = ordered.len();
+                    for (at, prior) in ordered.iter().enumerate() {
+                        if below(&value, prior)? { position = at; break; }
+                    }
+                    ordered.insert(position, value);
+                }
+                match operation {
+                    Prim::Ordered => Ok(Value::List(Rc::new(ordered))),
+                    Prim::Least if !ordered.is_empty() => Ok(ordered.remove(0)),
+                    Prim::Greatest if !ordered.is_empty() => Ok(ordered.pop().unwrap()),
+                    _ => Err(self.walk_word("ext.op.iterator.unready").into()),
+                }
+            }
+            Prim::JoinedWalk => {
+                let delimiter = supplied.get(1).map(collection_read);
+                let Some(Value::Text(delimiter)) = delimiter else { return Err(self.walk_word("ext.op.iterator.unready").into()) };
+                let mut words = Vec::new();
+                for value in contents {
+                    if let Value::Text(word) = collection_read(&value) { words.push(word.to_string()); }
+                    else { return Err(self.walk_word("ext.op.iterator.unready").into()); }
+                }
+                Ok(Value::text(&words.join(&delimiter)))
+            }
+            Prim::Dictionary => {
+                let mut associations: Vec<(Value, Value)> = Vec::new();
+                for row in contents {
+                    let pair = self.gathered_members(&row)?;
+                    if pair.len() != 2 { return Err(self.walk_word("ext.op.iterator.unready").into()); }
+                    if let Some(at) = associations.iter().position(|(key, _)| key.equals(&pair[0])) { associations[at].1 = pair[1].clone(); }
+                    else { associations.push((pair[0].clone(), pair[1].clone())); }
+                }
+                Ok(Value::Dict(Rc::new(associations)))
+            }
+            _ => Err(self.walk_word("ext.op.iterator.unready").into()),
+        }
+    }
+
     fn lazy_primitive(&mut self, op: Prim, written: &str, values: &[Value]) -> Res<Value> {
         use crate::data::PendingWalk;
+        if matches!(op, Prim::KeyWindow | Prim::ValueWindow | Prim::PairWindow) {
+            if values.len() != 1 || !matches!(collection_read(&values[0]), Value::Dict(_)) { return Err(self.walk_word("ext.op.iterator.unready").into()); }
+            let mode = match op { Prim::KeyWindow => 0, Prim::ValueWindow => 1, _ => 2 };
+            return Ok(Value::Window(Rc::new((values[0].clone(), mode, self.table.strings("ext.op.iterator.views")[mode as usize].clone()))));
+        }
+        if matches!(op, Prim::Tupled | Prim::Unique | Prim::Ordered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Dictionary | Prim::Represented | Prim::JoinedWalk | Prim::SomeTrue | Prim::Total) { return self.finish_walk(op, values); }
         let wrong = self.argument_fault("ext.syntax.call.amiss", None);
         let title = written.to_owned();
         match op {
@@ -217,7 +328,7 @@ impl<'a> Machine<'a> {
             Prim::Reversed if values.len() == 1 => {
                 if let Some(custom) = self.walk_message(&values[0], "ext.op.iterator.reverse", vec![])? { return Ok(custom); }
                 let size = match collection_read(&values[0]) {
-                    Value::Vector(v) | Value::Tuple(v) => BigInt::from(v.len()),
+                    Value::Vector(v) | Value::List(v) | Value::Tuple(v) => BigInt::from(v.len()),
                     Value::Text(t) => BigInt::from(t.chars().count()),
                     Value::Progression(r) => r.count(),
                     object => self.walk_message(&object, "ext.op.iterator.length", vec![])?.ok_or_else(|| self.walk_word("ext.op.iterator.unready"))?.as_big()?,

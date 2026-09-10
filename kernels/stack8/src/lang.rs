@@ -826,6 +826,10 @@ b system.flag.counts
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
 const EXT_LABELS: &str = "
+w ext.builtin.dict.keys | w ext.builtin.dict.values | w ext.builtin.dict.items | w ext.op.iterator.changed | w ext.op.iterator.views
+
+w ext.builtin.tuple | w ext.builtin.set | w ext.builtin.sorted | w ext.builtin.all | w ext.builtin.min | w ext.builtin.max | w ext.builtin.dict | w ext.builtin.repr | w ext.builtin.join
+
 w ext.builtin.iter | w ext.builtin.next | w ext.builtin.map | w ext.builtin.filter | w ext.builtin.zip | w ext.builtin.enumerate | w ext.builtin.reversed | w ext.op.iterator.give | w ext.op.iterator.next | w ext.op.iterator.item | w ext.op.iterator.reverse | w ext.op.iterator.call | w ext.op.iterator.length | w ext.op.iterator.stop | w ext.op.iterator.end | w ext.op.iterator.unwalkable | w ext.op.iterator.unnextable | w ext.op.iterator.unsized | w ext.op.iterator.unready | w ext.op.iterator.kind | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long | w ext.builtin.enumerate.start
 
 w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point
@@ -1336,7 +1340,7 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
-            ("ext.builtin.iter", Builtin::Iterate), ("ext.builtin.next", Builtin::Next), ("ext.builtin.map", Builtin::MapLazy), ("ext.builtin.filter", Builtin::FilterLazy), ("ext.builtin.zip", Builtin::ZipLazy), ("ext.builtin.enumerate", Builtin::EnumerateLazy), ("ext.builtin.reversed", Builtin::ReverseLazy), ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
+            ("ext.builtin.iter", Builtin::Iterate), ("ext.builtin.next", Builtin::Next), ("ext.builtin.map", Builtin::MapLazy), ("ext.builtin.filter", Builtin::FilterLazy), ("ext.builtin.zip", Builtin::ZipLazy), ("ext.builtin.enumerate", Builtin::EnumerateLazy), ("ext.builtin.reversed", Builtin::ReverseLazy), ("ext.builtin.tuple", Builtin::TupleLazy), ("ext.builtin.set", Builtin::SetLazy), ("ext.builtin.sorted", Builtin::SortedLazy), ("ext.builtin.all", Builtin::AllLazy), ("ext.builtin.min", Builtin::MinLazy), ("ext.builtin.max", Builtin::MaxLazy), ("ext.builtin.dict", Builtin::DictLazy), ("ext.builtin.repr", Builtin::ReprLazy), ("ext.builtin.join", Builtin::JoinLazy), ("ext.builtin.dict.keys", Builtin::KeysView), ("ext.builtin.dict.values", Builtin::ValuesView), ("ext.builtin.dict.items", Builtin::ItemsView), ("ext.builtin.sum", Builtin::Sum), ("ext.builtin.list", Builtin::List), ("ext.builtin.any", Builtin::Any),
             ("builtin.emit", Builtin::Echo), ("builtin.print", Builtin::Say), ("builtin.write", Builtin::Out),
             ("builtin.len", Builtin::Length), ("builtin.char_at", Builtin::CharAtIndex), ("builtin.ord", Builtin::CodeOf),
             ("builtin.chr", Builtin::CharOf), ("builtin.typeof", Builtin::SortOf), ("builtin.error", Builtin::Raise),
@@ -1421,7 +1425,7 @@ impl Lang {
         prefix.push_str("Error");
 
         let mut lang = Lang {
-            iterator_words: ["ext.builtin.iter", "ext.builtin.next", "ext.builtin.map", "ext.builtin.filter", "ext.builtin.zip", "ext.builtin.enumerate", "ext.builtin.reversed", "ext.op.iterator.give", "ext.op.iterator.next", "ext.op.iterator.item", "ext.op.iterator.reverse", "ext.op.iterator.call", "ext.op.iterator.length", "ext.op.iterator.stop", "ext.op.iterator.end", "ext.op.iterator.unwalkable", "ext.op.iterator.unnextable", "ext.op.iterator.unsized", "ext.op.iterator.unready", "ext.op.iterator.kind", "ext.builtin.zip.strict", "ext.builtin.zip.short", "ext.builtin.zip.long", "ext.builtin.enumerate.start"].into_iter().map(|key| r.strings(key).map(|v| (key.to_string(), v))).collect::<Result<_, _>>()?,
+            iterator_words: ["ext.builtin.dict.keys", "ext.builtin.dict.values", "ext.builtin.dict.items", "ext.op.iterator.changed", "ext.op.iterator.views", "ext.builtin.tuple", "ext.builtin.set", "ext.builtin.sorted", "ext.builtin.all", "ext.builtin.min", "ext.builtin.max", "ext.builtin.dict", "ext.builtin.repr", "ext.builtin.join", "ext.builtin.iter", "ext.builtin.next", "ext.builtin.map", "ext.builtin.filter", "ext.builtin.zip", "ext.builtin.enumerate", "ext.builtin.reversed", "ext.op.iterator.give", "ext.op.iterator.next", "ext.op.iterator.item", "ext.op.iterator.reverse", "ext.op.iterator.call", "ext.op.iterator.length", "ext.op.iterator.stop", "ext.op.iterator.end", "ext.op.iterator.unwalkable", "ext.op.iterator.unnextable", "ext.op.iterator.unsized", "ext.op.iterator.unready", "ext.op.iterator.kind", "ext.builtin.zip.strict", "ext.builtin.zip.short", "ext.builtin.zip.long", "ext.builtin.enumerate.start"].into_iter().map(|key| r.strings(key).map(|v| (key.to_string(), v))).collect::<Result<_, _>>()?,
             ident: name,
             extensions: r.strings("extensions")?,
             banner: prefix,

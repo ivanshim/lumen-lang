@@ -36,6 +36,8 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    KeyWindow, ValueWindow, PairWindow,
+    Tupled, Unique, Ordered, EveryTrue, Least, Greatest, Dictionary, Represented, JoinedWalk,
     IteratorOf, TakeNext, Mapped, Filtered, Zipped, Enumerated, Reversed,
     /// A compound write may ask a real to retain its point.
     Pointed,

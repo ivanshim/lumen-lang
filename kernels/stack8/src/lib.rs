@@ -118,7 +118,7 @@ fn settle_brief(lang: &mut Lang, request: &[(String, String, String, bool)]) {
 fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     go_inner(lang, source, program_args, request).map_err(|e| {
         let words = &lang.call_builtin_amiss;
-        let own_words = ["ext.op.iterator.unwalkable", "ext.op.iterator.unnextable", "ext.op.iterator.unsized", "ext.builtin.zip.short", "ext.builtin.zip.long", "ext.op.iterator.unready", "ext.op.iterator.stop"].iter().any(|key| {
+        let own_words = ["ext.op.iterator.changed", "ext.op.iterator.unwalkable", "ext.op.iterator.unnextable", "ext.op.iterator.unsized", "ext.builtin.zip.short", "ext.builtin.zip.long", "ext.op.iterator.unready", "ext.op.iterator.stop"].iter().any(|key| {
             let Some(parts) = lang.iterator_words.get(*key) else { return false };
             match parts.as_slice() { [head, tail] => e.starts_with(head) && e.ends_with(tail), [whole] => &e == whole, _ => false }
         });

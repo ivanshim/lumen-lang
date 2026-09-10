@@ -130,9 +130,30 @@ pub struct Cursor {
 }
 
 #[derive(Debug, Clone)]
+pub struct View {
+    pub source: Value,
+    pub which: u8,
+    pub name: String,
+}
+
+impl View {
+    pub fn members(&self) -> Vec<Value> {
+        let mut source = self.source.clone();
+        while let Value::Bond(cell) = source { source = cell.borrow().clone(); }
+        let Value::Map(pairs) = source else { return Vec::new() };
+        pairs.iter().map(|(key, value)| match self.which {
+            0 => key.clone(), 1 => value.clone(), _ => Value::Row(Rc::new(vec![key.clone(), value.clone()])),
+        }).collect()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Value {
     Cursor(Rc<RefCell<Cursor>>),
     Row(Rc<Vec<Value>>),
+    Bag(Rc<Vec<Value>>),
+    Listed(Rc<Vec<Value>>),
+    View(Rc<View>),
     Stream(bool),
     Counted(Rc<Counted>),
     Small(i64),
@@ -172,6 +193,7 @@ pub enum Value {
 
 /// How a language spells the literal values when printing.
 pub struct Wording<'a> {
+    pub set_word: &'a str,
     pub true_word: &'a str,
     pub false_word: &'a str,
     pub null_word: &'a str,
@@ -273,7 +295,7 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Row(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Listed(_) | Value::Bag(_) | Value::View(_) | Value::Row(_) | Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -294,7 +316,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Row(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Listed(_) | Value::View(_) | Value::Bag(_) | Value::Row(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -373,6 +395,19 @@ impl Value {
 
     /// What print shows: the language's words for the literals, the
     /// machine's own form for the rest.
+    pub fn quoted(&self, words: &Wording) -> String {
+        match self {
+            Value::Bond(cell) => cell.borrow().quoted(words),
+            Value::Text(t) => format!("'{}'", t.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")),
+            Value::Array(items) | Value::Listed(items) => format!("[{}]", items.iter().map(|v| v.quoted(words)).collect::<Vec<_>>().join(", ")),
+            Value::Row(items) => format!("({}{})", items.iter().map(|v| v.quoted(words)).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
+            Value::Bag(items) => if items.is_empty() { format!("{}()", words.set_word) } else { format!("{{{}}}", items.iter().map(|v| v.quoted(words)).collect::<Vec<_>>().join(", ")) },
+            Value::Map(pairs) => format!("{{{}}}", pairs.iter().map(|(k, v)| format!("{}: {}", k.quoted(words), v.quoted(words))).collect::<Vec<_>>().join(", ")),
+            Value::View(view) => format!("{}({})", view.name, Value::array(view.members()).quoted(words)),
+            other => other.display(words),
+        }
+    }
+
     pub fn display(&self, sp: &Wording) -> String {
         match self {
             // A cell two names share is written as what it holds: the
@@ -387,13 +422,7 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
-            Value::Row(items) => {
-                let shown: Vec<String> = items.iter().map(|v| match v {
-                    Value::Text(s) => format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n")),
-                    _ => v.display(sp),
-                }).collect();
-                format!("({}{})", shown.join(", "), if items.len() == 1 { "," } else { "" })
-            }
+            Value::Listed(_) | Value::Bag(_) | Value::Row(_) | Value::View(_) => self.quoted(sp),
             Value::Array(items) => {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))
@@ -508,6 +537,9 @@ impl Value {
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
+            Value::Listed(items) => format!("[{}]", items.iter().map(Value::plain).collect::<Vec<_>>().join(", ")),
+            Value::View(view) => format!("{}({})", view.name, Value::array(view.members()).plain()),
+            Value::Bag(items) => format!("{{{}}}", items.iter().map(Value::plain).collect::<Vec<_>>().join(", ")),
             Value::Row(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
             Value::Cursor(c) => format!("<{} object at 0x1>", c.borrow().name),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }

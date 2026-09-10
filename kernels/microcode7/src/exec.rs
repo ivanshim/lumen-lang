@@ -404,7 +404,7 @@ impl<'a> Machine<'a> {
     fn stands_true(&self, v: &Value) -> bool {
         match v {
             Value::Shared(cell) => self.stands_true(&cell.borrow()),
-            Value::Vector(items) if self.hollow_is_false => !items.is_empty(),
+            Value::Vector(items) | Value::List(items) | Value::Tuple(items) | Value::Set(items) if self.hollow_is_false => !items.is_empty(),
             Value::Dict(pairs) if self.hollow_is_false => !pairs.is_empty(),
             Value::Text(s) => match self.false_words.iter().any(|w| w == s.as_ref()) {
                 true => false,
@@ -430,7 +430,11 @@ impl<'a> Machine<'a> {
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
         if self.table.has_any("ext.builtin.iter") {
             match op {
-                Prim::Walked => return self.start_walk(&v[0]),
+                Prim::Walked => {
+                    let walk = self.start_walk(&v[0])?;
+                    return if matches!(walk, Value::Lazy(_)) { Ok(walk) }
+                        else { Ok(self.suspend(self.walk_type(&walk), crate::data::PendingWalk::Stepping(walk))) };
+                }
                 Prim::MoreYet => {
                     let next = self.take_walk(&v[0])?;
                     let exists = next.is_some();
@@ -1033,6 +1037,7 @@ impl<'a> Machine<'a> {
                 }
                 return Ok(format!("{{{}}}", shown.join(", ")));
             }
+            Value::Lazy(_) | Value::Tuple(_) | Value::List(_) | Value::Window(_) | Value::Set(_) => return Ok(item.render(self.wording())),
             Value::Frac(n) if n.places.is_some() => {
                 let mut shown = item.render(self.wording());
                 if !n.past_numbers() && !shown.chars().any(|c| matches!(c, '.' | 'e' | 'E')) { shown += ".0"; }
@@ -1114,6 +1119,7 @@ impl<'a> Machine<'a> {
 
     fn wording(&self) -> Names<'a> {
         Names {
+            empty_set: self.table.single("ext.builtin.set").unwrap_or_default(),
             truth: self.table.single("literal.true").unwrap_or("true"),
             falsity: self.table.single("literal.false").unwrap_or("false"),
             flag_counted: self.table.flag("system.flag.counts"),
@@ -3509,7 +3515,7 @@ impl<'a> Machine<'a> {
 
     fn collection_cell(&self, value: Value) -> Value {
         match value {
-            Value::Vector(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
+            Value::Vector(_) | Value::List(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
                 Value::Shared(Rc::new(RefCell::new(value))),
             _ => value,
         }
@@ -3518,9 +3524,9 @@ impl<'a> Machine<'a> {
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
-        if matches!(op, Prim::IteratorOf | Prim::TakeNext | Prim::Mapped | Prim::Filtered | Prim::Zipped | Prim::Enumerated | Prim::Reversed) {
+        if self.table.has_any("ext.builtin.iter") && matches!(op, Prim::SomeTrue | Prim::Total) || matches!(op, Prim::KeyWindow | Prim::ValueWindow | Prim::PairWindow | Prim::Tupled | Prim::Unique | Prim::Ordered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Dictionary | Prim::Represented | Prim::JoinedWalk | Prim::IteratorOf | Prim::TakeNext | Prim::Mapped | Prim::Filtered | Prim::Zipped | Prim::Enumerated | Prim::Reversed) {
             return match self.lazy_primitive(op, name, v) {
-                Ok(answer) => Ok(answer),
+                Ok(answer) => Ok(self.collection_cell(answer)),
                 Err(Escape::Error(words)) => Err(words),
                 Err(away) => { self.got_away = Some(away); Err(String::new()) }
             };
@@ -3629,7 +3635,7 @@ impl<'a> Machine<'a> {
             },
             Prim::Partition(wanted, star) => {
                 let mut values: Vec<Value> = match &v[0] {
-                    Value::Progression(_) | Value::Lazy(_) | Value::Tuple(_) => self.gathered_members(&v[0])?,
+                    Value::Progression(_) | Value::Lazy(_) | Value::Tuple(_) | Value::List(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
                     Value::Vector(v) => v.to_vec(),
@@ -3720,7 +3726,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Progression(walk) => Value::from_big(walk.count()),
-                    Value::Vector(items) => Value::Small(items.len() as i64),
+                    Value::Vector(items) | Value::List(items) | Value::Tuple(items) | Value::Set(items) => Value::Small(items.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Thing(thing) => Value::Small(thing.holds.borrow().len() as i64),
                     // A language with a word for a warning hears that a
@@ -4635,6 +4641,14 @@ impl<'a> Machine<'a> {
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
+                if matches!(&v[1], Value::Lazy(_)) {
+                    loop {
+                        let taken = self.take_walk(&v[1]);
+                        let next = match taken { Ok(next) => next, Err(Escape::Error(words)) => return Err(words), Err(e) => { self.got_away = Some(e); return Err(String::new()); } };
+                        let Some(next) = next else { return Ok(Value::Flag(op == Prim::Absent)); };
+                        if v[0].equals(&next) { return Ok(Value::Flag(op == Prim::Contains)); }
+                    }
+                }
                 let present = match (&v[0], &v[1]) {
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
@@ -4911,11 +4925,11 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
-            Prim::IteratorOf | Prim::TakeNext | Prim::Mapped | Prim::Filtered | Prim::Zipped | Prim::Enumerated | Prim::Reversed => unreachable!(),
+            Prim::KeyWindow | Prim::ValueWindow | Prim::PairWindow | Prim::Tupled | Prim::Unique | Prim::Ordered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Dictionary | Prim::Represented | Prim::JoinedWalk | Prim::IteratorOf | Prim::TakeNext | Prim::Mapped | Prim::Filtered | Prim::Zipped | Prim::Enumerated | Prim::Reversed => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
-                    1 => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
+                    1 => { let members = Rc::new(self.gathered_members(&v[0])?); if self.table.has_any("ext.builtin.iter") { Value::List(members) } else { Value::Vector(members) } },
                     _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
                 }
             }
@@ -4999,7 +5013,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Vector(l) => Value::Small(l.len() as i64),
+                    Value::Vector(l) | Value::List(l) | Value::Tuple(l) | Value::Set(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
                     _ => return Err(format!("{}() requires a string or array argument", name)),
@@ -5399,6 +5413,10 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if self.table.has_any("ext.builtin.iter") {
+            let subject = collection_read(source);
+            if !matches!(subject, Value::Vector(_) | Value::List(_) | Value::Tuple(_) | Value::Set(_) | Value::Dict(_) | Value::Window(_) | Value::Progression(_) | Value::Text(_) | Value::Lazy(_) | Value::Thing(_)) {
+                return Err(self.walk_word("ext.syntax.collection.unwalkable"));
+            }
             let gathered = (|| -> Res<Vec<Value>> {
                 let iterator = self.start_walk(source)?;
                 let mut output = Vec::new();
