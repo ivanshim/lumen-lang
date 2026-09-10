@@ -416,6 +416,13 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Greatest,
+    Least,
+    Represent,
+    Backward,
+    Tuple,
+    Set,
+
     Sum,
     List,
     Any,

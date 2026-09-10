@@ -267,10 +267,29 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.range.value`: a switch making the range builtin a value
   with one, two or three whole-number arguments: end; start and end;
   start, end and step. Its bounds are kept, so its length, indexed places
-  and walks need no array made beforehand. A slice of it remains wanting.
-  `ext.builtin.range.zero`, `.integer` and `.index` give plain complaints
-  for a step of nought, a bound or index of the wrong kind, and a place
-  beyond the walk.
+  and walks need no array made beforehand. Slicing keeps another three
+  bounds; membership, equality, and sums reckon from them without a walk.
+  Calls of one or two bounds in a counted loop keep the counted body,
+  after the bounds have been checked once.
+  `ext.builtin.range.members` names start, stop, step, index and count,
+  in that order. The first three are read alone; the last two are bound
+  methods taking the value sought. `ext.builtin.range.zero` and `.index`
+  give the complaints for a step of nought and a place beyond the walk.
+  `.integer` gives either plain words or two pieces about the kind of a
+  bound; `.kinds` names real, text, nothing, array, range and other kinds,
+  in order. `.missing` puts a sought value between two pieces of its
+  complaint. `.length` refuses a length past the machine's signed width.
+  `.unready` refuses protocols and conversions whose running is wanting.
+- `ext.builtin.reversed` names a backward iterator over a range, keeping
+  only its remaining bounds. Taking its items consumes it, including a
+  loop stopped before the end. Other sources remain wanting.
+  `ext.builtin.repr` writes a range's representation; other kinds remain
+  wanting. `ext.builtin.max` and `.min` find a range's greatest and least
+  members without walking it; `.empty` on either gives the words for an
+  empty source. Their other call forms remain wanting.
+  `ext.builtin.tuple` and `ext.builtin.set` read the collection calls;
+  the former stops with `ext.op.tuple.unready`, the latter with
+  `ext.builtin.range.unready`, until these kinds have their own account.
 - `ext.builtin.write.operator`: a switch; the writer (`builtin.write`) is
   read the same way, as an operator and not as a call, so a bracket after
   it groups what follows rather than holding its argument. It takes the
@@ -897,10 +916,8 @@ only. The extension labels so far, all from PHP:
   replacing earlier ones. `ext.syntax.collection.unwalkable` gives
   the words for a value having no such members, and
   `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
-- `ext.builtin.range.value`: a switch; a call of the range builtin
-  yields an eager array from one, two or three whole-number bounds,
-  the last a nonzero step. Without it the range remains loop syntax.
-  `ext.builtin.list` gathers one collection into an array;
+- `ext.builtin.list` gathers one collection into an array, including a
+  range whose bounds were kept by `ext.builtin.range.value`;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.
   `ext.builtin.sum.non_number`, `ext.builtin.range.non_integer` and
@@ -2213,6 +2230,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
+| `ext.builtin.max.empty` | - | - | `ValueError: max() iterable argument is empty` | - | - | - | - | - | - | - |
+| `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
+| `ext.builtin.min.empty` | - | - | `ValueError: min() iterable argument is empty` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
@@ -2231,12 +2252,19 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
-| `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
+| `ext.builtin.range.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
+| `ext.builtin.range.kinds` | - | - | `float` `str` `NoneType` `list` `range` `object` | - | - | - | - | - | - | - |
+| `ext.builtin.range.length` | - | - | `OverflowError: Python int too large to convert to C ssize_t` | - | - | - | - | - | - | - |
+| `ext.builtin.range.members` | - | - | `start` `stop` `step` `index` `count` | - | - | - | - | - | - | - |
+| `ext.builtin.range.missing` | - | - | `ValueError: ` ` is not in range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
+| `ext.builtin.range.unready` | - | - | `NotImplementedError: this range operation is not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |
+| `ext.builtin.reversed` | - | - | `reversed` | - | - | - | - | - | - | - |
 | `ext.builtin.room.limit` | - | - | - | - | `__room_limit` | - | - | - | - | - |
 | `ext.builtin.room.most` | - | - | - | - | `__room_most` | - | - | - | - | - |
 | `ext.builtin.room.most.forget` | - | - | - | - | `__room_most_forget` | - | - | - | - | - |
@@ -2244,6 +2272,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
+| `ext.builtin.set` | - | - | `set` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
@@ -2259,6 +2288,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
 | `ext.builtin.var_dump` | - | - | - | - | `var_dump` | - | - | - | - | - |

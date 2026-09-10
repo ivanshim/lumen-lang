@@ -112,6 +112,20 @@ impl Progression {
         ((&self.limit - &self.first).abs() - BigInt::one()) / self.stride.abs() + BigInt::one()
     }
 
+    pub fn locate(&self, sought: &Value) -> Option<BigInt> {
+        let n = if let Value::Flag(truth) = sought { BigInt::from(*truth as u8) }
+        else {
+            let fraction = crate::math::ratio_of(sought)?;
+            if fraction.beneath == BigInt::zero() { return None; }
+            let (whole, remainder) = fraction.above.div_rem(&fraction.beneath);
+            if remainder != BigInt::zero() { return None; }
+            whole
+        };
+        let (place, spare) = (n - &self.first).div_rem(&self.stride);
+        if spare != BigInt::zero() || place < BigInt::zero() || place >= self.count() { None }
+        else { Some(place) }
+    }
+
     pub fn item(&self, position: &BigInt) -> Option<Value> {
         let count = self.count();
         let offset = if position < &BigInt::zero() { position + &count } else { position.clone() };
@@ -124,6 +138,8 @@ impl Progression {
 pub enum Value {
     Channel(u8),
     Progression(Rc<Progression>),
+    ProgressionMember { walk: Rc<Progression>, part: usize },
+    Retreat(Rc<RefCell<Progression>>),
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Ratio>),
@@ -223,7 +239,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) | Value::ProgressionMember { .. } | Value::Retreat(_) => return None,
         })
     }
 
@@ -260,7 +276,7 @@ impl Value {
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
-            Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Channel(_) | Value::Progression(_) | Value::ProgressionMember { .. } | Value::Retreat(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -487,6 +503,8 @@ impl Value {
                 let tail = if p.stride == BigInt::one() { String::new() } else { format!(", {}", p.stride) };
                 format!("{}({}, {}{})", p.word, p.first, p.limit, tail)
             }
+            Value::Retreat(_) => String::from("<range_iterator>"),
+            Value::ProgressionMember { .. } => String::from("<built-in method>"),
             Value::Ellipsis => String::from("Ellipsis"),
             Value::Small(n) => n.to_string(),
             Value::Huge(n) => n.to_string(),

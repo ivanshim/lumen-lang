@@ -992,7 +992,7 @@ impl<'a> Engine<'a> {
     }
 
     fn walkable(&mut self, held: &Value) -> Result<(), Fault> {
-        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_)) {
+        if matches!(held, Value::Array(_) | Value::Map(_) | Value::Object(_) | Value::Counted(_) | Value::Backward(_)) {
             return Ok(());
         }
         if !self.lang.warns_of_unwritten {
@@ -2326,6 +2326,12 @@ impl<'a> Engine<'a> {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
                 return match callee {
+                    Value::RangeMethod(r, part) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let result = self.range_method(&r, part, &args)?;
+                        self.data.push(result);
+                        Ok(())
+                    }
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -2481,6 +2487,15 @@ impl<'a> Engine<'a> {
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
                 match &pair[0] {
+                    Value::Backward(walk) => {
+                        if key { Value::Small(at as i64) } else {
+                            let mut r = walk.borrow_mut();
+                            let next = r.at(BigInt::from(0)).ok_or_else(|| self.lang.range_index[0].clone())?;
+                            let step = r.step.clone();
+                            r.start += step;
+                            next
+                        }
+                    }
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
                         r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
                     },
@@ -2610,12 +2625,14 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
+                    Value::Counted(_) => self.lang.range_members.iter().any(|word| word == name.as_ref()),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
                 Value::Flag(field || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             Action::Grab(name) => match self.drop_top()? {
+                Value::Counted(r) => self.range_member(&r, name)?,
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
                         Value::Routine(method.clone())
@@ -3082,6 +3099,10 @@ impl<'a> Engine<'a> {
                 let pair = self.drop_many(2)?;
                 match self.walk_asked(&pair[0], self.lang.walk_more.clone())? {
                     Some(answer) => Value::Flag(self.truth(&answer)),
+                    None if matches!(&pair[0], Value::Backward(_)) => {
+                        let Value::Backward(walk) = &pair[0] else { unreachable!() };
+                        Value::Flag(walk.borrow().length() > BigInt::from(0))
+                    }
                     None if matches!(&pair[0], Value::Counted(_)) => {
                         let Value::Counted(r) = &pair[0] else { unreachable!() };
                         Value::Flag(pair[1].as_big().map_or(false, |i| i >= BigInt::from(0) && i < r.length()))
@@ -3119,7 +3140,7 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::Extent => match self.drop_top()? {
-                Value::Counted(r) => Value::of_big(r.length()),
+                Value::Counted(r) => self.range_size(&r)?,
                 Value::Array(items) => Value::Small(items.len() as i64),
                 Value::Map(pairs) => Value::Small(pairs.len() as i64),
                 Value::Object(o) => Value::Small(o.fields.borrow().len() as i64),
@@ -3395,6 +3416,10 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
+                    Value::Counted(r) => {
+                        if matches!(a, Value::Object(_) | Value::Imaginary(..)) { return Err(self.lang.range_unready[0].clone()); }
+                        r.position(a).is_some()
+                    }
                     Value::Array(items) => items.iter().any(|v| a.equals(v)),
                     Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
                     Value::Text(haystack) => match a {
@@ -3946,13 +3971,81 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn range_integer_fault(&self, value: &Value) -> String {
+        let part = match value {
+            Value::Real(_) | Value::Frac(_) => 0, Value::Text(_) => 1,
+            Value::Null => 2, Value::Array(_) => 3, Value::Counted(_) => 4, _ => 5,
+        };
+        let before = self.lang.range_integer.first().cloned().unwrap_or_default();
+        match self.lang.range_integer.get(1) {
+            Some(after) => format!("{}{}{}", before, self.lang.range_kinds.get(part).map(String::as_str).unwrap_or_default(), after),
+            None => before,
+        }
+    }
+
+    fn range_size(&self, r: &crate::value::Counted) -> Res<Value> {
+        let length = r.length();
+        if length > BigInt::from(i64::MAX) { return Err(self.lang.range_length[0].clone()); }
+        Ok(Value::of_big(length))
+    }
+
+    fn range_member(&self, range: &Rc<crate::value::Counted>, name: &str) -> Res<Value> {
+        let part = self.lang.range_members.iter().position(|word| word == name);
+        Ok(match part {
+            Some(0) => Value::of_big(range.start.clone()),
+            Some(1) => Value::of_big(range.stop.clone()),
+            Some(2) => Value::of_big(range.step.clone()),
+            Some(n @ 3..=4) => Value::RangeMethod(range.clone(), n),
+            _ => return Err(self.lang.range_unready[0].clone()),
+        })
+    }
+
+    fn range_method(&self, r: &crate::value::Counted, part: usize, args: &[Value]) -> Res<Value> {
+        if args.len() != 1 { return Err(self.lang.call_amiss[0].clone()); }
+        if matches!(&args[0], Value::Object(_) | Value::Imaginary(..)) { return Err(self.lang.range_unready[0].clone()); }
+        let found = r.position(&args[0]);
+        if part == 4 { return Ok(Value::Small(i64::from(found.is_some()))); }
+        found.map(Value::of_big).ok_or_else(|| format!("{}{}{}", self.lang.range_missing[0], args[0].display(&self.wording()), self.lang.range_missing[1]))
+    }
+
+    fn range_slice(&self, r: &crate::value::Counted, bounds: &[Value; 3]) -> Res<Value> {
+        let integer = |v: &Value| -> Res<Option<BigInt>> {
+            match v {
+                Value::Null => Ok(None),
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => v.as_big().map(Some),
+                _ => Err(self.lang.slice_bounds.clone().unwrap_or_default()),
+            }
+        };
+        let step = integer(&bounds[2])?.unwrap_or_else(|| BigInt::from(1));
+        if step == BigInt::from(0) { return Err(self.lang.slice_zero.clone().unwrap_or_default()); }
+        let length = r.length();
+        let backward = step < BigInt::from(0);
+        let lower = BigInt::from(if backward { -1 } else { 0 });
+        let upper = if backward { &length - 1 } else { length.clone() };
+        let bound = |v: &Value, absent: &BigInt| -> Res<BigInt> {
+            Ok(match integer(v)? {
+                None => absent.clone(),
+                Some(mut n) => {
+                    if n < BigInt::from(0) { n += &length; }
+                    n.max(lower.clone()).min(upper.clone())
+                }
+            })
+        };
+        let start = bound(&bounds[0], if backward { &upper } else { &lower })?;
+        let stop = bound(&bounds[1], if backward { &lower } else { &upper })?;
+        Ok(Value::Counted(Rc::new(crate::value::Counted {
+            start: &r.start + &r.step * start, stop: &r.start + &r.step * stop,
+            step: &r.step * step, name: r.name.clone(),
+        })))
+    }
+
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Res<Value> {
         if let Value::Counted(r) = target {
-            if matches!(at, Value::Slice(_)) { return Err(self.lang.slice_unsupported.clone().unwrap_or_default()); }
+            if let Value::Slice(bounds) = at { return self.range_slice(r, bounds); }
             let index = match at {
                 Value::Small(n) => BigInt::from(*n), Value::Huge(n) => (**n).clone(),
                 Value::Flag(b) => BigInt::from(i64::from(*b)),
-                _ => return Err(self.lang.range_integer[0].clone()),
+                _ => return Err(self.range_integer_fault(at)),
             };
             return r.at(index).ok_or_else(|| self.lang.range_index[0].clone());
         }
@@ -4144,6 +4237,16 @@ impl<'a> Engine<'a> {
             Value::Array(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
+            Value::Backward(walk) => {
+                let mut held = walk.borrow_mut();
+                let mut items = Vec::new();
+                while let Some(value) = held.at(BigInt::from(0)) {
+                    items.push(value);
+                    let step = held.step.clone();
+                    held.start += step;
+                }
+                Ok(items)
+            }
             Value::Counted(range) => {
                 let mut items = Vec::new();
                 let mut next = range.start.clone();
@@ -4841,6 +4944,29 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
+            Builtin::Tuple => return Err(self.lang.tuple_unready[0].clone()),
+            Builtin::Set => return Err(self.lang.range_unready[0].clone()),
+            Builtin::Represent => {
+                arity(1)?;
+                if !matches!(&args[0], Value::Counted(_)) { return Err(self.lang.range_unready[0].clone()); }
+                Value::text(&args[0].plain())
+            }
+            Builtin::Backward => {
+                arity(1)?;
+                let Value::Counted(r) = &args[0] else { return Err(self.lang.range_unready[0].clone()); };
+                Value::Backward(Rc::new(RefCell::new(crate::value::Counted {
+                    start: &r.start + (r.length() - 1) * &r.step,
+                    stop: &r.start - &r.step, step: -&r.step, name: r.name.clone(),
+                })))
+            }
+            Builtin::Greatest | Builtin::Least => {
+                arity(1)?;
+                let Value::Counted(r) = &args[0] else { return Err(self.lang.range_unready[0].clone()); };
+                let high = matches!(builtin, Builtin::Greatest);
+                if r.length() == BigInt::from(0) { return Err(if high { &self.lang.max_empty[0] } else { &self.lang.min_empty[0] }.clone()); }
+                let last = high == (r.step > BigInt::from(0));
+                r.at(BigInt::from(if last { -1 } else { 0 })).expect("nonempty counted walk")
+            }
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -4854,6 +4980,11 @@ impl<'a> Engine<'a> {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
                 if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                if let Value::Counted(r) = &args[0] {
+                    let length = r.length();
+                    let sum = Value::of_big(&length * (&r.start * 2 + (&length - 1) * &r.step) / 2);
+                    return arith::calculate(Operation::Plus, &total, &sum).ok_or_else(|| self.lang.sum_non_number[0].clone())?;
+                }
                 for item in self.comprehension_items(&args[0])? {
                     let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
                     total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;
@@ -4868,7 +4999,7 @@ impl<'a> Engine<'a> {
                         Value::Small(n) => BigInt::from(*n),
                         Value::Huge(n) => (**n).clone(),
                         Value::Flag(b) => BigInt::from(i64::from(*b)),
-                        _ => return Err(self.lang.range_integer[0].clone()),
+                        _ => return Err(self.range_integer_fault(v)),
                     });
                 }
                 if bounds.len() == 1 { bounds.insert(0, BigInt::from(0)); }
@@ -4929,7 +5060,7 @@ impl<'a> Engine<'a> {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Array(items) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
-                    Value::Counted(r) => Value::of_big(r.length()),
+                    Value::Counted(r) => self.range_size(&r)?,
                     _ => return Err(format!("{}() requires a string or array argument", name)),
                 }
             }

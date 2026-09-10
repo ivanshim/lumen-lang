@@ -55,6 +55,14 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     markup_settled(&mut table, request);
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
+        let labelled = ["ext.builtin.range.index", "ext.builtin.range.integer",
+            "ext.builtin.range.missing", "ext.builtin.range.unready", "ext.builtin.range.length",
+            "ext.builtin.max.empty", "ext.builtin.min.empty"];
+        for label in labelled {
+            let wording = table.strings(label);
+            if (wording.len() == 1 && wording[0] == e)
+                || (wording.len() == 2 && e.starts_with(&wording[0]) && e.ends_with(&wording[1])) { return e; }
+        }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),

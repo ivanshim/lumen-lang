@@ -480,6 +480,10 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 match self.walk_asked(&v[0], self.table.single("ext.op.walk.more").map(str::to_string))? {
                     Some(answer) => Value::Flag(self.stands_true(&answer)),
+                    None if matches!(&v[0], Value::Retreat(_)) => {
+                        let Value::Retreat(walking) = &v[0] else { unreachable!() };
+                        Value::Flag(walking.borrow().count() != BigInt::from(0))
+                    }
                     None if matches!(&v[0], Value::Progression(_)) => {
                         let Value::Progression(walk) = &v[0] else { unreachable!() };
                         let count = walk.count();
@@ -539,7 +543,7 @@ impl<'a> Machine<'a> {
     /// a word for a warning is told so and walks it no times, instead of
     /// having the run stopped over it.
     fn can_be_walked(&mut self, x: &Value) -> Result<(), Escape> {
-        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_)) {
+        if matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Thing(_) | Value::Progression(_) | Value::Retreat(_)) {
             return Ok(());
         }
         if !self.complaint_words.iter().any(|(k, _)| *k == "warning") {
@@ -2168,6 +2172,10 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::ProgressionMember { walk, part } = &stands {
+                    let given = self.value_list(args, frame)?;
+                    return self.progression_asked(walk, *part, &given).map_err(Escape::from);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2728,6 +2736,10 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Value::ProgressionMember { walk, part } = &stands {
+                    let given = self.value_list(args, frame)?;
+                    return Ok(Next::Value(self.progression_asked(walk, *part, &given)?));
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -3651,6 +3663,14 @@ impl<'a> Machine<'a> {
                 let at = as_index(&v[1])?;
                 let wants_key = op == Prim::KeyAt;
                 match &v[0] {
+                    Value::Retreat(walking) => {
+                        if wants_key { Value::Small(at as i64) } else {
+                            let mut row = walking.borrow_mut();
+                            let item = row.item(&BigInt::from(0)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))?;
+                            row.first = &row.first + &row.stride;
+                            item
+                        }
+                    }
                     Value::Progression(walk) => {
                         if wants_key { Value::Small(at as i64) }
                         else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
@@ -3760,11 +3780,13 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
-                Value::Flag(own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                let counted = matches!(&v[0], Value::Progression(_)) && self.table.spells("ext.builtin.range.members", &word);
+                Value::Flag(counted || own || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
+                if let Value::Progression(walk) = &v[0] { return self.progression_part(walk, &called); }
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
                 }
@@ -4599,6 +4621,10 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
+                    (needle, Value::Progression(walk)) => {
+                        if matches!(needle, Value::Thing(_) | Value::Imaginary { .. }) { return Err(self.argument_fault("ext.builtin.range.unready", None)); }
+                        walk.locate(needle).is_some()
+                    }
                     (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -4873,6 +4899,34 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
+            Prim::AsTuple => return Err(self.argument_fault("ext.op.tuple.unready", None)),
+            Prim::AsSet => return Err(self.argument_fault("ext.builtin.range.unready", None)),
+            Prim::Representation => {
+                n(1)?;
+                match &v[0] {
+                    Value::Progression(_) => Value::text(&v[0].bare()),
+                    _ => return Err(self.argument_fault("ext.builtin.range.unready", None)),
+                }
+            }
+            Prim::Turned => {
+                n(1)?;
+                if let Value::Progression(row) = &v[0] {
+                    let turned = crate::data::Progression {
+                        first: &row.first + &row.stride * (row.count() - 1),
+                        stride: -&row.stride, limit: &row.first - &row.stride, word: row.word.clone(),
+                    };
+                    Value::Retreat(Rc::new(RefCell::new(turned)))
+                } else { return Err(self.argument_fault("ext.builtin.range.unready", None)); }
+            }
+            Prim::Highest | Prim::Lowest => {
+                n(1)?;
+                let high = op == Prim::Highest;
+                let Value::Progression(row) = &v[0] else { return Err(self.argument_fault("ext.builtin.range.unready", None)); };
+                let final_place = (row.stride > BigInt::from(0)) == high;
+                row.item(&BigInt::from(if final_place { -1 } else { 0 })).ok_or_else(|| {
+                    self.argument_fault(if high { "ext.builtin.max.empty" } else { "ext.builtin.min.empty" }, None)
+                })?
+            }
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -4887,6 +4941,13 @@ impl<'a> Machine<'a> {
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                if let Value::Progression(walk) = &v[0] {
+                    let count = walk.count();
+                    let value = Value::from_big((&walk.first * 2 + (&count - 1) * &walk.stride) * count / 2);
+                    let start = v.get(1).cloned().unwrap_or(Value::Small(0));
+                    let start = if let Value::Flag(b) = start { Value::Small(b as i64) } else { start };
+                    return math::compute(Calc::Plus, &start, &value).unwrap_or_else(|| Err(self.argument_fault("ext.builtin.sum.non_number", None)));
+                }
                 let members = self.gathered_members(&v[0])?;
                 let start = v.get(1).cloned().unwrap_or(Value::Small(0));
                 let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
@@ -4901,7 +4962,7 @@ impl<'a> Machine<'a> {
                     Value::Huge(big) => Ok((**big).clone()),
                     Value::Small(small) => Ok(BigInt::from(*small)),
                     Value::Flag(flag) => Ok(BigInt::from(if *flag { 1 } else { 0 })),
-                    _ => Err(self.argument_fault("ext.builtin.range.integer", None)),
+                    _ => Err(self.progression_fault(item)),
                 };
                 let (first, limit) = if v.len() == 1 { (BigInt::from(0), integer(&v[0])?) }
                     else { (integer(&v[0])?, integer(&v[1])?) };
@@ -4961,7 +5022,7 @@ impl<'a> Machine<'a> {
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
                     Value::Vector(l) => Value::Small(l.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
-                    Value::Progression(p) => Value::from_big(p.count()),
+                    Value::Progression(p) => self.progression_length(p)?,
                     _ => return Err(format!("{}() requires a string or array argument", name)),
                 }
             }
@@ -5161,12 +5222,75 @@ impl<'a> Machine<'a> {
         self.as_key(at)
     }
 
+    fn progression_fault(&self, worth: &Value) -> String {
+        let kind = match worth {
+            Value::Text(_) => 1, Value::Nil => 2, Value::Vector(_) => 3,
+            Value::Progression(_) => 4, Value::Frac(_) => 0, _ => 5,
+        };
+        let words = self.table.strings("ext.builtin.range.kinds");
+        self.argument_fault("ext.builtin.range.integer", words.get(kind).map(String::as_str))
+    }
+
+    fn progression_length(&self, walk: &crate::data::Progression) -> Result<Value, String> {
+        match walk.count().to_i64() {
+            Some(n) => Ok(Value::Small(n)),
+            None => Err(self.argument_fault("ext.builtin.range.length", None)),
+        }
+    }
+
+    fn progression_part(&self, walk: &Rc<crate::data::Progression>, word: &str) -> Result<Value, String> {
+        let parts = self.table.strings("ext.builtin.range.members");
+        let part = parts.iter().position(|p| p == word);
+        match part {
+            Some(3) | Some(4) => Ok(Value::ProgressionMember { walk: walk.clone(), part: part.unwrap() }),
+            Some(0) => Ok(Value::from_big(walk.first.clone())),
+            Some(1) => Ok(Value::from_big(walk.limit.clone())),
+            Some(2) => Ok(Value::from_big(walk.stride.clone())),
+            _ => Err(self.argument_fault("ext.builtin.range.unready", None)),
+        }
+    }
+
+    fn progression_asked(&self, walk: &crate::data::Progression, part: usize, given: &[Value]) -> Result<Value, String> {
+        if given.len() != 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
+        let item = &given[0];
+        if matches!(item, Value::Thing(_) | Value::Imaginary { .. }) { return Err(self.argument_fault("ext.builtin.range.unready", None)); }
+        match (part, walk.locate(item)) {
+            (4, answer) => Ok(Value::Small(answer.is_some() as i64)),
+            (_, Some(position)) => Ok(Value::from_big(position)),
+            (_, None) => Err(self.argument_fault("ext.builtin.range.missing", Some(&item.render(self.wording())))),
+        }
+    }
+
+    fn progression_slice(&self, walk: &crate::data::Progression, spans: &[Value]) -> Result<Value, String> {
+        let stride = self.span_number(&spans[2])?.unwrap_or_else(|| BigInt::from(1));
+        if stride == BigInt::from(0) { return Err(self.span_complaint("zero")); }
+        let size = walk.count();
+        let reverse = stride < BigInt::from(0);
+        let (floor, ceiling) = if reverse { (BigInt::from(-1), &size - 1) }
+            else { (BigInt::from(0), size.clone()) };
+        let mut edges = Vec::new();
+        for (i, value) in spans[..2].iter().enumerate() {
+            let absent = if (i == 0) == reverse { &ceiling } else { &floor };
+            let offset = match self.span_number(value)? {
+                None => absent.clone(),
+                Some(n) => {
+                    let shifted = if n < BigInt::from(0) { n + &size } else { n };
+                    if shifted < floor { floor.clone() } else if shifted > ceiling { ceiling.clone() } else { shifted }
+                }
+            };
+            edges.push(&walk.first + &walk.stride * offset);
+        }
+        Ok(Value::Progression(Rc::new(crate::data::Progression {
+            first: edges.remove(0), limit: edges.remove(0), stride: stride * &walk.stride, word: walk.word.clone(),
+        })))
+    }
+
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if let Value::Progression(walk) = target {
             match at {
                 Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
-                Value::Span(_) => return Err(self.span_complaint("unsupported")),
-                _ => return Err(self.argument_fault("ext.builtin.range.integer", None)),
+                Value::Span(bounds) => return self.progression_slice(walk, bounds),
+                _ => return Err(self.progression_fault(at)),
             }
         }
         // A place holding a cell that names share reads as whatever the
@@ -5362,6 +5486,15 @@ impl<'a> Machine<'a> {
             Value::Text(word) => word.chars().map(|letter| Value::text(&String::from(letter))).collect(),
             Value::Vector(values) => values.to_vec(),
             Value::Dict(entries) => entries.iter().map(|entry| entry.0.clone()).collect(),
+            Value::Retreat(cursor) => {
+                let mut row = cursor.borrow_mut();
+                let mut gathered = Vec::new();
+                while row.count() > BigInt::from(0) {
+                    gathered.push(Value::from_big(row.first.clone()));
+                    row.first = &row.first + &row.stride;
+                }
+                Ok(gathered)
+            }
             Value::Progression(walk) => {
                 let mut values = Vec::new();
                 let mut position = BigInt::from(0);

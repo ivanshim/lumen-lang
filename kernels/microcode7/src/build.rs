@@ -3297,6 +3297,21 @@ impl<'a> Builder<'a> {
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                if table.flag("ext.builtin.range.value") && place.is_none() {
+                    if let Form::Apply(Callee::Prim(Prim::Span, _), arguments) = &start {
+                        if (1..=2).contains(&arguments.len()) && !arguments.iter().any(|v| matches!(v, Form::Apply(Callee::Prim(Prim::Couple, _), _))) {
+                            let row = self.gensym("counted");
+                            let name = row.ident.to_string();
+                            let save = Form::Write(row, Box::new(start));
+                            let names = table.strings("ext.builtin.range.members");
+                            let first = prim_call(Prim::Of, vec![self.read(&name), constant(Value::text(&names[0]))]);
+                            let stop = prim_call(Prim::Of, vec![self.read(&name), constant(Value::text(&names[1]))]);
+                            self.address_to_write(&var);
+                            let body = self.count_loop(&var, first, stop, |reader| reader.body())?;
+                            return Ok(sequence(vec![save, body]));
+                        }
+                    }
+                }
                 self.address_to_write(&var);
                 return self.walk(start, None, var, None, place);
             }

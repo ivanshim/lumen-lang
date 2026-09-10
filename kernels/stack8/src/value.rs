@@ -109,6 +109,21 @@ impl Counted {
         else { (distance - 1) / self.step.abs() + 1 }
     }
 
+    pub fn position(&self, value: &Value) -> Option<BigInt> {
+        let whole = match value {
+            Value::Flag(b) => BigInt::from(i64::from(*b)),
+            other => {
+                let number = crate::arith::Exact::from_value(other)?;
+                if number.q.is_zero() || !(&number.p % &number.q).is_zero() { return None; }
+                number.p / number.q
+            }
+        };
+        let distance = whole - &self.start;
+        if !(&distance % &self.step).is_zero() { return None; }
+        let index = distance / &self.step;
+        (index >= BigInt::zero() && index < self.length()).then_some(index)
+    }
+
     pub fn at(&self, mut index: BigInt) -> Option<Value> {
         let length = self.length();
         if index.is_negative() { index += &length; }
@@ -120,6 +135,8 @@ impl Counted {
 pub enum Value {
     Stream(bool),
     Counted(Rc<Counted>),
+    RangeMethod(Rc<Counted>, usize),
+    Backward(Rc<RefCell<Counted>>),
     Small(i64),
     Huge(Rc<BigInt>),
     Frac(Rc<Frac>),
@@ -248,7 +265,7 @@ impl Value {
     pub fn is_true(&self) -> bool {
         match self {
             Value::Imaginary(n, _) => *n != 0.0,
-            Value::Stream(_) => true,
+            Value::Stream(_) | Value::RangeMethod(..) | Value::Backward(_) => true,
             Value::Counted(r) => !r.length().is_zero(),
             Value::Flag(b) => *b,
             Value::Small(n) => *n != 0,
@@ -283,7 +300,7 @@ impl Value {
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
-            Value::Stream(_) | Value::Counted(_) => Err("Cannot coerce this value to number".to_string()),
+            Value::Stream(_) | Value::Counted(_) | Value::RangeMethod(..) | Value::Backward(_) => Err("Cannot coerce this value to number".to_string()),
             Value::Ellipsis => Err("Ellipsis is not a number".to_string()),
             Value::Slice(_) => Err("Cannot coerce slice to number".to_string()),
             Value::SortOf(_) => Err("Cannot coerce kind meta-value to number".to_string()),
@@ -485,6 +502,8 @@ impl Value {
         match self {
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
+            Value::RangeMethod(..) => "<built-in method>".to_string(),
+            Value::Backward(_) => "<range_iterator>".to_string(),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
                 else { format!("{}({}, {}, {})", r.name, r.start, r.stop, r.step) },
             Value::Ellipsis => "Ellipsis".to_string(),

@@ -339,6 +339,18 @@
   "ext.builtin.list": [
     "list"
   ],
+  "ext.builtin.max": [
+    "max"
+  ],
+  "ext.builtin.max.empty": [
+    "ValueError: max() iterable argument is empty"
+  ],
+  "ext.builtin.min": [
+    "min"
+  ],
+  "ext.builtin.min.empty": [
+    "ValueError: min() iterable argument is empty"
+  ],
   "ext.builtin.print.end": [
     "end"
   ],
@@ -371,10 +383,36 @@
     "IndexError: range object index out of range"
   ],
   "ext.builtin.range.integer": [
-    "TypeError: range() arguments must be integers"
+    "TypeError: '",
+    "' object cannot be interpreted as an integer"
+  ],
+  "ext.builtin.range.kinds": [
+    "float",
+    "str",
+    "NoneType",
+    "list",
+    "range",
+    "object"
+  ],
+  "ext.builtin.range.length": [
+    "OverflowError: Python int too large to convert to C ssize_t"
+  ],
+  "ext.builtin.range.members": [
+    "start",
+    "stop",
+    "step",
+    "index",
+    "count"
+  ],
+  "ext.builtin.range.missing": [
+    "ValueError: ",
+    " is not in range"
   ],
   "ext.builtin.range.non_integer": [
     "TypeError: range needs whole-number bounds"
+  ],
+  "ext.builtin.range.unready": [
+    "NotImplementedError: this range operation is not supported"
   ],
   "ext.builtin.range.value": true,
   "ext.builtin.range.zero": [
@@ -383,6 +421,15 @@
   "ext.builtin.range.zero_start": true,
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
+  ],
+  "ext.builtin.repr": [
+    "repr"
+  ],
+  "ext.builtin.reversed": [
+    "reversed"
+  ],
+  "ext.builtin.set": [
+    "set"
   ],
   "ext.builtin.sum": [
     "sum"
@@ -417,6 +464,9 @@
   ],
   "ext.builtin.to_string.unready": [
     "NotImplementedError: str encoding and errors are not supported"
+  ],
+  "ext.builtin.tuple": [
+    "tuple"
   ],
   "ext.lexical.escape.byte": [
     "x"

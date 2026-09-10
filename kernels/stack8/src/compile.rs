@@ -2728,6 +2728,22 @@ impl<'a> Compiler<'a> {
                 if !lang.for_collections {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                if lang.range_value && target.is_none() {
+                    let words = &self.piece().instrs[from..];
+                    if matches!(words.last(), Some(Instr::Act(Action::Builtin(Builtin::Span, _), 1 | 2)))
+                        && !words.iter().any(|w| matches!(w, Instr::Act(Action::Tie, _))) {
+                        let bag = self.gensym("range");
+                        let bound = self.gensym("end");
+                        self.write(&bag);
+                        self.read(&bag);
+                        self.act(Action::Grab(lang.range_members[0].as_str().into()), 1);
+                        self.write(&var);
+                        self.read(&bag);
+                        self.act(Action::Grab(lang.range_members[1].as_str().into()), 1);
+                        self.write(&bound);
+                        return self.count_loop(&var, &bound, false);
+                    }
+                }
                 let bag = self.gensym("bag");
                 let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 for w in relocated(source, -(from as i64) + self.mark() as i64) {
