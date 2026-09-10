@@ -1450,6 +1450,11 @@ impl<'a> Engine<'a> {
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
     fn bind_call(&self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
+        // A full row of ordinary arguments already stands in order.
+        if args.len() == rules.len() && rules.iter().all(|rule| *rule < 2)
+            && args.iter().all(|v| !matches!(v, Value::Tie(_) | Value::Blank)) {
+            return Ok(args);
+        }
         let items = self.call_items(args)?;
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();

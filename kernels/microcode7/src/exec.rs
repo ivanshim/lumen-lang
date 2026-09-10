@@ -3345,6 +3345,9 @@ impl<'a> Machine<'a> {
     }
 
     fn fit_arguments(&self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
+        let ordinary_call = manners.iter().all(|how| matches!(how, 'b' | 'p'))
+            && !values.iter().any(|v| matches!(v, Value::Couple(_) | Value::Unset));
+        if ordinary_call && manners.len() == values.len() { return Ok(values); }
         let (positional, named) = self.open_arguments(values)?;
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
