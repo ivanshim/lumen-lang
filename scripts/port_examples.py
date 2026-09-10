@@ -1817,6 +1817,19 @@ def write_mirror(lang, d, files, reasons):
     for old in out.iterdir():
         if old.is_file():
             old.unlink()
+    # Modules stay apart from the mirror and are read only when wanted.
+    modules = out / "modules"
+    if modules.is_dir():
+        packed = []
+        for source in sorted(modules.rglob(f"*.{ext}")):
+            relative = source.relative_to(modules).as_posix()
+            name = relative[:-(len(ext) + 1)].replace("/", ".")
+            if name.endswith(".__init__"):
+                name = name[:-9]
+            packed.append(f'    ({json.dumps(name)}, include_str!({json.dumps(relative)})),\n')
+        (modules / "manifest.rs").write_text(
+            "// Modules kept as source until a program asks for them.\n"
+            "pub static MODULES: &[(&str, &str)] = &[\n" + "".join(packed) + "];\n", encoding="utf-8")
     # A language may carry hand-written source of its own under native/,
     # for what it has and Lumen has not: PHP's exception classes. The
     # porter never writes there; it only puts those files first.

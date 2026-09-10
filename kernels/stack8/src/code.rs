@@ -172,6 +172,8 @@ pub enum Action {
     Adorn(u8),
     ContextEnter,
     SettleObjects,
+    Import(String, Option<String>, bool),
+    ImportAll,
     Add,
     /// A step onward or back (`++`, `--`), which is adding or taking
     /// away one save where a language steps text along its letters.
@@ -458,6 +460,13 @@ pub enum Builtin {
     SetSorted,
 
     Format,
+    DeriveClass,
+    CallOutcome,
+    CopyValue,
+    ModuleLoad,
+    MemberSet,
+    MemberGet,
+    ProgramNamespace,
     Sum,
     List,
     Any,

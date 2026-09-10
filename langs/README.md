@@ -2497,11 +2497,59 @@ only. The extension labels so far, all from PHP:
   its alias. Relative paths may begin with one dot or more, and the
   wanted names may stand in parentheses over several lines, with a
   trailing comma. The multiplication sign asks for all names and binds
-  none. For now an import names what is wanted and gets nothing: every
-  name it binds holds null in the current scope, so that reading can
-  go on to the constructs that matter. The kernels carry no modules;
-  a later stage will give the names something. An import named by the
-  lexical prologue is read too where these words are spelled.
+  the public names of the module when values are carried. An import
+  named by the lexical prologue is read too where these words are spelled.
+- `ext.stmt.with.enter` and `ext.stmt.with.leave`: the methods which
+  enter and leave a context. Where a manager has them, entry supplies
+  the bound value and leaving is guaranteed on an outward step or a
+  fault. The leaving method receives the fault's class, value and an
+  empty traceback; a true answer takes the fault. Managers without the
+  named methods retain the earlier binding-only form at this stage.
+- `ext.stmt.import.value`: a switch; imports fetch source the host has
+  kept under its module name, read it once in its own namespace, and
+  bind that namespace or the requested members. Without the switch the
+  old empty bindings remain. A dotted import binds its first component
+  unless given an alias. Imported routines retain their module's cells.
+- `ext.stmt.import.missing` and `ext.stmt.import.member.missing`: two
+  pieces of a complaint, surrounding the absent module or member name.
+  `ext.stmt.import.relative.unready` gives the words for a relative path
+  where the run has no package context to resolve it against.
+- `ext.builtin.math.floating`: a switch; results of the real-math
+  builtin retain floating-point spelling, including a decimal point on
+  a whole-valued result. Other exact reals retain their former spelling.
+- `ext.builtin.module.helper.amiss`: the complaint for unsuitable
+  arguments to namespace and class-making helpers. `ext.builtin.member.absent`
+  holds two pieces surrounding an attribute name which lookup cannot find.
+
+- `ext.builtin.class.derive`: a builtin making a fresh class from a name,
+  one parent class and a map of shared members. The new class inherits
+  its parent's methods. This lets a library make named records without
+  writing a class body afresh; the kernel chooses none of their names.
+
+- `ext.builtin.call.outcome`: a builtin calling the routine it is given
+  without arguments and returning three values: whether it returned, its
+  answer or raised value, and the complaint's text. A library can thus
+  count failures and errors itself. An ending of the run or exhaustion
+  of its allotted time or room is carried onward, never counted as a test.
+- `ext.builtin.module.load`: a builtin fetching the module named by its
+  text argument, through the same source store and cache as an import.
+- `ext.builtin.copy`: a builtin copying a value; its second argument says
+  whether to copy the things held within it too. Deep copies remember
+  objects already copied, so cycles and shared members keep their shape.
+- `ext.builtin.program.namespace`: a builtin handing out a map of the
+  outer program's names and their present values. A module's private
+  cells are not part of that map; it lets a library find the classes the
+  program has declared without teaching the kernel a test runner.
+- `ext.builtin.member.get` and `ext.builtin.member.set`: builtins reading
+  and writing a member by its name, the owner given first. The reader
+  may be given a third value for an absent member; the writer takes the
+  new value third. Methods read from an object retain their owner.
+- `ext.builtin.instance`: a builtin asking whether a value belongs to a
+  class, one of its descendants, or one of a list of classes. A kind
+  value asks for that kind instead.
+- `ext.system.module.cache`: two names, the module keeping the cache
+  and the member under which it keeps it. That member is refreshed as a
+  map of imported names to their namespaces whenever a load finishes.
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
@@ -3222,16 +3270,19 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
+| `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | - | - | `__calls` | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
-| `ext.builtin.class.methods` | - | - | - | - | `__class_methods` | - | - | - | - | - |
+| `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
+| `ext.builtin.class.methods` | - | - | `__class_methods` | - | `__class_methods` | - | - | - | - | - |
 | `ext.builtin.class.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.builtin.class.properties` | - | - | - | - | `__class_properties` | - | - | - | - | - |
 | `ext.builtin.classes` | - | - | - | - | `__classes_bound` | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | - | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
+| `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity` | - | - | `TypeError: ` `() received invalid arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.exact` | - | - | `TypeError: ` ` expected ` ` arguments, got ` | - | - | - | - | - | - | - |
 | `ext.builtin.core.arity.one` | - | - | `TypeError: ` `() takes exactly one argument (` ` given)` | - | - | - | - | - | - | - |
@@ -3289,6 +3340,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.include.demanded` | - | - | - | - | `require` `require_once` | - | - | - | - | - |
 | `ext.builtin.include.demanded.missing` | - | - | - | - | `Failed opening required '` `' (include_path='.')` | - | - | - | - | - |
 | `ext.builtin.include.once` | - | - | - | - | `include_once` `require_once` | - | - | - | - | - |
+| `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.iter` | - | - | `iter` | - | - | - | - | - | - | - |
@@ -3297,8 +3349,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.pair.amiss` | - | - | `ValueError: dictionary update sequence element must have length 2` | - | - | - | - | - | - | - |
-| `ext.builtin.math` | - | - | - | - | `__math` | - | - | - | - | - |
+| `ext.builtin.math` | - | - | `__math` | - | `__math` | - | - | - | - | - |
+| `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
+| `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_length` | - | - | `bit_length` | - | - | - | - | - | - | - |
@@ -3369,14 +3425,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.values` | - | - | `values` | - | - | - | - | - | - | - |
 | `ext.builtin.method.zfill` | - | - | `zfill` | - | - | - | - | - | - | - |
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
+| `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
 | `ext.builtin.oct` | - | - | `oct` | - | - | - | - | - | - | - |
 | `ext.builtin.output.begun` | - | - | - | - | `__output_begun` | - | - | - | - | - |
 | `ext.builtin.output.depth` | - | - | - | - | `__output_depth` | - | - | - | - | - |
-| `ext.builtin.output.drop` | - | - | - | - | `__output_drop` | - | - | - | - | - |
-| `ext.builtin.output.held` | - | - | - | - | `__output_held` | - | - | - | - | - |
-| `ext.builtin.output.hold` | - | - | - | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
+| `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
+| `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
 | `ext.builtin.pow` | - | - | `pow` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.pow.exp` | - | - | `exp` | - | - | - | - | - | - | - |
@@ -3394,6 +3452,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
@@ -3754,6 +3813,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import` | - | - | `import` | - | - | - | - | - | - | - |
 | `ext.stmt.import.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.import.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.import.member.missing` | - | - | `ImportError: cannot import name '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
+| `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.match` | - | - | `match` | - | - | - | - | - | - | - |
 | `ext.stmt.match.as` | - | - | `as` | - | - | - | - | - | - | - |
@@ -3790,6 +3853,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
+| `ext.stmt.with.enter` | - | - | `__enter__` | - | - | - | - | - | - | - |
+| `ext.stmt.with.leave` | - | - | `__exit__` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unrun` | - | - | `NotImplementedError: context managers cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
@@ -3822,7 +3887,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
-| `ext.system.args.list` | - | - | - | - | `$argv` | - | - | - | - | - |
+| `ext.system.args.list` | - | - | `__program_argv` | - | `$argv` | - | - | - | - | - |
 | `ext.system.class.folded` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.complaint.deprecated` | - | - | - | - | `Deprecated` | - | - | - | - | - |
 | `ext.system.complaint.fatal` | - | - | - | - | `Fatal error` | - | - | - | - | - |
@@ -3863,6 +3928,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.kind.loose` | - | - | - | - | `mixed` `callable` `iterable` `object` `self` `static` `parent` `void` `never` `false` `true` | - | - | - | - | - |
 | `ext.system.kind.object` | - | - | - | - | `object` | - | - | - | - | - |
 | `ext.system.kind.spelled` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.system.module.cache` | - | - | `sys` `modules` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |

@@ -1380,9 +1380,7 @@ impl<'a> Compiler<'a> {
                 let held = self.gensym("with");
                 self.write(&held);
                 self.bind_block_target(&held)?;
-            } else {
-                self.discard();
-            }
+            } else { self.discard(); }
             if !lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { break; }
             self.take();
             if bracketed && self.at_symbol(&group.close) { break; }
@@ -1634,6 +1632,7 @@ impl<'a> Compiler<'a> {
                 self.take();
             }
         }
+        let a_class = self.on_keyword(&lang.class_words) && lang.explicit_this;
         if self.on_keyword(&lang.async_words) { self.take(); }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
@@ -1653,7 +1652,7 @@ impl<'a> Compiler<'a> {
             name
         };
         for decorator in held.into_iter().rev() {
-            let bound = if lang.routines_outermost {
+            let bound = if lang.routines_outermost && !a_class {
                 Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
             } else {
                 self.cell_to_write(&name)
@@ -1682,29 +1681,31 @@ impl<'a> Compiler<'a> {
                 return Err(format!("Expected identifier in an import, got '{}'", word));
             }
         }
-        let first = parts[0].to_string();
+        let mut first = word.clone();
         if path {
             while self.on_any(&self.lang.pipe_words) {
                 self.take();
-                self.import_name(true)?;
+                first.push_str(divider.unwrap_or_default());
+                first.push_str(&self.import_name(true)?);
             }
         }
         Ok(first)
     }
 
-    /// Imports give their names places, but no module is carried yet.
+    /// Each import carries its path until the run asks for its namespace.
     fn import_stmt(&mut self) -> Res<()> {
         let lang = self.lang;
         let from = self.on_keyword(&lang.import_from_words);
         self.take();
+        let mut module = String::new();
         if from {
             let mut relative = false;
             while self.on_any(&lang.pipe_words) || self.on_any(&lang.slice_ellipsis) {
                 relative = true;
-                self.take();
+                module.push_str(&self.take().lexeme);
             }
             if !relative || !self.on_keyword(&lang.import_words) {
-                self.import_name(true)?;
+                module.push_str(&self.import_name(true)?);
             }
             if !self.on_keyword(&lang.import_words) {
                 return Err(format!("Expected '{}' after the module name, got '{}'", lang.import_words.first().map_or("", String::as_str), self.look().lexeme));
@@ -1718,14 +1719,22 @@ impl<'a> Compiler<'a> {
         let star = from && self.look().shape == Shape::Sign && lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
         if star && group.is_none() {
             self.take();
+            if lang.import_values {
+                self.act(Action::Import(module.clone(), None, false), 0);
+                self.act(Action::ImportAll, 1);
+            }
         } else {
             loop {
-                let mut bound = self.import_name(!from)?;
+                let original = self.import_name(!from)?;
+                let mut bound = original.split(lang.pipe_words.first().map_or(".", String::as_str)).next().unwrap_or(&original).to_string();
+                let aliased = self.on_keyword(&lang.import_as_words);
                 if self.on_keyword(&lang.import_as_words) {
                     self.take();
                     bound = self.import_name(false)?;
                 }
-                self.constant(Value::Null);
+                if lang.import_values {
+                    self.act(Action::Import(if from { module.clone() } else { original.clone() }, from.then_some(original), !from && !aliased), 0);
+                } else { self.constant(Value::Null); }
                 self.write(&bound);
                 let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
                 if !comma.map_or(false, |mark| self.at_symbol(mark)) {
@@ -6848,6 +6857,7 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value()?; }
         loop {
+            if !lang.lambda_words.is_empty() { self.called_on_value()?; }
             let member = lang.member_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             let scope = lang.scope_mark.as_ref().map_or(false, |m| self.at_symbol(m));
             if !member && !scope {

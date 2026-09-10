@@ -30,6 +30,10 @@ use std::process;
 
 mod web;
 
+mod embedded_modules {
+    include!("../langs/lib_python/modules/manifest.rs");
+}
+
 /// All the room the host takes is handed out through this, so that a
 /// program can be told how much of it the program itself has taken. An
 /// allocator is one thing for the whole process, and the kernels are
@@ -257,6 +261,9 @@ fn main() {
     // has only to bind it: the full kernels take it, the others do not
     // read the labels that name it.
     let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
+    for (name, source) in embedded_modules::MODULES {
+        request.push(("MODULE".to_string(), name.to_string(), source.to_string(), false));
+    }
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.
     let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));

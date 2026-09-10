@@ -27,6 +27,8 @@ pub struct Engine<'a> {
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
+    pub module_sources: HashMap<String, String>,
+    modules: HashMap<String, Value>,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -325,6 +327,8 @@ impl<'a> Engine<'a> {
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             reading_amiss: None,
+            module_sources: HashMap::new(),
+            modules: HashMap::new(),
             registry,
         }
     }
@@ -1503,9 +1507,11 @@ impl<'a> Engine<'a> {
                 return Ok(());
             }
         }
-        if let Value::Bond(shared) = &self.world[slot.far] {
-            *shared.borrow_mut() = v;
-            return Ok(());
+        if slot.near.is_empty() || !self.registry.idents[slot.far].starts_with("\0module:") {
+            if let Value::Bond(shared) = &self.world[slot.far] {
+                *shared.borrow_mut() = v;
+                return Ok(());
+            }
         }
         if matches!(self.world[slot.far], Value::Gap) {
             self.world[slot.far] = v;
@@ -3498,6 +3504,29 @@ impl<'a> Engine<'a> {
                 }
                 Value::Object(object)
             }
+            Action::Import(path, member, root) => {
+                let module = self.import_module(path)?;
+                if let Some(name) = member {
+                    self.import_member(&module, path, name)?
+                } else if *root {
+                    self.import_module(path.split('.').next().unwrap_or(path))?
+                } else { module }
+            }
+            Action::ImportAll => {
+                let module = self.drop_top()?;
+                if let Value::Object(object) = module {
+                    let fields = object.fields.borrow().clone();
+                    for (name, held) in fields {
+                        if name.starts_with('_') || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
+                        let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
+                        if matches!(value, Value::Blank) { continue; }
+                        let at = self.registry.slot(&name);
+                        self.world.resize(self.registry.idents.len(), Value::Blank);
+                        self.world[at] = value;
+                    }
+                }
+                Value::Null
+            }
             Action::HasMember(name) => {
                 let held = self.drop_top()?;
                 let class = match &held {
@@ -3693,7 +3722,10 @@ impl<'a> Engine<'a> {
                         }
                         let mut fields = o.fields.borrow_mut();
                         match taken {
-                            Some(at) => fields[at].1 = value,
+                            Some(at) => {
+                                if let Value::Bond(cell) = &fields[at].1 { *cell.borrow_mut() = value; }
+                                else { fields[at].1 = value; }
+                            },
                             None => fields.push((name.to_string(), value)),
                         }
                         Value::Null
@@ -4604,6 +4636,7 @@ impl<'a> Engine<'a> {
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
                     (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     _ if !a.identical(b) => false,
                     _ => return Err(self.lang.identity_unsupported.clone().unwrap_or_default()),
                 };
@@ -6134,6 +6167,93 @@ impl<'a> Engine<'a> {
             // The routine every complaint is to be handed to, or none.
             // What the run has bound under a name, by name: the
             // classes, and the routines.
+            Builtin::ModuleLoad => {
+                arity(1)?;
+                match self.import_module(&args[0].display(&sp)) {
+                    Ok(module) => module,
+                    Err(Fault::Note(words)) => return Err(words),
+                    Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
+                }
+            }
+            Builtin::DeriveClass => {
+                arity(3)?;
+                let (Value::Text(title), Value::Class(parent), Value::Map(entries)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(self.lang.module_helper_amiss.clone());
+                };
+                let mut shared = Vec::new();
+                for (key, value) in entries.iter() {
+                    let Value::Text(word) = key else { return Err(self.lang.module_helper_amiss.clone()); };
+                    shared.push((word.to_string(), value.clone()));
+                }
+                Value::Class(Rc::new(Class {
+                    name: title.to_string(), base: Some(parent.clone()), answers: Vec::new(),
+                    fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                    constants: Vec::new(), shared: RefCell::new(shared),
+                }))
+            }
+            Builtin::CopyValue => {
+                arity(2)?;
+                duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
+            }
+            Builtin::CallOutcome => {
+                arity(1)?;
+                let depth = self.data.len();
+                self.data.push(args[0].clone());
+                let result = self.perform(&Action::Invoke(Rc::from(name)), 1);
+                let answer = match result {
+                    Ok(()) => {
+                        let value = self.drop_top()?;
+                        Value::array(vec![Value::Flag(true), value, Value::text("")])
+                    }
+                    Err(Fault::Note(words)) => Value::array(vec![Value::Flag(false), Value::text(&words), Value::text(&words)]),
+                    Err(Fault::Thrown(value)) => {
+                        let message = value.display(&sp);
+                        Value::array(vec![Value::Flag(false), value, Value::text(&message)])
+                    }
+                    Err(fault) => { self.data.truncate(depth); self.carried = Some(fault); return Err("the call stopped the run".into()); }
+                };
+                self.data.truncate(depth);
+                answer
+            }
+            Builtin::ProgramNamespace => {
+                arity(0)?;
+                Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
+                    if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }
+                    else { Some((Value::text(name), value.clone())) }
+                }).collect()))
+            }
+            Builtin::MemberGet => {
+                if args.len() != 2 && args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                let name = args[1].display(&sp);
+                let value = &args[0];
+                let class = match value { Value::Object(o) => Some(&o.class), Value::Class(c) => Some(c), _ => None };
+                let field = match value {
+                    Value::Object(o) => o.fields.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| v.clone()),
+                    _ => None,
+                };
+                let found = field.or_else(|| class.and_then(|c| {
+                    if let Some(holder) = c.holder(&name) { return holder.shared.borrow().iter().find(|(n, _)| n == &name).map(|(_, v)| v.clone()); }
+                    c.constant(&name).cloned().or_else(|| c.method(&name).map(|m| match value {
+                        Value::Object(o) => Value::Method(o.clone(), m.clone()), _ => Value::Routine(m.clone()),
+                    }))
+                }));
+                match found.or_else(|| args.get(2).cloned()) {
+                    Some(Value::Bond(cell)) => cell.borrow().clone(),
+                    Some(v) => v,
+                    None => return Err(Self::named_fault(&self.lang.member_absent, &name)),
+                }
+            }
+            Builtin::MemberSet => {
+                arity(3)?;
+                let name = args[1].display(&sp);
+                let value = args[2].clone();
+                let fields = match &args[0] { Value::Object(o) => &o.fields, Value::Class(c) => &c.shared, _ => return Err(self.lang.module_helper_amiss.clone()) };
+                let mut fields = fields.borrow_mut();
+                if let Some((_, old)) = fields.iter_mut().find(|(n, _)| n == &name) {
+                    if let Value::Bond(cell) = old { *cell.borrow_mut() = value; } else { *old = value; }
+                } else { fields.push((name, value)); }
+                Value::Null
+            }
             Builtin::ClassesBound | Builtin::RoutinesBound => {
                 arity(0)?;
                 let wanted = |v: &Value| match builtin {
@@ -6271,7 +6391,9 @@ impl<'a> Engine<'a> {
                     "fdiv" => x / y,
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 };
-                crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES))
+                let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                value
             }
             Builtin::OutBegun => {
                 arity(0)?;
@@ -7795,5 +7917,111 @@ impl Engine<'_> {
             _ => unreachable!(),
         };
         Ok(result)
+    }
+}
+
+impl Engine<'_> {
+    /// A module owns cells in the same world, under names no source can
+    /// spell. Its routines keep those addresses after the reader returns.
+    fn import_module(&mut self, path: &str) -> Flow<Value> {
+        if path.starts_with('.') { return Err(self.lang.import_relative_unready.clone().into()); }
+        if let Some(held) = self.modules.get(path) { return Ok(held.clone()); }
+        let Some(source) = self.module_sources.get(path).cloned() else {
+            return Err(Self::named_fault(&self.lang.import_missing, path).into());
+        };
+        let parent = path.rsplit_once('.');
+        if let Some((above, _)) = parent { self.import_module(above)?; }
+        let mut local = crate::compile::Registry::default();
+        let offset = self.registry.idents.len();
+        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        let tokens = crate::layout::layout(crate::lex::lex(&source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?;
+        let program = crate::compile::compile(&tokens, self.lang, &mut local, 0)?;
+        let names: Vec<String> = local.idents[offset..].to_vec();
+        for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let mut fields = Vec::new();
+        for (index, name) in names.iter().enumerate() {
+            let initial = if self.lang.module_names.contains(name) { Value::text(path) }
+                else if let Some(value) = self.native_exceptions.get(name) { value.clone() }
+                else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
+            let shared = Value::Bond(Rc::new(RefCell::new(initial)));
+            self.world[offset + index] = shared.clone();
+            fields.push((name.clone(), shared));
+        }
+        for name in &self.lang.module_names {
+            if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }
+        }
+        self.made += 1;
+        let object = Rc::new(Instance {
+            class: Rc::new(Class { name: path.to_string(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) }),
+            fields: RefCell::new(fields), mark: self.made,
+        });
+        let module = Value::Object(object);
+        self.modules.insert(path.to_string(), module.clone());
+        let saved_depth = self.data.len();
+        let result = self.invoke(&program, Vec::new());
+        self.data.truncate(saved_depth);
+        if let Err(fault) = result { self.modules.remove(path); self.refresh_module_cache(); return Err(fault); }
+        if let Some((above, name)) = parent {
+            if let Some(Value::Object(parent)) = self.modules.get(above) {
+                let mut fields = parent.fields.borrow_mut();
+                match fields.iter_mut().find(|(word, _)| word == name) {
+                    Some((_, Value::Bond(place))) => *place.borrow_mut() = module.clone(),
+                    Some((_, place)) => *place = module.clone(),
+                    None => fields.push((name.to_string(), module.clone())),
+                }
+            }
+        }
+        self.refresh_module_cache();
+        Ok(module)
+    }
+
+    fn import_member(&mut self, module: &Value, path: &str, name: &str) -> Flow<Value> {
+        if let Value::Object(object) = module {
+            if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
+                let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
+                if !matches!(value, Value::Blank) { return Ok(value); }
+            }
+        }
+        let child = format!("{path}.{name}");
+        if self.module_sources.contains_key(&child) { return self.import_module(&child); }
+        Err(Self::named_fault(&self.lang.import_member_missing, name).into())
+    }
+}
+
+fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, made: &mut usize) -> Value {
+    match value {
+        Value::Object(object) => {
+            let address = Rc::as_ptr(object) as usize;
+            if deep {
+                if let Some(copy) = seen.get(&address) { return copy.clone(); }
+            }
+            *made += 1;
+            let copy = Rc::new(Instance { class: object.class.clone(), fields: RefCell::new(Vec::new()), mark: *made });
+            let result = Value::Object(copy.clone());
+            seen.insert(address, result.clone());
+            let fields = object.fields.borrow().iter().map(|(name, worth)| {
+                (name.clone(), if deep { duplicate_value(worth, true, seen, made) } else { worth.clone() })
+            }).collect();
+            *copy.fields.borrow_mut() = fields;
+            result
+        }
+        Value::Array(items) if deep => Value::array(items.iter().map(|v| duplicate_value(v, true, seen, made)).collect()),
+        Value::Map(items) if deep => Value::Map(Rc::new(items.iter().map(|(key, value)| (duplicate_value(key, true, seen, made), duplicate_value(value, true, seen, made))).collect())),
+        Value::Bond(cell) => duplicate_value(&cell.borrow(), deep, seen, made),
+        _ => value.clone(),
+    }
+}
+
+impl Engine<'_> {
+    fn refresh_module_cache(&self) {
+        let [owner, member] = self.lang.module_cache.as_slice() else { return };
+        let Some(Value::Object(module)) = self.modules.get(owner) else { return };
+        let values = self.modules.iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
+        let map = Value::Map(Rc::new(values));
+        let mut fields = module.fields.borrow_mut();
+        if let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) {
+            match place { Value::Bond(cell) => *cell.borrow_mut() = map, _ => *place = map }
+        }
     }
 }

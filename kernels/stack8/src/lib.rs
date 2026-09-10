@@ -125,7 +125,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
             if let Some(told) = e.strip_prefix('\0') { return told.to_string(); }
         }
         let words = &lang.call_builtin_amiss;
-        if crate::formatting::names_fault(lang, &e) { e }
+        if crate::formatting::names_fault(lang, &e) || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
         else if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
@@ -220,6 +220,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     };
 
     let mut machine = engine::Engine::new(lang, registry);
+    if lang.import_values {
+        machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
+    }
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
     }

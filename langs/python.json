@@ -349,11 +349,23 @@
   "ext.builtin.bool": [
     "bool"
   ],
+  "ext.builtin.call.outcome": [
+    "__call_outcome"
+  ],
   "ext.builtin.callable": [
     "callable"
   ],
+  "ext.builtin.class.derive": [
+    "__derive_class"
+  ],
+  "ext.builtin.class.methods": [
+    "__class_methods"
+  ],
   "ext.builtin.class.name": [
     "__name__"
+  ],
+  "ext.builtin.copy": [
+    "__copy_value"
   ],
   "ext.builtin.core.arity": [
     "TypeError: ",
@@ -523,6 +535,9 @@
   "ext.builtin.id": [
     "id"
   ],
+  "ext.builtin.instance": [
+    "isinstance"
+  ],
   "ext.builtin.isinstance": [
     "isinstance"
   ],
@@ -544,8 +559,22 @@
   "ext.builtin.map.pair.amiss": [
     "ValueError: dictionary update sequence element must have length 2"
   ],
+  "ext.builtin.math": [
+    "__math"
+  ],
+  "ext.builtin.math.floating": true,
   "ext.builtin.max": [
     "max"
+  ],
+  "ext.builtin.member.absent": [
+    "AttributeError: object has no attribute '",
+    "'"
+  ],
+  "ext.builtin.member.get": [
+    "getattr"
+  ],
+  "ext.builtin.member.set": [
+    "setattr"
   ],
   "ext.builtin.method.append": [
     "append"
@@ -757,11 +786,26 @@
   "ext.builtin.min": [
     "min"
   ],
+  "ext.builtin.module.helper.amiss": [
+    "TypeError: invalid module helper arguments"
+  ],
+  "ext.builtin.module.load": [
+    "__load_module"
+  ],
   "ext.builtin.next": [
     "next"
   ],
   "ext.builtin.oct": [
     "oct"
+  ],
+  "ext.builtin.output.drop": [
+    "__output_drop"
+  ],
+  "ext.builtin.output.held": [
+    "__output_held"
+  ],
+  "ext.builtin.output.hold": [
+    "__output_hold"
   ],
   "ext.builtin.pow": [
     "pow"
@@ -808,6 +852,9 @@
   ],
   "ext.builtin.print.separator": [
     "sep"
+  ],
+  "ext.builtin.program.namespace": [
+    "__program_namespace"
   ],
   "ext.builtin.range.index": [
     "IndexError: range object index out of range"
@@ -1608,6 +1655,18 @@
   "ext.stmt.import.from": [
     "from"
   ],
+  "ext.stmt.import.member.missing": [
+    "ImportError: cannot import name '",
+    "'"
+  ],
+  "ext.stmt.import.missing": [
+    "ModuleNotFoundError: No module named '",
+    "'"
+  ],
+  "ext.stmt.import.relative.unready": [
+    "NotImplementedError: relative imports require a package context"
+  ],
+  "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
   "ext.stmt.match": [
     "match"
@@ -1699,6 +1758,12 @@
   "ext.stmt.with.as": [
     "as"
   ],
+  "ext.stmt.with.enter": [
+    "__enter__"
+  ],
+  "ext.stmt.with.leave": [
+    "__exit__"
+  ],
   "ext.stmt.with.unready": [
     "NotImplementedError: context managers are not supported"
   ],
@@ -1785,6 +1850,9 @@
     "TypeError: value is not a mapping"
   ],
   "ext.syntax.set": true,
+  "ext.system.args.list": [
+    "__program_argv"
+  ],
   "ext.system.fault.attribute": [
     "object has no attribute '",
     "'"
@@ -1840,6 +1908,10 @@
   ],
   "ext.system.fault.shift": [
     "negative shift count"
+  ],
+  "ext.system.module.cache": [
+    "sys",
+    "modules"
   ],
   "ext.system.module.name": [
     "__name__"

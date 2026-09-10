@@ -45,6 +45,16 @@ pub enum Prim {
     Iterate,
     NextOne,
     FormatValue,
+    MakeHeir,
+    CallResult,
+    CopyWorth,
+    LoadModule,
+    IsInstance,
+    WriteMember,
+    ReadMember,
+    ProgramNames,
+    BringModule,
+    SpreadModule,
     /// Whether a member, rather than the pipe, takes the name.
     HasMember,
     /// Read a matrix product; the run cannot yet ask its methods.

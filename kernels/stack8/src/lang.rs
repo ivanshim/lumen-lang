@@ -548,13 +548,23 @@ pub struct Lang {
     pub yield_busy: Vec<String>,
     pub yield_unsupported: Vec<String>,
     pub yield_throw_unavailable: Vec<String>,
+    pub with_enter: Option<String>,
+    pub with_leave: Option<String>,
     pub yield_unrun: Vec<String>,
     pub scope_unready: Vec<String>,
     pub global_words: Vec<String>,
     pub binding_unrun: String,
+    pub import_values: bool,
+    pub import_missing: Vec<String>,
+    pub import_member_missing: Vec<String>,
+    pub import_relative_unready: String,
     pub import_words: Vec<String>,
     pub import_from_words: Vec<String>,
     pub import_as_words: Vec<String>,
+    pub math_floating: bool,
+    pub module_helper_amiss: String,
+    pub member_absent: Vec<String>,
+    pub module_cache: Vec<String>,
     pub module_names: Vec<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
@@ -964,6 +974,19 @@ w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero
 w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step | w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.stmt.assign.names.chained | b ext.syntax.call.chained | w ext.op.lambda | w ext.op.lambda.unready | w ext.op.assign.expression | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.op.contains | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss | w ext.builtin.method.sort.key | w ext.builtin.method.sort.reverse | w ext.builtin.method.split.sep | w ext.builtin.method.split.maxsplit | w ext.builtin.method.upper | w ext.builtin.method.lower | w ext.builtin.method.strip | w ext.builtin.method.lstrip | w ext.builtin.method.rstrip | w ext.builtin.method.split | w ext.builtin.method.rsplit | w ext.builtin.method.join | w ext.builtin.method.replace | w ext.builtin.method.startswith | w ext.builtin.method.endswith | w ext.builtin.method.find | w ext.builtin.method.rfind | w ext.builtin.method.index | w ext.builtin.method.count | w ext.builtin.method.isdigit | w ext.builtin.method.isalpha | w ext.builtin.method.isalnum | w ext.builtin.method.isspace | w ext.builtin.method.islower | w ext.builtin.method.isupper | w ext.builtin.method.title | w ext.builtin.method.capitalize | w ext.builtin.method.center | w ext.builtin.method.ljust | w ext.builtin.method.rjust | w ext.builtin.method.zfill | w ext.builtin.method.format | w ext.builtin.method.encode | w ext.builtin.method.append | w ext.builtin.method.extend | w ext.builtin.method.insert | w ext.builtin.method.pop | w ext.builtin.method.remove | w ext.builtin.method.sort | w ext.builtin.method.reverse | w ext.builtin.method.copy | w ext.builtin.method.clear | w ext.builtin.method.get | w ext.builtin.method.keys | w ext.builtin.method.values | w ext.builtin.method.items | w ext.builtin.method.setdefault | w ext.builtin.method.update | w ext.builtin.method.bit_length | w ext.builtin.method.is_integer | w ext.builtin.method.hex | w ext.builtin.method.as_integer_ratio | w ext.builtin.method.error.unready | w ext.builtin.method.error.bytes | w ext.builtin.method.error.arguments | w ext.builtin.method.error.separator | w ext.builtin.method.error.substring | w ext.builtin.method.error.pop | w ext.builtin.method.error.index | w ext.builtin.method.error.remove | w ext.builtin.method.error.list_index | w ext.builtin.method.error.format | w ext.builtin.method.error.spec | w ext.builtin.method.error.unicode | w ext.builtin.method.error.attribute | w ext.builtin.method.error.key | w ext.builtin.method.error.missing | w ext.builtin.method.error.mixed | w ext.builtin.method.error.fill | w ext.builtin.sorted | w ext.builtin.isinstance | w ext.builtin.tuple | w ext.builtin.set | w ext.builtin.dict | w ext.builtin.reversed | w ext.builtin.enumerate | w ext.builtin.zip | w ext.builtin.filter | w ext.builtin.all | w ext.builtin.min | w ext.builtin.max | w ext.builtin.abs | w ext.builtin.round | w ext.builtin.divmod | w ext.builtin.pow | w ext.builtin.hex | w ext.builtin.oct | w ext.builtin.bin | w ext.builtin.repr | w ext.builtin.bool | w ext.builtin.callable | w ext.builtin.id | w ext.builtin.hash | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.hasattr | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.vars | w ext.builtin.key | w ext.builtin.reverse | w ext.builtin.start | w ext.builtin.default | w ext.builtin.round.ndigits | w ext.builtin.round.number | w ext.builtin.pow.base | w ext.builtin.pow.exp | w ext.builtin.pow.mod | w ext.builtin.core.uniterable | w ext.builtin.core.uncallable | w ext.builtin.core.unhashable | w ext.builtin.core.unready | w ext.builtin.core.exhausted | w ext.builtin.core.isinstance.amiss | w ext.builtin.core.empty | w ext.builtin.core.arity | w ext.builtin.core.attribute | w ext.builtin.core.attribute.name | w ext.builtin.core.vars | w ext.builtin.core.zero | w ext.builtin.core.mod.zero | w ext.builtin.core.inverse | w ext.builtin.core.default.many | w ext.builtin.core.dict.pair | w ext.builtin.core.unindexable | w ext.builtin.core.immutable | w ext.builtin.core.power.zero | w ext.builtin.core.power.overflow | w ext.builtin.core.arity.one | w ext.builtin.core.arity.exact | w ext.builtin.core.integer | w ext.builtin.core.not_iterator | w ext.builtin.core.power.integer | w ext.builtin.core.dict.sequence | w ext.builtin.set.add | w ext.builtin.set.remove | w ext.builtin.set.discard | w ext.builtin.set.pop | w ext.builtin.set.clear | w ext.builtin.set.copy | w ext.builtin.set.update | w ext.builtin.set.union | w ext.builtin.set.intersection | w ext.builtin.set.difference | w ext.builtin.set.symmetric_difference | w ext.builtin.set.issubset | w ext.builtin.set.issuperset | w ext.builtin.set.isdisjoint | w ext.builtin.set.intersection_update | w ext.builtin.set.difference_update | w ext.builtin.set.symmetric_difference_update | w ext.builtin.set.sorted | w ext.builtin.set.method.unavailable | w ext.builtin.set.changed | w ext.builtin.set.unhashable | w ext.builtin.set.missing | w ext.builtin.set.empty | w ext.builtin.set.operands | w ext.builtin.set.arguments | w ext.builtin.set.unsupported | w ext.builtin.set.unsortable
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
+b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
+w ext.builtin.program.namespace
+w ext.builtin.member.get
+w ext.builtin.member.set
+w ext.builtin.instance
+w ext.builtin.module.load
+w ext.builtin.copy
+w ext.stmt.with.enter | w ext.stmt.with.leave
+w ext.system.module.cache
+w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
+b ext.builtin.math.floating
+w ext.builtin.class.derive
+w ext.builtin.call.outcome
 w ext.stmt.import | w ext.stmt.import.from | w ext.stmt.import.as | w ext.system.module.name
 w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.match.wildcard | w ext.stmt.match.or | w ext.stmt.match.guard | w ext.stmt.match.as | w ext.stmt.match.unready | w ext.stmt.match.invalid
@@ -1564,6 +1587,14 @@ impl Lang {
             ("ext.builtin.uncaught", Builtin::Untaken),
             ("ext.builtin.classes", Builtin::ClassesBound), ("ext.builtin.routines", Builtin::RoutinesBound), ("ext.builtin.spelled", Builtin::Spelled), ("ext.builtin.class.methods", Builtin::ClassMethods), ("ext.builtin.class.properties", Builtin::ClassProperties),
             ("ext.builtin.class.beneath", Builtin::ClassBeneath), ("ext.builtin.math", Builtin::Math),
+            ("ext.builtin.program.namespace", Builtin::ProgramNamespace),
+            ("ext.builtin.member.get", Builtin::MemberGet),
+            ("ext.builtin.member.set", Builtin::MemberSet),
+            ("ext.builtin.instance", Builtin::InstanceOf),
+            ("ext.builtin.module.load", Builtin::ModuleLoad),
+            ("ext.builtin.copy", Builtin::CopyValue),
+            ("ext.builtin.class.derive", Builtin::DeriveClass),
+            ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
@@ -1998,13 +2029,23 @@ impl Lang {
             yield_busy: r.strings("ext.stmt.yield.busy")?,
             yield_unsupported: r.strings("ext.stmt.yield.unsupported")?,
             yield_throw_unavailable: r.strings("ext.stmt.yield.throw.unavailable")?,
+            with_enter: r.head("ext.stmt.with.enter")?,
+            with_leave: r.head("ext.stmt.with.leave")?,
             yield_unrun: r.strings("ext.stmt.yield.unrun")?,
             scope_unready: r.strings("ext.system.scope.unready")?,
             global_words: r.strings("ext.stmt.global")?,
             binding_unrun: r.head("ext.stmt.binding.unrun")?.unwrap_or_default(),
+            import_values: r.flag("ext.stmt.import.value")?,
+            import_missing: r.strings("ext.stmt.import.missing")?,
+            import_member_missing: r.strings("ext.stmt.import.member.missing")?,
+            import_relative_unready: r.head("ext.stmt.import.relative.unready")?.unwrap_or_default(),
             import_words: r.strings("ext.stmt.import")?,
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
+            math_floating: r.flag("ext.builtin.math.floating")?,
+            module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
+            member_absent: r.strings("ext.builtin.member.absent")?,
+            module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,

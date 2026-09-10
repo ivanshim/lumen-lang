@@ -69,11 +69,11 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
     // one value.
     if q.is_zero() {
         let places = places.unwrap_or(DEFAULT_PLACES);
-        return Value::Real(Rc::new(Real { p: p.signum(), q, places, below: false, point: false }));
+        return Value::Real(Rc::new(Real { floating: false, p: p.signum(), q, places, below: false, point: false }));
     }
     if p.is_zero() {
         return match places {
-            Some(places) => Value::Real(Rc::new(Real { p, q: BigInt::one(), places, below, point: false })),
+            Some(places) => Value::Real(Rc::new(Real { floating: false, p, q: BigInt::one(), places, below, point: false })),
             None => Value::Small(0),
         };
     }
@@ -81,7 +81,7 @@ pub fn shape_signed(p: BigInt, q: BigInt, places: Option<usize>, below: bool) ->
     let g = p.gcd(&q);
     let (p, q) = if g.is_one() { (p, q) } else { (&p / &g, &q / &g) };
     match places {
-        Some(places) => Value::Real(Rc::new(Real { p, q, places, below: false, point: false })),
+        Some(places) => Value::Real(Rc::new(Real { floating: false, p, q, places, below: false, point: false })),
         None if q.is_one() => Value::of_big(p),
         None => Value::Frac(Rc::new(Frac { p, q })),
     }
