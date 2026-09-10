@@ -40,6 +40,7 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub complex_words: HashMap<String, Vec<String>>,
     pub method_keywords: HashMap<String, String>,
     pub value_methods: HashMap<String, String>,
     pub method_errors: HashMap<String, String>,
@@ -1063,7 +1064,7 @@ w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.l
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
-";
+ | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -1482,6 +1483,8 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.complex", Builtin::Complex),
+            ("ext.builtin.method.conjugate", Builtin::ValueMethod),
             ("ext.builtin.isinstance", Builtin::InstanceOf),
             ("ext.builtin.tuple", Builtin::Tuple),
             ("ext.builtin.set", Builtin::Set),
@@ -1856,6 +1859,7 @@ impl Lang {
             byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
             imaginary_letters: r.letters("ext.lexical.number.imaginary")?,
+            complex_words: ["ext.builtin.complex", "ext.builtin.complex.real", "ext.builtin.complex.imag", "ext.builtin.method.conjugate", "ext.builtin.complex.invalid", "ext.builtin.complex.integer", "ext.builtin.complex.order", "ext.builtin.complex.floor", "ext.builtin.complex.zero", "ext.builtin.complex.power.zero", "ext.builtin.complex.unready"].into_iter().map(|label| Ok((label.to_string(), r.strings(label)?))).collect::<Result<_, String>>()?,
             imaginary_unready: r.head("ext.lexical.number.imaginary.unready")?,
             number_point_edge: r.flag("ext.lexical.number.point_edge")?,
             number_strict: r.flag("ext.lexical.number.separator.strict")?,
@@ -1944,7 +1948,7 @@ impl Lang {
             dyadic: binary,
             monadic: unary,
             method_keywords: [("ext.builtin.method.sort.key", "key"), ("ext.builtin.method.sort.reverse", "reverse"), ("ext.builtin.method.split.sep", "sep"), ("ext.builtin.method.split.maxsplit", "maxsplit")].into_iter().map(|(label, purpose)| Ok((purpose, r.strings(label)?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(purpose, words)| words.into_iter().map(move |word| (word, purpose.to_string()))).collect(),
-            value_methods: ["upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
+            value_methods: ["conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
             method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "attribute", "key", "missing", "mixed", "fill"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             pipe_words: pipes,
             range_marks: ranges,

@@ -3608,6 +3608,15 @@ impl<'a> Machine<'a> {
                 return self.work_set(code, &values).map_err(Escape::from);
             }
         }
+        if name == "conjugate" {
+            if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            let subject = receiver.settled();
+            let pair = crate::complex::coordinates(&subject).ok_or_else(|| crate::complex::complaint(self.table, "unready"))?;
+            if !matches!(subject, Value::Complex(_)) {
+                return Ok(if let Value::Flag(b) = subject { Value::Small(if b { 1 } else { 0 }) } else { subject });
+            }
+            return Ok(crate::complex::pair(self.table, pair.0, -pair.1));
+        }
         let mut found = Vec::new();
         for (word, _) in &keywords {
             if found.contains(word) { return Err(self.method_fault("arguments").into()); }
@@ -3791,6 +3800,21 @@ impl<'a> Machine<'a> {
                 _ => self.utter(&written),
             }
             return Ok(Some(Value::Nil));
+        }
+        if op == Prim::ComplexMade && !keywords.is_empty() {
+            if positional.len() > 2 { return Err(crate::complex::complaint(table,"arguments").into()); }
+            let mut parts: [Option<Value>; 2] = [positional.first().cloned(), positional.get(1).cloned()];
+            for (key, value) in keywords {
+                let which = match () {
+                    _ if table.spells("ext.builtin.complex.imag", &key) => 1,
+                    _ if table.spells("ext.builtin.complex.real", &key) => 0,
+                    _ => return Err(crate::complex::complaint(table,"arguments").into()),
+                };
+                if parts[which].replace(value).is_some() { return Err(crate::complex::complaint(table,"arguments").into()); }
+            }
+            let mut given = vec![parts[0].take().unwrap_or(Value::Small(0))];
+            if let Some(imaginary) = parts[1].take() { given.push(imaginary); }
+            return crate::complex::create(table,&given).map(Some).map_err(Escape::Error);
         }
         if Self::is_core_primitive(op) {
             return self.core_primitive(op, name, positional.clone(), keywords).map(Some).map_err(Escape::Error);
@@ -5341,6 +5365,7 @@ impl<'a> Machine<'a> {
         }
         if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
             | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
+            if v.iter().any(|value| matches!(value, Value::Complex(_))) { return crate::complex::reckon(self.table, op, v); }
             for value in v {
                 if let Value::Imaginary { unready, .. } = value { return Err(unready.to_string()); }
             }
@@ -5404,6 +5429,7 @@ impl<'a> Machine<'a> {
             }
             Prim::ClassWork(work) => return self.work_on_class(work, v.to_vec()).map_err(|e| self.suspension_fault(e)),
             Prim::Pointed => v[0].clone().keeping_point(true),
+            Prim::ComplexMade => crate::complex::create(self.table, v)?,
             Prim::NumberAlone => match &v[0] {
                 Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
                 Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
@@ -5807,6 +5833,7 @@ impl<'a> Machine<'a> {
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
                 let (class, own) = match &v[0] {
+                    Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
@@ -5817,6 +5844,11 @@ impl<'a> Machine<'a> {
             Prim::Of => {
                 n(2)?;
                 let called = v[1].bare();
+                if let Value::Complex(pair) = &v[0] {
+                    if self.table.spells("ext.builtin.complex.real", &called) { return Ok(crate::complex::decimal_value(pair.0)); }
+                    if self.table.spells("ext.builtin.complex.imag", &called) { return Ok(crate::complex::decimal_value(pair.1)); }
+                    return Err(crate::complex::complaint(self.table, "unready"));
+                }
                 if matches!(v[0], Value::Member(..)) {
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
@@ -7270,6 +7302,7 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 Value::text(&v[0].render(w))
             }
+            Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,
             Prim::AsInt => {
                 n(1)?;
@@ -7371,6 +7404,7 @@ impl<'a> Machine<'a> {
                 if self.table.has_any("ext.builtin.isinstance") {
                     if let Value::Thing(t) = &v[0] { return Ok(Value::Blueprint(t.of.clone())); }
                     let wanted = match &v[0] {
+                        Value::Complex(_) => Some(Prim::ComplexMade),
                         Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
                         Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
                         Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
@@ -8973,6 +9007,7 @@ impl Machine<'_> {
             Value::Intrinsic(word) => {
                 let op = self.table.prims.get(word.as_ref());
                 let answer = match op {
+                    Some(Prim::ComplexMade) => matches!(item, Value::Complex(_)),
                     Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
                     Some(Prim::AsReal) => matches!(item, Value::Frac(r) if r.places.is_some()),
                     Some(Prim::AsText) => matches!(item, Value::Text(_)),
@@ -9194,6 +9229,11 @@ impl Machine<'_> {
             }
             Magnitude => {
                 require(1, 1)?;
+                if let Value::Complex(pair) = &input[0] {
+                    let norm = pair.0.hypot(pair.1);
+                    if pair.0.is_finite() && pair.1.is_finite() && !norm.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
+                    return Ok(crate::complex::decimal_value(norm));
+                }
                 let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
             }
@@ -9207,6 +9247,7 @@ impl Machine<'_> {
             }
             QuotRem => {
                 require(2, 2)?;
+                if input.iter().any(|x| matches!(x, Value::Complex(_))) { return Err(crate::complex::floor(self.table, &input[0], &input[1])); }
                 let one = as_number(&input[0]); let two = as_number(&input[1]);
                 let integral = |v: &Value| matches!(v, Value::Huge(_) | Value::Small(_));
                 if integral(&one) && integral(&two) {
@@ -9231,6 +9272,10 @@ impl Machine<'_> {
             }
             Powered => {
                 require(2, 3)?;
+                if input.iter().any(|x| matches!(x, Value::Complex(_))) {
+                    if input.len() != 2 { return Err(crate::complex::complaint(self.table, "unready")); }
+                    return crate::complex::reckon(self.table, Prim::Power, &input);
+                }
                 if input.len() < 3 || matches!(input[2], Value::Nil) {
                     let base = as_number(&input[0]); let exponent = as_number(&input[1]);
                     let e = math::ratio_of(&exponent).ok_or_else(|| self.core_complaint("core.unready", name))?;

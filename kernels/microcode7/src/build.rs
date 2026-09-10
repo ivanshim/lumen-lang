@@ -7515,6 +7515,9 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     let imaginary = table.letters("ext.lexical.number.imaginary");
     if let Some(letter) = text.chars().next_back().filter(|c| imaginary.contains(c)) {
         let coefficient: f64 = text[..text.len() - letter.len_utf8()].parse().map_err(|_| unreadable_numeral(text, table))?;
+        if table.has_any("ext.builtin.complex") {
+            return Ok(crate::complex::pair(table, 0.0, coefficient));
+        }
         return Ok(Value::Imaginary {
             coefficient,
             unready: Rc::from(table.single("ext.lexical.number.imaginary.unready").unwrap_or("Imaginary arithmetic is not ready")),

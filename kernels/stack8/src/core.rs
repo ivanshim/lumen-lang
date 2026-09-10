@@ -9,6 +9,7 @@ use std::hash::{Hash, Hasher};
 impl Value {
     pub fn core_kind(&self) -> String {
         match self {
+            Value::Complex(_) => "complex",
             Value::Small(_) | Value::Huge(_) => "int",
             Value::Real(_) | Value::Frac(_) => "float",
             Value::Text(_) => "str",
@@ -69,6 +70,12 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
+            Value::Complex(z) => {
+                if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
+                let a = crate::complex::real(z.real).core_hash()?;
+                let b = crate::complex::real(z.imag).core_hash()?;
+                Some(finish(a.wrapping_add(b.wrapping_mul(1_000_003))))
+            }
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {
                 let number = self.as_big().ok()?;
                 let modulus = BigInt::from((1u64 << 61) - 1);

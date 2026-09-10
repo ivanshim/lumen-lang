@@ -440,6 +440,7 @@ pub enum Builtin {
     /// Take text straight from the input stream, so many characters or
     /// up to the end of a line.
     StreamTake,
+    Complex,
     MapFrom,
     Next,
     Iter,

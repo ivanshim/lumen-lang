@@ -3117,13 +3117,14 @@ impl<'a> Engine<'a> {
                 match self.drop_top()? {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
-                    number @ (Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
+                    number @ (Value::Complex(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
                     _ => return Err(self.lang.plus_non_number.clone().unwrap_or_default().into()),
                 }
             }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
+                if let Value::Complex(z) = &v { self.data.push(crate::complex::made(self.lang, -z.real,-z.imag)); return Ok(()); }
                 if let Value::Imaginary(_, words) = &v { return Err(words.to_string().into()); }
                 if let Some(answer) = self.special_call(&v, 25, Vec::new())? {
                     self.data.push(answer);
@@ -3605,6 +3606,7 @@ impl<'a> Engine<'a> {
                     _ => None,
                 };
                 let field = match &held {
+                    Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     _ => false,
                 };
@@ -3615,6 +3617,11 @@ impl<'a> Engine<'a> {
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
+                }
+                Value::Complex(z) => {
+                    if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { crate::complex::real(z.real) }
+                    else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { crate::complex::real(z.imag) }
+                    else { return Err(crate::complex::fault(self.lang, "unready").into()); }
                 }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
                 subject if self.descriptor_of(&subject, name).is_some() => {
@@ -4592,6 +4599,7 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Flag(answer));
             }
         }
+        if (matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_))) && !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) { return crate::complex::work(self.lang, op, a, b); }
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
@@ -5858,6 +5866,21 @@ impl<'a> Engine<'a> {
             }
             return self.byte_work(task, &args, signed);
         }
+        if builtin == Builtin::Complex && !named.is_empty() {
+            if args.len() > 2 { return Err(crate::complex::fault(self.lang, "arguments")); }
+            let mut present = [!args.is_empty(), args.len() > 1];
+            args.resize(2, Value::Small(0));
+            for (word, value) in named {
+                let slot = if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], &word) { 0 }
+                    else if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], &word) { 1 }
+                    else { return Err(crate::complex::fault(self.lang, "arguments")); };
+                if present[slot] { return Err(crate::complex::fault(self.lang, "arguments")); }
+                args[slot] = value;
+                present[slot] = true;
+            }
+            if !present[1] { args.pop(); }
+            return crate::complex::construct(self.lang, &args);
+        }
         if builtin == Builtin::Say && !self.lang.print_sep.is_empty() {
             let routed = self.lang.print_route.len() == 3;
             let mut between = " ".to_string();
@@ -5986,6 +6009,13 @@ impl<'a> Engine<'a> {
                 return self.set_builtin(method, &given);
             }
         }
+        if operation == "conjugate" {
+            if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            let held = receiver.contents();
+            let (a,b) = crate::complex::parts(&held).ok_or_else(|| crate::complex::fault(self.lang, "unready"))?;
+            if !matches!(held, Value::Complex(_)) { return Ok(match held { Value::Flag(b) => Value::Small(i64::from(b)), number => number }); }
+            return Ok(crate::complex::made(self.lang, a,-b));
+        }
         if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
@@ -6050,6 +6080,7 @@ impl<'a> Engine<'a> {
     fn integer_call(&self, args: &[Value]) -> Res<Value> {
         if args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
         let Some(value) = args.first() else { return Ok(Value::Small(0)) };
+        if matches!(value, Value::Complex(_)) { return Err(crate::complex::fault(self.lang, "integer")); }
         let base = match args.get(1) {
             None => 10,
             Some(Value::Small(n)) => *n,
@@ -6421,6 +6452,7 @@ impl<'a> Engine<'a> {
             Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
         };
         Ok(match builtin {
+            Builtin::Complex => crate::complex::construct(self.lang, args)?,
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
             Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
@@ -7288,6 +7320,7 @@ impl<'a> Engine<'a> {
                 if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
                     if let Value::Object(o) = &args[0] { return Ok(Value::Class(o.class.clone())); }
                     let which = match &args[0] {
+                        Value::Complex(_) => Some(Builtin::Complex),
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
@@ -8265,6 +8298,7 @@ impl Engine<'_> {
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
         };
         Ok(match b {
+            Builtin::Complex => matches!(value, Value::Complex(_)),
             Builtin::ToInt => matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
             Builtin::AsReal => matches!(value, Value::Real(_)),
             Builtin::ToText => matches!(value, Value::Text(_)),
@@ -8461,6 +8495,11 @@ impl Engine<'_> {
             }
             Builtin::Absolute => {
                 arity(1, 1)?;
+                if let Value::Complex(z) = &args[0] {
+                    let length = z.real.hypot(z.imag);
+                    if length.is_infinite() && z.real.is_finite() && z.imag.is_finite() { return Err(self.core_fault("core.power.overflow", "")); }
+                    return Ok(crate::complex::real(length));
+                }
                 let x = number(&args[0]);
                 let (p,q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;
                 arith::shape_number(p.abs(), q, if matches!(x, Value::Real(_)) { Some(arith::DEFAULT_PLACES) } else { None })
@@ -8473,6 +8512,7 @@ impl Engine<'_> {
             }
             Builtin::Divmod => {
                 arity(2, 2)?;
+                if args.iter().any(|v| matches!(v, Value::Complex(_))) { return Err(crate::complex::floor_fault(self.lang, &args[0], &args[1])); }
                 let (a,z) = (number(&args[0]), number(&args[1]));
                 if matches!(a, Value::Small(_) | Value::Huge(_)) && matches!(z, Value::Small(_) | Value::Huge(_)) {
                     let divisor = z.as_big()?;
@@ -8496,6 +8536,10 @@ impl Engine<'_> {
             }
             Builtin::Power => {
                 arity(2, 3)?;
+                if args.iter().any(|v| matches!(v, Value::Complex(_))) {
+                    if args.len() != 2 { return Err(crate::complex::fault(self.lang, "unready")); }
+                    return crate::complex::work(self.lang, &Action::Power, &args[0], &args[1]);
+                }
                 if args.len() == 3 && !matches!(args[2], Value::Null) {
                     if args.iter().any(|v| !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) { return Err(self.core_fault("core.power.integer", "")); }
                     let (mut a, mut exp, modulus) = (integer(&args[0])?, integer(&args[1])?, integer(&args[2])?);

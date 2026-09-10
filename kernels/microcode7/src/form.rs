@@ -46,6 +46,7 @@ pub enum Prim {
     OctetAssign(bool),
     Textual(crate::text::Work),
     ClassWork(u8),
+    ComplexMade,
     /// A compound write may ask a real to retain its point.
     Pointed,
     Adorn(char),

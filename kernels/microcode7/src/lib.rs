@@ -23,6 +23,7 @@ pub mod table;
 pub mod form;
 pub mod data;
 mod core;
+mod complex;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -71,6 +72,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
             if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
         }
         if text::bears_kind(&table, &e) { return e; }
+        if crate::complex::already_named(&table, &e) { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
