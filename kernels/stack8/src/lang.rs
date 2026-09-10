@@ -1366,6 +1366,7 @@ impl Lang {
         let mut natives = HashMap::new();
         for (tag, native) in [
             ("ext.builtin.complex", Builtin::Complex),
+            ("ext.builtin.method.conjugate", Builtin::ValueMethod),
             ("ext.builtin.isinstance", Builtin::InstanceOf),
             ("ext.builtin.tuple", Builtin::Tuple),
             ("ext.builtin.set", Builtin::Set),
