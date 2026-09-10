@@ -84,6 +84,7 @@ only names what its language spells; the floor is the same for all.
    string under two infix labels is an error, save for `op.pipe` and
    `ext.op.member` when `ext.op.member.pipes` is set. Then a member found
    on an object or a class takes the name, and otherwise the pipe does.
+   `ext.op.member` where `ext.op.member.pipes` is set.
 7. Every lexeme under `stmt.*` and `literal.*`, and every word-shaped
    operator (`and`, `not`), is a reserved word and must be shaped like an
    identifier.
@@ -225,6 +226,11 @@ the examples to the core. An extension label is optional: absent means
 empty, or `false` for a switch. The porter and the emitter use the core
 only. The extension labels so far, all from PHP:
 
+- `ext.lexical.line_continuation`: marks which, immediately before a line
+  end outside a string or comment, join the next line to this one. The
+  mark and line end say nothing, and the next line's indentation opens
+  no block. A backslash so spelled also drops an escaped line end in a
+  string whose escapes are read. A comment never carries a line on.
 - `ext.lexical.epilogue`: a closing marker dropped from the very end of
   the source (`?>`), the mirror of `lexical.prologue`.
 - `ext.builtin.echo`: a builtin that prints each argument's text with
@@ -342,6 +348,14 @@ only. The extension labels so far, all from PHP:
   value or specification asks for a rendering the run has no rule for.
   The field and its specification are read and worked out before this
   complaint; no part of the specification is quietly put by.
+  even one shielding a quote. Byte text is read whole but refused when reached. Doubled braces in formatted text stand for single braces;
+  fields may carry conversions, format specifications and a debug equals
+  sign. Each field and each field in its specification is read as code.
+  Plain fields of whole numbers, text, flags and nothing are rendered,
+  with an optional string conversion. Other conversions, specifications,
+  and kinds of value use `ext.lexical.string.unready`, as byte text does.
+- `ext.lexical.string.unready`: the words for a string form whose
+  syntax can be read but whose value cannot yet be given honestly.
 - `ext.lexical.string.adjacent`: whether string literals standing beside
   one another make one string, including within brackets over lines.
 - `ext.lexical.string.amiss`: what is said of a string or a formatted
@@ -370,6 +384,87 @@ only. The extension labels so far, all from PHP:
   in; the scanner turns such a string into a bracketed concatenation
   (`op.concat` inside `syntax.group`) starting from the empty string, so
   the result is always text. `\$` is a literal sigil.
+- `ext.lexical.number.point.bare` permits a decimal point with figures
+  on only one side. `ext.lexical.number.imaginary` names the suffix of
+  an imaginary number; its magnitude is read whole, and reaching it
+  raises `ext.lexical.number.imaginary.unready` until complex values
+  can be held. Decimal exponents, bit conjunction, left shifts and unary
+  plus use `ext.lexical.number.exponent`, `ext.op.bit.and`,
+  `ext.op.bit.left` and `ext.op.plus` as already described below.
+- `ext.stmt.type_params.open` and `.close` enclose type parameters after
+  a class name. Each names a type, a row of types after the existing
+  `ext.stmt.function.carries` mark, or a parameter row after `.pairs`.
+  A bound after `ext.stmt.annotation` and a default after `stmt.assign`
+  are read as expressions; a last comma is allowed and repeated names
+  are refused. The class still raises `ext.stmt.class.unready` when
+  reached. These labels also belong to the separate modern syntax piece;
+  this reading supplies only the class head needed here.
+- `ext.stmt.class.bases.open` and `.close` enclose the expressions a
+  class takes as bases. With `ext.stmt.class.unready` spelled, this small
+  reading reads the head and every statement within, then refuses the
+  declaration at the run with those words. The class piece supplies the
+  fuller meaning. These three class labels supply the reading in place
+  of a separate `ext.stmt.class.new` word. Decorators before a class or
+  an asynchronous declaration are read before its deferred body.
+  `ext.op.member.pipes` keeps the old builtin pipe for a call on a
+  plain named receiver; a member without call brackets remains a member,
+  even when its name also spells a builtin. Other member forms use
+  `ext.op.member`.
+- `ext.op.in` asks whether its left value is in its right; the preceding
+  `ext.op.in.negated` word reverses the question. Both operands are read
+  before `ext.op.in.unready` refuses the operation at the run.
+- `ext.op.identity` asks whether its two operands are the very same
+  value, with a following `ext.op.identity.negated` reversing it.
+  `ext.op.identity.unready` refuses the question at the run. The strict
+  equality of `ext.op.identical` is a different question and is not
+  borrowed for identity. The expression piece supplies both operations.
+- `ext.stmt.for.target.unready` says that a loop target which takes a
+  value apart cannot yet run. The target, iterable and whole body are
+  read; a plain named target keeps its former meaning. A language which
+  spells `ext.builtin.range.value` may give a loop any supported range
+  call, including a one-bound call or one with a step. A bare comma list
+  as the source is read by the tuple reading above.
+- `ext.op.lambda` reads a parameter list without outer brackets, then
+  a colon and one expression. `ext.op.lambda.unready` refuses this value
+  at the run; the expression piece supplies the function and its cells.
+- `ext.stmt.with` takes context expressions, each optionally followed by
+  `ext.stmt.with.as` and a target, then a body. Outer brackets and a final
+  comma are allowed. Every expression and statement is read, and the
+  run raises `ext.stmt.with.unready` before entering any context.
+- `ext.stmt.async` stands before a function, a loop or a context body;
+  `ext.op.await` takes the expression whose answer would be awaited.
+  Their readings finish before `ext.stmt.async.unready` speaks at the run.
+- `ext.stmt.yield` takes an optional value list, or `ext.stmt.yield.from`
+  and the value which would be walked. `ext.stmt.yield.unrun` refuses it
+  at the run until a routine can be suspended and entered again.
+- `ext.stmt.nonlocal` names enclosing bindings, separated by commas.
+  `ext.stmt.nonlocal.unrun` says that the enclosing cells are not yet
+  provided. Outermost bindings use the existing `ext.stmt.global`.
+- `ext.stmt.del` reads one or more places to remove; `ext.stmt.del.unrun`
+  refuses their removal at the run. The separate block piece supplies
+  deletion, enclosing bindings and the fuller suspended forms above.
+- `ext.op.tuple` names the comma within a grouped value or a bare value
+  list. Its parts are read in order; `ext.op.tuple.unready` refuses the
+  value at the run until the tuple piece supplies its representation.
+  The existing `ext.op.assign.value` lets the value written to one name
+  be written to another in a chained assignment.
+- `ext.lexical.string.long` names repeated quote marks which enclose one
+  string across lines. The four `ext.lexical.string.prefix.raw`, `.plain`,
+  `.bytes` and `.format` lists name letters before a quote; a raw letter
+  keeps every backslash, and a plain letter leaves the text unchanged.
+  Raw may stand beside bytes or format. `ext.lexical.string.adjacent`
+  joins neighbouring string tokens, after line ends within brackets
+  have been removed as well as on one line. The small reading here carries byte
+  and formatted strings to the run, where `ext.lexical.string.unready`
+  says that their values cannot yet be represented. The same words serve
+  for a named character or half of a Unicode pair. Ordinary numbered
+  escapes yield their characters; `.amiss` says that a string was not
+  closed, and `ext.lexical.escape.codepoint.amiss` speaks of bad figures.
+  The fuller string reading is held in the separate string piece.
+- `ext.lexical.line_continuation` names a mark outside strings which
+  joins its line to the following line. A mark followed by anything but
+  a line end raises `ext.lexical.line_continuation.amiss`. Indentation
+  after that line end belongs to the continued line, not a fresh block.
 - `ext.lexical.heredoc`: the mark that opens a string written over lines,
   PHP's `<<<`. After it stands a label — a name, or a name in string
   quotes, with spaces or tabs about it if the program likes — and then a
@@ -672,18 +767,46 @@ only. The extension labels so far, all from PHP:
   `ext.lexical.number.amiss.binary.digit` and
   `ext.lexical.number.amiss.octal.digit` hold two pieces, before and
   after the first decimal digit that the base cannot hold.
+- `ext.lexical.number.imaginary`: single letters following a numeral,
+  as `2j` or `2.5J`. The reader keeps the numeral and its suffix whole.
+  A spelled decimal exponent may precede the suffix, as in `1e3j`.
+  The kernels have no imaginary values; reaching one stops the run with
+  the words in `ext.lexical.number.imaginary.unrun`. A routine holding
+  one may still be read and bound without reaching it.
 - `ext.op.plus`: a sign that leaves its operand as it is (`+5`), bound as
-  tightly as negation.
+  tightly as negation. Python spells it too, including repeated signs
+  and a sign standing before a power.
+- `ext.op.plus.non_number`: what is said when unary plus is handed
+  something other than a number. Where spelled, a flag becomes its
+  whole-number worth and other numbers keep their kind.
 - `ext.stmt.break.levels`: a switch; `break n` and `continue n` leave n
   loops (a switch counting as one).
 - `ext.builtin.array`: a builtin that gathers what it is given into an
   array or a map, written like a call (`array(1, 2)`, `array("a" => 1)`).
 - `ext.op.index.append`: a switch; `a[] = v` appends.
 - `ext.stmt.for.collection`: a switch; `for v in a`, where a is not a
-  range, walks what a holds. Python's `for x in [1, 2]`.
+  range, walks what a holds. Python's `for x in [1, 2]`. Where
+  `ext.op.comprehension.for` is spelled too, it gathers the source as
+  a comprehension does: array items, text letters, or map keys. A
+  source with no such members says `ext.syntax.collection.unwalkable`.
 - `ext.builtin.print_r`: a builtin writing a value over lines, as PHP's
   `print_r` does: a scalar on its own, an array as `Array` and its places
   in brackets, each array within eight spaces further along.
+- `ext.stmt.with` and `ext.stmt.with.as`: the word before one or more
+  context managers and the word before the names each binds. Managers
+  may stand within grouping brackets; binding names may be grouped or
+  nested lists of names. The body is read as an ordinary suite, with its
+  enclosing loops and returns kept. `ext.stmt.with.unready` supplies
+  the complaint raised before any manager or body is worked out; the
+  block piece remains responsible for the context protocol.
+- `ext.stmt.class.unready`: the words for a class body whose reading
+  is known but whose running is not. With indented blocks the class
+  header takes ordinary call arguments for its bases, and the body is
+  read in a scope of its own. This form requires call brackets and a
+  block introduction; the executable form still requires member access
+  and a maker word. Reaching the declaration says these
+  words; none of its bases or members is worked out. The fuller class
+  account may use the same complaint for only the forms it cannot run.
 - `ext.stmt.class` and its family: `ext.stmt.class.extends`,
   `ext.stmt.class.new`, `ext.stmt.class.this` (the name a method knows
   its own object by), `ext.stmt.class.constructor` (the method run when
@@ -869,6 +992,130 @@ only. The extension labels so far, all from PHP:
   block may be opened in one run and closed in another, which is how a
   page is written around a loop. One line end straight after the closing
   marker belongs to it.
+- `ext.lexical.line_continuation`: the lexical reader's mark joining
+  physical lines. It must stand straight before the line end; a comment
+  after it does not make a join. `ext.lexical.escape.continued` is the
+  string reader's switch for dropping an escaped line end in plain text.
+- `ext.op.bit.whole`: the lexical branch's switch for bit operations on
+  whole numbers of any width. Text and reals are refused with
+  `ext.system.fault.operands`; a negative shift count is refused with
+  `ext.system.fault.shift`. This piece spells only the bit signs found
+  outside the generator tests' strings: and, or, complement and left shift.
+- `ext.stmt.nonlocal` and `ext.stmt.nonlocal.unrun`: the enclosing-binding
+  word of the block reader and its complaint. Its names are read, but the
+  statement cannot run until enclosing cells may be shared.
+- `ext.stmt.del`: the deletion word of the block reader. Comma-parted
+  names must exist before they are forgotten. Indexed and slice targets
+  are read, but the words in `ext.stmt.del.unrun` stop the whole deletion
+  before its targets are reached. The fuller target runner remains in
+  the block branch.
+- `ext.stmt.with` and `ext.stmt.with.as`: the context header and its target
+  word from the block reader. This piece reads ordinary expression items
+  and targets followed by a body; `ext.stmt.with.unrun` stops the run before
+  an item or body is worked out, since context entry and exit are wanting.
+- `ext.stmt.async`: the block reader's word before an asynchronous
+  declaration. Here only a function follows it; the whole function is
+  read, then `ext.stmt.async.unrun` refuses the declaration when reached.
+- `ext.stmt.loop.else`: the block reader's switch for a last arm after a
+  loop. Exhaustion reaches it; a break passes over it. A continue leaves
+  the last arm still to be reached when the loop is done.
+- `ext.stmt.yield`, `ext.stmt.yield.from` and `ext.stmt.yield.unrun`:
+  a suspended value, with no operand, one operand or comma-parted operands,
+  or a delegation to another walk. These are the names of the suspended
+  forms in the block reader. A routine containing one is read whole, but
+  calling it stops in the words of the last label before its body runs;
+  suspended frames, sending, throwing and closing are not yet provided.
+- `ext.lexical.string.long`, `ext.lexical.string.prefix.raw` and
+  `ext.lexical.string.adjacent`: the long delimiters, raw prefixes and
+  adjoining-string switch of the string reader. Long strings keep quotes,
+  comments and line ends within them; a raw prefix keeps backslashes too.
+  Adjoining strings form one value. This piece takes only these parts of
+  that reader, so doctests stay text while the surrounding source is read.
+- `ext.stmt.class.bases.open` and `ext.stmt.class.bases.close`: lists of
+  marks enclosing the classes a declaration stands on. The first base is
+  its parent; further bases are read and set aside, without running them.
+  A header may name a base by an expression, and may end with a separator.
+- `ext.stmt.class.this.explicit`: a switch; a method writes the parameter
+  for its object first, rather than having an unwritten parameter put there.
+  Calling a class makes its object without a word for making; assignments
+  in its body belong to the class, and the parent word is called before
+  reaching a parent's method. Classes bind as ordinary names.
+- `ext.op.member.pipes`: a switch; a mark shared by the pipe and member
+  signs reads a member when the object or class holds that name, and pipes
+  otherwise. A method takes its object before the written arguments; a
+  pipe keeps the ordinary rules for changing the array named on its left.
+  A member written into, whether nested, indexed or among tuple targets,
+  remains a member place throughout the reading of that target.
+- `ext.stmt.class.unready`: words said when a class form has been read but
+  cannot yet run: header keywords or unpacking, annotations, classes inside
+  functions, or statements in a class
+  body beyond methods, assignments, nested classes, plain strings and pass.
+  A parent call outside a method, or one given explicit arguments, also
+  stops with these words. A pipe that changes an unnamed array also stops
+  here. Nothing in such a form is silently carried out.
+- `ext.stmt.separator`: optional signs parting statements on one line.
+  Unlike `stmt.terminator`, which gives a statement its written ending,
+  these need not stand at the end of a line. An indented language may
+  use them within a body written on the same line as its introduction.
+- `ext.op.tuple`: the signs joining values into a tuple without an
+  array's brackets. Grouping marks may hold one, and an empty group is
+  an empty tuple; one value followed by the sign is a tuple of one.
+  A return or a write may give a tuple without grouping marks. At this
+  stage tuples are held as arrays: they have no separate kind, and are
+  printed with array brackets. Their places may be read and their extent
+  counted as an array's may; tuple immutability is not yet kept.
+- `ext.stmt.assign.chain`: a switch; several places may be joined by
+  the assignment sign before one value. The value is worked out once,
+  then written into each place from left to right.
+- `ext.stmt.unpack.rest`: the signs before a place taking all values
+  left between the places before and after it, as an array. Only one
+  such place may stand in each taking-apart. In a tuple expression the
+  same sign before a value puts all its items into the tuple, and may
+  stand more than once (`return 1, *rest`). Where `ext.op.tuple` is
+  spelt, `ext.stmt.unpack` may name the array's opening bracket; bare
+  tuples and grouped tuples may then stand as targets too, within one
+  another and as a loop's target. The value is taken apart before its
+  places are written, and a wrong number of values stops the run.
+- `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
+  `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
+  too few values, too many, or no walk to take values from. Arrays and
+  text may be taken apart, and maps give their keys; other walks are
+  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
+  taking-apart whose places are ill written.
+- `ext.op.identical.negated`: the word directly after the identity
+  operator that turns it about (`is not`). With this spelling, equality
+  keeps its ordinary meaning; it does not take the looser rules above.
+  Arrays, maps and objects ask whether both names hold the same thing.
+  Nothing, ellipsis, flags and the small whole numbers from -5 through
+  256 have fixed identities. Unlike values cannot be identical. For
+  other alike values the kernels keep no identity that answers this
+  question; `ext.op.identical.unsupported` gives the plain complaint,
+  rather than answering equality in its stead.
+
+- `ext.op.lambda`: the word before an unbracketed parameter list and
+  one expression, parted by `block.intro`. The value is a routine;
+  its defaults are worked out where it is made and kept for later
+  calls. A multiplication sign before a parameter gathers the remaining
+  arguments into an array. A division sign parts positional parameters;
+  a power sign before a parameter and parameters after a bare
+  multiplication sign are read as keyword parameters. Such parameters
+  cannot yet be called: `ext.op.lambda.unsupported` gives the words said
+  on reaching that body. A name of the enclosing routine is not carried
+  away; `ext.op.lambda.enclosing` gives the complaint when such a body
+  is called. These are lists of plain words, one message apiece.
+- `ext.op.in`: membership of the left value among an array's items, a
+  map's keys, or the substrings of text on the right. `ext.op.in.negated`
+  is a word before the operator that turns the answer about (`not in`).
+  `ext.op.in.unsupported` holds the plain complaint where the right
+  value cannot be searched, or the left of a text search is not text.
+- `ext.op.compare.chained`: a switch; comparisons beside one another
+  ask each adjacent pair in turn. A middle value is worked out once
+  and kept; after a false comparison no further operand runs. Equality,
+  ordering, identity and membership may be mixed in one chain.
+
+
+
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `&` < `<<` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
 - `ext.op.comprehension.for`, `ext.op.comprehension.in` and
   `ext.op.comprehension.if`: the words after a literal's first expression
   that bind names over a collection and keep only the passes whose
@@ -899,7 +1146,15 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.map.spread.unmapped` for spreading pairs from no map.
 - `ext.builtin.range.value`: a switch; a call of the range builtin
   yields an eager array from one, two or three whole-number bounds,
-  the last a nonzero step. Without it the range remains loop syntax.
+  the last a nonzero step. A loop walks that value by the collection
+  path, so one bound and a descending step are read there too. Without
+  it the range remains loop syntax.
+  the last a nonzero step. A for loop reads this call as a collection
+  too, keeping its single bound or its backward step. Without the
+  switch the range remains loop syntax.
+  the last a nonzero step. A loop may walk these values too, so its
+  one-bound and stepped forms need no second bound put in by hand.
+  Without it the range remains loop syntax.
   `ext.builtin.list` gathers one collection into an array;
   `ext.builtin.sum` adds its members to an optional starting value,
   and `ext.builtin.any` asks whether any member holds true.
@@ -1003,6 +1258,11 @@ only. The extension labels so far, all from PHP:
   nothing when the number is read. A mark with no digit on either hand
   is refused with `ext.lexical.number.amiss`, save where
   `ext.lexical.number.separator.after_prefix` allows the first one.
+  nothing when the number is read.
+- `ext.lexical.number.separator.after_prefix`: a switch; one separator
+  may stand just after a base prefix. Other separators must have digits
+  on both sides. Python spells this with its binary, octal and hexadecimal
+  prefixes and the separator `_`; whole literals keep every digit.
 - `ext.system.integer.bits` and `ext.system.real.bits`: how many bits
   wide a language holds a whole number and a real in. A whole number
   that outgrows its width becomes a real, literal or worked out, and a
@@ -1815,6 +2075,39 @@ only. The extension labels so far, all from PHP:
   other mark or a value whose representation is not provided;
   `ext.op.rem.format.arguments` gives it for the wrong
   number or kind of arguments. Numeric remainder keeps its meaning.
+- `ext.literal.ellipsis`: the literal mark standing for an ellipsis
+  value, distinct from its use within an index. The expression piece
+  gives it its full meaning. This small reading says the words in
+  `ext.literal.ellipsis.unready` when the value is reached; an ellipsis
+  in an uncalled routine is read without raising a complaint.
+- `ext.op.tuple`: the comma joining values within grouping brackets,
+  in a return, a statement or an assignment value, or in the collection
+  a loop walks. Empty brackets and a trailing comma
+  likewise name tuples. The small reading uses `ext.op.tuple.unready`
+  for the words said when a tuple value is reached; its members are
+  read whole but not worked out. The tuple piece supplies the fuller
+  account of values, stores, and taking apart.
+- `ext.op.lambda`: the word introducing unbracketed parameters and one
+  expression, with `block.intro` between them. The parameter rules are
+  those of a function, without annotations. `ext.op.lambda.unready`
+  supplies the complaint when a lambda value is reached; its parameters,
+  defaults and body are read whole, but this small reading makes no value.
+- `ext.op.assign.expression`: a mark between a binding name and the
+  expression whose value is both stored there and answered with. The mark
+  is read at the lowest expression tier, including in a decorator.
+- `ext.syntax.call.chained`: allows another call after the value a call
+  or an index gives back, with further calls and indices read in order.
+  Each callee is kept before its arguments are worked out.
+- `ext.stmt.assign.names.chained`: permits several plain binding names
+  joined by assignment signs. The final value is worked out once and
+  then written to the names from left to right. Tuple and indexed
+  targets are not covered by this small reading.
+- `ext.op.matrix`: the matrix product sign, taking its place among the
+  binary operators by `op.precedence`. The compound assignment switch
+  gives it a writing form as well. Both operands are read whole; where
+  the run reaches the product, `ext.op.matrix.unready` supplies the
+  complaint, since the methods for a matrix product are not yet called.
+  A product in a routine never called raises nothing.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
@@ -1837,6 +2130,17 @@ only. The extension labels so far, all from PHP:
   whole number. A shift below nought says `ext.system.fault.shift`.
   A left shift whose count the host cannot hold is refused with
   `ext.system.fault.operands`.
+- `ext.op.bit.whole`: a switch; the bit signs take whole numbers of
+  any length, keeping the sign as though it went on without end.
+  Fractions, text and objects are refused; flags stand for nought or one,
+  and two flags joined by and, or or xor give a flag back. Python spells
+  all six bit signs with this switch, in its own precedence tiers;
+  compound writes use those same operations.
+- `ext.op.bit.whole.room`: the words for a left shift whose length
+  cannot fit in the host's address space. An operand that is no whole
+  number is refused with `ext.system.fault.operands`. A right shift
+  beyond every bit gives nought or minus one according to the sign;
+  either shift by a negative count uses `ext.system.fault.shift`.
 - `ext.op.bit.shift.numbers`: a switch; the two shifts read each side
   for the number it is worth, the way arithmetic reads one, rather than
   reading it straight as bits. Text that spells a number stands for it,
@@ -1895,6 +2199,96 @@ only. The extension labels so far, all from PHP:
   every function that returns one. Python spells `->` here; with
   `ext.stmt.annotation`, the whole expression after it is read and
   discarded, even where it names things the run does not know.
+
+- `ext.op.identical.negated`: the word directly after the identity
+  operator that turns it about (`is not`). With this spelling, equality
+  keeps its ordinary meaning; it does not take the looser rules above.
+  Arrays, maps and objects ask whether both names hold the same thing.
+  Nothing, ellipsis, flags and the small whole numbers from -5 through
+  256 have fixed identities. Unlike values cannot be identical. For
+  other alike values the kernels keep no identity that answers this
+  question; `ext.op.identical.unsupported` gives the plain complaint,
+  rather than answering equality in its stead.
+- `ext.op.if_else`: two words, the first before the condition and the
+  second before the other arm (`a if c else b`). It binds below every
+  binary operator and above a lambda. The condition runs first, and
+  only the arm it chooses runs; a further conditional belongs to the
+  other arm unless brackets say otherwise.
+- `ext.op.in`: membership of the left value among an array's items, a
+  map's keys, or the substrings of text on the right. `ext.op.in.negated`
+  is a word before the operator that turns the answer about (`not in`).
+  `ext.op.in.unsupported` holds the plain complaint where the right
+  value cannot be searched, or the left of a text search is not text.
+- `ext.op.compare.chained`: a switch; comparisons beside one another
+  ask each adjacent pair in turn. A middle value is worked out once
+  and kept; after a false comparison no further operand runs. Equality,
+  ordering, identity and membership may be mixed in one chain.
+
+- `ext.stmt.loop.else`: a switch; the last arm of a for or while loop
+  runs when the loop has no further pass. A break goes beyond that arm;
+  a continue still reaches it upon exhaustion. The two kernels keep
+  this distinction in their own loop shapes.
+- `ext.lexical.number.imaginary`: letters after a numeral that make it
+  imaginary. The numeral is read whole; `ext.lexical.number.imaginary.unready`
+  gives the words said when the run reaches it, for complex arithmetic
+  remains wanting. Ordinary whole numbers and decimal exponents keep
+  their accustomed reading.
+- `ext.lexical.string.adjacent`: a switch; neighbouring quoted tokens
+  join into one string, including quoted parts on separate lines within
+  brackets. Outside brackets a line end still parts statements.
+
+The iteration reader borrows the small scope readers already used above.
+Grouped loop targets and comma-separated loop sources are read whole;
+where they require tuple values or unpacking, `ext.system.scope.unready`
+says what is still owed when the run reaches them. Attribute assignments
+and mutations through a member are likewise read before their running is
+provided. The common class, tuple, block and expression work supplies the
+full forms; these narrow readings do not stand in for their execution.
+
+Membership in the ordinary collections asks whether an item is the same
+one before comparing its worth. Truth counts as one and falsehood as
+nought in that comparison, including within nested array items; maps
+compare their pairs without regard to order. Class-defined membership
+awaits the class and iterator work. `ext.lexical.number.separator` and
+`ext.lexical.number.exponent` are also spelled for the iteration bounds:
+the former parts long figures with underscores, the latter reads the
+power of ten whole instead of leaving its letter as another name.
+
+- `ext.lexical.string.prefix.bytes`: a prefix adjoining a quoted run
+  marks bytes. `ext.lexical.string.bytes.unready` gives the complaint
+  raised on reaching that value; the ordinary text value is not given
+  in its stead. Adjacent byte runs are read together.
+
+A decorated class is read with all its decorators and its body, and says
+`ext.stmt.class.unready` when reached. Chained assignments are also read
+through their last value and say `ext.system.scope.unready`; their shared
+bindings await the common tuple and binding work. The class grammar with
+base brackets requires both closing brackets and the unready complaint;
+the older class grammar keeps its member and constructor requirements.
+
+- `ext.lexical.number.point_edge`: a switch; the decimal point may
+  stand at either end of a numeral, as in `.5` or `1.`. Either spelling
+  makes a real, so a range bound written thus is still turned down by
+  `ext.builtin.range.non_integer` when the run reaches it.
+
+A member read may be followed by an index or a slice. The deferred scope
+reader keeps these attached to that member, including bounds which are
+member reads themselves, instead of beginning another array literal.
+This narrow reading uses `ext.system.scope.unready` alongside the common
+index and slice labels.
+
+An indexed collection-loop target uses the ordinary indexed assignment
+on each pass, with the item already at hand. Its brackets are read before
+the collection word, which cannot become part of the target. This is
+`ext.stmt.for.collection` with the common index labels; grouped targets
+remain deferred as stated above. A deferred context body discards its
+outgoing returns, breaks and continues together with its other work, so
+no later loop or routine tries to mend a jump that no longer stands.
+
+A routine containing `ext.stmt.yield` is marked while its own body is
+read. Until suspension is provided, calling it says `ext.stmt.yield.unrun`
+before any of its body runs, even when the yield lies in an unchosen arm.
+A yield within a nested routine marks that routine alone.
 
 ## The web
 
@@ -2161,7 +2555,7 @@ Operator precedence, lowest tier first. Unary operators sit in their own tier.
 
 - **lumen**: `|>` < `or` < `and` < `==` `!=` `<` `>` `<=` `>=` < `..` < `+` `-` < `*` `/` `%` `//` `.` < `**` < `-` `not` `!`
 - **rplumen**: 
-- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` < `-` `~` < `**` < `.`
+- **python**: `or` < `and` < `not` < `==` `!=` `<` `>` `<=` `>=` `is` `in` < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `//` `%` `@` < `-` `~` < `**` < `.`
 - **rust**: `..` < `||` < `&&` < `==` `!=` `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `-` `!` < `.`
 - **php (extra)**: `or` < `and` < `||` < `&&` < `|` < `^` < `&` < `==` `!=` `<>` `===` `!==` < `<` `>` `<=` `>=` `<=>` < `.` < `<<` `>>` < `+` `-` < `*` `/` `%` < `!` `~` `@` < `-` < `**`
 - **c (extra)**: `||` < `&&` < `==` `!=` < `<` `>` `<=` `>=` < `+` `-` < `*` `/` `%` < `!` `-`
@@ -2285,6 +2679,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.interpolating.index.amiss` | - | - | - | - | `string content, expecting "-" or identifier or variable or number` | - | - | - | - | - |
 | `ext.lexical.interpolating_quotes` | - | - | - | - | `"` | - | - | - | - | - |
 | `ext.lexical.line_continuation` | - | - | `\` | - | - | - | - | - | - | - |
+| `ext.lexical.line_continuation.amiss` | - | - | `unexpected character after line continuation character` | - | - | - | - | - | - | - |
 | `ext.lexical.name_lead` | - | - | - | - | `\` | - | - | - | - | - |
 | `ext.lexical.number.amiss` | - | - | `invalid numeric literal` | - | `Invalid numeric literal` | - | - | - | - | - |
 | `ext.lexical.number.amiss.binary` | - | - | `SyntaxError: invalid binary literal` | - | - | - | - | - | - | - |
@@ -2297,6 +2692,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.number.exponent` | - | - | `e` `E` | - | `e` `E` | - | - | - | - | - |
 | `ext.lexical.number.imaginary` | - | - | `j` `J` | - | - | - | - | - | - | - |
 | `ext.lexical.number.imaginary.unready` | - | - | `NotImplementedError: complex arithmetic is not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.number.imaginary.unrun` | - | - | `NotImplementedError: imaginary numbers cannot be run` | - | - | - | - | - | - | - |
 | `ext.lexical.number.octal_lead` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.lexical.number.octal_prefix` | - | - | `0o` `0O` | - | `0o` `0O` | - | - | - | - | - |
 | `ext.lexical.number.point.bare` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2311,6 +2707,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.adjacent` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.lexical.string.amiss` | - | - | `invalid string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
+| `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
@@ -2319,12 +2716,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.format.unready` | - | - | `NotImplementedError: formatted strings are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
+| `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.value.unready` | - | - | `NotImplementedError: this string value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
+| `ext.literal.ellipsis.unready` | - | - | `NotImplementedError: ellipsis values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
-| `ext.op.assign.value` | - | - | - | - | `true` | - | - | - | - | - |
+| `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.await` | - | - | `await` | - | - | - | - | - | - | - |
 | `ext.op.bit.and` | - | - | `&` | - | `&` | - | - | - | - | - |
 | `ext.op.bit.left` | - | - | `<<` | - | `<<` | - | - | - | - | - |
@@ -2333,6 +2732,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.bit.right` | - | - | `>>` | - | `>>` | - | - | - | - | - |
 | `ext.op.bit.shift.numbers` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.bit.whole` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.bit.whole.room` | - | - | `OverflowError: too many digits in integer` | - | - | - | - | - | - | - |
 | `ext.op.bit.xor` | - | - | `^` | - | `^` | - | - | - | - | - |
 | `ext.op.cast` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.compare` | - | - | - | - | `<=>` | - | - | - | - | - |
@@ -2350,9 +2750,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.identical` | - | - | `is` | - | `===` | - | - | - | - | - |
 | `ext.op.identical.negated` | - | - | `not` | - | - | - | - | - | - | - |
 | `ext.op.identical.unsupported` | - | - | `Identity of these values is not supported` | - | - | - | - | - | - | - |
+| `ext.op.identity` | - | - | `is` | - | - | - | - | - | - | - |
+| `ext.op.identity.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.identity.unready` | - | - | `NotImplementedError: identity is not supported` | - | - | - | - | - | - | - |
 | `ext.op.if_else` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
 | `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.in.unready` | - | - | `NotImplementedError: membership is not supported` | - | - | - | - | - | - | - |
 | `ext.op.in.unsupported` | - | - | `Membership requires an array, string or map` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |
 | `ext.op.increment.text` | - | - | - | - | `Increment on non-numeric string is deprecated, use str_increment() instead` | - | - | - | - | - |
@@ -2375,7 +2779,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.instanceof` | - | - | - | - | `instanceof` | - | - | - | - | - |
 | `ext.op.lambda` | - | - | `lambda` | - | - | - | - | - | - | - |
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
+| `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
+| `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
+| `ext.op.matrix.unready` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.member` | - | - | `.` | - | `->` | - | - | - | - | - |
 | `ext.op.member.by_value` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.member.pipes` | - | - | `true` | - | - | - | - | - | - | - |
@@ -2383,6 +2790,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |
+| `ext.op.plus.non_number` | - | - | `TypeError: unary plus requires a number` | - | - | - | - | - | - | - |
 | `ext.op.reference` | - | - | - | - | `&` | - | - | - | - | - |
 | `ext.op.reference.unshared.given` | - | - | - | - | `Only variable references should be returned by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
@@ -2413,7 +2821,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
 | `ext.stmt.assert.kind` | - | - | `AssertionError` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.unready` | - | - | `NotImplementedError: asynchronous execution is not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.async.unrun` | - | - | `NotImplementedError: asynchronous functions cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.binding.unrun` | - | - | `This binding target cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.block.instead` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.block.instead.close` | - | - | - | - | `endif` `endwhile` `endfor` `endforeach` `endswitch` | - | - | - | - | - |
@@ -2463,6 +2874,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.finally` | - | - | `finally` | - | `finally` | - | - | - | - | - |
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.for.target.unready` | - | - | `NotImplementedError: unpacking loop targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
 | `ext.stmt.function.carries.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.stmt.function.defaults.amiss` | - | - | `TypeError: mutable parameter defaults are not supported` | - | - | - | - | - | - | - |
@@ -2500,6 +2912,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.close` | - | - | `]` | - | - | - | - | - | - | - |
+| `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |
@@ -2509,6 +2923,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.with.unrun` | - | - | `NotImplementedError: context managers cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
@@ -2520,6 +2935,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.syntax.call.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |

@@ -1106,6 +1106,12 @@ impl<'a> Cursor<'a> {
                 self.step();
             } else if lang.heredoc.as_deref().map_or(false, |mark| at_word(&self.text, self.at, mark)) {
                 self.heredoc()?;
+            } else if lang.line_continuations.iter().any(|m| at_word(&self.text, self.at, m)) {
+                let mark = lang.line_continuations.iter().find(|m| at_word(&self.text, self.at, m)).unwrap();
+                for _ in mark.chars() { self.step(); }
+                if self.look(0) == Some('\r') { self.step(); }
+                if self.look(0) != Some('\n') { return Err(lang.continuation_amiss.first().cloned().unwrap_or_default()); }
+                self.step();
             } else if lang.quotes.contains(&c) {
                 self.string(c)?;
             } else if c.is_ascii_digit()

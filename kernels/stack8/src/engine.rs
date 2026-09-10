@@ -950,9 +950,7 @@ impl<'a> Engine<'a> {
         })
     }
 
-    /// A value with no places at all cannot be walked. A language with
-    /// a word for a warning is told so and walks it no times, rather
-    /// than having the run stopped over it.
+    /// A whole number, with the language's complaint for another kind.
     fn whole_for_bits(&self, v: &Value) -> Res<BigInt> {
         if matches!(v.sort(), Some(Sort::Integer | Sort::Boolean)) {
             v.as_big()
@@ -2290,9 +2288,12 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::Positive => {
-                let value = self.drop_top()?;
-                if let Value::Imaginary(_, words) = &value { return Err(words.to_string().into()); }
-                value
+                match self.drop_top()? {
+                    Value::Imaginary(_, words) => return Err(words.to_string().into()),
+                    Value::Flag(flag) => Value::Small(i64::from(flag)),
+                    number @ (Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
+                    _ => return Err(self.lang.plus_non_number.clone().unwrap_or_default().into()),
+                }
             }
             Action::Negate => {
                 // 0 - x, so a real keeps its precision.
@@ -2508,6 +2509,7 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
+            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_default().into()),
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {
                 let step = self.drop_top()?;
@@ -3395,8 +3397,14 @@ impl<'a> Engine<'a> {
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
                 let found = match b {
-                    Value::Array(items) => items.iter().any(|v| a.equals(v)),
-                    Value::Map(items) => items.iter().any(|(key, _)| a.equals(key)),
+                    Value::Counted(range) => a.as_big().ok().filter(|n| Self::member_matches(a, &Value::of_big(n.clone()))).map_or(false, |n| {
+                        let delta = &n - &range.start;
+                        let inside = if range.step > BigInt::from(0) { n >= range.start && n < range.stop }
+                            else { n <= range.start && n > range.stop };
+                        inside && delta % &range.step == BigInt::from(0)
+                    }),
+                    Value::Array(items) => items.iter().any(|v| Self::member_matches(a, v)),
+                    Value::Map(items) => items.iter().any(|(key, _)| Self::member_matches(a, key)),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
                         _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
@@ -3492,8 +3500,8 @@ impl<'a> Engine<'a> {
                         } else if x == BigInt::from(0) {
                             x
                         } else {
-                            let by = y.to_usize().ok_or_else(|| self.lang.operand_fault.clone()
-                                .unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
+                            let by = y.to_usize().filter(|n| (*n as u128) + u128::from(x.bits()) < isize::MAX as u128)
+                                .ok_or_else(|| self.lang.bit_room.clone().unwrap_or_else(|| "Bit shift count is too large".to_string()))?;
                             if matches!(op, Action::BitUp) { x << by } else { x >> by }
                         }
                     }
@@ -4137,6 +4145,22 @@ impl<'a> Engine<'a> {
     }
 
     // ---------- builtins ----------
+
+    /// Membership asks identity before equality, and counts truth as one.
+    fn member_matches(a: &Value, b: &Value) -> bool {
+        if let Value::Bond(cell) = a { return Self::member_matches(&cell.borrow(), b); }
+        if let Value::Bond(cell) = b { return Self::member_matches(a, &cell.borrow()); }
+        match (a, b) {
+            (Value::Flag(x), _) => Self::member_matches(&Value::Small(i64::from(*x)), b),
+            (_, Value::Flag(y)) => Self::member_matches(a, &Value::Small(i64::from(*y))),
+            (Value::Real(x), Value::Real(y)) if Rc::ptr_eq(x, y) => true,
+            (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y)
+                || (x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| Self::member_matches(p, q))),
+            (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y)
+                || (x.len() == y.len() && x.iter().all(|(k, v)| y.iter().any(|(l, w)| Self::member_matches(k, l) && Self::member_matches(v, w)))),
+            _ => a.equals(b),
+        }
+    }
 
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {

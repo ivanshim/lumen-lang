@@ -142,6 +142,7 @@ pub struct Builder<'a> {
     reading_yield: bool,
     unsupported_place: bool,
     iteration_binding: Option<(String, usize)>,
+    place_depth: usize,
     outside_lambda: Vec<String>,
 }
 
@@ -250,7 +251,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
     let outer_layers = layers.len();
     let mut r = Builder { class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
-        reading_yield: false,
+        reading_yield: false, place_depth: 0,
         unsupported_place: false,
         iteration_binding: None,
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
@@ -1074,17 +1075,16 @@ impl<'a> Builder<'a> {
         }
         let head_mark = self.on_any("block.intro");
         self.skip_lead_word();
-        if head_mark && self.table.blocks == Blocks::Indented && self.table.flag("ext.block.lone_statement")
-            && self.look().shape != Shape::LineEnd && self.look().shape != Shape::Open
-        {
-            let mut line = Vec::new();
-            while !matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
-                line.push(self.stmt()?);
-                if self.look().shape == Shape::Sign && self.table.spells("stmt.terminator", &self.look().lexeme) {
-                    self.advance();
-                }
+        let same_line = head_mark && self.table.blocks == Blocks::Indented && self.table.flag("ext.block.lone_statement")
+            && !self.on_stmt_end() && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish);
+        if same_line {
+            let mut body = vec![self.stmt()?];
+            while self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme) {
+                self.advance();
+                if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+                body.push(self.stmt()?);
             }
-            return Ok(sequence(line));
+            return Ok(sequence(body));
         }
         self.skip_line_ends();
         match self.table.blocks {
@@ -1172,6 +1172,7 @@ impl<'a> Builder<'a> {
     fn class_scope(&mut self) -> Res<Form> {
         self.advance();
         let name = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
             let _bases = self.arguments_of(&name, "ext.stmt.class.bases.close", "syntax.call.separator")?;
@@ -1530,18 +1531,23 @@ impl<'a> Builder<'a> {
                 break;
             }
         }
-        if self.key("ext.stmt.class") && self.table.has_any("ext.stmt.class.bases.open") { forms.push(if self.table.flag("ext.stmt.class.this.explicit") { self.class_decl()? } else { self.class_scope()? }); return Ok(sequence(forms)); }
         if self.key("ext.stmt.async") { self.advance(); }
-        if !self.key("stmt.function") {
-            return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+        let named;
+        if self.key("ext.stmt.class") && self.table.flag("ext.stmt.class.this.explicit") {
+            named = self.glance(1).lexeme.clone();
+            forms.push(self.class_decl()?);
+        } else {
+            if !self.key("stmt.function") {
+                return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
+            }
+            self.advance();
+            let shared = self.skip_reference();
+            named = self.need_word("after the function keyword")?;
+            self.giving_cells.push(shared);
+            let definition = self.func(named.clone(), true);
+            self.giving_cells.pop();
+            forms.push(definition?);
         }
-        self.advance();
-        let shared = self.skip_reference();
-        let named = self.need_word("after the function keyword")?;
-        self.giving_cells.push(shared);
-        let definition = self.func(named.clone(), true);
-        self.giving_cells.pop();
-        forms.push(definition?);
         let binding = match self.table.flag("ext.stmt.function.outermost") {
             true => self.global_address(&named),
             false => self.address_to_write(&named),
@@ -2072,6 +2078,7 @@ impl<'a> Builder<'a> {
     fn class_with_receiver(&mut self) -> Res<Form> {
         self.advance();
         let named = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
         let mut setup = Vec::new();
         let mut parent = None;
@@ -2190,6 +2197,25 @@ impl<'a> Builder<'a> {
         Ok(sequence(setup))
     }
 
+    fn class_type_parameters(&mut self) -> Res<()> {
+        self.advance();
+        let table = self.table;
+        let mut declared = Vec::new();
+        loop {
+            if ["ext.stmt.function.carries", "ext.stmt.function.carries.pairs"].iter().any(|key| self.on_any(key)) { self.advance(); }
+            let parameter = self.need_word("among the type parameters")?;
+            if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
+            declared.push(parameter);
+            if self.on_any("ext.stmt.annotation") { self.advance(); self.expr_at(0, false)?; }
+            if self.on_assign() { self.advance(); self.expr(0)?; }
+            if self.on_any("ext.stmt.type_params.close") { break; }
+            self.need_sign(table.single("syntax.call.separator").unwrap(), "between type parameters")?;
+            if self.on_any("ext.stmt.type_params.close") { break; }
+        }
+        self.need_sign(table.single("ext.stmt.type_params.close").unwrap(), "after the type parameters")?;
+        Ok(())
+    }
+
     fn class_decl(&mut self) -> Res<Form> {
         if self.table.flag("ext.stmt.class.this.explicit") {
             return self.class_with_receiver();
@@ -2197,6 +2223,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
+        if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         // A class of method names only may be built on several at once;
         // a class is built on one and answers to any number.
         let bare = table.spells("ext.stmt.class.interface", &word);
@@ -3297,8 +3324,12 @@ impl<'a> Builder<'a> {
                 if !table.flag("ext.stmt.for.collection") {
                     return Err("A for loop needs a range: start..end".to_string());
                 }
+                let source = match table.single("ext.op.comprehension.for") {
+                    Some(_) => prim_call(Prim::Iterated, vec![start]),
+                    None => start,
+                };
                 self.address_to_write(&var);
-                return self.walk(start, None, var, None, place);
+                return self.walk(source, None, var, None, place);
             }
             self.advance();
             let end = self.expr(tier + 1)?;
@@ -4020,7 +4051,15 @@ impl<'a> Builder<'a> {
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
-            let place = self.expr_at(255, false)?;
+            self.place_depth += 1;
+            let reading = if hi == lo + 1 && self.look().shape == Shape::Bare {
+                let word = self.advance().lexeme;
+                if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) {
+                    Err("Invalid assignment target before '='".to_string())
+                } else { Ok(self.read(&word)) }
+            } else { self.monadic_expr() };
+            self.place_depth -= 1;
+            let place = reading?;
             if self.pos != hi { return Err(bad); }
             let sign = self.look().clone();
             let old = self.waiting.replace(source.to_string());
@@ -4148,7 +4187,11 @@ impl<'a> Builder<'a> {
                 _ => false,
             }
         });
-        let expr = self.expr_at(0, false)?;
+        let writing = !self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty();
+        self.place_depth += usize::from(writing);
+        let read = self.expr_at(0, false);
+        self.place_depth -= usize::from(writing);
+        let expr = read?;
         let follows = |reader: &Self| reader.on_assign() && reader.glance(1).shape == Shape::Bare
             && reader.glance(2).shape == Shape::Sign && reader.table.spells("stmt.assign", &reader.glance(2).lexeme);
         if self.table.flag("ext.stmt.assign.chain") && follows(self) {
@@ -4172,7 +4215,7 @@ impl<'a> Builder<'a> {
             return self.with_annotation(expr, began);
         }
         if !self.on_writing() {
-            return Ok(expr);
+            return self.comma_tail(expr);
         }
         let tail = &self.tokens[began..self.pos];
         let attribute = tail.len() >= 2
@@ -4260,6 +4303,28 @@ impl<'a> Builder<'a> {
         (sequence(vec![stored, back]), Some(cell))
     }
 
+    fn binding_chain(&mut self, first: &str, answers: bool) -> Res<Form> {
+        let mut targets = vec![self.address_to_write(first)];
+        loop {
+            if self.look().shape != Shape::Bare
+                || !self.table.spells("stmt.assign", &self.glance(1).lexeme) { break; }
+            let target_name = self.advance().lexeme;
+            if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &target_name)) {
+                return Err("Invalid assignment target before '='".to_string());
+            }
+            targets.push(self.address_to_write(&target_name));
+            self.advance();
+        }
+        let value = self.comma_value()?;
+        let saved = self.gensym("chained");
+        let mut steps = vec![Form::Write(saved.clone(), Box::new(value))];
+        for place in targets {
+            steps.push(Form::Write(place, Box::new(Form::Read(saved.clone()))));
+        }
+        if answers { steps.push(Form::Read(saved)); }
+        Ok(sequence(steps))
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
@@ -4278,6 +4343,14 @@ impl<'a> Builder<'a> {
             if slot.ident.as_ref() == this {
                 self.stopped_fatally = true;
                 return Err(format!("Cannot re-assign {}", this));
+            }
+        }
+        if self.table.flag("ext.stmt.assign.names.chained") && compound.is_none()
+            && self.waiting.is_none() && self.stepping.is_none()
+            && self.look().shape == Shape::Bare
+            && self.table.spells("stmt.assign", &self.glance(1).lexeme) {
+            if let Form::Read(slot) = &expr {
+                return self.binding_chain(&slot.ident, gives_back);
             }
         }
         let plain = compound.is_none();
@@ -4804,7 +4877,11 @@ impl<'a> Builder<'a> {
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
                 }
-                left = self.named_call(&name, args)?;
+                let mutation = matches!(table.prims.get(&name), Some(Prim::Append) | Some(Prim::Replace));
+                left = if mutation && table.has_any("ext.system.scope.unready") && !matches!(args.first(), Some(Form::Read(_))) {
+                    self.scope_unrun("ext.system.scope.unready")
+                } else { self.named_call(&name, args)? };
+                if table.has_any("ext.system.scope.unready") { left = self.subscript(left)?; }
                 continue;
             }
             if table.single("ext.op.otherwise").map_or(false, |m| self.sign(m)) {
@@ -5099,7 +5176,8 @@ impl<'a> Builder<'a> {
                 self.advance();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
                 let held = self.expr(tier)?;
-                return Ok(if table.strings("ext.lexical.number.imaginary").is_empty() { held } else { prim_call(Prim::Positive, vec![held]) });
+                return Ok(if table.has_any("ext.op.plus.non_number") { prim_call(Prim::NumberAlone, vec![held]) }
+                    else if !table.strings("ext.lexical.number.imaginary").is_empty() { prim_call(Prim::Positive, vec![held]) } else { held });
             }
         }
         let node = match t.shape {
@@ -5164,9 +5242,9 @@ impl<'a> Builder<'a> {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.null", &t.lexeme) {
                     constant(Value::Nil)
-                } else if table.spells("ext.builtin.print.file.output", &t.lexeme) {
+                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.output", &t.lexeme) {
                     constant(Value::Channel(1))
-                } else if table.spells("ext.builtin.print.file.error", &t.lexeme) {
+                } else if self.place_depth == 0 && table.spells("ext.builtin.print.file.error", &t.lexeme) {
                     constant(Value::Channel(2))
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == &t.lexeme)
                     && (table.flag("ext.syntax.call.bind_names") || table.single("syntax.call.open").map_or(false, |o| self.sign(o)))
@@ -5878,7 +5956,7 @@ impl<'a> Builder<'a> {
             }
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
-            if reaching && table.flag("ext.op.member.pipes") && (calling || !self.on_writing()) {
+            if reaching && table.flag("ext.op.member.pipes") && (calling || (self.place_depth == 0 && !self.on_writing())) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
@@ -5982,7 +6060,7 @@ impl<'a> Builder<'a> {
     }
 
     fn subscript(&mut self, mut node: Form) -> Res<Form> {
-        if self.table.has_any("ext.op.lambda") {
+        if self.table.flag("ext.syntax.call.chained") || self.table.has_any("ext.op.lambda") {
             node = self.called_on_value(node)?;
         }
         node = self.members(node)?;
@@ -6015,6 +6093,9 @@ impl<'a> Builder<'a> {
                 node = invoke(node, args);
             }
             node = self.members(node)?;
+        }
+        if self.table.flag("ext.syntax.call.chained") && self.on_any("syntax.call.open") {
+            return self.subscript(node);
         }
         Ok(node)
     }

@@ -170,6 +170,8 @@ pub enum Action {
     Step(bool),
     Sub,
     Mul,
+    /// A matrix product, awaiting the language's method protocol.
+    Matrix,
     Div,
     DivReal,
     IntDiv,

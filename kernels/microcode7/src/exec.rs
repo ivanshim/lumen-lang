@@ -2645,7 +2645,12 @@ impl<'a> Machine<'a> {
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
-                if let Some(at) = self.member_place(&fields, name) { return Some(fields[at].1.clone()); }
+                if let Some(at) = self.member_place(&fields, name) {
+                    return Some(match &fields[at].1 {
+                        Value::Shared(cell) => cell.borrow().clone(),
+                        held => held.clone(),
+                    });
+                }
                 &thing.of
             }
             Value::Blueprint(class) => class,
@@ -3508,7 +3513,7 @@ impl<'a> Machine<'a> {
             if v.len() == k { Ok(()) } else { Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len())) }
         };
         if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
-            | Prim::Positive | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
+            | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
             for value in v {
                 if let Value::Imaginary { unready, .. } = value { return Err(unready.to_string()); }
             }
@@ -3535,7 +3540,12 @@ impl<'a> Machine<'a> {
                 match op {
                     Prim::BitsDown if right >= BigInt::from(left.bits()) => BigInt::from(i32::from(left.sign() == num_bigint::Sign::Minus) * -1),
                     _ if left == BigInt::from(0) => left,
-                    Prim::BitsUp => left << right.to_usize().ok_or_else(fault)?,
+                    Prim::BitsUp => {
+                        let by = right.to_usize().filter(|count| {
+                            (*count as u128) + u128::from(left.bits()) < isize::MAX as u128
+                        }).ok_or_else(|| self.table.single("ext.op.bit.whole.room").unwrap_or("Bit shift count is too large").to_owned())?;
+                        left << by
+                    },
                     _ => left >> right.to_usize().ok_or_else(fault)?,
                 }
             } else {
@@ -3555,6 +3565,15 @@ impl<'a> Machine<'a> {
         Ok(match op {
             Prim::Positive => { n(1)?; v[0].clone() }
             Prim::Pointed => v[0].clone().keeping_point(true),
+            Prim::NumberAlone => match &v[0] {
+                Value::Small(_) | Value::Huge(_) | Value::Frac(_) => v[0].clone(),
+                Value::Flag(b) => Value::Small(if *b { 1 } else { 0 }),
+                _ => return Err(self.table.single("ext.op.plus.non_number").unwrap_or("").to_owned()),
+            },
+            Prim::MatrixProduct => {
+                let words = self.table.single("ext.op.matrix.unready").unwrap_or_default();
+                return Err(words.to_owned());
+            }
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text
@@ -4599,8 +4618,19 @@ impl<'a> Machine<'a> {
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
                 let present = match (&v[0], &v[1]) {
-                    (needle, Value::Vector(hay)) => hay.iter().any(|item| needle.equals(item)),
-                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| key.equals(k)),
+                    (needle, Value::Progression(sequence)) => {
+                        match needle.as_big().ok().filter(|whole| contained_equal(needle, &Value::from_big(whole.clone()))) {
+                            None => false,
+                            Some(whole) => {
+                                let offset = &whole - &sequence.first;
+                                let position = &offset / &sequence.stride;
+                                (&offset % &sequence.stride) == BigInt::from(0)
+                                    && position >= BigInt::from(0) && position < sequence.count()
+                            }
+                        }
+                    },
+                    (needle, Value::Vector(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
+                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k)),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
@@ -6109,4 +6139,37 @@ fn fit_case(test: &crate::form::CaseTest, value: &Value, tuple: bool) -> Result<
         }
     }
     Ok(Some(gathered))
+}
+
+
+/// A container's comparison keeps a shared nonreflexive item findable.
+fn contained_equal(near: &Value, far: &Value) -> bool {
+    match near {
+        Value::Shared(storage) => return contained_equal(&storage.borrow(), far),
+        _ => {},
+    }
+    match far {
+        Value::Shared(storage) => return contained_equal(near, &storage.borrow()),
+        _ => {},
+    }
+    if let Value::Flag(bit) = near { return contained_equal(&Value::Small(if *bit { 1 } else { 0 }), far); }
+    if let Value::Flag(bit) = far { return contained_equal(near, &Value::Small(if *bit { 1 } else { 0 })); }
+    match (near, far) {
+        (Value::Frac(x), Value::Frac(y)) if Rc::ptr_eq(x, y) => return true,
+        (Value::Vector(left), Value::Vector(right)) => {
+            if Rc::ptr_eq(left, right) { return true; }
+            if left.len() != right.len() { return false; }
+            return left.iter().zip(right.iter()).all(|(l, r)| contained_equal(l, r));
+        }
+        (Value::Dict(left), Value::Dict(right)) => {
+            if Rc::ptr_eq(left, right) { return true; }
+            if left.len() != right.len() { return false; }
+            for (key, value) in left.iter() {
+                if !right.iter().any(|(k, v)| contained_equal(key, k) && contained_equal(value, v)) { return false; }
+            }
+            return true;
+        }
+        _ => {}
+    }
+    near.equals(far)
 }
