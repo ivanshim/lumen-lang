@@ -57,7 +57,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     go(&table, source, program_args, request).map_err(|e| {
         for label in ["ext.op.iterator.changed", "ext.op.iterator.unwalkable", "ext.op.iterator.unnextable", "ext.op.iterator.unsized", "ext.builtin.zip.short", "ext.builtin.zip.long", "ext.op.iterator.unready", "ext.op.iterator.stop"] {
             let pieces = table.strings(label);
-            if pieces.len() == 1 && pieces[0] == e || pieces.len() == 2 && e.starts_with(&pieces[0]) && e.ends_with(&pieces[1]) { return e; }
+            if pieces.len() == 1 && pieces[0] == e || pieces.len() >= 2 && e.starts_with(&pieces[0]) && (e.ends_with(&pieces[1]) || pieces.get(2).is_some_and(|span| e.contains(span))) { return e; }
         }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,

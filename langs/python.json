@@ -1029,11 +1029,13 @@
   ],
   "ext.builtin.zip.short": [
     "ValueError: zip() argument ",
-    " is shorter than argument 1"
+    " is shorter than argument 1",
+    " is shorter than arguments 1-"
   ],
   "ext.builtin.zip.long": [
     "ValueError: zip() argument ",
-    " is longer than argument 1"
+    " is longer than argument 1",
+    " is longer than arguments 1-"
   ],
   "ext.builtin.enumerate.start": [
     "start"

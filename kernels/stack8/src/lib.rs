@@ -120,7 +120,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
         let words = &lang.call_builtin_amiss;
         let own_words = ["ext.op.iterator.changed", "ext.op.iterator.unwalkable", "ext.op.iterator.unnextable", "ext.op.iterator.unsized", "ext.builtin.zip.short", "ext.builtin.zip.long", "ext.op.iterator.unready", "ext.op.iterator.stop"].iter().any(|key| {
             let Some(parts) = lang.iterator_words.get(*key) else { return false };
-            match parts.as_slice() { [head, tail] => e.starts_with(head) && e.ends_with(tail), [whole] => &e == whole, _ => false }
+            match parts.as_slice() { [head, tail, span] => e.starts_with(head) && (e.ends_with(tail) || e.contains(span)), [head, tail] => e.starts_with(head) && e.ends_with(tail), [whole] => &e == whole, _ => false }
         });
         if own_words || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }

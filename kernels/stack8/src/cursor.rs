@@ -31,6 +31,13 @@ impl<'a> Engine<'a> {
         Self::named_fault(self.cursor_words(label), &self.cursor_kind(value))
     }
 
+    fn cursor_zip_fault(&self, label: &str, column: usize) -> String {
+        let words = self.cursor_words(label);
+        if column > 2 && words.len() > 2 {
+            format!("{}{}{}{}", words[0], column, words[2], column - 1)
+        } else { Self::named_fault(words, &column.to_string()) }
+    }
+
     fn cursor_make(&self, way: u8, name: String, sources: Vec<Value>, function: Value, mut sentinel: Value, at: BigInt) -> Value {
         if way == 0 || way == 6 {
             match sources.first().map(collection_contents) {
@@ -54,7 +61,7 @@ impl<'a> Engine<'a> {
 
     fn cursor_call(&mut self, function: &Value, args: Vec<Value>) -> Flow<Value> {
         if let Some(answer) = self.cursor_method(function, "ext.op.iterator.call", args.clone())? { return Ok(answer); }
-        if matches!(collection_contents(function), Value::Text(_)) { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
+        if !matches!(collection_contents(function), Value::Routine(_) | Value::Method(..) | Value::Class(_) | Value::Native(..)) { return Err(self.cursor_word("ext.op.iterator.unready").into()); }
         let count = args.len();
         self.data.extend(args);
         self.data.push(collection_contents(function));
@@ -146,9 +153,9 @@ impl<'a> Engine<'a> {
                         None => {
                             cell.borrow_mut().ended = true;
                             if state.way == 4 && self.truth(&state.sentinel) {
-                                if at > 0 { return Err(Self::named_fault(self.cursor_words("ext.builtin.zip.short"), &(at + 1).to_string()).into()); }
+                                if at > 0 { return Err(self.cursor_zip_fault("ext.builtin.zip.short", at + 1).into()); }
                                 for (later, other) in state.sources.iter().enumerate().skip(1) {
-                                    if self.cursor_next(other)?.is_some() { return Err(Self::named_fault(self.cursor_words("ext.builtin.zip.long"), &(later + 1).to_string()).into()); }
+                                    if self.cursor_next(other)?.is_some() { return Err(self.cursor_zip_fault("ext.builtin.zip.long", later + 1).into()); }
                                 }
                             }
                             return Ok(None);
@@ -172,6 +179,7 @@ impl<'a> Engine<'a> {
             7 => self.cursor_next(&state.sources[0])?,
             _ => return Err(self.cursor_word("ext.op.iterator.unready").into()),
         };
+        if cell.borrow().ended { return Ok(None); }
         if answer.is_none() { cell.borrow_mut().ended = true; }
         Ok(answer)
     }

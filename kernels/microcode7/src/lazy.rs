@@ -27,6 +27,13 @@ impl<'a> Machine<'a> {
         self.argument_fault(label, Some(&self.walk_type(value)))
     }
 
+    fn unequal_walks(&self, label: &str, at: usize) -> String {
+        match (at, self.table.strings(label)) {
+            (3.., [beginning, _, span]) => beginning.clone() + &at.to_string() + span + &(at - 1).to_string(),
+            _ => self.argument_fault(label, Some(&at.to_string())),
+        }
+    }
+
     fn suspend(&self, title: String, work: crate::data::PendingWalk) -> Value {
         let extent = match &work {
             crate::data::PendingWalk::Places(source, _, _) => match collection_read(source) {
@@ -189,9 +196,9 @@ impl<'a> Machine<'a> {
                         if let Some(item) = self.take_walk(input)? { row.push(item); continue; }
                         shared.borrow_mut().finished = true;
                         if strict {
-                            if column != 0 { return Err(self.argument_fault("ext.builtin.zip.short", Some(&(column + 1).to_string())).into()); }
+                            if column != 0 { return Err(self.unequal_walks("ext.builtin.zip.short", column + 1).into()); }
                             for (number, rest) in inputs.iter().enumerate().skip(1) {
-                                if self.take_walk(rest)?.is_some() { return Err(self.argument_fault("ext.builtin.zip.long", Some(&(number + 1).to_string())).into()); }
+                                if self.take_walk(rest)?.is_some() { return Err(self.unequal_walks("ext.builtin.zip.long", number + 1).into()); }
                             }
                         }
                         return Ok(None);
@@ -200,6 +207,7 @@ impl<'a> Machine<'a> {
                 }
             }
         };
+        if shared.borrow().finished { return Ok(None); }
         shared.borrow_mut().finished = result.is_none();
         Ok(result)
     }

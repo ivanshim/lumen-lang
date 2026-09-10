@@ -919,6 +919,8 @@ only. The extension labels so far, all from PHP:
   walks, then whole, real, flag, text, list, map and null values.
   `ext.builtin.zip.strict` names its equal-length switch; `.short` and
   `.long` enclose the number of the source that ended too soon or late.
+  Their third piece, where given, precedes the last number of a span
+  when more than one earlier source has been walked.
   `ext.builtin.enumerate.start` names its first count.
 - `ext.builtin.tuple`, `.set`, `.sorted` and `.dict` gather a walk as
   ordered members, distinct members, members put in order, and key-value
@@ -2308,8 +2310,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.builtin.zip` | - | - | `zip` | - | - | - | - | - | - | - |
-| `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` | - | - | - | - | - | - | - |
-| `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
 | `ext.builtin.zip.strict` | - | - | `strict` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
