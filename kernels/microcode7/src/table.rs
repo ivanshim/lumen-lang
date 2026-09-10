@@ -92,7 +92,7 @@ ext.builtin.member.get:L \
 ext.builtin.member.set:L \
 ext.builtin.instance:L \
 ext.builtin.module.load:L \
-ext.builtin.copy:L \
+ext.builtin.copy:L ext.builtin.copy.hooks:L ext.builtin.pickle.pack:L ext.builtin.pickle.unpack:L ext.builtin.pickle.hooks:L ext.builtin.pickle.amiss:L \
 ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
 ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L \
@@ -160,7 +160,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 86] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 88] = [
     ("ext.builtin.sum", Prim::Total), ("ext.builtin.list", Prim::Listed), ("ext.builtin.any", Prim::SomeTrue),
     ("builtin.emit", Prim::Echo), ("builtin.print", Prim::Say), ("builtin.write", Prim::Out), ("builtin.len", Prim::Length),
     ("builtin.char_at", Prim::CharAtIndex), ("builtin.ord", Prim::CodeOf), ("builtin.chr", Prim::CharOf), ("builtin.typeof", Prim::SortOf),
@@ -193,6 +193,8 @@ pub const BUILTIN_LABELS: [(&str, Prim); 86] = [
     ("ext.builtin.instance", Prim::IsInstance),
     ("ext.builtin.module.load", Prim::LoadModule),
     ("ext.builtin.copy", Prim::CopyWorth),
+    ("ext.builtin.pickle.pack", Prim::KeepWorth),
+    ("ext.builtin.pickle.unpack", Prim::RestoreWorth),
     ("ext.builtin.class.derive", Prim::MakeHeir),
     ("ext.builtin.call.outcome", Prim::CallResult),
     ("ext.builtin.clock", Prim::SinceEpoch),

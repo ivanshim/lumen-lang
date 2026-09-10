@@ -1669,6 +1669,18 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.copy`: a builtin copying a value; its second argument says
   whether to copy the things held within it too. Deep copies remember
   objects already copied, so cycles and shared members keep their shape.
+- `ext.builtin.copy.hooks`: the shallow and deep copying methods, in
+  that order. A deep method receives the map of objects already copied.
+- `ext.builtin.pickle.pack` and `ext.builtin.pickle.unpack`: builtins
+  keeping a value as text and restoring it. The text begins with a version
+  mark and carries counted references, whole numbers in full, and the
+  exact parts of a real. It is an in-memory format of its own, not the
+  byte stream of another implementation. Arrays retain the distinctions
+  the value store holds; they cannot recover distinctions lost on reading.
+- `ext.builtin.pickle.hooks`: the methods fetching state, restoring state,
+  and reducing an object, in that order.
+- `ext.builtin.pickle.amiss`: the complaints for an unsupported value,
+  a broken stored value, and an unpicklable routine, in that order.
 - `ext.builtin.program.namespace`: a builtin handing out a map of the
   outer program's names and their present values. A module's private
   cells are not part of that map; it lets a library find the classes the
@@ -2171,6 +2183,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.complaint.handler` | - | - | - | - | `__complaint_handler` | - | - | - | - | - |
 | `ext.builtin.complaint.say` | - | - | - | - | `__complaint_say` | - | - | - | - | - |
 | `ext.builtin.copy` | - | - | `__copy_value` | - | - | - | - | - | - | - |
+| `ext.builtin.copy.hooks` | - | - | `__copy__` `__deepcopy__` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.echo` | - | - | - | - | `echo` | - | - | - | - | - |
@@ -2207,6 +2220,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.output.drop` | - | - | `__output_drop` | - | `__output_drop` | - | - | - | - | - |
 | `ext.builtin.output.held` | - | - | `__output_held` | - | `__output_held` | - | - | - | - | - |
 | `ext.builtin.output.hold` | - | - | `__output_hold` | - | `__output_hold` | - | - | - | - | - |
+| `ext.builtin.pickle.amiss` | - | - | `PicklingError: unsupported value` `UnpicklingError: invalid in-memory pickle` `PicklingError: cannot pickle a function or generator` | - | - | - | - | - | - | - |
+| `ext.builtin.pickle.hooks` | - | - | `__getstate__` `__setstate__` `__reduce__` | - | - | - | - | - | - | - |
+| `ext.builtin.pickle.pack` | - | - | `__pickle_pack` | - | - | - | - | - | - | - |
+| `ext.builtin.pickle.unpack` | - | - | `__pickle_unpack` | - | - | - | - | - | - | - |
 | `ext.builtin.print.end` | - | - | `end` | - | - | - | - | - | - | - |
 | `ext.builtin.print.end.amiss` | - | - | `TypeError: end must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.file` | - | - | `file` | - | - | - | - | - | - | - |

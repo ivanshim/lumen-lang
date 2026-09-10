@@ -39,6 +39,8 @@ pub enum Prim {
     MakeHeir,
     CallResult,
     CopyWorth,
+    KeepWorth,
+    RestoreWorth,
     LoadModule,
     IsInstance,
     WriteMember,

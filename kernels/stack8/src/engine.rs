@@ -3533,6 +3533,7 @@ impl<'a> Engine<'a> {
                 let same = match (a, b) {
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+                    (Value::Text(x), Value::Text(y)) if Rc::ptr_eq(x, y) => true,
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Small(x), Value::Small(y)) if (-5..=256).contains(x) => x == y,
@@ -4731,9 +4732,28 @@ impl<'a> Engine<'a> {
                     constants: Vec::new(), shared: RefCell::new(shared),
                 }))
             }
+            Builtin::PicklePack => {
+                arity(1)?;
+                let payload = self.pack_value(&args[0], &mut HashMap::new(), 0)?;
+                Value::text(&serde_json::json!(["LMP1", payload]).to_string())
+            }
+            Builtin::PickleUnpack => {
+                arity(1)?;
+                let Value::Text(text) = &args[0] else { return Err(self.pickle_note(1)) };
+                let root: serde_json::Value = serde_json::from_str(text).map_err(|_| self.pickle_note(1))?;
+                let row = root.as_array().filter(|r| r.len() == 2 && r[0].as_str() == Some("LMP1")).ok_or_else(|| self.pickle_note(1))?;
+                self.unpack_value(&row[1], &mut HashMap::new(), 0)?
+            }
             Builtin::CopyValue => {
                 arity(2)?;
-                duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
+                let deep = matches!(args[1], Value::Flag(true));
+                if let Value::Object(object) = &args[0] {
+                    if let Some(word) = self.lang.copy_hooks.get(usize::from(deep)).cloned() {
+                        let memo = if deep { vec![Value::Map(Rc::new(Vec::new()))] } else { vec![] };
+                        if let Some(answer) = self.stored_method(object, &word, memo)? { return Ok(answer); }
+                    }
+                }
+                duplicate_value(&args[0], deep, &mut HashMap::new(), &mut self.made)
             }
             Builtin::CallOutcome => {
                 arity(1)?;
@@ -6193,6 +6213,166 @@ impl Engine<'_> {
         let mut fields = module.fields.borrow_mut();
         if let Some((_, place)) = fields.iter_mut().find(|(name, _)| name == member) {
             match place { Value::Bond(cell) => *cell.borrow_mut() = map, _ => *place = map }
+        }
+    }
+}
+
+impl Engine<'_> {
+    fn pickle_note(&self, place: usize) -> String {
+        self.lang.pickle_amiss.get(place).cloned().unwrap_or_default()
+    }
+
+    fn stored_method(&mut self, object: &Rc<Instance>, name: &str, rest: Vec<Value>) -> Res<Option<Value>> {
+        let Some(method) = object.class.method(name).cloned() else { return Ok(None) };
+        let mut arguments = vec![Value::Object(object.clone())];
+        arguments.extend(rest);
+        match self.invoke(&method, arguments) {
+            Ok(()) => self.drop_top().map(Some),
+            Err(Fault::Note(words)) => Err(words),
+            Err(other) => { self.carried = Some(other); Err(self.pickle_note(0)) }
+        }
+    }
+
+    fn pack_value(&mut self, value: &Value, known: &mut HashMap<usize, usize>, depth: usize) -> Res<serde_json::Value> {
+        use serde_json::json;
+        if depth > 256 { return Err(self.pickle_note(0)); }
+        if let Value::Bond(cell) = value { return self.pack_value(&cell.borrow(), known, depth + 1); }
+        let address = match value {
+            Value::Array(v) => Some(Rc::as_ptr(v) as usize),
+            Value::Map(v) => Some(Rc::as_ptr(v) as usize),
+            Value::Object(v) => Some(Rc::as_ptr(v) as usize),
+            _ => None,
+        };
+        let index = known.len();
+        if let Some(address) = address {
+            if let Some(index) = known.get(&address) { return Ok(json!(["ref", index])); }
+            known.insert(address, index);
+        }
+        Ok(match value {
+            Value::Null => json!(["none"]),
+            Value::Flag(v) => json!(["bool", v]),
+            Value::Small(v) => json!(["int", v.to_string()]),
+            Value::Huge(v) => json!(["int", v.to_string()]),
+            Value::Text(v) => json!(["str", v.as_ref()]),
+            Value::Real(v) => json!(["real", v.p.to_string(), v.q.to_string(), v.places, v.below, v.floating]),
+            Value::Frac(v) => json!(["ratio", v.p.to_string(), v.q.to_string()]),
+            Value::Array(items) => {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.pack_value(item, known, depth + 1)?); }
+                json!(["array", index, parts])
+            }
+            Value::Map(items) => {
+                let mut pairs = Vec::new();
+                for (key, worth) in items.iter() {
+                    pairs.push(json!([self.pack_value(key, known, depth + 1)?, self.pack_value(worth, known, depth + 1)?]));
+                }
+                json!(["map", index, pairs])
+            }
+            Value::Object(object) => {
+                let mut module = None;
+                for (name, namespace) in &self.modules {
+                    if let Value::Object(namespace) = namespace {
+                        if namespace.fields.borrow().iter().any(|(_, v)| match v {
+                            Value::Class(c) => Rc::ptr_eq(c, &object.class),
+                            Value::Bond(b) => matches!(&*b.borrow(), Value::Class(c) if Rc::ptr_eq(c, &object.class)),
+                            _ => false,
+                        }) { module = Some(name.clone()); break; }
+                    }
+                }
+                if module.is_none() && !self.world.iter().any(|v| matches!(v, Value::Class(c) if Rc::ptr_eq(c, &object.class))) {
+                    return Err(self.pickle_note(0));
+                }
+                let hooks = self.lang.pickle_hooks.clone();
+                if hooks.get(2).is_some_and(|word| object.class.method(word).is_some()) { return Err(self.pickle_note(0)); }
+                let custom = match hooks.first() { Some(word) => self.stored_method(object, word, vec![])?, None => None };
+                let uses_hook = custom.is_some();
+                let state = custom.unwrap_or_else(|| Value::Map(Rc::new(object.fields.borrow().iter().map(|(k, v)| (Value::text(k), v.clone())).collect())));
+                json!(["object", index, module.unwrap_or_default(), object.class.name, uses_hook, self.pack_value(&state, known, depth + 1)?])
+            }
+            Value::Routine(_) | Value::Method(_, _) => return Err(self.pickle_note(2)),
+            _ => return Err(self.pickle_note(0)),
+        })
+    }
+
+    fn unpack_value(&mut self, held: &serde_json::Value, known: &mut HashMap<usize, Value>, depth: usize) -> Res<Value> {
+        let bad = self.pickle_note(1);
+        if depth > 256 { return Err(bad); }
+        let row = held.as_array().ok_or_else(|| bad.clone())?;
+        let text = |at: usize| row.get(at).and_then(|v| v.as_str()).ok_or_else(|| bad.clone());
+        let integer = |at: usize| -> Res<BigInt> { text(at)?.parse().map_err(|_| bad.clone()) };
+        let index = || row.get(1).and_then(|v| v.as_u64()).and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad.clone());
+        match text(0)? {
+            "none" if row.len() == 1 => Ok(Value::Null),
+            "bool" if row.len() == 2 => Ok(Value::Flag(row[1].as_bool().ok_or(bad)?)),
+            "int" if row.len() == 2 => Ok(Value::of_big(integer(1)?)),
+            "str" if row.len() == 2 => Ok(Value::text(text(1)?)),
+            "real" if row.len() == 6 => Ok(Value::Real(Rc::new(crate::value::Real {
+                p: integer(1)?, q: integer(2)?, places: row[3].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad.clone())?,
+                below: row[4].as_bool().ok_or_else(|| bad.clone())?, floating: row[5].as_bool().ok_or(bad)?,
+            }))),
+            "ratio" if row.len() == 3 => {
+                let q = integer(2)?;
+                if q <= BigInt::from(1) { return Err(bad); }
+                Ok(Value::Frac(Rc::new(crate::value::Frac { p: integer(1)?, q })))
+            }
+            "ref" if row.len() == 2 => known.get(&index()?).cloned().ok_or(bad),
+            "array" | "map" if row.len() == 3 => {
+                let at = index()?;
+                if known.contains_key(&at) { return Err(bad); }
+                let parts = row[2].as_array().ok_or_else(|| bad.clone())?;
+                let answer = if text(0)? == "array" {
+                    let mut items = Vec::new();
+                    for item in parts { items.push(self.unpack_value(item, known, depth + 1)?); }
+                    Value::array(items)
+                } else {
+                    let mut pairs = Vec::new();
+                    for part in parts {
+                        let pair = part.as_array().filter(|p| p.len() == 2).ok_or_else(|| bad.clone())?;
+                        pairs.push((self.unpack_value(&pair[0], known, depth + 1)?, self.unpack_value(&pair[1], known, depth + 1)?));
+                    }
+                    Value::Map(Rc::new(pairs))
+                };
+                known.insert(at, answer.clone());
+                Ok(answer)
+            }
+            "object" if row.len() == 6 => {
+                let at = index()?;
+                if known.contains_key(&at) { return Err(bad); }
+                let module = text(2)?;
+                let name = text(3)?;
+                let class = if module.is_empty() {
+                    self.world.iter().find_map(|v| match v { Value::Class(c) if c.name == name => Some(c.clone()), _ => None })
+                } else {
+                    let namespace = match self.import_module(module) {
+                        Ok(namespace) => namespace,
+                        Err(Fault::Note(note)) => return Err(note),
+                        Err(other) => { self.carried = Some(other); return Err(bad); }
+                    };
+                    if let Value::Object(namespace) = namespace {
+                        namespace.fields.borrow().iter().find_map(|(_, v)| {
+                            let v = match v { Value::Bond(cell) => cell.borrow().clone(), v => v.clone() };
+                            match v { Value::Class(c) if c.name == name => Some(c), _ => None }
+                        })
+                    } else { None }
+                }.ok_or_else(|| bad.clone())?;
+                self.made += 1;
+                let object = Rc::new(Instance { class, mark: self.made, fields: RefCell::new(Vec::new()) });
+                let answer = Value::Object(object.clone());
+                known.insert(at, answer.clone());
+                let state = self.unpack_value(&row[5], known, depth + 1)?;
+                let word = self.lang.pickle_hooks.get(1).cloned();
+                if let Some(word) = word {
+                    if self.stored_method(&object, &word, vec![state.clone()])?.is_some() { return Ok(answer); }
+                }
+                if matches!(state, Value::Null) { return Ok(answer); }
+                let Value::Map(fields) = state else { return Err(bad) };
+                for (key, value) in fields.iter() {
+                    let Value::Text(key) = key else { return Err(bad) };
+                    object.fields.borrow_mut().push((key.to_string(), value.clone()));
+                }
+                Ok(answer)
+            }
+            _ => Err(bad),
         }
     }
 }

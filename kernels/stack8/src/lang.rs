@@ -426,6 +426,9 @@ pub struct Lang {
     pub import_as_words: Vec<String>,
     pub math_floating: bool,
     pub module_helper_amiss: String,
+    pub copy_hooks: Vec<String>,
+    pub pickle_hooks: Vec<String>,
+    pub pickle_amiss: Vec<String>,
     pub member_absent: Vec<String>,
     pub object_protocol: Vec<String>,
     pub clock_parts: bool,
@@ -834,7 +837,7 @@ w ext.builtin.member.get
 w ext.builtin.member.set
 w ext.builtin.instance
 w ext.builtin.module.load
-w ext.builtin.copy
+w ext.builtin.copy | w ext.builtin.copy.hooks | w ext.builtin.pickle.pack | w ext.builtin.pickle.unpack | w ext.builtin.pickle.hooks | w ext.builtin.pickle.amiss
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
@@ -1361,6 +1364,8 @@ impl Lang {
             ("ext.builtin.instance", Builtin::InstanceOf),
             ("ext.builtin.module.load", Builtin::ModuleLoad),
             ("ext.builtin.copy", Builtin::CopyValue),
+            ("ext.builtin.pickle.pack", Builtin::PicklePack),
+            ("ext.builtin.pickle.unpack", Builtin::PickleUnpack),
             ("ext.builtin.class.derive", Builtin::DeriveClass),
             ("ext.builtin.call.outcome", Builtin::CallOutcome),
             ("ext.builtin.clock", Builtin::Clock),
@@ -1669,6 +1674,9 @@ impl Lang {
             import_from_words: r.strings("ext.stmt.import.from")?,
             import_as_words: r.strings("ext.stmt.import.as")?,
             math_floating: r.flag("ext.builtin.math.floating")?,
+            copy_hooks: r.strings("ext.builtin.copy.hooks")?,
+            pickle_hooks: r.strings("ext.builtin.pickle.hooks")?,
+            pickle_amiss: r.strings("ext.builtin.pickle.amiss")?,
             module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
             member_absent: r.strings("ext.builtin.member.absent")?,
             object_protocol: r.strings("ext.op.object.protocol")?,

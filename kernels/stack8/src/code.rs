@@ -328,6 +328,8 @@ pub enum Builtin {
     DeriveClass,
     CallOutcome,
     CopyValue,
+    PicklePack,
+    PickleUnpack,
     ModuleLoad,
     InstanceOf,
     MemberSet,

@@ -347,6 +347,10 @@
   "ext.builtin.copy": [
     "__copy_value"
   ],
+  "ext.builtin.copy.hooks": [
+    "__copy__",
+    "__deepcopy__"
+  ],
   "ext.builtin.fault.current": [
     "__current_fault"
   ],
@@ -402,6 +406,22 @@
   ],
   "ext.builtin.output.hold": [
     "__output_hold"
+  ],
+  "ext.builtin.pickle.amiss": [
+    "PicklingError: unsupported value",
+    "UnpicklingError: invalid in-memory pickle",
+    "PicklingError: cannot pickle a function or generator"
+  ],
+  "ext.builtin.pickle.hooks": [
+    "__getstate__",
+    "__setstate__",
+    "__reduce__"
+  ],
+  "ext.builtin.pickle.pack": [
+    "__pickle_pack"
+  ],
+  "ext.builtin.pickle.unpack": [
+    "__pickle_unpack"
   ],
   "ext.builtin.print.end": [
     "end"

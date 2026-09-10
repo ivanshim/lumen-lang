@@ -3907,9 +3907,29 @@ impl<'a> Machine<'a> {
                 };
                 Value::Blueprint(Rc::new(heir))
             }
+            Prim::KeepWorth => {
+                n(1)?;
+                let tree = self.keep_worth(&v[0], &mut Vec::new(), 0)?;
+                let envelope = serde_json::json!(["LMP1", tree]);
+                Value::text(&envelope.to_string())
+            }
+            Prim::RestoreWorth => {
+                n(1)?;
+                let source = match &v[0] { Value::Text(s) => s, _ => return Err(self.keeping_fault(1)) };
+                let envelope = serde_json::from_str::<serde_json::Value>(source).map_err(|_| self.keeping_fault(1))?;
+                if envelope.as_array().map_or(true, |a| a.len() != 2) || envelope[0] != "LMP1" { return Err(self.keeping_fault(1)); }
+                self.restore_worth(&envelope[1], &mut vec![], 0)?
+            }
             Prim::CopyWorth => {
                 n(2)?;
                 let deep = matches!(v[1], Value::Flag(true));
+                let hooks = self.table.strings("ext.builtin.copy.hooks");
+                if let Value::Thing(thing) = &v[0] {
+                    if let Some(word) = hooks.get(if deep { 1 } else { 0 }) {
+                        let handed = if deep { vec![Value::Dict(Rc::new(vec![]))] } else { Vec::new() };
+                        if let Some(answer) = self.state_answer(thing, word, handed)? { return Ok(answer); }
+                    }
+                }
                 let mut known = Vec::new();
                 self.copy_worth(&v[0], deep, &mut known)
             }
@@ -6463,5 +6483,176 @@ impl Machine<'_> {
                 }
             }
         }
+    }
+}
+
+impl Machine<'_> {
+    fn keeping_fault(&self, which: usize) -> String {
+        self.table.strings("ext.builtin.pickle.amiss").get(which).cloned().unwrap_or_default()
+    }
+
+    fn state_answer(&mut self, thing: &Rc<Thing>, word: &str, values: Vec<Value>) -> Result<Option<Value>, String> {
+        if let Some(routine) = thing.of.method(word).cloned() {
+            let call = Form::Apply(Callee::Code(Box::new(Form::Const(Value::Method(routine, thing.clone())))), values.into_iter().map(Form::Const).collect());
+            let frame = Rc::clone(&self.outermost);
+            return match self.value_of(&call, &frame) {
+                Ok(answer) => Ok(Some(answer)),
+                Err(Escape::Error(message)) => Err(message),
+                Err(escape) => { self.got_away = Some(escape); Err(self.keeping_fault(0)) }
+            };
+        }
+        Ok(None)
+    }
+
+    fn keep_worth(&mut self, worth: &Value, numbered: &mut Vec<usize>, level: usize) -> Result<serde_json::Value, String> {
+        use serde_json::{Value as J, json};
+        if level == 257 { return Err(self.keeping_fault(0)); }
+        if let Value::Shared(place) = worth {
+            let inner = place.borrow().clone();
+            return self.keep_worth(&inner, numbered, level + 1);
+        }
+        let pointer = match worth {
+            Value::Thing(x) => Rc::as_ptr(x) as usize,
+            Value::Vector(x) => Rc::as_ptr(x) as usize,
+            Value::Dict(x) => Rc::as_ptr(x) as usize,
+            _ => 0,
+        };
+        let ordinal = numbered.len();
+        if pointer != 0 {
+            if let Some(previous) = numbered.iter().position(|p| *p == pointer) { return Ok(json!(["ref", previous])); }
+            numbered.push(pointer);
+        }
+        let result = match worth {
+            Value::Text(chars) => json!(["str", chars.to_string()]),
+            Value::Flag(truth) => json!(["bool", truth]),
+            Value::Nil => json!(["none"]),
+            Value::Huge(_) | Value::Small(_) => json!(["int", worth.bare()]),
+            Value::Frac(number) => match number.places {
+                Some(precision) => json!(["real", number.above.to_string(), number.beneath.to_string(), precision, number.under, number.float_style]),
+                None => json!(["ratio", number.above.to_string(), number.beneath.to_string()]),
+            },
+            Value::Vector(sequence) => {
+                let children: Result<Vec<J>, String> = sequence.iter().map(|part| self.keep_worth(part, numbered, level + 1)).collect();
+                json!(["array", ordinal, children?])
+            }
+            Value::Dict(entries) => {
+                let mut contents = vec![];
+                for entry in entries.as_ref() {
+                    let key = self.keep_worth(&entry.0, numbered, level + 1)?;
+                    let item = self.keep_worth(&entry.1, numbered, level + 1)?;
+                    contents.push(J::Array(vec![key, item]));
+                }
+                json!(["map", ordinal, contents])
+            }
+            Value::Thing(instance) => {
+                let agrees = |v: &Value| match v {
+                    Value::Blueprint(b) => Rc::ptr_eq(b, &instance.of),
+                    Value::Shared(p) => matches!(&*p.borrow(), Value::Blueprint(b) if Rc::ptr_eq(b, &instance.of)),
+                    _ => false,
+                };
+                let origin = self.imported.iter().find_map(|(name, namespace)| {
+                    if let Value::Thing(scope) = namespace {
+                        if scope.holds.borrow().iter().any(|(_, v)| agrees(v)) { return Some(name.clone()); }
+                    }
+                    None
+                });
+                if origin.is_none() && !self.outermost.cells.borrow().iter().any(agrees) { return Err(self.keeping_fault(0)); }
+                let methods = self.table.strings("ext.builtin.pickle.hooks");
+                if methods.len() > 2 && instance.of.method(&methods[2]).is_some() { return Err(self.keeping_fault(0)); }
+                let alternate = if methods.is_empty() { None } else { self.state_answer(instance, &methods[0], Vec::new())? };
+                let changed = alternate.is_some();
+                let state = match alternate {
+                    Some(state) => state,
+                    None => Value::Dict(Rc::new(instance.holds.borrow().iter().map(|(name, item)| (Value::text(name), item.clone())).collect())),
+                };
+                let encoded = self.keep_worth(&state, numbered, level + 1)?;
+                json!(["object", ordinal, origin.unwrap_or_default(), instance.of.name, changed, encoded])
+            }
+            Value::Bound(_, _) | Value::Method(_, _) | Value::Routine(_) => return Err(self.keeping_fault(2)),
+            _ => return Err(self.keeping_fault(0)),
+        };
+        Ok(result)
+    }
+
+    fn restore_worth(&mut self, record: &serde_json::Value, restored: &mut Vec<(usize, Value)>, level: usize) -> Result<Value, String> {
+        let fault = self.keeping_fault(1);
+        if level > 256 { return Err(fault); }
+        let list = record.as_array().ok_or_else(|| fault.clone())?;
+        let word = |position| list.get(position).and_then(serde_json::Value::as_str).ok_or_else(|| fault.clone());
+        let count = |position| list.get(position).and_then(serde_json::Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(|| fault.clone());
+        let number = |position| -> Result<BigInt, String> { word(position)?.parse().map_err(|_| fault.clone()) };
+        let tag = word(0)?;
+        if tag == "ref" && list.len() == 2 {
+            let wanted = count(1)?;
+            return restored.iter().find(|(n, _)| *n == wanted).map(|(_, v)| v.clone()).ok_or(fault);
+        }
+        let scalar = match (tag, list.len()) {
+            ("str", 2) => Some(Value::text(word(1)?)),
+            ("int", 2) => Some(Value::from_big(number(1)?)),
+            ("none", 1) => Some(Value::Nil),
+            ("bool", 2) => Some(Value::Flag(list[1].as_bool().ok_or_else(|| fault.clone())?)),
+            ("real", 6) => Some(Value::Frac(Rc::new(crate::data::Ratio {
+                above: number(1)?, beneath: number(2)?, places: Some(count(3)?),
+                float_style: list[5].as_bool().ok_or_else(|| fault.clone())?, under: list[4].as_bool().ok_or_else(|| fault.clone())?,
+            }))),
+            ("ratio", 3) => {
+                let denominator = number(2)?;
+                if denominator <= BigInt::from(1) { return Err(fault); }
+                Some(Value::Frac(Rc::new(crate::data::Ratio { above: number(1)?, beneath: denominator, places: None, float_style: false, under: false })))
+            }
+            _ => None,
+        };
+        if let Some(scalar) = scalar { return Ok(scalar); }
+        let ordinal = count(1)?;
+        if restored.iter().any(|(old, _)| *old == ordinal) { return Err(fault); }
+        if (tag == "array" || tag == "map") && list.len() == 3 {
+            let entries = list[2].as_array().ok_or_else(|| fault.clone())?;
+            let mut sequence = Vec::new();
+            let mut mapping = Vec::new();
+            for entry in entries {
+                if tag == "array" { sequence.push(self.restore_worth(entry, restored, level + 1)?); }
+                else {
+                    let parts = entry.as_array().filter(|e| e.len() == 2).ok_or_else(|| fault.clone())?;
+                    let key = self.restore_worth(&parts[0], restored, level + 1)?;
+                    let item = self.restore_worth(&parts[1], restored, level + 1)?;
+                    mapping.push((key, item));
+                }
+            }
+            let value = if tag == "array" { Value::Vector(Rc::new(sequence)) } else { Value::Dict(Rc::new(mapping)) };
+            restored.push((ordinal, value.clone()));
+            return Ok(value);
+        }
+        if tag != "object" || list.len() != 6 { return Err(fault); }
+        let owner = word(2)?;
+        let title = word(3)?;
+        let find_class = |v: &Value| {
+            let held = if let Value::Shared(c) = v { c.borrow().clone() } else { v.clone() };
+            match held { Value::Blueprint(b) if b.name == title => Some(b), _ => None }
+        };
+        let shape = if owner.is_empty() { self.outermost.cells.borrow().iter().find_map(find_class) }
+        else {
+            match self.load_namespace(owner)? {
+                Value::Thing(scope) => scope.holds.borrow().iter().find_map(|(_, v)| find_class(v)),
+                _ => None,
+            }
+        }.ok_or_else(|| fault.clone())?;
+        self.made += 1;
+        let fresh = Rc::new(Thing { turn: self.made, of: shape, holds: RefCell::new(vec![]) });
+        let result = Value::Thing(Rc::clone(&fresh));
+        restored.push((ordinal, result.clone()));
+        let state = self.restore_worth(&list[5], restored, level + 1)?;
+        let names = self.table.strings("ext.builtin.pickle.hooks");
+        if names.len() >= 2 && self.state_answer(&fresh, &names[1], vec![state.clone()])?.is_some() { return Ok(result); }
+        match state {
+            Value::Nil => (),
+            Value::Dict(entries) => for (key, data) in entries.iter() {
+                match key {
+                    Value::Text(name) => fresh.holds.borrow_mut().push((name.to_string(), data.clone())),
+                    _ => return Err(fault),
+                }
+            },
+            _ => return Err(fault),
+        }
+        Ok(result)
     }
 }
