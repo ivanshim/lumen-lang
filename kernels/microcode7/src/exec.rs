@@ -4088,7 +4088,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Flag(if op == Prim::Eq { equal } else { !equal }));
             }
         }
-        if matches!(op, Prim::Added | Prim::Placed) {
+        if matches!(op, Prim::Added | Prim::Placed) || op == Prim::Erase && self.table.has_any("ext.op.index.delete") {
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
                 arguments[0] = v[0].settled();
@@ -4105,7 +4105,7 @@ impl<'a> Machine<'a> {
                 return self.prim(op, name, &arguments);
             }
         }
-        if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed) {
+        if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::SliceValue) {
             let settled: Vec<Value> = v.iter().map(Value::settled).collect();
             return self.prim(op, name, &settled);
         }
@@ -5113,6 +5113,13 @@ impl<'a> Machine<'a> {
             }
             Prim::Erase => {
                 n(2)?;
+                if self.keyed_method(&v[0], "ext.op.index.delete", &[v[1].clone()])?.is_some() { return Ok(v[0].clone()); }
+                if let (Value::Vector(items), Value::Span(bounds)) = (&v[0], &v[1]) {
+                    let counted = self.counted_bounds(bounds)?;
+                    let (_, omitted, _) = self.span_selection(&counted, items.len())?;
+                    let kept = items.iter().enumerate().filter(|(i, _)| !omitted.contains(i)).map(|(_, item)| item.clone()).collect();
+                    return Ok(Value::Vector(Rc::new(kept)));
+                }
                 match &v[0] {
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
                         let offset = (match &v[1] { Value::Flag(b) => Some(if *b { 1 } else { 0 }), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None }).ok_or_else(|| self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string())?;

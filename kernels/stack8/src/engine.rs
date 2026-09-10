@@ -4417,6 +4417,8 @@ impl<'a> Engine<'a> {
     }
 
     fn compare_slices(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if let Value::Bond(cell) = a { let value = cell.borrow().clone(); return self.compare_slices(op, &value, b); }
+        if let Value::Bond(cell) = b { let value = cell.borrow().clone(); return self.compare_slices(op, a, &value); }
         let (Value::Slice(left), Value::Slice(right)) = (a, b) else { return self.dyadic(op, a, b); };
         let mut same = true;
         for (x, y) in left.iter().zip(right.iter()) {
@@ -4495,6 +4497,11 @@ impl<'a> Engine<'a> {
     }
 
     fn read_index(&mut self, target: &Value, key: &Value) -> Res<Value> {
+        if let Value::Bond(cell) = target { let value = cell.borrow().clone(); return self.read_index(&value, key); }
+        if let Value::Bond(cell) = key { let value = cell.borrow().clone(); return self.read_index(target, &value); }
+        if matches!(target, Value::Collection(..)) || matches!(key, Value::Collection(..)) {
+            return self.read_index(&target.contents(), &key.contents());
+        }
         if let Some(value) = self.index_method(target, "ext.op.index.get", vec![key.clone()])? { return Ok(value); }
         if let Value::Slice(parts) = key {
             if let Value::Counted(row) = target {
@@ -5017,7 +5024,7 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace) { for value in args.iter_mut() { *value = value.contents(); } }
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice) { for value in args.iter_mut() { *value = value.contents(); } }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
