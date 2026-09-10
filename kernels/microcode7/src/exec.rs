@@ -4118,9 +4118,10 @@ impl<'a> Machine<'a> {
             return self.prim_values(op, name, &counted);
         }
         if self.table.has_any("ext.op.order.unsupported") && matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
-            && crate::math::below(&v[0], &v[1]).is_none() && !matches!((&v[0], &v[1]), (Value::Text(_), Value::Text(_))) {
+            && crate::math::below(&v[0], &v[1]).is_none() && !matches!((&v[0], &v[1]), (Value::Text(_), Value::Text(_)))
+            && !v.iter().all(|part| matches!(part, Value::Small(_) | Value::Huge(_) | Value::Frac(_))) {
             let words = self.table.strings("ext.op.order.unsupported");
-            let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
+            let sign = self.written_as(&op);
             return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], v[0].kind_word(), words[2], v[1].kind_word(), words[3]));
         }
         if op == Prim::AsText && v.len() == 1 {

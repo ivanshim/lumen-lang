@@ -3736,8 +3736,10 @@ impl<'a> Engine<'a> {
             }
         }
         if !self.identity_word("ext.op.order.unsupported").is_empty() && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge)
-            && crate::arith::order_values(a, b).is_none() && !matches!((a, b), (Value::Text(_), Value::Text(_))) {
-            let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
+            && crate::arith::order_values(a, b).is_none() && !matches!((a, b), (Value::Text(_), Value::Text(_)))
+            && !(matches!(a, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_))
+                && matches!(b, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_))) {
+            let sign = self.written_as(op);
             let words = &self.lang.identity_words["ext.op.order.unsupported"];
             return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], a.core_kind(), words[2], b.core_kind(), words[3]));
         }
