@@ -46,7 +46,7 @@ class redirect_stdout:
 
     def __exit__(self, kind, value, traceback):
         import sys
-        setattr(sys, 'stdout', self.saved[-1])
+        setattr(sys, 'stdout', self.saved[len(self.saved) - 1])
         self.saved = self.saved[:-1]
         return False
 
@@ -104,7 +104,7 @@ class ExitStack:
     def __exit__(self, kind, value, traceback):
         suppressed = False
         while len(self.exits):
-            leave = self.exits[-1]
+            leave = self.exits[len(self.exits) - 1]
             self.exits = self.exits[:-1]
             if leave(kind, value, traceback):
                 kind = None

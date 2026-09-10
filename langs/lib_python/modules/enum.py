@@ -13,7 +13,7 @@ class _Member:
         return self.owner.__name__ + '.' + self.name
 
     def __repr__(self):
-        return '<' + self.owner.__name__ + '.' + self.name + ': ' + str(self.value) + '>'
+        return '<' + self.owner.__name__ + '.' + self.name + ': ' + f'{self.value!r}' + '>'
 
     def __eq__(self, other):
         return self is other
@@ -50,5 +50,5 @@ class Enum:
 
 # Stub: integer arithmetic on members awaits numeric object methods.
 class IntEnum(Enum):
-    def __class_call__(cls, value):
+    def __init_subclass__(cls, attributes):
         raise 'NotImplementedError: integer enumeration arithmetic is not supported'

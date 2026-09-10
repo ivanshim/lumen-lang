@@ -62,5 +62,5 @@ class Template:
             elif safe:
                 result += text[begin:i]
             else:
-                raise KeyError(name)
+                raise 'KeyError: ' + name
         return result

@@ -27,7 +27,7 @@ class _Reader:
             before = self.i
             node = self.atom()
             if self.i <= before:
-                raise 'RuntimeError: regular expression reader made no progress' 
+                raise 'RuntimeError: regular expression reader made no progress'
             if self.i < len(self.pattern) and self.pattern[self.i] in '*+?{':
                 mark = self.pattern[self.i]
                 self.i += 1

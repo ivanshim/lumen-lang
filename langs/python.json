@@ -920,6 +920,9 @@
   "ext.system.args.list": [
     "__program_argv"
   ],
+  "ext.system.fault.class.key": [
+    "KeyError"
+  ],
   "ext.system.module.cache": [
     "sys",
     "modules"

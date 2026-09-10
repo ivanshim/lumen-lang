@@ -215,7 +215,11 @@ impl<'a> Engine<'a> {
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
-            world: vec![Value::Blank; idents.len()],
+            world: idents.iter().map(|name| {
+                if lang.fault_key.as_ref() != Some(name) { return Value::Blank; }
+                Value::Class(Rc::new(Class { name: name.clone(), base: None, answers: vec![],
+                    fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: RefCell::new(vec![]) }))
+            }).collect(),
             data: Vec::new(),
             caught: Vec::new(),
             memo: HashMap::new(),
@@ -838,6 +842,7 @@ impl<'a> Engine<'a> {
     /// stands.
     fn class_for(&self, told: &str) -> Option<String> {
         let named = match told {
+            _ if told.starts_with("Undefined array key ") => &self.lang.fault_key,
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if self.lang.args_below.as_deref() == Some(told) || self.lang.args_beyond.as_deref() == Some(told) => &self.lang.fault_value,
@@ -1739,7 +1744,10 @@ impl<'a> Engine<'a> {
                     let (kind, fault) = match &ending {
                         Err(Fault::Thrown(Value::Object(raised))) => (Value::Class(raised.class.clone()), Value::Object(raised.clone())),
                         Err(Fault::Thrown(value)) => (Value::text("exception"), value.clone()),
-                        Err(Fault::Note(words)) => (Value::text("error"), Value::text(words)),
+                        Err(Fault::Note(words)) => match self.as_fault(words) {
+                            Some(Value::Object(fault)) => (Value::Class(fault.class.clone()), Value::Object(fault)),
+                            _ => (Value::text("error"), Value::text(words)),
+                        },
                         _ => (Value::Null, Value::Null),
                     };
                     let failed = !matches!(kind, Value::Null);
@@ -2081,6 +2089,11 @@ impl<'a> Engine<'a> {
         if let Some(slot) = slot {
             if let Some(answer) = self.object_answer(&a, slot, vec![b.clone()])? {
                 return Ok(if matches!(op, Action::Ne) { Value::Flag(!self.truth(&answer)) } else { answer });
+            }
+        }
+        if matches!(op, Action::Eq | Action::Ne) {
+            if let Some(answer) = self.object_answer(&b, 1, vec![a.clone()])? {
+                return Ok(Value::Flag(self.truth(&answer) != matches!(op, Action::Ne)));
             }
         }
         self.dyadic(op, &a, &b)
@@ -2616,7 +2629,11 @@ impl<'a> Engine<'a> {
                         c.shared.borrow_mut().push((word.clone(), Value::text(&plan.name)));
                     }
                     let members = Value::Map(Rc::new(c.shared.borrow().iter().map(|(k, v)| (Value::text(k), v.clone())).collect()));
-                    if c.base.is_some() { self.object_answer(&made, 5, vec![members])?; }
+                    let inherited = c.base.as_ref().and_then(|parent| self.lang.object_protocol.get(5).and_then(|name| parent.method(name))).cloned();
+                    if let Some(method) = inherited {
+                        self.invoke(&method, vec![made.clone(), members])?;
+                        self.drop_top()?;
+                    }
                 }
                 made
             }
@@ -4353,6 +4370,9 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::ToText && args.len() == 1 && matches!(args[0], Value::Object(_)) {
+            return Ok(Value::text(&self.object_text(&args[0], false)?));
+        }
         let sp = self.wording();
         let arity = |n: usize| -> Res<()> {
             if args.len() == n {

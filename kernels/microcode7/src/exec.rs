@@ -246,12 +246,20 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
 impl<'a> Machine<'a> {
     pub fn new(table: &'a Table, idents: Vec<String>) -> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let outermost = Env::make(idents.len(), None);
+        if let Some(name) = table.single("ext.system.fault.class.key") {
+            if let Some(at) = idents.iter().position(|word| word == name) {
+                let class = Blueprint { name: name.to_string(), under: None, answers: Vec::new(),
+                    fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()) };
+                outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(class));
+            }
+        }
         Machine {
             library_sources: HashMap::new(),
             imported: HashMap::new(),
             in_output_method: false,
             table,
-            outermost: Env::make(idents.len(), None),
+            outermost,
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
@@ -1124,6 +1132,7 @@ impl<'a> Machine<'a> {
     fn class_of_fault(&self, told: &str) -> Option<String> {
         let told_of = |label: &str| self.table.single(label) == Some(told);
         let by_kind = match told {
+            _ if told.starts_with("Undefined array key ") => Some("ext.system.fault.class.key"),
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
             _ if told_of("ext.builtin.args.at.below") || told_of("ext.builtin.args.at.beyond") => Some("ext.system.fault.class.value"),
@@ -2009,7 +2018,7 @@ impl<'a> Machine<'a> {
                 if let Some(method) = leave {
                     let fault = match &outcome {
                         Err(Escape::Thrown(value)) => Some(value.clone()),
-                        Err(Escape::Error(words)) => Some(Value::text(words)),
+                        Err(Escape::Error(words)) => self.as_raised(words).or_else(|| Some(Value::text(words))),
                         _ => None,
                     };
                     let kind = match &fault {
@@ -2135,7 +2144,12 @@ impl<'a> Machine<'a> {
                     }
                     if blueprint.under.is_some() {
                         let entries = blueprint.shared.borrow().iter().map(|(name, value)| (Value::text(name), value.clone())).collect();
-                        self.protocol_value(&built, 5, &[Value::Dict(Rc::new(entries))])?;
+                        let hook = self.table.strings("ext.op.object.protocol").get(5)
+                            .and_then(|name| blueprint.under.as_ref().and_then(|parent| parent.program(name))).cloned();
+                        if let Some(hook) = hook {
+                            let outer = self.outermost.clone();
+                            self.invoke(hook, outer, vec![built.clone(), Value::Dict(Rc::new(entries))])?;
+                        }
                     }
                 }
                 Ok(built)
@@ -3569,12 +3583,20 @@ impl<'a> Machine<'a> {
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if v.len() == 2 {
-            let index = match op { Prim::Eq | Prim::Ne => Some(1), Prim::Fetch => Some(2), _ => None };
+            let index = match op { Prim::Eq | Prim::Ne => Some(1), Prim::Fetch | Prim::At => Some(2), _ => None };
             if let Some(index) = index {
                 if let Some(answer) = self.protocol_value(&v[0], index, &v[1..])? {
                     return Ok(if op == Prim::Ne { Value::Flag(!answer.is_true()) } else { answer });
                 }
             }
+        }
+        if matches!(op, Prim::Eq | Prim::Ne) && v.len() == 2 {
+            if let Some(value) = self.protocol_value(&v[1], 1, &v[..1])? {
+                return Ok(Value::Flag(value.is_true() != (op == Prim::Ne)));
+            }
+        }
+        if op == Prim::AsText && v.len() == 1 && matches!(v[0], Value::Thing(_)) {
+            return Ok(Value::text(&self.protocol_text(&v[0], false)?));
         }
         if matches!(op, Prim::Listed | Prim::Iterated) && v.len() == 1 {
             if let Some(answer) = self.protocol_value(&v[0], 4, &[])? { return Ok(answer); }

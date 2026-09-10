@@ -27,6 +27,8 @@ def indent(text, prefix, predicate=None):
     lines = _lines(text)
     for i in range(len(lines)):
         line = lines[i]
+        if i == len(lines) - 1 and line == '':
+            continue
         if i < len(lines) - 1:
             line += '\n'
         if predicate is None:

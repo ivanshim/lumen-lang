@@ -1,0 +1,3 @@
+Note(text="a'b", marks=['x', 'y'])
+[<Word.HELLO: 'hello'>]
+Word.HELLO False False

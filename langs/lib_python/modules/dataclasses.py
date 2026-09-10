@@ -46,10 +46,10 @@ class _Record:
                 result += ', '
             name = self._fields[i]
             value = getattr(self, name)
-            if type(value) == type(''):
-                value = "'" + value + "'"
+            if isinstance(value, _Record):
+                value = value.__repr__()
             else:
-                value = str(value)
+                value = f'{value!r}'
             result += name + '=' + value
         return result + ')'
 
@@ -63,7 +63,8 @@ class _Record:
                 return False
         return True
 
-# Stub: frozen records, inheritance and custom methods are not provided.
+# Stub: a fresh record class is made. Frozen records, inheritance and
+# custom methods are not provided.
 def dataclass(cls=None, frozen=False, **options):
     if frozen or len(options):
         raise 'NotImplementedError: these dataclass options are not supported'
@@ -84,7 +85,7 @@ def dataclass(cls=None, frozen=False, **options):
             raise 'TypeError: non-default argument follows default argument'
         optional = optional or supplied
         defaults.append(specification)
-    return __derive_class(cls.__name__, _Record, {'_fields': names, '_defaults': defaults, '_record_name': cls.__name__, '_record_token': _Missing()})
+    return __derive_class(cls.__name__, _Record, {'_fields': names, '_defaults': defaults, '_record_name': cls.__name__, '_record_token': _Missing(), '__name__': cls.__name__, '__annotations__': getattr(cls, '__annotations__', {})})
 
 def asdict(obj):
     if not isinstance(obj, _Record):

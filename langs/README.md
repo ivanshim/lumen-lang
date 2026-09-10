@@ -506,6 +506,9 @@ only. The extension labels so far, all from PHP:
   annotated field names, and the class name. At this stage their type expressions are read
   and put aside; the map keeps an empty value for each name. Defaults
   remain ordinary shared members.
+- `ext.system.fault.class.key`: the class name for an absent map key.
+  Where spelled, a plain class of that name is bound before the program
+  starts, and context managers receive its object for such a fault.
 - `ext.builtin.print.redirect`: three names, for the module, its output
   stream and the stream's writing method. Print asks that method to
   write its completed text. A print within the writer reaches the host
@@ -2482,6 +2485,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class` | - | - | - | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | - | - | `ArithmeticError` | - | - | - | - | - |
 | `ext.system.fault.class.division` | - | - | - | - | `DivisionByZeroError` | - | - | - | - | - |
+| `ext.system.fault.class.key` | - | - | `KeyError` | - | - | - | - | - | - | - |
 | `ext.system.fault.class.kind` | - | - | - | - | `TypeError` | - | - | - | - | - |
 | `ext.system.fault.class.reading` | - | - | - | - | `ParseError` | - | - | - | - | - |
 | `ext.system.fault.class.value` | - | - | - | - | `ValueError` | - | - | - | - | - |
