@@ -2073,8 +2073,8 @@ only. The extension labels so far, all from PHP:
   of children and the message held by an exception group. `.group.derive`
   makes another group from a row of children; `.group.subgroup` takes the
   children beneath a class, and `.group.split` returns both halves. Nested
-  groups retain their shape. A callable condition requires means not yet
-  furnished and says `.unready`. `.group.invalid` gives the complaint for
+  groups retain their shape, notes and cause. A class or a function may
+  choose the children; other selectors say `.unready`. `.group.invalid` gives the complaint for
   unsuitable constructor arguments.
 - `ext.builtin.exceptions.info` and `.current`: builtins giving the class,
   value and absent traceback as a tuple, or the caught value alone. Outside

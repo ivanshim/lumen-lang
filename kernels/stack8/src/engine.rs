@@ -286,7 +286,7 @@ impl<'a> Engine<'a> {
                 self.perform(&Action::Make, 1)?;
                 return self.drop_top().map_err(Fault::from);
             }
-            return Err(self.lang.stmt_throw_invalid.first().cloned().unwrap_or_default().into());
+            return Err(self.lang.stmt_throw_invalid.first().cloned().or_else(|| self.lang.catch_invalid.clone()).unwrap_or_default().into());
         }
         if !self.lang.stmt_throw_invalid.is_empty() && !matches!(&value, Value::Object(o) if self.exception_class(&o.class)) {
             return Err(self.lang.stmt_throw_invalid[0].clone().into());
@@ -294,6 +294,33 @@ impl<'a> Engine<'a> {
         Ok(value)
     }
 
+
+    fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
+        if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+        let mut args = Vec::new();
+        let mut fields = Vec::new();
+        let items = if self.lang.bind_names { self.call_items(given)? } else { given.into_iter().map(|v| (None, v)).collect() };
+        for (name, value) in items {
+            let Some(name) = name else { args.push(value); continue };
+            let named = self.lang.exceptions.get(10).map_or(false, |n| class.named(n, false));
+            let attributed = self.lang.exceptions.get(12).map_or(false, |n| class.named(n, false));
+            if !((named || attributed) && self.lang.builtin_exceptions_name.contains(&name) || attributed && self.lang.builtin_exceptions_object.contains(&name)) {
+                return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
+            }
+            if fields.iter().any(|(key, _)| key == &name) { return Err(Self::named_fault(&self.lang.call_duplicate, &name).into()); }
+            fields.push((name, value));
+        }
+        if args.len() > 2 && self.lang.exceptions.get(20).map_or(false, |n| class.named(n, false)) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
+        let value = if class.all_fields().iter().any(|(n, _)| n == "\0group") { self.make_group(class, args)? }
+            else { self.exception_instance(class, args, Value::Null) };
+        if let Value::Object(o) = &value {
+            let mut held = o.fields.borrow_mut();
+            for (name, value) in fields {
+                if let Some((_, previous)) = held.iter_mut().find(|(n, _)| n == &name) { *previous = value; }
+            }
+        }
+        Ok(value)
+    }
 
     fn make_group(&mut self, class: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         let bad = || self.lang.builtin_exceptions_group_invalid.first().cloned().unwrap_or_default();
@@ -333,6 +360,41 @@ impl<'a> Engine<'a> {
         Some((o.class.clone(), message, row.to_vec()))
     }
 
+    fn group_state(&self, source: &Value, target: &Option<Value>) {
+        let (Value::Object(old), Some(Value::Object(new))) = (source, target) else { return };
+        let names = self.lang.builtin_exceptions_notes.iter().chain(self.lang.builtin_exceptions_suppress.iter())
+            .chain(self.lang.builtin_exceptions_traceback.iter()).chain(self.lang.exception_cause.iter());
+        let old = old.fields.borrow();
+        let mut new = new.fields.borrow_mut();
+        for key in names {
+            if let Some((_, value)) = old.iter().find(|(n, _)| n == key) {
+                let value = match value { Value::Array(row) => Value::array(row.to_vec()), other => other.clone() };
+                if let Some((_, kept)) = new.iter_mut().find(|(n, _)| n == key) { *kept = value; }
+                else { new.push((key.clone(), value)); }
+            }
+        }
+    }
+
+    fn part_by_call(&mut self, value: Value, predicate: &Value) -> Flow<(Option<Value>, Option<Value>)> {
+        self.data.push(value.clone());
+        self.data.push(predicate.clone());
+        self.perform(&Action::Invoke(Rc::from("")), 2)?;
+        let answer = self.drop_top()?;
+        if self.truth(&answer) { return Ok((Some(value), None)); }
+        let Some((class, message, children)) = Self::group_parts(&value) else { return Ok((None, Some(value))) };
+        let mut yes = Vec::new();
+        let mut no = Vec::new();
+        for child in children {
+            let (left, right) = self.part_by_call(child, predicate)?;
+            yes.extend(left); no.extend(right);
+        }
+        let yes = if yes.is_empty() { None } else { Some(self.make_group(class.clone(), vec![message.clone(), Value::array(yes)])?) };
+        let no = if no.is_empty() { None } else { Some(self.make_group(class, vec![message, Value::array(no)])?) };
+        self.group_state(&value, &yes);
+        self.group_state(&value, &no);
+        Ok((yes, no))
+    }
+
     fn part_group(&mut self, value: Value, kinds: &[Rc<Class>]) -> Flow<(Option<Value>, Option<Value>)> {
         if matches!(&value, Value::Object(o) if kinds.iter().any(|c| Self::exception_beneath(&o.class, c))) { return Ok((Some(value), None)); }
         let Some((class, message, row)) = Self::group_parts(&value) else { return Ok((None, Some(value))) };
@@ -344,6 +406,8 @@ impl<'a> Engine<'a> {
         }
         let yes = if yes.is_empty() { None } else { Some(self.make_group(class.clone(), vec![message.clone(), Value::array(yes)])?) };
         let no = if no.is_empty() { None } else { Some(self.make_group(class, vec![message, Value::array(no)])?) };
+        self.group_state(&value, &yes);
+        self.group_state(&value, &no);
         Ok((yes, no))
     }
 
@@ -373,11 +437,11 @@ impl<'a> Engine<'a> {
                 let (class, message, _) = Self::group_parts(&value).ok_or_else(|| self.lang.exception_unready.clone().unwrap_or_default())?;
                 if args.len() != 1 { return Err(self.lang.builtin_exceptions_group_invalid.first().cloned().unwrap_or_default().into()); }
                 if derive { return self.make_group(class, vec![message, args[0].clone()]); }
-                let kinds = match &args[0] {
-                    Value::Class(c) if self.exception_class(c) => vec![c.clone()],
+                let (yes, no) = match &args[0] {
+                    Value::Class(c) if self.exception_class(c) => self.part_group(value, &[c.clone()])?,
+                    predicate @ (Value::Routine(_) | Value::Method(..)) => self.part_by_call(value, predicate)?,
                     _ => return Err(self.lang.exception_unready.clone().unwrap_or_default().into()),
                 };
-                let (yes, no) = self.part_group(value, &kinds)?;
                 Ok(if split { Value::Tuple(Rc::new(vec![yes.unwrap_or(Value::Null), no.unwrap_or(Value::Null)])) } else { yes.unwrap_or(Value::Null) })
             })());
         }
@@ -2931,11 +2995,7 @@ impl<'a> Engine<'a> {
                     return Err("Only a class can be made into an object".to_string().into());
                 };
                 if self.exception_class(&class) {
-                    if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
-                    if args.len() > 2 && self.lang.exceptions.get(20).map_or(false, |n| class.named(n, false)) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
-                    let object = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
-                        self.make_group(class, args)?
-                    } else { self.exception_instance(class, args, Value::Null) };
+                    let object = self.exception_new(class, args)?;
                     self.data.push(object);
                     return Ok(());
                 }
