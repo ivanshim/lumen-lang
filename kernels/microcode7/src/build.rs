@@ -301,6 +301,7 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
             // Where the reading stops, the row it had reached is kept,
             // so a language with a word for such a stopping names it.
+            let statement_row = r.look().row;
             let stmt = match r.stmt() {
                 Ok(stmt) => stmt,
                 Err(said) => {
@@ -311,12 +312,12 @@ fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: Ha
                     return Err(said);
                 }
             };
-            let doc = if first_statement {
+            let doc = if first_statement && statement_row > before {
                 let mut plain = &stmt;
                 while let Form::OnLine(_, inner) = plain { plain = inner; }
                 if let Form::Const(Value::Text(text)) = plain { Some(text.clone()) } else { None }
             } else { None };
-            first_statement = false;
+            if statement_row > before { first_statement = false; }
             if defines { ahead.push(stmt); } else { stmts.push(stmt); }
             if let Some(text) = doc {
                 for name in table.strings("ext.system.module.doc") {
@@ -1178,7 +1179,7 @@ impl<'a> Builder<'a> {
         // Only the program's own lines are carried: what stands ahead of
         // it is the library, and a complaint from within that names the
         // line of the program that was running, as PHP names it.
-        if self.tells_place && self.look().row > self.before {
+        if (self.tells_place || self.table.single("ext.builtin.globals").is_some()) && self.look().row > self.before {
             let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
             return Ok(Form::OnLine(row, Box::new(made)));

@@ -297,6 +297,7 @@ pub fn compile_within(
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let from = a.mark();
+            let statement_row = a.look().row as u32;
             // Where the reading stops, the line it had reached is kept,
             // so that a language with a word for such a stopping may
             // name the line as it names any other.
@@ -304,17 +305,17 @@ pub fn compile_within(
                 a.registry.stopped_at = a.look().row;
                 return Err(said);
             }
-            if first_statement && !lang.system_module_doc.is_empty() {
-                let words: Vec<&Instr> = a.pieces.last().unwrap().instrs[from..].iter().filter(|i| !matches!(i, Instr::Line(_))).collect();
+            if first_statement && statement_row > before && !lang.system_module_doc.is_empty() {
+                let words: Vec<&Instr> = a.pieces.last().unwrap().instrs[from..].iter().filter(|i| !matches!(i, Instr::Line(_) | Instr::Nothing | Instr::Emptied(_))).collect();
                 let documentation = match words.as_slice() {
-                    [Instr::Const(Value::Text(text)), Instr::Shed] => Some(text.to_string()),
+                    [Instr::Const(Value::Text(text)), Instr::Write(cell)] if cell.ident.as_ref() == RESULT_CELL => Some(text.to_string()),
                     _ => None,
                 };
                 if let Some(text) = documentation {
                     for name in &lang.system_module_doc { a.constant(Value::text(&text)); a.write(name); }
                 }
             }
-            first_statement = false;
+            if statement_row > before { first_statement = false; }
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
             }
@@ -1041,7 +1042,7 @@ impl<'a> Compiler<'a> {
         // Only the program's own lines are marked: what stands before it
         // is the library, and a complaint from inside that names the
         // line of the program that was running, as PHP names it.
-        if lang.tells_place && self.look().row as u32 > self.before {
+        if (lang.tells_place || !lang.builtin_globals.is_empty()) && self.look().row as u32 > self.before {
             let row = self.look().row as u32 - self.before;
             if self.piece().line != row {
                 self.piece().line = row;
@@ -4554,9 +4555,11 @@ impl<'a> Compiler<'a> {
         // instr that reads a name: then the whole chain is rebuilt and
         // written back into whatever it stood on.
         let footing: Option<Vec<Instr>> = match key_at.first() {
-            Some(at) if *at > from + 1 => Some(target[..at - from].to_vec()),
+            Some(at) if *at > from + 1 || matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::GlobalNames | Builtin::LocalNames | Builtin::Vars, _), 0))) => Some(target[..at - from].to_vec()),
             _ => None,
         };
+        let namespace_base = footing.as_ref().map_or(false, |base| matches!(base.as_slice(),
+            [Instr::Act(Action::Builtin(Builtin::GlobalNames | Builtin::LocalNames | Builtin::Vars, _), 0)]));
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
         // A slice write works out its value before it asks for bounds.
         let was_waiting = self.waiting.clone();
@@ -4681,6 +4684,7 @@ impl<'a> Compiler<'a> {
                 }
                 // What it stood on is written back into, read again as
                 // the store it is.
+                if namespace_base { return Ok(()); }
                 let footing_at = self.mark();
                 for w in relocated(base, footing_at as i64 - from as i64) {
                     self.put(w);

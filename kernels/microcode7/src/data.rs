@@ -134,6 +134,7 @@ pub enum Value {
     Nil,
     Ellipsis,
     Vector(Rc<Vec<Value>>),
+    ScopeList(Rc<Vec<Value>>),
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
@@ -219,7 +220,7 @@ impl Value {
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) => Kind::Chars,
             Value::Flag(_) => Kind::Truth,
-            Value::Vector(_) | Value::Dict(_) => Kind::Vector,
+            Value::Vector(_) | Value::ScopeList(_) | Value::Dict(_) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
@@ -256,7 +257,7 @@ impl Value {
             Value::Flag(b) => BigInt::from(*b as i64),
             Value::Nil | Value::Unset => BigInt::zero(),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
-            Value::Vector(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
+            Value::Vector(_) | Value::ScopeList(_) | Value::Dict(_) | Value::Couple(_) => return Err("Cannot coerce array to number".to_string()),
             Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
@@ -268,6 +269,8 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        if let Value::ScopeList(items) = self { return Value::Vector(items.clone()).equals(other); }
+        if let Value::ScopeList(items) = other { return self.equals(&Value::Vector(items.clone())); }
         if let (Some(a), Some(b)) = (crate::math::ratio_of(self), crate::math::ratio_of(other)) {
             // Nought beneath is no ratio to cross-multiply: what lies
             // past every number is equal to another only where both lie
@@ -351,6 +354,16 @@ impl Value {
 
     pub fn render(&self, w: Names) -> String {
         match self {
+            Value::ScopeList(elements) => {
+                let strings = elements.iter().map(|element| {
+                    let raw = element.bare();
+                    let mark = if raw.contains('\'') && !raw.contains('"') { '"' } else { '\'' };
+                    let escaped = raw.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t").replace(mark, &format!("\\{}", mark));
+                    format!("{mark}{escaped}{mark}")
+                }).collect::<Vec<_>>();
+                format!("[{}]", strings.join(", "))
+            }
+
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => cell.borrow().render(w),
             Value::Flag(true) if w.flag_counted => "1".to_string(),
@@ -481,6 +494,16 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::ScopeList(elements) => {
+                let strings = elements.iter().map(|element| {
+                    let raw = element.bare();
+                    let mark = if raw.contains('\'') && !raw.contains('"') { '"' } else { '\'' };
+                    let escaped = raw.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t").replace(mark, &format!("\\{}", mark));
+                    format!("{mark}{escaped}{mark}")
+                }).collect::<Vec<_>>();
+                format!("[{}]", strings.join(", "))
+            }
+
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
@@ -515,7 +538,7 @@ impl Value {
     pub fn memo_key(&self, out: &mut String) {
         match self {
             Value::Text(s) => out.push_str(&format!("s{:?}", s)),
-            Value::Vector(items) => {
+            Value::Vector(items) | Value::ScopeList(items) => {
                 out.push('[');
                 items.iter().for_each(|v| v.memo_key(out));
                 out.push(']');

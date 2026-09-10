@@ -26,6 +26,9 @@ enum Passage {
 pub struct Engine<'a> {
     lang: &'a Lang,
     namespace: Option<Rc<RefCell<Value>>>,
+    native_names: Vec<(Value, Value)>,
+    native_dictionary: Option<Value>,
+    namespace_seen: RefCell<Option<(Rc<Vec<(Value, Value)>>, usize)>>,
     scope_values: Vec<(Value, Value)>,
     scope_is_module: bool,
     source_locals: Option<(usize, Rc<RefCell<Value>>)>,
@@ -218,7 +221,7 @@ impl<'a> Engine<'a> {
         let find = |wanted: &Option<String>| wanted.as_ref().and_then(|w| idents.iter().position(|n| n == w));
         Engine {
             lang,
-            namespace: None, scope_values: Vec::new(), scope_is_module: true,
+            namespace: None, native_names: Vec::new(), native_dictionary: None, namespace_seen: RefCell::new(None), scope_values: Vec::new(), scope_is_module: true,
             source_locals: None, using_source_locals: false,
             routine_names: HashMap::new(),
             world: vec![Value::Blank; idents.len()],
@@ -1243,12 +1246,16 @@ impl<'a> Engine<'a> {
             Some(&s) => {
                 if self.using_source_locals && Self::public_name(&slot.ident) {
                     if let Some((_, local)) = &self.source_locals {
-                        if let Value::Map(pairs) = &mut *local.borrow_mut() { self.replace_item(Rc::make_mut(pairs), Value::text(&slot.ident), v.clone()); }
+                        if let Value::Map(pairs) = &mut *local.borrow_mut() {
+                            let pairs = Rc::make_mut(pairs);
+                            if matches!(v, Value::Blank | Value::Gap) { pairs.retain(|(k, _)| !k.equals(&Value::text(&slot.ident))); }
+                            else { self.replace_item(pairs, Value::text(&slot.ident), v.clone()); }
+                        }
                     }
                 }
                 frame[s] = v;
             }
-            None => { self.namespace_write(&slot.ident, v.clone()); self.world[slot.far] = v; },
+            None => { self.namespace_write(&slot.ident, v.clone()); self.world[slot.far] = v; self.namespace_written(); },
         }
     }
 
@@ -1797,11 +1804,21 @@ impl<'a> Engine<'a> {
         for name in self.lang.builtins.keys() {
             if !builtins.iter().any(|(k, _)| k.equals(&Value::text(name))) { builtins.push((Value::text(name), Value::text(name))); }
         }
+        for (name, value) in self.registry.idents.iter().zip(&self.world) {
+            if Self::public_name(name) && !self.lang.module_names.contains(name) && !self.lang.source_bindings.iter().any(|(_, n)| n == name) && !matches!(value, Value::Blank | Value::Gap) {
+                if !builtins.iter().any(|(key, _)| key.equals(&Value::text(name))) { builtins.push((Value::text(name), value.clone())); }
+            }
+        }
+        self.native_names = builtins.clone();
         let dictionary = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(builtins)))));
+        self.native_dictionary = Some(dictionary.clone());
         let mut initial: Vec<(String, Value)> = self.lang.system_module_builtins.iter().map(|name| (name.clone(), dictionary.clone())).collect();
         initial.extend(self.lang.system_module_doc.iter().map(|name| (name.clone(), Value::Null)));
         for name in self.lang.system_fault_class_name.iter().chain(self.lang.fault_reading.iter()) {
             let class = Value::Class(self.scope_class(name));
+            self.native_names.push((Value::text(name), class.clone()));
+            if let Value::Bond(book) = &dictionary { if let Value::Map(pairs) = &mut *book.borrow_mut() { Rc::make_mut(pairs).push((Value::text(name), class.clone())); } }
+            initial.push((name.clone(), class.clone()));
             initial.push((format!("{}{}", name, crate::code::OF_A_CLASS), class));
         }
         for (name, value) in initial {
@@ -1810,7 +1827,9 @@ impl<'a> Engine<'a> {
             self.world[at] = value;
         }
         let names = self.registry.idents.iter().zip(&self.world)
-            .filter(|(name, value)| Self::public_name(name) && !matches!(value, Value::Blank | Value::Gap))
+            .filter(|(name, value)| !matches!(value, Value::Blank | Value::Gap) &&
+                (self.lang.module_names.contains(name) || self.lang.system_module_builtins.contains(name) || self.lang.system_module_doc.contains(name)
+                 || self.lang.source_bindings.iter().any(|(_, binding)| binding == *name)))
             .map(|(name, value)| (Value::text(name), value.clone())).collect();
         self.namespace = Some(Rc::new(RefCell::new(Value::Map(Rc::new(names)))));
     }
@@ -1820,12 +1839,21 @@ impl<'a> Engine<'a> {
     fn namespace_cells(&mut self) {
         let Some(shared) = &self.namespace else { return };
         let Value::Map(pairs) = shared.borrow().clone() else { return };
+        if self.namespace_seen.borrow().as_ref().map_or(false, |(old, count)| Rc::ptr_eq(old, &pairs) && *count == self.registry.idents.len()) { return; }
+        *self.namespace_seen.borrow_mut() = Some((pairs.clone(), self.registry.idents.len()));
         self.world.resize(self.registry.idents.len(), Value::Blank);
         for (name, place) in self.registry.idents.iter().zip(&mut self.world) {
             if Self::public_name(name) {
                 *place = pairs.iter().find(|(key, _)| matches!(key, Value::Text(k) if k.as_ref() == name))
+                    .or_else(|| self.native_names.iter().find(|(key, _)| key.equals(&Value::text(name))))
                     .map_or(Value::Blank, |(_, value)| value.clone());
             }
+        }
+    }
+
+    fn namespace_written(&self) {
+        if let Some(shared) = &self.namespace {
+            if let Value::Map(pairs) = &*shared.borrow() { *self.namespace_seen.borrow_mut() = Some((pairs.clone(), self.registry.idents.len())); }
         }
     }
 
@@ -1878,13 +1906,13 @@ impl<'a> Engine<'a> {
                 let Value::Map(pairs) = collection_contents(&self.scope_words()) else { unreachable!() };
                 let mut names: Vec<String> = pairs.iter().map(|(key, _)| key.plain()).collect();
                 names.sort();
-                Ok(Value::Array(Rc::new(names.iter().map(|name| Value::text(name)).collect())))
+                Ok(Value::NameList(Rc::new(names.iter().map(|name| Value::text(name)).collect())))
             }
             Builtin::Sorted if args.len() == 1 => {
                 let mut values = self.comprehension_items(&args[0])?;
                 if !values.iter().all(|v| matches!(v, Value::Text(_))) { return Err(unready()); }
                 values.sort_by_key(Value::plain);
-                Ok(Value::Array(Rc::new(values)))
+                Ok(Value::NameList(Rc::new(values)))
             }
             Builtin::Breakpoint | Builtin::Help => Ok(Value::Null),
             Builtin::Import => Err(self.lang.builtin_import_unready[0].clone()),
@@ -1899,6 +1927,17 @@ impl<'a> Engine<'a> {
             }
             Builtin::Identity if args.len() == 1 => {
                 let address = match &args[0] {
+                    Value::Null => 0,
+                    Value::Ellipsis => 1,
+                    Value::Flag(b) => 2 + usize::from(*b),
+                    Value::Small(n) if (-5..=256).contains(n) => (*n + 9) as usize,
+                    Value::Huge(v) => Rc::as_ptr(v) as usize,
+                    Value::Real(v) => Rc::as_ptr(v) as usize,
+                    Value::Frac(v) => Rc::as_ptr(v) as usize,
+                    Value::Counted(v) => Rc::as_ptr(v) as usize,
+                    Value::Array(v) | Value::NameList(v) => Rc::as_ptr(v) as usize,
+                    Value::Map(v) => Rc::as_ptr(v) as usize,
+                    Value::Slice(v) => Rc::as_ptr(v) as usize,
                     Value::Bond(cell) => Rc::as_ptr(cell) as usize,
                     Value::Object(object) => Rc::as_ptr(object) as usize,
                     Value::Class(class) => Rc::as_ptr(class) as usize,
@@ -1909,7 +1948,16 @@ impl<'a> Engine<'a> {
                 Ok(Value::of_big(BigInt::from(address)))
             }
             Builtin::Hash if args.len() == 1 => {
-                match collection_contents(&args[0]) {
+                let held = collection_contents(&args[0]);
+                if let Some((numerator, denominator)) = arith::parts(&held) {
+                    let modulus = BigInt::from(2_305_843_009_213_693_951i64);
+                    let divisor = &denominator % &modulus;
+                    let result = if divisor == BigInt::from(0) {
+                        if numerator < BigInt::from(0) { BigInt::from(-314159) } else { BigInt::from(314159) }
+                    } else { ((numerator % &modulus) * divisor.modpow(&(&modulus - 2), &modulus)) % &modulus };
+                    return Ok(Value::of_big(if result == BigInt::from(-1) { BigInt::from(-2) } else { result }));
+                }
+                match held {
                     Value::Small(n) => { let n = n % 2_305_843_009_213_693_951; Ok(Value::Small(if n == -1 { -2 } else { n })) },
                     Value::Flag(b) => Ok(Value::Small(i64::from(b))),
                     Value::Text(text) => {
@@ -1944,7 +1992,8 @@ impl<'a> Engine<'a> {
             }
             _ => return Err(unready),
         };
-        if builtin != Builtin::Compile && args.len() > 3 { return Err(unready); }
+        if builtin == Builtin::Compile && args.len() > self.lang.builtin_compile_parameters.len() { return Err(unready); }
+        if builtin != Builtin::Compile && (args.len() > 4 || args.get(3).map_or(false, |v| builtin == Builtin::Eval || !matches!(v, Value::Null))) { return Err(unready); }
         if builtin == Builtin::Compile && args.get(5).map_or(false, |v| !matches!(v, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(unready); }
         let source = if mode == 1 { text.trim().to_string() } else { text.clone() };
         let prefix = self.lang.fault_reading.as_ref().map(|name| format!("{}:", name)).unwrap_or_default();
@@ -1978,18 +2027,16 @@ impl<'a> Engine<'a> {
         if matches!((&local, world), (Some(Value::Bond(a)), Some(b)) if Rc::ptr_eq(a,b)) { local = None; }
         let saved_namespace = self.namespace.clone();
         if let Some(target) = target_global { self.namespace = Some(target); }
-        if let (Some(current), Some(previous), Some(key)) = (&self.namespace, &saved_namespace, self.lang.system_module_builtins.first()) {
-            let default = match &*previous.borrow() { Value::Map(p) => p.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()), _ => None };
-            if let Some(default) = default {
-                let present = match &*current.borrow() { Value::Map(p) => p.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()), _ => None };
-                if let Some(present) = present {
-                    if !matches!((&present, &default), (Value::Bond(a), Value::Bond(b)) if Rc::ptr_eq(a,b)) {
-                        self.namespace = saved_namespace;
-                        self.namespace_cells();
-                        return Err(unready);
-                    }
-                } else { self.namespace_write(key, default); }
+        if let (Some(current), Some(default), Some(key)) = (&self.namespace, &self.native_dictionary, self.lang.system_module_builtins.first()) {
+            let Value::Map(native) = collection_contents(default) else { unreachable!() };
+            let unchanged = native.len() == self.native_names.len() && native.iter().zip(&self.native_names).all(|((k,v),(n,w))| k.equals(n) && v.equals(w));
+            let present = match &*current.borrow() { Value::Map(p) => p.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()), _ => None };
+            if !unchanged || present.as_ref().map_or(false, |present| !matches!((present, default), (Value::Bond(a), Value::Bond(b)) if Rc::ptr_eq(a,b))) {
+                self.namespace = saved_namespace;
+                self.namespace_cells();
+                return Err(unready);
             }
+            if present.is_none() { self.namespace_write(key, default.clone()); }
         }
         self.namespace_cells();
         let depth = self.data.len();
@@ -2022,7 +2069,6 @@ impl<'a> Engine<'a> {
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
-        self.start_namespace();
         while pc >= span.0 && pc < span.1 {
             self.namespace_cells();
             self.using_source_locals = self.source_locals.as_ref().map_or(false, |(id, _)| *id == Rc::as_ptr(program) as usize);
@@ -2097,7 +2143,8 @@ impl<'a> Engine<'a> {
                     self.store_cell(slot, frame, v)?;
                 }
                 Instr::Act(op, argc) => {
-                    if self.namespace.is_some() {
+                    let reads_scope = match op { Action::Builtin(native, _) => Self::introspective(*native) || *native == Builtin::Eval, Action::Invoke(_) => true, _ => false };
+                    if self.namespace.is_some() && reads_scope {
                         self.scope_is_module = program.body_of_all && program.idents.is_empty();
                         self.scope_values = program.idents.iter().zip(frame.iter()).filter(|(n,v)| Self::public_name(n) && !matches!(v, Value::Blank | Value::Gap)).map(|(n,v)| (Value::text(n), v.clone())).collect();
                     }
@@ -2219,9 +2266,11 @@ impl<'a> Engine<'a> {
                     for &s in &slot.near {
                         frame[s] = Value::Blank;
                     }
+                    if !slot.near.is_empty() { self.put_cell(slot, frame, Value::Blank); }
                     if slot.near.is_empty() {
                         self.namespace_write(&slot.ident, Value::Blank);
                         self.world[slot.far] = Value::Blank;
+                        self.namespace_written();
                     }
                 }
                 Instr::Ready(slot) => {
@@ -2239,6 +2288,7 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Flag(empty));
                 }
                 Instr::Line(row) => {
+                    self.start_namespace();
                     self.line = *row;
                     // A statement reached is a fault gone by: the calls
                     // an earlier one was raised under are none of its
@@ -3616,6 +3666,8 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        if let Value::NameList(items) = a { return self.dyadic(op, &Value::Array(items.clone()), b); }
+        if let Value::NameList(items) = b { return self.dyadic(op, a, &Value::Array(items.clone())); }
         // An operand read in place may be a shared cell; what it holds is
         // what the operation works on.
         if let Value::Bond(shared) = a {
@@ -4471,7 +4523,7 @@ impl<'a> Engine<'a> {
     /// The collections this reader can walk without asking a protocol.
     fn comprehension_items(&self, value: &Value) -> Res<Vec<Value>> {
         match value {
-            Value::Array(items) => Ok(items.as_ref().clone()),
+            Value::Array(items) | Value::NameList(items) => Ok(items.as_ref().clone()),
             Value::Map(pairs) => Ok(pairs.iter().map(|(k, _)| k.clone()).collect()),
             Value::Text(text) => Ok(text.chars().map(|c| Value::text(&c.to_string())).collect()),
             Value::Counted(range) => {
@@ -4639,6 +4691,7 @@ impl<'a> Engine<'a> {
         let last = args.len().saturating_sub(1);
         for (at, value) in args.iter_mut().enumerate() {
             if writes && at + 1 == last { continue; }
+            if builtin != Builtin::Say { if let Value::NameList(items) = value { *value = Value::Array(items.clone()); } }
             if let Value::Bond(cell) = value {
                 let held = cell.borrow().clone();
                 *value = held;
@@ -6150,6 +6203,7 @@ fn number_opening(s: &str) -> (Option<Value>, bool) {
 
 /// Read the contents without giving up the collection's own cell.
 fn collection_contents(value: &Value) -> Value {
+    if let Value::NameList(items) = value { return Value::Array(items.clone()); }
     match value {
         Value::Bond(cell) => cell.borrow().clone(),
         other => other.clone(),

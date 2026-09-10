@@ -13,3 +13,9 @@ def f():
     v = 9
     print('v' in vars(), 'v' in dir())
 f()
+a = []
+b = a
+c = []
+print(id(a) == id(b), id(a) == id(c), id(None) == id(None))
+print(id(1) == id(1), id(True) == id(1))
+print(hash(1.0) == hash(1), hash(2 ** 70), hash(-1.0))

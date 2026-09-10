@@ -1919,8 +1919,9 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.source.syntax` gives the plain complaint
   for text that cannot be read. `ext.builtin.source.unready` gives the
   complaint where a source operation cannot yet be honoured.
-- `ext.builtin.id` gives the identity of a value held by reference;
-  `ext.builtin.hash` hashes small whole numbers, truth and text.
+- `ext.builtin.id` gives the identity of a value held by reference,
+  of the small shared integers, and of the solitary literal values;
+  `ext.builtin.hash` hashes finite numbers, truth and text.
   `ext.builtin.sorted` orders text values, including dictionary keys.
   `ext.builtin.scope.unready` refuses other introspective operations.
 - `ext.builtin.input` reads one line, leaving off its ending;

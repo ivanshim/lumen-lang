@@ -131,6 +131,7 @@ pub enum Value {
     Null,
     Ellipsis,
     Array(Rc<Vec<Value>>),
+    NameList(Rc<Vec<Value>>),
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
@@ -218,7 +219,7 @@ impl Value {
             Value::Real(_) => Sort::Real,
             Value::Text(_) => Sort::Text,
             Value::Flag(_) => Sort::Boolean,
-            Value::Array(_) | Value::Map(_) => Sort::Array,
+            Value::Array(_) | Value::NameList(_) | Value::Map(_) => Sort::Array,
             Value::Bond(shared) => return shared.borrow().sort(),
             Value::Class(_) | Value::Object(_) => return None,
             Value::Null | Value::SortOf(_) => Sort::Null,
@@ -258,7 +259,7 @@ impl Value {
             Value::Real(r) => r.outside() || !r.p.is_zero(),
             Value::Text(s) => !s.is_empty(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => false,
-            Value::Frac(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
+            Value::Frac(_) | Value::Array(_) | Value::NameList(_) | Value::Map(_) | Value::Tie(_) | Value::Routine(_) | Value::Method(..) | Value::SortOf(_) => true,
             Value::Bond(shared) => shared.borrow().is_true(),
             Value::Class(_) | Value::Object(_) | Value::Ellipsis | Value::Slice(_) => true,
         }
@@ -279,7 +280,7 @@ impl Value {
             Value::Null | Value::Blank | Value::Gap | Value::Fence => Ok(BigInt::zero()),
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
-            Value::Array(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
+            Value::Array(_) | Value::NameList(_) | Value::Map(_) | Value::Tie(_) => Err("Cannot coerce array to number".to_string()),
             Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) => shared.borrow().as_big(),
             Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
@@ -293,6 +294,8 @@ impl Value {
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
     pub fn equals(&self, other: &Value) -> bool {
+        if let Value::NameList(items) = self { return Value::Array(items.clone()).equals(other); }
+        if let Value::NameList(items) = other { return self.equals(&Value::Array(items.clone())); }
         if let Some(order) = crate::arith::order_values(self, other) {
             return order == std::cmp::Ordering::Equal;
         }
@@ -329,6 +332,8 @@ impl Value {
     /// as another when it holds the same keys in the same order, each
     /// with a value that is itself the same.
     pub fn identical(&self, other: &Value) -> bool {
+        if let Value::NameList(items) = self { return Value::Array(items.clone()).identical(other); }
+        if let Value::NameList(items) = other { return self.identical(&Value::Array(items.clone())); }
         if let Value::Bond(shared) = self {
             let held = shared.borrow().clone();
             return held.identical(other);
@@ -359,6 +364,24 @@ impl Value {
     /// machine's own form for the rest.
     pub fn display(&self, sp: &Wording) -> String {
         match self {
+            Value::NameList(items) => {
+                let shown: Vec<String> = items.iter().map(|v| {
+                    let text = v.plain();
+                    let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                    let mut out = quote.to_string();
+                    for c in text.chars() {
+                        match c {
+                            '\n' => out.push_str("\\n"), '\r' => out.push_str("\\r"), '\t' => out.push_str("\\t"),
+                            '\\' => out.push_str("\\\\"),
+                            c if c == quote => { out.push('\\'); out.push(c); }
+                            c => out.push(c),
+                        }
+                    }
+                    out.push(quote); out
+                }).collect();
+                format!("[{}]", shown.join(", "))
+            }
+
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) => shared.borrow().display(sp),
@@ -483,6 +506,24 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::NameList(items) => {
+                let shown: Vec<String> = items.iter().map(|v| {
+                    let text = v.plain();
+                    let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+                    let mut out = quote.to_string();
+                    for c in text.chars() {
+                        match c {
+                            '\n' => out.push_str("\\n"), '\r' => out.push_str("\\r"), '\t' => out.push_str("\\t"),
+                            '\\' => out.push_str("\\\\"),
+                            c if c == quote => { out.push('\\'); out.push(c); }
+                            c => out.push(c),
+                        }
+                    }
+                    out.push(quote); out
+                }).collect();
+                format!("[{}]", shown.join(", "))
+            }
+
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
@@ -520,7 +561,7 @@ impl Value {
             Value::Text(s) => {
                 let _ = write!(into, "s{}:{}", s.len(), s);
             }
-            Value::Array(items) => {
+            Value::Array(items) | Value::NameList(items) => {
                 into.push('[');
                 for v in items.iter() {
                     v.memo_key(into);

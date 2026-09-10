@@ -105,6 +105,9 @@ enum Next {
 
 pub struct Machine<'a> {
     named_world: Option<Rc<RefCell<Value>>>,
+    native_book: Vec<(Value, Value)>,
+    native_dictionary: Option<Value>,
+    outer_seen: RefCell<Option<(usize, Rc<Vec<(Value, Value)>>)>>,
     near_names: Vec<(Value, Value)>,
     near_world: bool,
     inner_books: HashMap<usize, Rc<RefCell<Value>>>,
@@ -251,7 +254,7 @@ impl<'a> Machine<'a> {
         let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         Machine {
             table,
-            named_world: None, near_names: Vec::new(), near_world: true,
+            named_world: None, native_book: Vec::new(), native_dictionary: None, outer_seen: RefCell::new(None), near_names: Vec::new(), near_world: true,
             inner_books: HashMap::new(), near_book: None,
             made_under: HashMap::new(),
             outermost: Env::make(idents.len(), None),
@@ -413,7 +416,7 @@ impl<'a> Machine<'a> {
     fn stands_true(&self, v: &Value) -> bool {
         match v {
             Value::Shared(cell) => self.stands_true(&cell.borrow()),
-            Value::Vector(items) if self.hollow_is_false => !items.is_empty(),
+            Value::Vector(items) | Value::ScopeList(items) if self.hollow_is_false => !items.is_empty(),
             Value::Dict(pairs) if self.hollow_is_false => !pairs.is_empty(),
             Value::Text(s) => match self.false_words.iter().any(|w| w == s.as_ref()) {
                 true => false,
@@ -1558,12 +1561,16 @@ impl<'a> Machine<'a> {
                 if Self::visible_binding(&slot.ident) {
                     if let Value::Dict(pairs) = &mut *book.borrow_mut() {
                         let pairs = Rc::make_mut(pairs);
-                        if let Some(entry) = pairs.iter_mut().find(|(k, _)| k.equals(&Value::text(&slot.ident))) { entry.1 = stored.clone(); }
+                        if matches!(stored, Value::Unset) { pairs.retain(|(k, _)| !k.equals(&Value::text(&slot.ident))); }
+                        else if let Some(entry) = pairs.iter_mut().find(|(k, _)| k.equals(&Value::text(&slot.ident))) { entry.1 = stored.clone(); }
                         else { pairs.push((Value::text(&slot.ident), stored.clone())); }
                     }
                 }
             }
             target.cells.borrow_mut()[slot.at] = stored;
+            if Rc::ptr_eq(target, &self.outermost) {
+                if let Some(book) = &self.named_world { if let Value::Dict(pairs) = &*book.borrow() { *self.outer_seen.borrow_mut() = Some((self.idents.len(), pairs.clone())); } }
+            }
             return Ok(());
         }
         // A cell becomes a name's own only by being tied to it. A plain
@@ -1650,16 +1657,27 @@ impl<'a> Machine<'a> {
     /// place seen by the other before another form is worked out.
     fn establish_names(&mut self) {
         if self.named_world.is_some() || self.table.single("ext.builtin.globals").is_none() { return; }
-        let native = Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(
-            self.table.prims.keys().map(|s| (Value::text(s), Value::text(s))).collect(),
-        )))));
+        let mut words: Vec<(Value, Value)> = self.table.prims.keys().map(|s| (Value::text(s), Value::text(s))).collect();
+        for (at, name) in self.idents.iter().enumerate() {
+            let item = self.outermost.cells.borrow()[at].clone();
+            let supplied = ["ext.system.module.name", "ext.system.source.file", "ext.system.source.directory", "ext.system.runner"].iter().any(|label| self.table.spells(label, name));
+            if Self::visible_binding(name) && !supplied && !matches!(item, Value::Unset) && !words.iter().any(|(k, _)| k.equals(&Value::text(name))) {
+                words.push((Value::text(name), item));
+            }
+        }
+        self.native_book = words.clone();
+        let native = Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(words)))));
+        self.native_dictionary = Some(native.clone());
         let mut seeds = Vec::new();
         for word in self.table.strings("ext.system.module.doc") { seeds.push((word.clone(), Value::Nil)); }
         for word in self.table.strings("ext.system.module.builtins") { seeds.push((word.clone(), native.clone())); }
         for label in ["ext.system.fault.class.reading", "ext.system.fault.class.name"] {
             for title in self.table.strings(label) {
                 let worth = Value::Blueprint(self.small_class(title));
-                seeds.push((format!("{}{}", title, crate::form::OF_A_CLASS), worth.clone()));
+                self.native_book.push((Value::text(title), worth.clone()));
+                if let Value::Shared(book) = &native { if let Value::Dict(items) = &mut *book.borrow_mut() { Rc::make_mut(items).push((Value::text(title), worth.clone())); } }
+                seeds.push((title.clone(), worth.clone()));
+                seeds.push((format!("{}{}", title, crate::form::OF_A_CLASS), worth));
             }
         }
         for (word, worth) in seeds {
@@ -1670,7 +1688,8 @@ impl<'a> Machine<'a> {
         }
         let held = self.outermost.cells.borrow();
         let pairs = self.idents.iter().enumerate().filter_map(|(i, word)| {
-            (Self::visible_binding(word) && !matches!(held[i], Value::Unset)).then(|| (Value::text(word), held[i].clone()))
+            let module = ["ext.system.module.name", "ext.system.module.doc", "ext.system.module.builtins", "ext.system.source.file", "ext.system.source.directory", "ext.system.runner"].iter().any(|label| self.table.spells(label, word));
+            (module && !matches!(held[i], Value::Unset)).then(|| (Value::text(word), held[i].clone()))
         }).collect();
         self.named_world = Some(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs)))));
     }
@@ -1678,13 +1697,16 @@ impl<'a> Machine<'a> {
     fn refresh_outer(&self) {
         if let Some(names) = &self.named_world {
             if let Value::Dict(entries) = &*names.borrow() {
+                let cached = self.outer_seen.borrow().as_ref().map_or(false, |(size, old)| *size == self.idents.len() && Rc::ptr_eq(old, entries));
+                if cached { return; }
+                *self.outer_seen.borrow_mut() = Some((self.idents.len(), entries.clone()));
                 let mut held = self.outermost.cells.borrow_mut();
                 held.resize(self.idents.len(), Value::Unset);
                 for (index, word) in self.idents.iter().enumerate() {
                     if !Self::visible_binding(word) { continue; }
                     held[index] = entries.iter().find_map(|(key, value)| {
                         matches!(key, Value::Text(s) if s.as_ref() == word).then(|| value.clone())
-                    }).unwrap_or(Value::Unset);
+                    }).or_else(|| self.native_book.iter().find(|(k, _)| k.equals(&Value::text(word))).map(|(_, v)| v.clone())).unwrap_or(Value::Unset);
                 }
             }
         }
@@ -1756,7 +1778,7 @@ impl<'a> Machine<'a> {
                 let Value::Dict(entries) = collection_read(&self.current_names()) else { unreachable!() };
                 let mut keys: Vec<String> = entries.iter().map(|entry| entry.0.bare()).collect();
                 keys.sort_unstable();
-                Ok(Value::Vector(Rc::new(keys.into_iter().map(|k| Value::text(&k)).collect())))
+                Ok(Value::ScopeList(Rc::new(keys.into_iter().map(|k| Value::text(&k)).collect())))
             }
             (Prim::Ordered, [item]) => {
                 let mut items = match collection_read(item) {
@@ -1767,7 +1789,7 @@ impl<'a> Machine<'a> {
                 };
                 if items.iter().any(|v| !matches!(v, Value::Text(_))) { return Err(refused); }
                 items.sort_by_cached_key(Value::bare);
-                Ok(Value::Vector(Rc::new(items)))
+                Ok(Value::ScopeList(Rc::new(items)))
             }
             (Prim::BreakHere | Prim::HelpHere, _) => Ok(Value::Nil),
             (Prim::ImportNamed, _) => Err(self.table.single("ext.builtin.import.unready").unwrap_or_default().to_owned()),
@@ -1783,6 +1805,16 @@ impl<'a> Machine<'a> {
             }
             (Prim::IdentityOf, [item]) => {
                 let key = match item {
+                    Value::Nil => 0,
+                    Value::Ellipsis => 1,
+                    Value::Flag(false) => 2,
+                    Value::Flag(true) => 3,
+                    Value::Small(n) if *n >= -5 && *n <= 256 => (9 + n) as usize,
+                    Value::Huge(p) => Rc::as_ptr(p) as usize,
+                    Value::Frac(p) => Rc::as_ptr(p) as usize,
+                    Value::Progression(p) => Rc::as_ptr(p) as usize,
+                    Value::Vector(p) | Value::ScopeList(p) | Value::Span(p) => Rc::as_ptr(p) as usize,
+                    Value::Dict(p) => Rc::as_ptr(p) as usize,
                     Value::Shared(p) => Rc::as_ptr(p) as usize,
                     Value::Thing(p) => Rc::as_ptr(p) as usize,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize,
@@ -1793,7 +1825,19 @@ impl<'a> Machine<'a> {
                 Ok(Value::from_big(BigInt::from(key)))
             }
             (Prim::HashOf, [item]) => {
-                let number = match collection_read(item) {
+                let held = collection_read(item);
+                if let Some(fraction) = math::ratio_of(&held).filter(|r| !r.past_numbers()) {
+                    let prime = BigInt::from((1u64 << 61) - 1);
+                    let mut residue = &fraction.beneath % &prime;
+                    if residue == BigInt::from(0) {
+                        residue = BigInt::from(if fraction.above < BigInt::from(0) { -314159 } else { 314159 });
+                    } else {
+                        residue = (fraction.above % &prime) * residue.modpow(&(&prime - BigInt::from(2)), &prime) % prime;
+                    }
+                    if residue == BigInt::from(-1) { residue -= 1; }
+                    return Ok(Value::from_big(residue));
+                }
+                let number = match held {
                     Value::Small(n) => n % ((1i64 << 61) - 1),
                     Value::Flag(truth) => if truth { 1 } else { 0 },
                     Value::Text(s) => s.bytes().fold(0i64, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as i64)),
@@ -1832,7 +1876,8 @@ impl<'a> Machine<'a> {
             }
             _ => return Err(cannot),
         };
-        if !preparing && supplied.len() > 3 { return Err(cannot); }
+        if preparing && supplied.len() > formals.len() { return Err(cannot); }
+        if !preparing && (supplied.len() > 4 || supplied.get(3).map_or(false, |v| operation == Prim::Weigh || !matches!(v, Value::Nil))) { return Err(cannot); }
         if preparing && supplied.get(5).map_or(false, |value| !matches!(value, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(cannot); }
         let written = if manner == 1 { body.trim().to_owned() } else { body.clone() };
         let opening = table.single("ext.system.fault.class.reading").map(|word| format!("{}:", word)).unwrap_or_default();
@@ -1860,20 +1905,15 @@ impl<'a> Machine<'a> {
         }
         let original = self.named_world.clone();
         if let Some(world) = world { self.named_world = Some(world); }
-        if let Some(key) = table.single("ext.system.module.builtins") {
-            let default = original.as_ref().and_then(|book| {
+        if let (Some(key), Some(default)) = (table.single("ext.system.module.builtins"), self.native_dictionary.clone()) {
+            let Value::Dict(native) = collection_read(&default) else { unreachable!() };
+            let changed = native.len() != self.native_book.len() || self.native_book.iter().any(|(key, worth)| !native.iter().any(|(k,v)| k.equals(key) && v.equals(worth)));
+            let supplied = self.named_world.as_ref().and_then(|book| {
                 if let Value::Dict(pairs) = &*book.borrow() { pairs.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()) } else { None }
             });
-            if let Some(default) = default {
-                let supplied = self.named_world.as_ref().and_then(|book| {
-                    if let Value::Dict(pairs) = &*book.borrow() { pairs.iter().find(|(k, _)| k.equals(&Value::text(key))).map(|(_, v)| v.clone()) } else { None }
-                });
-                match supplied {
-                    None => self.write_outer_name(key, &default),
-                    Some(Value::Shared(p)) if matches!(&default, Value::Shared(q) if Rc::ptr_eq(&p,q)) => (),
-                    Some(_) => { self.named_world = original; self.refresh_outer(); return Err(cannot); }
-                }
-            }
+            let accepted = supplied.as_ref().map_or(true, |v| matches!((v, &default), (Value::Shared(p), Value::Shared(q)) if Rc::ptr_eq(p,q)));
+            if changed || !accepted { self.named_world = original; self.refresh_outer(); return Err(cannot); }
+            if supplied.is_none() { self.write_outer_name(key, &default); }
         }
         self.refresh_outer();
         let worked = (|| {
@@ -1919,7 +1959,6 @@ impl<'a> Machine<'a> {
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
-        self.establish_names();
         self.refresh_outer();
         if let Some(book) = self.inner_books.get(&(Rc::as_ptr(frame) as usize)) {
             if let (Value::Dict(entries), Some(routine)) = (&*book.borrow(), self.frames_named.last()) {
@@ -2200,6 +2239,7 @@ impl<'a> Machine<'a> {
                 Ok(Value::Nil)
             }
             Form::Forget(slot) => {
+                if self.table.flag("ext.syntax.call.bind_names") { self.store(slot, frame, Value::Unset)?; return Ok(Value::Nil); }
                 let f = ascend(frame, slot.up);
                 if Rc::ptr_eq(f, &self.outermost) { self.write_outer_name(&slot.ident, &Value::Unset); }
                 f.cells.borrow_mut()[slot.at] = Value::Unset;
@@ -2287,6 +2327,7 @@ impl<'a> Machine<'a> {
                 Ok(Value::Nil)
             }
             Form::OnLine(row, inner) => {
+                self.establish_names();
                 self.row = *row;
                 // A statement reached is a fault gone by: whatever calls
                 // an earlier one was raised under are none of its
@@ -3850,7 +3891,7 @@ impl<'a> Machine<'a> {
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple) {
+            } else if matches!(op, Prim::Say | Prim::MakeArray | Prim::MakeMap | Prim::Couple) {
                 self.prim_values(op, name, v)?
             } else {
                 let unwrapped: Vec<Value> = v.iter().map(collection_read).collect();
@@ -6430,6 +6471,7 @@ fn number_opening_in(v: &Value) -> (Option<Value>, bool) {
 }
 
 fn collection_read(held: &Value) -> Value {
+    if let Value::ScopeList(items) = held { return Value::Vector(items.clone()); }
     if let Value::Shared(inside) = held {
         inside.borrow().clone()
     } else {
