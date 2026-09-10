@@ -2277,6 +2277,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.text.fault.maketrans.type` | - | - | `TypeError: keys in translate table must be strings or integers` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.mapping` | - | - | `TypeError: translation table must be a mapping` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.missing` | - | - | `ValueError: substring not found` | - | - | - | - | - | - | - |
+| `ext.builtin.text.fault.protocol` | - | - | `NotImplementedError: string method object protocols are not supported` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.receiver` | - | - | `TypeError: string method requires a str object` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.room` | - | - | `OverflowError: repeated string is too long` | - | - | - | - | - | - | - |
 | `ext.builtin.text.fault.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |

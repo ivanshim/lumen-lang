@@ -474,6 +474,9 @@
   "ext.builtin.text.fault.missing": [
     "ValueError: substring not found"
   ],
+  "ext.builtin.text.fault.protocol": [
+    "NotImplementedError: string method object protocols are not supported"
+  ],
   "ext.builtin.text.fault.receiver": [
     "TypeError: string method requires a str object"
   ],

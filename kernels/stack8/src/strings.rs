@@ -210,7 +210,10 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             Value::Flag(good && seen)
         }
         Splitlines => {
-            let keep = params.first().map(|v| integer(v,lang)).transpose()?.unwrap_or(0) != 0;
+            let keep = match params.first() {
+                None => false, Some(Value::Array(row)) => !row.is_empty(), Some(Value::Map(row)) => !row.is_empty(),
+                Some(Value::Object(_)) => return Err(fault(lang,"protocol")), Some(v) => v.is_true(),
+            };
             let mut parts = Vec::new(); let mut start=0; let mut chars=s.char_indices().peekable();
             while let Some((at,c))=chars.next() {
                 if matches!(c,'\n'|'\r'|'\u{b}'|'\u{c}'|'\u{1c}'|'\u{1d}'|'\u{1e}'|'\u{85}'|'\u{2028}'|'\u{2029}') {
@@ -316,10 +319,19 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             Value::text(&s.replacen(old,new,if count<0 {usize::MAX} else {count as usize}))
         }
         Translate => {
-            let Value::Map(pairs)=&params[0] else {return Err(fault(lang,"mapping"));};
+            let table = &params[0];
+            if matches!(table, Value::Object(_)) { return Err(fault(lang,"protocol")); }
+            if !matches!(table, Value::Map(_) | Value::Array(_) | Value::Words(..) | Value::Text(_)) { return Err(fault(lang,"mapping")); }
             let mut out=String::new();
             for c in s.chars() {
-                match pairs.iter().find(|(key,_)|key.equals(&Value::Small(c as i64))).map(|(_,v)|v) {
+                let replacement = match table {
+                    Value::Map(pairs) => pairs.iter().find(|(key,_)|key.equals(&Value::Small(c as i64))).map(|(_,v)|v.clone()),
+                    Value::Array(items) => items.get(c as usize).cloned(),
+                    Value::Words(items, _) => items.get(c as usize).map(|s|Value::text(s)),
+                    Value::Text(word) => word.chars().nth(c as usize).map(|v|Value::text(&v.to_string())),
+                    _ => unreachable!(),
+                };
+                match replacement.as_ref() {
                     None=>out.push(c),Some(Value::Null)=>{},Some(Value::Text(t))=>out.push_str(t),
                     Some(v @ (Value::Small(_)|Value::Huge(_)|Value::Flag(_)))=>{let n=integer(v,lang)?;if !(0..0x110000).contains(&n) {return Err(fault(lang,"codepoint"));} out.push(char::from_u32(n as u32).ok_or_else(||fault(lang,"surrogate"))?);}
                     _=>return Err(fault(lang,"translation")),
@@ -331,6 +343,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let items=match &params[0] {
                 Value::Array(items)=>items.as_ref().clone(),Value::Words(items,_)=>items.iter().map(|s|Value::text(s)).collect(),
                 Value::Map(pairs)=>pairs.iter().map(|(k,_)|k.clone()).collect(),Value::Text(t)=>t.chars().map(|c|Value::text(&c.to_string())).collect(),
+                Value::Counted(range) if range.length() == num_bigint::BigInt::from(0) => Vec::new(),
+                Value::Counted(_) => return Err(fault(lang,"join")),
+                Value::Object(_) => return Err(fault(lang,"protocol")),
                 _=>return Err(fault(lang,"walk")),
             };
             let mut out=String::new();for (i,v) in items.iter().enumerate() {if i>0 {out.push_str(s);}let Value::Text(t)=v else {return Err(fault(lang,"join"));};out.push_str(t);}
@@ -358,7 +373,7 @@ fn mapping_format(s: &str, mapping: &Value, lang: &Lang, words: &Wording, depth:
         if key.contains(['.','[']) {return Err(fault(lang,"format"));}
         let value=entries.iter().find(|(k,_)|matches!(k,Value::Text(s) if s.as_ref()==key)).map(|(_,v)|v).ok_or_else(||fault(lang,"key")+&quoted(key))?;
         let spec=mapping_format(spec,mapping,lang,words,depth+1)?;
-        let shown=if conversion=="r" || conversion=="a" {let mut shown=repr(value,words);if conversion=="a" {shown=shown.chars().map(|c|if c.is_ascii(){c.to_string()}else if c as u32<=65535 {format!("\\u{:04x}",c as u32)}else{format!("\\U{:08x}",c as u32)}).collect();}Value::text(&shown).string_field(words,&spec,"")}
+        let shown=if conversion=="r" || conversion=="a" {let mut shown=repr(value,words);if conversion=="a" {shown=shown.chars().map(|c|if c.is_ascii(){c.to_string()}else if c as u32<=255 {format!("\\x{:02x}",c as u32)}else if c as u32<=65535 {format!("\\u{:04x}",c as u32)}else{format!("\\U{:08x}",c as u32)}).collect();}Value::text(&shown).string_field(words,&spec,"")}
             else {value.string_field(words,&spec,conversion)};
         out.push_str(&shown.ok_or_else(||fault(lang,"format"))?);
     }

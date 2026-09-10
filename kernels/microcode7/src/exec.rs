@@ -997,8 +997,6 @@ impl<'a> Machine<'a> {
 
     fn quoted_remainder(&self, item: &Value) -> Result<String, String> {
         match item {
-            Value::TextRow(words, closed) => return Ok(crate::text::written_row(words,*closed)),
-            Value::Text(word) if self.table.has_any("ext.builtin.text.repr") => return Ok(crate::text::quotation(word)),
             Value::Vector(elements) => {
                 let mut shown = Vec::new();
                 for element in elements.iter() { shown.push(self.quoted_remainder(element)?); }
@@ -2159,13 +2157,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
-                if let Value::TextCall { subject, work, name } = &stands {
-                    let received = self.value_list(args, frame)?;
-                    let (mut positional, named) = self.open_arguments(received)?;
-                    if *work != crate::text::Work::MAKETRANS { positional.insert(0, Value::Text(subject.clone())); }
-                    crate::text::fit_names(self.table, *work, &mut positional, named)?;
-                    return crate::text::apply(self.table, *work, name, &positional, self.wording()).map_err(Escape::from);
-                }
+                if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -2603,6 +2595,17 @@ impl<'a> Machine<'a> {
     /// the words that work on the values handed to them can be reached
     /// this way: the ones that hold on to the pieces they are written
     /// with have nothing to work on when there are none.
+    fn text_called(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res> {
+        let Value::TextCall { subject, work, name } = stands else { return None };
+        Some((|| {
+            let received = self.value_list(args, frame)?;
+            let (mut positional, named) = self.open_arguments(received)?;
+            if *work != crate::text::Work::MAKETRANS { positional.insert(0, Value::Text(subject.clone())); }
+            crate::text::fit_names(self.table, *work, &mut positional, named)?;
+            Ok(crate::text::apply(self.table, *work, name, &positional, self.wording())?)
+        })())
+    }
+
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
         let Value::Text(word) = stands else { return None };
         let op = self.table.prims.get(word.as_ref()).copied()?;
@@ -2732,6 +2735,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));

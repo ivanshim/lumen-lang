@@ -3221,8 +3221,6 @@ impl<'a> Engine<'a> {
 
     fn rem_repr(&self, value: &Value) -> Res<String> {
         Ok(match value {
-            Value::Words(items, tuple) => crate::strings::row(items, *tuple),
-            Value::Text(s) if !self.lang.text_words.get("ext.builtin.text.repr").map_or(true, Vec::is_empty) => crate::strings::quoted(s),
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
                 let mut out = String::from(quote);

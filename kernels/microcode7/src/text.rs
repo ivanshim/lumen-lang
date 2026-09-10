@@ -23,7 +23,7 @@ pub fn complaint(table: &Table, reason: &str) -> String {
 
 pub fn bears_kind(table: &Table, message: &str) -> bool {
     if !table.strings("ext.builtin.text.complaint").iter().any(|prefix| message.starts_with(prefix)) { return false; }
-    "index arguments codepoint encode fill format format.brace format.positional integer join key maketrans.key maketrans.length maketrans.type mapping missing receiver room separator string surrogate translation walk".split_whitespace().any(|reason| {
+    "protocol index arguments codepoint encode fill format format.brace format.positional integer join key maketrans.key maketrans.length maketrans.type mapping missing receiver room separator string surrogate translation walk".split_whitespace().any(|reason| {
         let words = complaint(table, reason);
         !words.is_empty() && if reason == "key" { message.starts_with(&words) } else { message == words }
     })
@@ -225,7 +225,11 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             Value::Flag(right && has_case)
         }
         SPLITLINES=>{
-            let ends=g.whole(0,0)?!=0;
+            let ends=match g.tail.first() {
+                Some(Value::Thing(_)) => return Err(g.bad("protocol")),
+                Some(Value::Dict(entries)) => !entries.is_empty(), Some(Value::Vector(items)) => !items.is_empty(),
+                Some(value) => value.is_true(), None => false,
+            };
             let chars: Vec<_>=source.char_indices().collect();
             let mut cursor=0;let mut begin=0;let mut lines=Vec::new();
             while cursor<chars.len() {
@@ -329,6 +333,11 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::TextRow(items,_)=>items.iter().map(|s|Value::text(s)).collect(),
                 Value::Text(word)=>word.chars().map(|c|Value::text(&String::from(c))).collect(),
                 Value::Dict(entries)=>entries.iter().map(|(key,_)|key.clone()).collect(),
+                Value::Progression(walk) => {
+                    if walk.count() != num_bigint::BigInt::from(0) { return Err(g.bad("join")); }
+                    Vec::new()
+                }
+                Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
             let mut portions=Vec::new();
@@ -336,12 +345,23 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             Value::text(&portions.join(source))
         }
         TRANSLATE=>{
-            let Value::Dict(entries)=&g.tail[0] else {return Err(g.bad("mapping"));};
+            let lookup=&g.tail[0];
+            match lookup {
+                Value::Thing(_) => return Err(g.bad("protocol")),
+                Value::Dict(_) | Value::Vector(_) | Value::TextRow(..) | Value::Text(_) => (),
+                _ => return Err(g.bad("mapping")),
+            }
             let mut result=String::new();
             for letter in source.chars() {
                 let numbered=Value::Small(letter as i64);
-                let replace=entries.iter().find(|(k,_)|k.equals(&numbered)).map(|(_,v)|v);
-                if let Some(value)=replace {
+                let replace=match lookup {
+                    Value::Text(word) => word.chars().nth(letter as usize).map(|c|Value::text(&String::from(c))),
+                    Value::TextRow(words, _) => words.get(letter as usize).map(|word|Value::text(word)),
+                    Value::Vector(items) => items.get(letter as usize).cloned(),
+                    Value::Dict(entries) => entries.iter().find(|(k,_)|k.equals(&numbered)).map(|(_,v)|v.clone()),
+                    _ => unreachable!(),
+                };
+                if let Some(value)=replace.as_ref() {
                     match value {
                         Value::Nil=>(),Value::Text(word)=>result.push_str(word),
                         Value::Small(_)|Value::Huge(_)|Value::Flag(_)=>{
@@ -424,7 +444,7 @@ fn fill_mapping(table:&Table, pattern:&str, mapping:&Value, names:Names, level:u
             "r"|"a"=>{
                 let mut literal=expression(value,names);
                 if conversion=="a" {
-                    literal=literal.chars().map(|c|match c as u32 {0..=127=>c.to_string(),128..=65535=>format!("\\u{:04x}",c as u32),_=>format!("\\U{:08x}",c as u32)}).collect();
+                    literal=literal.chars().map(|c|match c as u32 {0..=127=>c.to_string(),128..=255=>format!("\\x{:02x}",c as u32),256..=65535=>format!("\\u{:04x}",c as u32),_=>format!("\\U{:08x}",c as u32)}).collect();
                 }
                 Value::text(&literal).in_field(names,&spec,"")
             }
