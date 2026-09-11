@@ -1541,6 +1541,11 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as a binding target")?;
         self.read(&name);
         self.called_on_value()?;
+        // What a call gave back is no place a binding can reach: the
+        // whole target is still read, and the run refuses it.
+        if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) {
+            self.awkward_place = true;
+        }
         let mut keyed = Vec::new();
         loop {
             if self.on_any(&self.lang.pipe_words) {
@@ -3525,13 +3530,21 @@ impl<'a> Compiler<'a> {
             } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
                 let named = self.take().lexeme;
                 self.take();
-                self.expr(0)?;
+                // The value may run on past commas, as a bare tuple does
+                // at the top of a program; the joined value is the member.
+                match lang.tuple_marks.is_empty() {
+                    true => self.expr(0)?,
+                    false => self.scope_value()?,
+                }
                 let held = self.gensym("attribute");
                 self.write(&held);
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
-            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
+            } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+                && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
+                // A keyword before the mark (`try:`) heads a statement
+                // and is no member being annotated.
                 let named = self.take().lexeme;
                 self.take();
                 self.annotation_expression(&lang.assign_words)?;
@@ -4441,7 +4454,7 @@ impl<'a> Compiler<'a> {
         for at in begin..end {
             let t = &self.tokens[at];
             if closes.is_empty() {
-                if Lang::spells(&self.lang.lambda_words, &t.lexeme) { return (found, at); }
+                if t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.lexeme) { return (found, at); }
                 if matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish)
                     || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) {
                     return (found, at);
@@ -5877,7 +5890,9 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.lambda_words, &tok.lexeme) {
+        // Only the bare word opens a lambda; the same letters between
+        // quotes are a string, as when handed to print.
+        if tok.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &tok.lexeme) {
             self.take();
             self.lambda_value()?;
             return Ok(());
@@ -5997,6 +6012,14 @@ impl<'a> Compiler<'a> {
                     _ => 0,
                 };
                 self.act(Action::Make, argc + 1);
+            }
+            // Outside any class the parent word, unless it opens a call,
+            // is a name like another: it may be bound, listed or passed.
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
+                && self.within.is_none()
+                && lang.calling.as_ref().map_or(true, |call| !self.look_ahead(1).is_lexeme(Shape::Sign, &call.open)) => {
+                self.take();
+                self.read(&tok.lexeme);
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
                 && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
