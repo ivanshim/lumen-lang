@@ -39,6 +39,14 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt,
 pub struct Registry {
     index: HashMap<String, usize>,
     pub idents: Vec<String>,
+    /// Whether the next reading is of one expression alone, as text
+    /// handed over to be weighed is: nothing may follow it. The mark is
+    /// spent by that reading.
+    pub value_only: bool,
+    /// The names the outermost statements declared global, for text
+    /// read into two dictionaries: a name so declared is written to the
+    /// outer one.
+    pub declared_outer: Vec<String>,
     /// The global names the program's own lines have bound, as against
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
@@ -264,11 +272,12 @@ pub fn compile_within(
     read_in: bool,
 ) -> Res<Rc<Routine>> {
     let mut plans = HashMap::new();
+    let wants_value = std::mem::take(&mut table.value_only);
     if lang.closes_over {
         let mut survey = Registry::default();
-        compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true)?;
+        compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value)?;
     }
-    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false)
+    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value)
 }
 
 fn compile_pass(
@@ -282,6 +291,7 @@ fn compile_pass(
     read_in: bool,
     plans: &mut HashMap<usize, BindingPlan>,
     discovering: bool,
+    wants_value: bool,
 ) -> Res<Rc<Routine>> {
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
@@ -314,7 +324,20 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
-    if lang.rpn {
+    if wants_value {
+        // One expression and nothing after it, left where the reading
+        // finds it; the text may open and close with line ends.
+        a.skip_seps();
+        if let Err(said) = a.scope_value() {
+            a.registry.stopped_at = a.look().row;
+            return Err(said);
+        }
+        a.skip_seps();
+        if !a.exhausted() {
+            a.registry.stopped_at = a.look().row;
+            return Err(format!("Unexpected '{}'", a.look().lexeme));
+        }
+    } else if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
             return Err(said);
@@ -328,9 +351,11 @@ fn compile_pass(
         // a call above its function finds it (ext.stmt.function.hoisted).
         let mut lifted: Vec<Instr> = Vec::new();
         a.skip_seps();
+        let mut opening = true;
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let from = a.mark();
+            let own_line = a.look().row as u32 > before;
             // Where the reading stops, the line it had reached is kept,
             // so that a language with a word for such a stopping may
             // name the line as it names any other.
@@ -338,6 +363,23 @@ fn compile_pass(
                 a.registry.stopped_at = a.look().row;
                 return Err(said);
             }
+            // Text alone as the first statement of a program is the
+            // program's own documentation, kept under the name the
+            // language gives it (ext.system.module.doc).
+            if opening && own_line && alone && !lang.module_doc.is_empty() {
+                let said: Vec<&Instr> = a.piece().instrs[from..].iter().filter(|i| !matches!(i, Instr::Emptied(_) | Instr::Line(_) | Instr::Nothing)).collect();
+                let words = match said.as_slice() {
+                    [Instr::Const(Value::Text(words)), Instr::Write(cell)] if cell.ident.as_ref() == RESULT_CELL => Some(words.to_string()),
+                    _ => None,
+                };
+                if let Some(words) = words {
+                    for name in &lang.module_doc {
+                        a.constant(Value::text(&words));
+                        a.write(name);
+                    }
+                }
+            }
+            if own_line { opening = false; }
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
             }
@@ -1831,6 +1873,7 @@ impl<'a> Compiler<'a> {
             // is then reading a name written to.
             let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
             if !self.lang.bind_names { self.put(Instr::Ready(cell)); }
+            if self.pieces.len() == 1 { self.registry.declared_outer.push(name.clone()); }
             self.piece().globals.push((name.clone(), name));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -4951,8 +4994,11 @@ impl<'a> Compiler<'a> {
         // What the chain stands on, where it is anything but the one
         // instr that reads a name: then the whole chain is rebuilt and
         // written back into whatever it stood on.
+        // A dictionary of names handed out by a builtin is a footing
+        // too, written into where it lives and never written back.
+        let names_handed = matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::OuterNames | Builtin::NearNames | Builtin::Vars, _), 0)));
         let footing: Option<Vec<Instr>> = match key_at.first() {
-            Some(at) if *at > from + 1 => Some(target[..at - from].to_vec()),
+            Some(at) if *at > from + 1 || names_handed => Some(target[..at - from].to_vec()),
             _ => None,
         };
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
@@ -5080,6 +5126,7 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
                     self.write(&made);
                 }
+                if names_handed { return Ok(()); }
                 // What it stood on is written back into, read again as
                 // the store it is.
                 let footing_at = self.mark();

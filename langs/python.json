@@ -124,6 +124,9 @@
     "__getattr__"
   ],
   "ext.system.source.marked": true,
+  "ext.system.source.file": [
+    "__file__"
+  ],
   "format_version": 1,
   "language": "python",
   "extensions": [
@@ -722,7 +725,8 @@
     "UnicodeWarning",
     "BytesWarning",
     "ResourceWarning",
-    "EncodingWarning"
+    "EncodingWarning",
+    "SyntaxError"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -1610,6 +1614,47 @@
   ],
   "ext.builtin.zip.strict": [
     "strict"
+  ],
+  "ext.builtin.globals": [
+    "globals"
+  ],
+  "ext.builtin.locals": [
+    "locals"
+  ],
+  "ext.builtin.exec": [
+    "exec"
+  ],
+  "ext.builtin.eval": [
+    "eval"
+  ],
+  "ext.builtin.compile": [
+    "compile"
+  ],
+  "ext.builtin.compile.modes": [
+    "exec",
+    "eval",
+    "single"
+  ],
+  "ext.builtin.compile.parameters": [
+    "source",
+    "filename",
+    "mode",
+    "flags",
+    "dont_inherit",
+    "optimize",
+    "_feature_version"
+  ],
+  "ext.builtin.compile.kind": [
+    "code"
+  ],
+  "ext.builtin.source.syntax": [
+    "SyntaxError: invalid syntax"
+  ],
+  "ext.builtin.source.unready": [
+    "NotImplementedError: this source operation cannot run yet"
+  ],
+  "ext.builtin.import": [
+    "__import__"
   ],
   "ext.lexical.escape.byte": [
     "x"
@@ -2744,6 +2789,12 @@
     "RecursionError: maximum recursion depth exceeded"
   ],
   "ext.system.recursion.limit": 1000,
+  "ext.system.module.doc": [
+    "__doc__"
+  ],
+  "ext.system.module.builtins": [
+    "__builtins__"
+  ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

@@ -122,7 +122,8 @@ ext.system.complaint.markup.setting:L ext.system.complaint.markup.kind:L ext.sys
 ext.system.complaint.reference.setting:L ext.system.complaint.reference.page:L ext.system.complaint.reference.mark:L \
 ext.builtin.include.demanded:L ext.builtin.include.demanded.missing:L \
  ext.stmt.with.unready:L ext.op.member.pipes:B ext.op.tuple.unready:L ext.lexical.string.prefix.bytes.unready:L ext.lexical.string.prefix.format.unready:L ext.stmt.assign.chain:B ext.lexical.escape.deferred:L  ext.builtin.complex:L ext.builtin.complex.real:L ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.integer:L ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L ext.builtin.complex.unready:L \
- ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B ";
+ ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B \
+ ext.builtin.globals:L ext.builtin.locals:L ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.unready:L ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
     table.split_whitespace().map(|e| {
@@ -153,7 +154,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 263] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 268] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -202,6 +203,11 @@ pub const BUILTIN_LABELS: [(&str, Prim); 263] = [
             ("ext.builtin.setattr", Prim::SetMember),
             ("ext.builtin.delattr", Prim::DropMember),
             ("ext.builtin.vars", Prim::MembersOf),
+            ("ext.builtin.globals", Prim::WorldBook),
+            ("ext.builtin.locals", Prim::HereBook),
+            ("ext.builtin.exec", Prim::Perform),
+            ("ext.builtin.compile", Prim::Prepare),
+            ("ext.builtin.import", Prim::Summon),
             ("ext.builtin.sum", Prim::Total),
             ("ext.builtin.list", Prim::Listed),
             ("ext.builtin.any", Prim::SomeTrue),

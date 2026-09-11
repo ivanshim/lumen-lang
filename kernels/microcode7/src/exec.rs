@@ -148,6 +148,20 @@ impl Suspension {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    /// The dictionary kept beside the outermost names once a program
+    /// has asked for it: from then on those names are read out of it
+    /// and written into it, so either side sees the other's writing.
+    world_book: Option<Rc<RefCell<Value>>>,
+    /// Each text read into dictionaries handed over: the slots it was
+    /// given, the dictionary its names live in, and the outer one for
+    /// what the near one lacks and for its declared globals.
+    readings: Vec<Namebook>,
+    /// The reading the run stands inside at present, if any.
+    reading_now: Option<usize>,
+    /// The dictionary of builtin words, and the blueprint of a code
+    /// value, each made when first wanted.
+    natives_book: Option<Rc<RefCell<Value>>>,
+    code_kind: Option<Rc<Blueprint>>,
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
     property_kind: Option<Rc<Blueprint>>,
@@ -446,6 +460,11 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             imported: HashMap::new(),
+            world_book: None,
+            readings: Vec::new(),
+            reading_now: None,
+            natives_book: None,
+            code_kind: None,
             ancestor: None, property_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
             table,
             outermost,
@@ -1859,6 +1878,9 @@ impl<'a> Machine<'a> {
 
     fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
+        if Rc::ptr_eq(f, &self.outermost) {
+            if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
+        }
         let mut v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = &v {
             if self.table.flag("ext.syntax.call.bind_names") && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
@@ -1874,6 +1896,7 @@ impl<'a> Machine<'a> {
             return Ok(v);
         }
         if let Some(g) = slot.fallback {
+            if let Some(found) = self.booked_read(g, &slot.ident) { return found; }
             let v = self.outermost.cells.borrow()[g].clone();
             if !matches!(v, Value::Unset) {
                 return Ok(v);
@@ -1904,6 +1927,7 @@ impl<'a> Machine<'a> {
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
                 if let Value::Shared(cell) = &destination.cells.borrow()[slot.at] { *cell.borrow_mut() = stored; return Ok(()); }
             }
+            if Rc::ptr_eq(destination, &self.outermost) { self.booked_write(slot.at, &slot.ident, Some(stored.clone())); }
             destination.cells.borrow_mut()[slot.at] = stored;
             return Ok(());
         }
@@ -2573,6 +2597,7 @@ impl<'a> Machine<'a> {
             }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
                     Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.table.flag("ext.syntax.call.bind_names") => *cell.borrow_mut() = Value::Unset,
@@ -3065,7 +3090,7 @@ impl<'a> Machine<'a> {
                 // inside a routine it knows that routine's names, as the
                 // reference has it, and only the outermost body has none
                 // but the globals.
-                Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) => {
+                Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) && !self.reads_manners() => {
                     let v = self.value_list(args, frame)?;
                     if v.len() != 1 {
                         return Err(Escape::Error(format!("{}() expects 1 argument, got {}", name, v.len())));
@@ -3455,6 +3480,11 @@ impl<'a> Machine<'a> {
                     Err(Escape::Done)
                 }
                 op => {
+                    // The names about a call are only to be seen from
+                    // here, where the frame is at hand.
+                    if args.is_empty() && self.reads_manners() && matches!(op, Prim::HereBook | Prim::MembersOf | Prim::ClassWork(8) | Prim::WorldBook) {
+                        return self.names_here(frame, *op).map_err(Escape::Error);
+                    }
                     let mut values = self.value_list(args, frame)?;
                     // A list that a lazy walk is to begin on is not gathered
                     // into a copy: it goes on in its own cell, so the walk
@@ -4150,6 +4180,20 @@ impl<'a> Machine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (key, _) in &keywords {
             if !seen.insert(key) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)).into()); }
+        }
+        // Compile alone takes its arguments by name; the readers of text
+        // and the handing out of names take theirs in order only.
+        if self.reads_manners() && matches!(op, Prim::Prepare | Prim::Perform | Prim::Weigh | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
+            let formals = table.strings("ext.builtin.compile.parameters");
+            for (key, worth) in keywords {
+                let place = formals.iter().position(|word| word == &key).filter(|_| op == Prim::Prepare)
+                    .ok_or_else(|| self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)))?;
+                if positional.get(place).map_or(false, |held| !matches!(held, Value::Unset)) { return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)).into()); }
+                if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
+                positional[place] = worth;
+            }
+            for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
+            return Ok(None);
         }
         if let Prim::Octets(which @ (14 | 15)) = op {
             let mut negative_allowed = false;
@@ -5925,7 +5969,7 @@ impl<'a> Machine<'a> {
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
                 self.prim_values(op, name, v)?
             } else if matches!(op, Prim::SetAssign(0) | Prim::Backwards | Prim::Iterated | Prim::Erase | Prim::Pointed) && v.first().map_or(false, |first| Self::dict_cell(first).is_some()) {
                 // A map keeps its cell here: written into in place, a
@@ -5942,6 +5986,9 @@ impl<'a> Machine<'a> {
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
+            return self.text_operation(op, name, v);
+        }
         if matches!(op, Prim::Added | Prim::Placed) {
             if let Some(Value::Mutable(cell, _)) = v.first() {
                 let mut arguments = v.to_vec();
@@ -6858,6 +6905,11 @@ impl<'a> Machine<'a> {
             // Source read while the program runs, built against the
             // globals it already has and run where it stands. A file
             // that cannot be read answers false, as such a language says.
+            // The readers of text and the books of names are answered
+            // before the arguments are opened, where the table spells
+            // the manners text may be read in; spelled without them,
+            // the words are refused here.
+            Prim::WorldBook | Prim::HereBook | Prim::Perform | Prim::Prepare | Prim::Summon => return Err(self.source_refused()),
             Prim::Weigh | Prim::Bring | Prim::BringOnce => {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
@@ -9773,6 +9825,408 @@ impl Machine<'_> {
     }
 }
 
+/// A text read into dictionaries handed over. Its names have slots of
+/// their own among the outermost cells, yet what they hold lives in the
+/// dictionaries: the near one first; then the outer one, which also
+/// takes whatever the text declared global.
+struct Namebook {
+    near: Rc<RefCell<Value>>,
+    outer: Option<Rc<RefCell<Value>>>,
+    from: usize,
+    upto: usize,
+    declared: Vec<String>,
+}
+
+/// Which dictionary a slot's value lives in, when it lives in one.
+#[derive(Clone, Copy)]
+enum Held {
+    World,
+    Reading(usize),
+}
+
+/// Whether a dictionary's key is this name, however it is wrapped.
+fn spells_key(key: &Value, name: &str) -> bool {
+    match key {
+        Value::Text(word) => word.as_ref() == name,
+        Value::Keyed(inner, _) => spells_key(inner, name),
+        Value::Shared(cell) => spells_key(&cell.borrow(), name),
+        _ => false,
+    }
+}
+
+/// The value a dictionary in a cell keeps under a name.
+fn looked_up(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
+    let Value::Dict(entries) = &*book.borrow() else { return None };
+    entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, worth)| worth.clone())
+}
+
+/// Set a value down under a name in such a dictionary; given nothing,
+/// strike the name out.
+fn set_down(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>) {
+    let Value::Dict(entries) = &mut *book.borrow_mut() else { return };
+    let entries = Rc::make_mut(entries);
+    let place = entries.iter().position(|(key, _)| spells_key(key, name));
+    match (place, worth) {
+        (Some(place), Some(worth)) => entries[place].1 = worth,
+        (Some(place), None) => { entries.remove(place); }
+        (None, Some(worth)) => entries.push((Value::text(name), worth)),
+        (None, None) => {}
+    }
+}
+
+impl<'a> Machine<'a> {
+    /// Whether the table spells the manners text may be read in, which
+    /// is what brings the readers of text and the books of names alive.
+    fn reads_manners(&self) -> bool {
+        self.table.has_any("ext.builtin.compile.modes")
+    }
+
+    /// A name the program can write, rather than a cell of the builder's.
+    fn visible_name(word: &str) -> bool {
+        !word.contains('\0') && !word.starts_with('#')
+    }
+
+    /// The dictionary an outermost slot lives in, if any: that of the
+    /// reading it belongs to, else the world's once that has been asked for.
+    fn book_holding(&self, at: usize) -> Option<Held> {
+        if self.world_book.is_none() && self.readings.is_empty() { return None; }
+        let ident = self.idents.get(at)?;
+        let bare = ident.rsplit('/').next().unwrap_or(ident);
+        if !Self::visible_name(bare) { return None; }
+        if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
+        if self.world_book.is_some() && Self::visible_name(ident) { return Some(Held::World); }
+        None
+    }
+
+    /// Whether the world's dictionary passed this name over when it was
+    /// made — a builtin under its own name, a native kind, or a cell
+    /// never written — so that it goes on being read from the cell.
+    fn passed_over(&self, name: &str, held: &Value) -> bool {
+        match held {
+            Value::Intrinsic(word) => word.as_ref() == name,
+            Value::Blueprint(kind) => kind.name == name && (self.fault_kinds.contains_key(name) || name == self.detail("root")),
+            Value::KindOf(_) | Value::Unset => true,
+            _ => false,
+        }
+    }
+
+    /// What a builtin word names: a fault kind, a native operation, or
+    /// the root class.
+    fn native_of(&self, name: &str) -> Option<Value> {
+        if let Some(kind) = self.fault_kinds.get(name) { return Some(kind.clone()); }
+        if self.table.prims.contains_key(name) { return Some(Value::Intrinsic(Rc::from(name))); }
+        if self.has_class_order() && name == self.detail("root") { return self.ancestor.clone().map(Value::Blueprint); }
+        None
+    }
+
+    /// Read a slot's name out of the dictionary it lives in; nothing
+    /// means the cell itself is to be read after all.
+    fn booked_read(&self, at: usize, name: &str) -> Option<Result<Value, String>> {
+        match self.book_holding(at)? {
+            Held::World => {
+                let book = self.world_book.as_ref()?;
+                if let Some(worth) = looked_up(book, name) { return Some(Ok(worth)); }
+                let cell = self.outermost.cells.borrow()[at].clone();
+                if self.passed_over(name, &cell) { return None; }
+                Some(Err(format!("Undefined variable: {}", name)))
+            }
+            Held::Reading(which) => {
+                let book = &self.readings[which];
+                if let Some(worth) = looked_up(&book.near, name) { return Some(Ok(worth)); }
+                if let Some(worth) = book.outer.as_ref().and_then(|outer| looked_up(outer, name)) { return Some(Ok(worth)); }
+                // A builtin is reached through the dictionary of builtins
+                // the outer dictionary names, so a program may hand over
+                // one of its own and so choose what the text can reach.
+                let roots = book.outer.as_ref().unwrap_or(&book.near);
+                let found = match self.table.single("ext.system.module.builtins").and_then(|word| looked_up(roots, word)) {
+                    Some(Value::Shared(natives)) => looked_up(&natives, name),
+                    Some(_) => None,
+                    None => self.native_of(name),
+                };
+                Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
+            }
+        }
+    }
+
+    /// Write a slot's name into the dictionary it lives in, or strike it out.
+    fn booked_write(&self, at: usize, name: &str, worth: Option<Value>) {
+        match self.book_holding(at) {
+            Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },
+            Some(Held::Reading(which)) => {
+                let book = &self.readings[which];
+                let goes_to = match &book.outer {
+                    Some(outer) if book.declared.iter().any(|word| word == name) => outer,
+                    _ => &book.near,
+                };
+                set_down(goes_to, name, worth);
+            }
+            None => {}
+        }
+    }
+
+    /// The dictionary of every builtin word, made once.
+    fn natives_kept(&mut self) -> Rc<RefCell<Value>> {
+        if let Some(book) = &self.natives_book { return book.clone(); }
+        let mut words: Vec<&String> = self.table.prims.keys().chain(self.table.strings("ext.builtin.exceptions")).collect();
+        words.sort();
+        words.dedup();
+        let entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
+        let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries))));
+        self.natives_book = Some(book.clone());
+        book
+    }
+
+    /// The world's dictionary, made from the outermost cells the first
+    /// time it is wanted and kept beside them after.
+    fn world_kept(&mut self) -> Rc<RefCell<Value>> {
+        if let Some(book) = &self.world_book { return book.clone(); }
+        let mut entries = Vec::new();
+        {
+            let cells = self.outermost.cells.borrow();
+            for (at, word) in self.idents.iter().enumerate() {
+                if !Self::visible_name(word) || self.readings.iter().any(|book| (book.from..book.upto).contains(&at)) { continue; }
+                let Some(held) = cells.get(at) else { continue };
+                if self.passed_over(word, held) { continue; }
+                entries.push((Value::text(word), held.clone()));
+            }
+        }
+        let natives = self.natives_kept();
+        for word in self.table.strings("ext.system.module.builtins") {
+            if !entries.iter().any(|(key, _)| spells_key(key, word)) { entries.push((Value::text(word), Value::Shared(natives.clone()))); }
+        }
+        let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries))));
+        self.world_book = Some(book.clone());
+        book
+    }
+
+    /// The dictionary of the names where the run stands: the reading
+    /// under way, else the world's. Asked for the outer names, a reading
+    /// with two dictionaries answers with its outer one.
+    fn book_about(&mut self, outer: bool) -> Rc<RefCell<Value>> {
+        if let Some(which) = self.reading_now {
+            let book = &self.readings[which];
+            return match (&book.outer, outer) {
+                (Some(outer), true) => outer.clone(),
+                _ => book.near.clone(),
+            };
+        }
+        self.world_kept()
+    }
+
+    /// The names about a call given nothing: the outermost dictionary;
+    /// inside a routine, a fresh dictionary of its own names; and for
+    /// dir, those names listed in order.
+    fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
+        let book = if op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost) {
+            self.book_about(op == Prim::WorldBook)
+        } else {
+            let mut entries = Vec::new();
+            if let Some(program) = self.frames_named.last() {
+                let cells = frame.cells.borrow();
+                for (word, held) in program.idents.iter().zip(cells.iter()) {
+                    if Self::visible_name(word) && !matches!(held, Value::Unset) { entries.push((Value::text(word), held.clone())); }
+                }
+            }
+            Rc::new(RefCell::new(Value::Dict(Rc::new(entries))))
+        };
+        if op == Prim::ClassWork(8) {
+            let mut words: Vec<String> = match &*book.borrow() {
+                Value::Dict(entries) => entries.iter().map(|(key, _)| key.bare()).collect(),
+                _ => Vec::new(),
+            };
+            words.sort();
+            return Ok(Value::Vector(Rc::new(words.iter().map(|word| Value::text(word)).collect())));
+        }
+        Ok(Value::Shared(book))
+    }
+
+    /// The blueprint of a code value, made once.
+    fn code_blueprint(&mut self) -> Rc<Blueprint> {
+        if let Some(kind) = &self.code_kind { return kind.clone(); }
+        let kind = Rc::new(Blueprint {
+            parents: Vec::new(), ancestry: Vec::new(), presentation: None, name: self.table.single("ext.builtin.compile.kind").unwrap_or_default().to_owned(),
+            under: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+        });
+        self.code_kind = Some(kind.clone());
+        kind
+    }
+
+    fn source_refused(&self) -> String {
+        self.table.single("ext.builtin.source.unready").unwrap_or_default().to_owned()
+    }
+
+    fn source_unreadable(&self) -> String {
+        self.table.single("ext.builtin.source.syntax").unwrap_or_default().to_owned()
+    }
+
+    /// The tokens of text handed over to be read, else the words for
+    /// text that cannot be read.
+    fn text_tokens(&self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
+        crate::scan::scan_at(source, self.table)
+            .and_then(|read| crate::indent::indent(read, self.table, 0))
+            .map_err(|_| self.source_unreadable())
+    }
+
+    /// The readers of text, the handing out of names, and the fetching
+    /// of a namespace by name.
+    fn text_operation(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        match op {
+            Prim::WorldBook | Prim::HereBook => {
+                if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
+                Ok(Value::Shared(self.book_about(op == Prim::WorldBook)))
+            }
+            Prim::Summon => match v.first().map(Value::settled) {
+                Some(Value::Text(path)) => self.load_namespace(&path),
+                _ => Err(self.source_refused()),
+            },
+            Prim::Prepare => self.text_prepared(name, v),
+            _ => self.text_performed(op == Prim::Weigh, v),
+        }
+    }
+
+    /// Text checked ahead of time and kept as a code value with the
+    /// file it stands in and the manner it is to be read in.
+    fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
+        let formals = self.table.strings("ext.builtin.compile.parameters");
+        if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
+        let (Value::Text(source), Value::Text(file), Value::Text(manner)) = (v[0].settled(), v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
+        let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err(self.source_refused()) };
+        // Flags and inheritance are read and let be; optimisation beyond
+        // the ordinary setting is not honoured.
+        if v.get(5).map_or(false, |worth| !matches!(worth, Value::Nil | Value::Small(0) | Value::Small(-1))) { return Err(self.source_refused()); }
+        let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
+        self.text_built(&tokens, &[], &file, mode, &[])?;
+        let kind = self.code_blueprint();
+        let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file)), (formals[2].clone(), Value::Small(mode as i64))];
+        self.made += 1;
+        Ok(Value::Thing(Rc::new(Thing { of: kind, holds: RefCell::new(holds), turn: self.made })))
+    }
+
+    /// Text or a code value run: as one expression where it is to be
+    /// weighed, else as statements; in the dictionaries handed over,
+    /// else where the call stands.
+    fn text_performed(&mut self, weighing: bool, v: &[Value]) -> Result<Value, String> {
+        let Some(first) = v.first().map(Value::settled) else { return Err(self.source_refused()) };
+        let (source, file, mode) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
+            Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.of.name.as_str()) => {
+                let holds = code.holds.borrow();
+                let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
+                (holds[0].1.bare(), Some(holds[1].1.bare()), mode)
+            }
+            _ => return Err(self.source_refused()),
+        };
+        if v.len() > 3 { return Err(self.source_refused()); }
+        // An expression to be weighed may stand in from the edge of its text.
+        let source = if mode == 1 { source.trim().to_owned() } else { source };
+        let mut books = Vec::new();
+        for place in 1..3 {
+            books.push(match v.get(place) {
+                None | Some(Value::Nil) => None,
+                Some(Value::Shared(cell)) if matches!(&*cell.borrow(), Value::Dict(_)) => Some(cell.clone()),
+                Some(_) => return Err(self.source_refused()),
+            });
+        }
+        let (outer, near) = match (books.remove(0), books.remove(0)) {
+            (None, None) => return self.perform_here(&source, file, mode),
+            (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
+            (Some(outer), near) => (outer, near),
+            (None, near) => (self.book_about(true), near),
+        };
+        // A dictionary handed over for the outer names is given the
+        // builtins as well, unless it names a dictionary of its own.
+        if let Some(word) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
+            if looked_up(&outer, &word).is_none() {
+                let natives = self.natives_kept();
+                set_down(&outer, &word, Some(Value::Shared(natives)));
+            }
+        }
+        self.perform_booked(&source, file, mode, outer, near)
+    }
+
+    /// Text run where the call stands: within the reading under way, in
+    /// its dictionaries; else among the outermost names.
+    fn perform_here(&mut self, source: &str, file: Option<String>, mode: usize) -> Result<Value, String> {
+        if let Some(which) = self.reading_now {
+            let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
+            return match outer {
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near)),
+                None => self.perform_booked(source, file, mode, near, None),
+            };
+        }
+        let tokens = self.text_tokens(source)?;
+        let file = file.unwrap_or_else(|| "<string>".to_owned());
+        let seeded = self.idents.clone();
+        let (built, shown) = self.text_built(&tokens, &seeded, &file, mode, &[])?;
+        self.idents = built.globals.clone();
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        self.text_concluded(&built, &file, mode, shown)
+    }
+
+    /// Text run in dictionaries of its own: its names are given slots
+    /// among the outermost cells, and a book kept for them.
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Result<Value, String> {
+        let tokens = self.text_tokens(source)?;
+        let file = file.unwrap_or_else(|| "<string>".to_owned());
+        let beginning = self.idents.len();
+        let prior: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
+        // Where the outer dictionary names a dictionary of builtins of
+        // its own, every builtin word is read as a name, and the text
+        // reaches only what that dictionary holds.
+        let own_natives = match self.table.single("ext.system.module.builtins").and_then(|word| looked_up(&outer, word)) {
+            Some(Value::Shared(cell)) => self.natives_book.as_ref().map_or(true, |natives| !Rc::ptr_eq(&cell, natives)),
+            _ => false,
+        };
+        let shadowed: Vec<String> = if own_natives { self.table.prims.keys().cloned().collect() } else { Vec::new() };
+        let (built, shown) = self.text_built(&tokens, &prior, &file, mode, &shadowed)?;
+        let fresh = &built.globals[beginning..];
+        self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
+        self.readings.push(Namebook { near, outer, from: beginning, upto: beginning + fresh.len(), declared: built.outer_aliases.clone() });
+        let was_reading = self.reading_now.replace(self.readings.len() - 1);
+        let answer = self.text_concluded(&built, &file, mode, shown);
+        self.reading_now = was_reading;
+        answer
+    }
+
+    /// A text built in its manner: one expression to be weighed; one
+    /// statement shown as it runs, which is an expression written out
+    /// where it is one; else statements. Says besides whether what the
+    /// text leaves is to be written out.
+    fn text_built(&mut self, tokens: &[crate::scan::Token], seeded: &[String], file: &str, mode: usize, shadowed: &[String]) -> Result<(crate::build::Built, bool), String> {
+        let written_in: Option<Rc<str>> = Some(Rc::from(file));
+        if mode == 2 {
+            if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed) { return Ok((built, true)); }
+        }
+        crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed)
+            .map(|built| (built, false)).map_err(|_| self.source_unreadable())
+    }
+
+    /// Run a built text as standing in its file, and answer what it
+    /// left: the value weighed, else nothing.
+    fn text_concluded(&mut self, built: &crate::build::Built, file: &str, mode: usize, shown: bool) -> Result<Value, String> {
+        let (was_in, was_on) = (self.written_in.clone(), self.row);
+        self.written_in = Rc::from(file);
+        let top = self.outermost.clone();
+        let ran = self.value_of(&built.program.body, &top);
+        self.written_in = was_in;
+        self.row = was_on;
+        let answer = match ran {
+            Ok(answer) => answer,
+            Err(Escape::Error(told)) => return Err(told),
+            Err(Escape::Yield(answer)) => answer,
+            Err(other) => { self.got_away = Some(other); return Err("the source read in did not finish".to_owned()); }
+        };
+        if shown && !matches!(answer, Value::Nil | Value::Unset) {
+            let quoted = self.core_primitive(Prim::Quoted, "repr", vec![answer], Vec::new())?;
+            self.utter(&format!("{}\n", quoted.bare()));
+            return Ok(Value::Nil);
+        }
+        Ok(if mode == 1 { answer } else { Value::Nil })
+    }
+}
+
 fn belongs_to(worth: &Value, kind: &Value) -> bool {
     match kind {
         Value::Vector(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
@@ -10168,7 +10622,11 @@ impl Machine<'_> {
                     Value::Thing(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Blueprint(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Iterator(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Bound(p, _) | Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
+                    // A routine bound where it was defined is that
+                    // definition reached that time: two reachings of the
+                    // one definition are two routines.
+                    Value::Bound(p, env) => (Rc::as_ptr(p) as usize as u64) ^ (Rc::as_ptr(env) as usize as u64).rotate_left(21),
+                    Value::Routine(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Huge(p) => Rc::as_ptr(p) as usize as u64,
                     Value::Frac(p) => Rc::as_ptr(p) as usize as u64,
                     _ => return Err(self.core_complaint("core.unready", name)),
