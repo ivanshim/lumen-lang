@@ -1011,6 +1011,9 @@
   "ext.builtin.method.sort.key": [
     "key"
   ],
+  "ext.builtin.method.sort.modified": [
+    "ValueError: list modified during sort"
+  ],
   "ext.builtin.method.sort.reverse": [
     "reverse"
   ],
