@@ -577,7 +577,9 @@ impl<'a> Machine<'a> {
             Prim::Walked => {
                 n(1)?;
                 if let Value::Blueprint(kind) = &v[0] {
-                    if let Some(yielded) = self.blueprint_walk(&kind.clone())? { return self.prim(Prim::Walked, name, &[yielded]).map_err(Escape::from); }
+                    // What the class hands over is walked as any walk begins,
+                    // here, where the walking is done.
+                    if let Some(yielded) = self.blueprint_walk(&kind.clone())? { return self.walking(&Prim::Walked, name, &[yielded]); }
                 }
                 if let Some(walk) = self.begin_set_walk(&v[0]) { return Ok(walk); }
                 if self.table.flag("ext.stmt.yield.suspends") && !matches!(v[0], Value::Thing(_)) { return self.make_iterator(v[0].clone()); }
