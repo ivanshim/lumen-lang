@@ -2032,6 +2032,17 @@ impl<'a> Engine<'a> {
         format!("{}{}{}", words.first().map_or("", String::as_str), name, words.get(1).map_or("", String::as_str))
     }
 
+    /// A counted row's complaint carries the class it belongs to in the
+    /// words themselves, so it is marked as told whole and the language
+    /// puts no further naming over it.
+    fn range_fault(&self, words: &[String], piece: &str) -> String {
+        match words.first() {
+            Some(opening) if !opening.is_empty() && !self.lang.exceptions.is_empty() => format!("\0{}", Self::named_fault(words, piece)),
+            Some(opening) => Self::named_fault(std::slice::from_ref(opening), piece),
+            None => String::new(),
+        }
+    }
+
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
     fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
@@ -4401,7 +4412,7 @@ impl<'a> Engine<'a> {
                         Value::Small(*row.borrow().get(at).ok_or_else(|| self.byte_fault("index"))? as i64)
                     },
                     Value::Counted(r) => if key { Value::Small(at as i64) } else {
-                        r.at(BigInt::from(at)).ok_or_else(|| self.lang.range_index[0].clone())?
+                        r.at(BigInt::from(at)).ok_or_else(|| self.range_fault(&self.lang.range_index, ""))?
                     },
                     Value::Words(items, _) => match items.get(at) {
                         Some(s) => if key { Value::Small(at as i64) } else { Value::text(s) },
@@ -4611,6 +4622,7 @@ impl<'a> Engine<'a> {
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),
+                    Value::Counted(_) => self.range_member_named(name).is_some(),
                     _ => false,
                 };
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
@@ -4625,6 +4637,13 @@ impl<'a> Engine<'a> {
             // A member is read of what a module's cell holds, not of the cell.
             Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
                 Value::Slice(bounds) if self.slice_bound_named(name).is_some() => bounds[self.slice_bound_named(name).expect("the bound")].clone(),
+                // A counted row keeps its bounds rather than its places,
+                // and hands each of them over by name.
+                Value::Counted(row) if self.range_member_named(name).is_some() => match self.range_member_named(name).expect("the member") {
+                    0 => Value::of_big(row.start.clone()),
+                    1 => Value::of_big(row.stop.clone()),
+                    _ => Value::of_big(row.step.clone()),
+                },
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
@@ -6617,9 +6636,9 @@ impl<'a> Engine<'a> {
             let index = match at {
                 Value::Small(n) => BigInt::from(*n), Value::Huge(n) => (**n).clone(),
                 Value::Flag(b) => BigInt::from(i64::from(*b)),
-                _ => return Err(self.lang.range_integer[0].clone()),
+                _ => return Err(self.range_fault(&self.lang.range_integer, &at.core_kind())),
             };
-            return r.at(index).ok_or_else(|| self.lang.range_index[0].clone());
+            return r.at(index).ok_or_else(|| self.range_fault(&self.lang.range_index, ""));
         }
         // A place holding a cell two names share reads as what the cell
         // holds, since the sharing is between the names and not
@@ -7063,6 +7082,22 @@ impl<'a> Engine<'a> {
         self.lang.slice_parts.get(label).cloned().unwrap_or_default()
     }
 
+    /// Which of a counted row's three bounds this name asks for, where
+    /// the definition gives words for them at all.
+    fn range_member_named(&self, name: &str) -> Option<usize> {
+        self.lang.range_members.iter().position(|word| !word.is_empty() && word == name)
+    }
+
+    /// Where a worth stands in a counted row, counting from its first
+    /// place, or nowhere. A worth that is no whole number stands
+    /// nowhere, and neither does one the stride steps over.
+    fn range_place(row: &crate::value::Counted, worth: &Value) -> Option<BigInt> {
+        let whole = worth.as_big().ok().filter(|n| Self::member_matches(worth, &Value::of_big(n.clone())))?;
+        let inside = if row.step > BigInt::from(0) { whole >= row.start && whole < row.stop } else { whole <= row.start && whole > row.stop };
+        let away = &whole - &row.start;
+        (inside && &away % &row.step == BigInt::from(0)).then(|| away / &row.step)
+    }
+
     /// Which bound a name reads, where the definition names them.
     fn slice_bound_named(&self, name: &str) -> Option<usize> {
         ["ext.builtin.slice.start", "ext.builtin.slice.stop", "ext.builtin.slice.step"].iter()
@@ -7358,6 +7393,17 @@ impl<'a> Engine<'a> {
                     crate::strings::keywords(op, &mut given, named, self.lang)?;
                     return crate::strings::run(op, "", &given, self.lang, &self.wording());
                 }
+            }
+        }
+        if let Value::Counted(row) = &contents {
+            if matches!(operation, "index" | "count") {
+                if !named.is_empty() || args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                let place = Self::range_place(row, &args[0]);
+                if operation == "count" { return Ok(Value::Small(i64::from(place.is_some()))); }
+                return match place {
+                    Some(at) => Ok(Value::of_big(at)),
+                    None => Err(self.range_fault(&self.lang.range_missing, &args[0].core_repr(false))),
+                };
             }
         }
         if matches!(receiver.contents(), Value::Set(_)) {
@@ -8647,6 +8693,18 @@ impl<'a> Engine<'a> {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
                 if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                // A counted row is added up from its bounds alone. The
+                // places are never made, so a row of a thousand million
+                // costs no more than a row of three.
+                if let Value::Counted(row) = args[0].contents() {
+                    let length = row.length();
+                    let gathered = match length == BigInt::from(0) {
+                        true => BigInt::from(0),
+                        false => (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2,
+                    };
+                    return Ok(arith::calculate(Operation::Plus, &total, &Value::of_big(gathered))
+                        .ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_default())??);
+                }
                 if self.lang.yield_suspends {
                     let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
                     while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
@@ -8669,7 +8727,7 @@ impl<'a> Engine<'a> {
                         Value::Small(n) => BigInt::from(*n),
                         Value::Huge(n) => (**n).clone(),
                         Value::Flag(b) => BigInt::from(i64::from(*b)),
-                        _ => return Err(self.lang.range_integer[0].clone()),
+                        _ => return Err(self.range_fault(&self.lang.range_integer, &v.core_kind())),
                     });
                 }
                 if bounds.len() == 1 { bounds.insert(0, BigInt::from(0)); }
@@ -10184,6 +10242,17 @@ impl Engine<'_> {
             Builtin::Minimum | Builtin::Maximum | Builtin::Sorted => {
                 arity(1, if b == Builtin::Sorted { 1 } else { usize::MAX })?;
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
+                // The least and the greatest of a counted row are its
+                // two ends, which the bounds give without the places.
+                if b != Builtin::Sorted && args.len() == 1 && matches!(key, Value::Null) {
+                    if let Value::Counted(row) = args[0].contents() {
+                        let length = row.length();
+                        if length == BigInt::from(0) { return default.ok_or_else(|| self.core_fault("core.empty", name)); }
+                        let far = &row.start + (&length - 1) * &row.step;
+                        let (below, above) = match row.step > BigInt::from(0) { true => (row.start.clone(), far), false => (far, row.start.clone()) };
+                        return Ok(Value::of_big(if b == Builtin::Maximum { above } else { below }));
+                    }
+                }
                 let values = if args.len() == 1 { self.core_members(&args[0])? } else { args.clone() };
                 if values.is_empty() && b != Builtin::Sorted { return default.ok_or_else(|| self.core_fault("core.empty", name)); }
                 let mut ranked: Vec<(Value,Value)> = Vec::new();

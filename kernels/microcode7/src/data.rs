@@ -567,6 +567,10 @@ impl Value {
             (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
             (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
             (Value::Channel(left), Value::Channel(right)) => left == right,
+            // A method read off a value twice is one method, so long as
+            // the word is the same word and the value the same value —
+            // not another one merely equal to it.
+            (Value::Member(one, first), Value::Member(two, second)) => first == second && one.one_and_same(two),
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
                 match left.count().to_u8() {
