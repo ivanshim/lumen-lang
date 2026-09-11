@@ -25,6 +25,8 @@ enum Passage {
 
 pub struct Engine<'a> {
     class_root: Option<Rc<Class>>,
+    /// The classes standing for builtin kinds, one for each word asked for.
+    kind_classes: Vec<(String, Rc<Class>)>,
     function_members: Vec<(Value, Rc<Instance>)>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -291,7 +293,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, function_members: Vec::new(),
+            class_root: None, kind_classes: Vec::new(), function_members: Vec::new(),
             native_exceptions,
             lang,
             world,
@@ -2567,6 +2569,12 @@ impl<'a> Engine<'a> {
                 let words = self.wording();
                 return Ok(if representation { value.repr(&words) } else { value.display(&words) });
             }
+            // A thing keeping a worth of its kind shows as that worth
+            // where its class says nothing of how it is shown.
+            if let Some(worth) = Self::worth_of(value) {
+                let told = self.special_value(value, 1).is_some() || (!representation && self.special_value(value, 0).is_some());
+                if !told { return self.special_text(&worth, representation); }
+            }
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
                 Some(Value::Text(text)) => Ok(text.to_string()),
@@ -2577,7 +2585,7 @@ impl<'a> Engine<'a> {
         match value {
             Value::Hashed(pair) => self.special_text(&pair.0, representation),
             Value::Fields(object) => {
-                let entries = object.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
+                let entries = object.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, v)| (Value::text(k), v.clone())).collect();
                 self.special_text(&Value::Map(Rc::new(entries)), true)
             }
             Value::Array(items) => {
@@ -2598,7 +2606,7 @@ impl<'a> Engine<'a> {
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
-        if let Value::Fields(o) = value { return Ok(o.fields.borrow().iter().any(|(_, v)| !matches!(v, Value::Blank))); }
+        if let Value::Fields(o) = value { return Ok(o.fields.borrow().iter().any(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0'))); }
         if matches!(value, Value::Declined(_)) { return Err(self.lang.special_unready.first().cloned().unwrap_or_default()); }
         if let Some(answer) = self.special_call(value, 9, Vec::new())? {
             return match answer {
@@ -2613,6 +2621,7 @@ impl<'a> Engine<'a> {
                 _ => Err(self.special_fault()),
             };
         }
+        if let Some(worth) = Self::worth_of(value) { return self.special_truth(&worth.contents()); }
         Ok(self.truth(value))
     }
 
@@ -2704,6 +2713,25 @@ impl<'a> Engine<'a> {
                 return self.dyadic(op, a, &Value::Slice(Rc::new(settled)));
             }
         }
+        // A thing keeping a worth of its kind is, for whatever its class
+        // did not answer above, that worth; a mapping thing asked for a
+        // key it has not may answer through the method the definition
+        // names for it.
+        let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
+        if left.is_some() || right.is_some() {
+            if let (Action::At, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
+                if let Some(method) = self.lang.missing_key.as_deref().and_then(|word| self.class_value(&o.class, word)) {
+                    let wanted = self.special_key(b)?;
+                    let mut found = None;
+                    for (key, value) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = Some(value.clone()); break; } }
+                    return match found {
+                        Some(value) => Ok(value),
+                        None => self.class_apply(method, vec![a.clone(), b.clone()]).map_err(|fault| fault.told(&self.wording())),
+                    };
+                }
+            }
+            return self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
+        }
         self.dyadic(op, a, b)
     }
 
@@ -2712,6 +2740,43 @@ impl<'a> Engine<'a> {
         let first = args.first();
         if Self::core_builtin(op) && !args.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) { return Ok(None); }
         if op == Builtin::InstanceOf { return Ok(None); }
+        // A thing keeping a worth of its kind is written into through
+        // that worth, and is that worth for whatever its class does not
+        // answer itself: the builtin is then given the worths instead.
+        if let (Builtin::Replace | Builtin::Erase, Some(place)) = (op, if op == Builtin::Replace { args.get(2) } else { args.first() }) {
+            let asked = if op == Builtin::Replace { 12 } else { 13 };
+            if let Some(Value::Collection(cell, _)) = Self::worth_of(place).filter(|_| self.special_value(place, asked).is_none()) {
+                let mut inner: Vec<Value> = args.to_vec();
+                let at = if op == Builtin::Replace { 2 } else { 0 };
+                inner[at] = cell.borrow().clone();
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
+                let result = self.builtin(op, &word, &mut inner)?;
+                *cell.borrow_mut() = result;
+                return Ok(Some(place.clone()));
+            }
+        }
+        let places: &[usize] = match op {
+            Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
+            Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
+            Builtin::ToText => &[0, 1], Builtin::Repr => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
+            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
+            Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
+            _ => &[usize::MAX],
+        };
+        let mut settled: Vec<Value> = Vec::new();
+        let mut changed = false;
+        for value in args {
+            match if places == [usize::MAX] { None } else { self.worth_free_of(value, places) } {
+                Some(worth) => { settled.push(worth); changed = true; }
+                None => settled.push(value.clone()),
+            }
+        }
+        if changed && !settled.iter().any(|v| Self::holds_object(v) || matches!(v, Value::Walk(_))) {
+            let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
+            return Ok(Some(self.builtin(op, &word, &mut settled)?));
+        }
+        let args: &[Value] = if changed { &settled } else { args };
+        let first = if changed { args.first() } else { first };
         let answer = match op {
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
             Builtin::ToText if args.len() == 1 => {
@@ -2755,7 +2820,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::Length if args.len() == 1 && matches!(&args[0], Value::Fields(_)) => {
                 let Value::Fields(o) = &args[0] else { unreachable!() };
-                Value::Small(o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).count() as i64)
+                Value::Small(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).count() as i64)
             }
             Builtin::Replace if args.len() == 3 && self.special_method(&args[2], 12).is_some() => {
                 self.special_call(&args[2], 12, vec![args[0].clone(), args[1].clone()])?;
@@ -2799,11 +2864,11 @@ impl<'a> Engine<'a> {
                         at -= 1;
                     }
                 }
-                Value::array(items)
+                Value::array(items).held(true)
             }
             Builtin::List if args.len() == 1 => {
                 let row = Value::array(self.special_items(&args[0])?);
-                if matches!(args[0], Value::View(_) | Value::Collection(_, true)) { row.held(true) } else { row }
+                if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_)) { row.held(true) } else { row }
             },
             Builtin::Iter if args.len() == 1 => {
                 if matches!(&args[0], Value::Walk(_)) { return Ok(Some(args[0].clone())); }
@@ -2855,7 +2920,7 @@ impl<'a> Engine<'a> {
 
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
-            return Ok(o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, _)| Value::text(k)).collect());
+            return Ok(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, _)| Value::text(k)).collect());
         }
         if let Value::Walk(walk) = value {
             let mut walk = walk.borrow_mut();
@@ -2880,7 +2945,7 @@ impl<'a> Engine<'a> {
         }
         if self.fuller_classes() {
             let result = match op {
-                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class.outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
+                Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class.outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
@@ -3601,6 +3666,8 @@ impl<'a> Engine<'a> {
                     true => match given.next() {
                         Some(Value::Class(c)) => Some(c),
                         Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
+                        // A builtin kind the definition lets a class stand on.
+                        Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => Some(self.kind_class(&word)),
                         Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
                         None => return Err("Stack underflow".to_string().into()),
                     },
@@ -3609,6 +3676,7 @@ impl<'a> Engine<'a> {
                 for _ in 0..plan.answers {
                     match given.next() {
                         Some(Value::Class(c)) => answers.push(c),
+                        Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => { let kind = self.kind_class(&word); answers.push(kind); }
                         Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
                         None => return Err("Stack underflow".to_string().into()),
                     }
@@ -3706,7 +3774,10 @@ impl<'a> Engine<'a> {
                     _ => false,
                 };
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
-                Value::Flag(text_method || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                // A builtin kind's word has a maker, where a class may stand on it.
+                let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
+                    && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref()));
+                Value::Flag(kind_maker || text_method || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
@@ -3986,7 +4057,7 @@ impl<'a> Engine<'a> {
                         return Ok(());
                     }
                 }
-                if self.fuller_classes() && matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
+                if self.fuller_classes() && (matches!(&subject, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(&subject, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) {let target=self.class_get(subject,name,false)?;let result=self.class_apply(target,args)?;self.data.push(result);return Ok(());}
                 if self.lang.member_pipes {
                     if let Value::Class(c) = &subject {
                         if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -5920,6 +5991,7 @@ impl<'a> Engine<'a> {
     }
 
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
+        if let Some(worth) = self.worth_free_of(value, &[15]) { return self.comprehension_items(&worth); }
         if let Value::Class(class) = value {
             if let Some(yielded) = self.class_walked(class)? { return self.comprehension_items(&yielded); }
         }
@@ -7529,7 +7601,7 @@ impl<'a> Engine<'a> {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
                 let result = Value::array(self.comprehension_items(&args[0])?);
-                if matches!(args[0], Value::View(_) | Value::Collection(_, true)) { result.held(true) } else { result }
+                if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_)) { result.held(true) } else { result }
             }
             Builtin::Any => {
                 arity(1)?;
@@ -8683,6 +8755,10 @@ impl Engine<'_> {
         }
         if let Value::Class(class) = kind {
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
+        }
+        // A thing of a class standing on a builtin kind is of that kind.
+        if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
+            if let Some(kind) = Self::kind_beneath(&o.class) { return Ok(kind == word.as_ref()); }
         }
         let b = match kind {
             Value::Native(b, _) => *b,

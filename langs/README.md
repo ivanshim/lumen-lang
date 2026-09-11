@@ -1307,6 +1307,16 @@ only. The extension labels so far, all from PHP:
   class details spelled, every base is kept and ordered by C3. Without
   them the first base is its parent; further bases are read and set aside.
   A header may name a base by an expression, and may end with a separator.
+- `ext.stmt.class.builtin`: the words of the builtin kinds a class may stand
+  on. A thing of such a class keeps a worth of that kind beside its own
+  members, made by the kind's builtin from what the class was called with,
+  or by the kind's own maker where the class asks for it. Whatever the class
+  does not say of its things, how they show, count, compare, hash, walk,
+  are indexed or written into, and the methods of the kind, the worth
+  answers. A class standing on two such kinds at once is refused with
+  `ext.stmt.class.layout`.
+- `ext.stmt.class.missing`: the method a thing standing on a mapping kind
+  answers with when a key it has not is asked for.
 - `ext.stmt.class.special`: a list naming, in order, the methods for
   text, representation, equal, unequal, less, less or equal, greater,
   greater or equal, hashing, truth, length, reading a place, writing a
@@ -4201,6 +4211,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.annotations` | - | - | `__annotations__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
+| `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` | - | - | - | - | - | - | - |
 | `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
@@ -4240,6 +4251,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.hidden` | - | - | - | - | `private` | - | - | - | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | `implements` | - | - | - | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | `interface` | - | - | - | - | - |
+| `ext.stmt.class.layout` | - | - | `TypeError: multiple bases have instance lay-out conflict` | - | - | - | - | - | - | - |
+| `ext.stmt.class.missing` | - | - | `__missing__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
 | `ext.stmt.class.parent` | - | - | `super` | - | `parent` | - | - | - | - | - |

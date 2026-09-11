@@ -1,0 +1,5 @@
+a True ['a', 'b'] True True
+True True True
+True True abc
+text 3 {'note': 3}
+{'k': 1} mapping True True

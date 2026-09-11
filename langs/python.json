@@ -2047,6 +2047,21 @@
   "ext.stmt.class.bases.close": [
     ")"
   ],
+  "ext.stmt.class.builtin": [
+    "str",
+    "int",
+    "float",
+    "list",
+    "dict",
+    "tuple",
+    "set"
+  ],
+  "ext.stmt.class.layout": [
+    "TypeError: multiple bases have instance lay-out conflict"
+  ],
+  "ext.stmt.class.missing": [
+    "__missing__"
+  ],
   "ext.stmt.class.bases.open": [
     "("
   ],
