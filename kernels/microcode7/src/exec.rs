@@ -6594,7 +6594,9 @@ impl<'a> Machine<'a> {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
                 self.prim_values(op, name, v)?
-            } else if matches!(op, Prim::SetAssign(0) | Prim::Backwards | Prim::Iterated | Prim::Erase | Prim::Pointed) && v.first().map_or(false, |first| Self::dict_cell(first).is_some()) {
+            } else if (matches!(op, Prim::SetAssign(0) | Prim::Backwards | Prim::Iterated | Prim::Erase | Prim::Pointed)
+                || matches!(op, Prim::Landing(place) if matches!(self.table.landing_working(place), Prim::SetAssign(0))))
+                && v.first().map_or(false, |first| Self::dict_cell(first).is_some()) {
                 // A map keeps its cell here: written into in place, a
                 // key taken out of it, walked under watch forwards or
                 // backwards, or handed on after a compound write.
@@ -6690,10 +6692,12 @@ impl<'a> Machine<'a> {
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
-        // A landing no thing answered for itself is the plain working.
+        // A landing no thing answered for itself is the plain working,
+        // given what it was handed: a map written into keeps its cell,
+        // so that every name for it sees what was written.
         if let Prim::Landing(place) = op {
             let plain = self.table.landing_working(place);
-            return self.prim(plain, name, v);
+            return self.prim_values(plain, name, v);
         }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
