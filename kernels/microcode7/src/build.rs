@@ -2440,8 +2440,14 @@ impl<'a> Builder<'a> {
                 } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
                     self.pos += 2;
                     attributes.push(member);
-                    Some(self.expr(0)?)
-                } else if self.look().shape == Shape::Bare && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
+                    // Commas after the value gather a tuple for the member,
+                    // where the language has them.
+                    let gathered = table.has_any("ext.op.tuple");
+                    Some(if gathered { self.comma_value()? } else { self.expr(0)? })
+                } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+                    && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
+                    // A keyword ahead of the mark, as `try:`, begins a
+                    // statement of the body, not an annotated member.
                     self.pos += 2;
                     self.put_by_annotation(&["stmt.assign"])?;
                     annotated_names.push((Value::text(&member), Value::Nil));
@@ -4336,7 +4342,7 @@ impl<'a> Builder<'a> {
         for i in start..limit {
             let word = &self.tokens[i];
             if depth.is_empty() {
-                if t.spells("ext.op.lambda", &word.lexeme) { break; }
+                if word.shape == Shape::Bare && t.spells("ext.op.lambda", &word.lexeme) { break; }
                 if matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
                 if word.shape == Shape::Sign && t.separates(&word.lexeme) { break; }
                 if matches!(word.shape, Shape::Bare | Shape::Sign) && t.spells(label, &word.lexeme) { cuts.push(i); }
@@ -5523,7 +5529,9 @@ impl<'a> Builder<'a> {
             self.advance();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
-        if table.spells("ext.op.lambda", &t.lexeme) {
+        // The lambda word must stand bare: quoted, it is text and no
+        // more, as when it is one of print's arguments.
+        if t.shape == Shape::Bare && table.spells("ext.op.lambda", &t.lexeme) {
             self.advance();
             return self.lambda_form();
         }
@@ -5639,6 +5647,14 @@ impl<'a> Builder<'a> {
                     given.extend(self.arguments_of(&maker, "syntax.call.close", "syntax.call.separator")?);
                 }
                 prim_call(Prim::Spawn, given)
+            }
+            // Beyond every class body the parent word not opening a call
+            // is an ordinary name, to be bound, listed or handed on.
+            Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme)
+                && self.within.is_none()
+                && table.single("syntax.call.open").map_or(true, |open| !(self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == open)) => {
+                self.advance();
+                self.read(&t.lexeme)
             }
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.lexeme)
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {

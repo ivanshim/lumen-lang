@@ -702,8 +702,10 @@ only. The extension labels so far, all from PHP:
   keep their keys. `ext.stmt.del.unrun` holds the words for a deletion
   whose target cannot yet be taken away, including slices.
   `ext.stmt.binding.unrun` holds the words for a binding target the
-  kernels cannot yet fill, including starred targets, or a value with
-  the wrong number of items to take apart.
+  kernels cannot yet fill, including starred targets, a value with
+  the wrong number of items to take apart, or a context target whose
+  footing is what a call gave back, indexed or not; such a target is
+  read whole and refused only when the binding is reached.
 - `ext.stmt.assign.chain`: a switch; several places may be joined by
   the assignment sign before one value. The value is worked out once,
   then written into each place from left to right. This reading provides
@@ -1381,7 +1383,9 @@ only. The extension labels so far, all from PHP:
   for its object first, rather than having an unwritten parameter put there.
   Calling a class makes its object without a word for making; assignments
   in its body belong to the class, and the parent word is called before
-  reaching a parent's method. Classes bind as ordinary names.
+  reaching a parent's method. Classes bind as ordinary names. Outside
+  every class body the parent word, unless it opens a call, is an
+  ordinary name too: it may be bound, listed or handed to a routine.
 - `ext.stmt.class.static`: words after a decorator mark which keep the
   decorated value from taking an object when reached through an instance.
 - `ext.stmt.class.classmethod`: words after a decorator mark which give
@@ -1402,7 +1406,10 @@ only. The extension labels so far, all from PHP:
 - `ext.stmt.class.unready`: words said when a class form has been read but
   cannot yet run: header keywords or unpacking, classes inside functions,
   or statements in a class body beyond methods, assignments, annotations,
-  nested classes, plain strings and pass.
+  nested classes, plain strings and pass. A keyword heading such a
+  statement, `try:` among them, is read as that statement and never as
+  a member being annotated, so the whole body is read before the
+  refusal.
   A parent call outside a method, or one given explicit arguments, also
   cannot yet run: header keywords or unpacking, annotations, classes inside
   functions, or statements in a class
@@ -3066,7 +3073,9 @@ only. The extension labels so far, all from PHP:
   likewise name tuples. The small reading uses `ext.op.tuple.unready`
   for the words said when a tuple value is reached; its members are
   read whole but not worked out. The tuple piece supplies the fuller
-  account of values, stores, and taking apart.
+  account of values, stores, and taking apart. The comma joins the
+  values of a class member written without brackets as well; the tuple
+  so gathered is the member.
 - `ext.op.lambda` introduces unbracketed parameters and one expression,
   separated by `block.intro`. Defaults are evaluated once when the value
   is defined. With `ext.syntax.call.bind_names`, positional-only and
@@ -3074,6 +3083,7 @@ only. The extension labels so far, all from PHP:
   binder. With `ext.stmt.function.closes_over`, free names read the
   enclosing bindings at call time. Rebinding or deleting a captured name
   changes that binding; aliases and defaults retain their own values.
+  Only the bare word opens a lambda: between quotes it is text.
 - `ext.op.assign.expression`: a mark between a binding name and the
   expression whose value is both stored there and answered with. The mark
   is read at the lowest expression tier, including in a decorator.
