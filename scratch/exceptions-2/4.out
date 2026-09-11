@@ -1,0 +1,15 @@
+True True
+2 second True
+False
+True True
+ValueError True
+True
+outer 1 inner
+True
+outer
+value
+outer inner
+exceptions must derive from BaseException
+missing_exception_name
+absent True
+2 missing

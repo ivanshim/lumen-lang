@@ -20,7 +20,7 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::math::{self, Calc};
 use crate::table::Table;
-use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee};
+use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee, Clause};
 use crate::data::{Adornment, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
@@ -96,6 +96,13 @@ enum Reading {
 }
 
 type Res<T = Value> = Result<T, Escape>;
+
+/// What a gatherer of faults is divided by: kinds its members may
+/// stand under, or a routine asked of each member.
+enum Sieve {
+    Kinds(Vec<Rc<Blueprint>>),
+    Asked(Value),
+}
 
 enum Next {
     Value(Value),
@@ -253,6 +260,9 @@ pub struct Machine<'a> {
     /// value or a note, so a throw or an ending is kept here and let
     /// go again where the reading stood.
     got_away: Option<Escape>,
+    /// The member last sought and not found, with what it was sought
+    /// on, for the attribute fault that will tell of it.
+    sought_in_vain: Option<(String, Value)>,
     /// Text read in that would not be read: the words said of it, the
     /// place it counts as standing in, and the line of its own that the
     /// reading stopped on. The reading answers with a plain note, so
@@ -316,14 +326,23 @@ impl<'a> Machine<'a> {
         let mut chain: Vec<Rc<Blueprint>> = Vec::new();
         for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {
             let parent = match number {
-                0 => None, 1 | 17 | 18 => Some(0), 3 | 4 => Some(2),
+                0 => None, 1 | 17 | 18 | 37 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), _ => Some(1),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), _ => Some(1),
             };
             let mut seed = Vec::new();
             match number {
                 0 => seed.push(("\0fault-kind".to_string(), Value::Flag(true))),
                 7 => seed.push(("\0key-fault".to_string(), Value::Flag(true))),
+                // The exit ends the run when nobody takes it; the two
+                // gatherers hold rows of faults, the ordinary one of
+                // ordinary faults only, and it also stands under them.
+                17 => seed.push(("\0leaves-run".to_string(), Value::Flag(true))),
+                37 => seed.push(("\0gathers".to_string(), Value::Flag(false))),
+                38 => {
+                    seed.push(("\0gathers".to_string(), Value::Flag(true)));
+                    if let Some(ordinary) = chain.get(1) { seed.push(("\0also-under".to_string(), Value::Blueprint(ordinary.clone()))); }
+                }
                 _ => {}
             }
             let kind = Blueprint { parents: Vec::new(), ancestry: Vec::new(), presentation: None,
@@ -340,10 +359,38 @@ impl<'a> Machine<'a> {
         self.table.has_any("ext.builtin.exceptions") && kind.every_field().iter().any(|(k, _)| k == "\0fault-kind")
     }
 
+    /// The furnished fault kind at a place in the roster, and whether a
+    /// kind stands under it.
+    fn furnished_kind(&self, place: usize) -> Option<Rc<Blueprint>> {
+        let word = self.table.strings("ext.builtin.exceptions").get(place)?;
+        match self.fault_kinds.get(word) { Some(Value::Blueprint(kind)) => Some(kind.clone()), _ => None }
+    }
+
+    fn stands_under(&self, kind: &Rc<Blueprint>, place: usize) -> bool {
+        self.furnished_kind(place).map_or(false, |ancestor| Self::fault_descends(kind, &ancestor))
+    }
+
     fn make_fault(&mut self, kind: Rc<Blueprint>, row: Vec<Value>, because: Value) -> Value {
         self.made += 1;
-        let values = Value::Arguments(Rc::new(row));
         let mut holds = kind.every_field();
+        // The rest of what a fault holds: a traceback that is nil, the
+        // name and object of a name or attribute fault, and the number
+        // and words of a system fault.
+        if let Some(key) = self.table.single("ext.builtin.exceptions.traceback.member") { holds.push((key.to_string(), Value::Nil)); }
+        let names_absent = self.stands_under(&kind, 10) || self.stands_under(&kind, 12);
+        if names_absent { if let Some(key) = self.table.single("ext.builtin.exceptions.name") { holds.push((key.to_string(), Value::Nil)); } }
+        if self.stands_under(&kind, 12) { if let Some(key) = self.table.single("ext.builtin.exceptions.object") { holds.push((key.to_string(), Value::Nil)); } }
+        if self.stands_under(&kind, 20) {
+            let numbered = row.len() >= 2;
+            for (at, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
+                holds.push((key.clone(), if numbered { row.get(at).cloned().unwrap_or(Value::Nil) } else { Value::Nil }));
+            }
+            if let ([opening, middle], true) = (self.table.strings("ext.builtin.exceptions.os.message"), numbered) {
+                let told = format!("{opening}{}{middle}{}", row[0].render(self.wording()), row[1].render(self.wording()));
+                holds.push(("\0told-as".to_string(), Value::text(&told)));
+            }
+        }
+        let values = Value::Arguments(Rc::new(row));
         let seeded = [
             ("ext.builtin.exceptions.args", values.clone()), ("ext.builtin.exceptions.cause", because),
             ("ext.builtin.exceptions.context", Value::Nil), ("ext.builtin.exceptions.suppress", Value::Flag(false)),
@@ -416,7 +463,210 @@ impl<'a> Machine<'a> {
     }
 
     fn fault_descends(kind: &Rc<Blueprint>, ancestor: &Rc<Blueprint>) -> bool {
-        Rc::ptr_eq(kind, ancestor) || kind.under.as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
+        if Rc::ptr_eq(kind, ancestor) { return true; }
+        // A kind standing under two stands under the second as well.
+        let second = kind.fields.iter().find_map(|(key, held)| match held { Value::Blueprint(other) if key == "\0also-under" => Some(other), _ => None });
+        second.map_or(false, |other| Self::fault_descends(other, ancestor))
+            || kind.under.as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
+    }
+
+    /// A fault made by a call: what was given by position is its row,
+    /// a gatherer's two are its heading and its members, and by name a
+    /// call may give only the absent name and the object it was sought on.
+    fn fault_from_call(&mut self, kind: Rc<Blueprint>, supplied: Vec<Value>) -> Res<Value> {
+        let (row, named) = self.open_arguments(supplied)?;
+        let made = if kind.every_field().iter().any(|(key, _)| key == "\0gathers") {
+            if row.len() != 2 { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()); }
+            let members = match row[1].settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
+            self.gather_faults(kind, row[0].clone(), members)?
+        } else { self.make_fault(kind, row, Value::Nil) };
+        if let Value::Thing(thing) = &made {
+            let mut holds = thing.holds.borrow_mut();
+            for (key, value) in named {
+                let allowed = ["ext.builtin.exceptions.name", "ext.builtin.exceptions.object"].iter().any(|label| self.table.single(label) == Some(key.as_str()));
+                match holds.iter_mut().find(|(k, _)| *k == key) {
+                    Some(entry) if allowed => entry.1 = value,
+                    _ => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
+                }
+            }
+        }
+        Ok(made)
+    }
+
+    /// A gatherer made of a heading and a row of faults, or refused.
+    /// The base gatherer given ordinary faults alone comes out as the
+    /// ordinary gatherer, as the reference has it.
+    fn gather_faults(&mut self, kind: Rc<Blueprint>, heading: Value, members: Vec<Value>) -> Res<Value> {
+        let refused = self.argument_fault("ext.builtin.exceptions.group.invalid", None);
+        if !matches!(heading, Value::Text(_)) || members.is_empty() { return Err(refused.into()); }
+        if !members.iter().all(|m| matches!(m, Value::Thing(t) if self.is_fault_kind(&t.of))) { return Err(refused.into()); }
+        let ordinary_only = members.iter().all(|m| matches!(m, Value::Thing(t) if self.stands_under(&t.of, 1)));
+        let strict = kind.every_field().iter().any(|(key, held)| key == "\0gathers" && matches!(held, Value::Flag(true)));
+        if strict && !ordinary_only { return Err(refused.into()); }
+        let kind = match (ordinary_only, self.furnished_kind(37), self.furnished_kind(38)) {
+            (true, Some(base), Some(ordinary)) if Rc::ptr_eq(&kind, &base) => ordinary,
+            _ => kind,
+        };
+        let how_many = members.len();
+        let members = Value::Tuple(Rc::new(members));
+        let made = self.make_fault(kind, vec![heading.clone(), members.clone()], Value::Nil);
+        if let Value::Thing(thing) = &made {
+            let mut holds = thing.holds.borrow_mut();
+            holds.push(("\0heading".to_string(), heading.clone()));
+            holds.push(("\0gathered".to_string(), members.clone()));
+            if let [opening, one, several] = self.table.strings("ext.builtin.exceptions.group.summary") {
+                let tail = if how_many == 1 { one } else { several };
+                holds.push(("\0told-as".to_string(), Value::text(&format!("{}{opening}{how_many}{tail}", heading.render(self.wording())))));
+            }
+            if let Some(key) = self.table.single("ext.builtin.exceptions.group.message") { holds.push((key.to_string(), heading)); }
+            if let Some(key) = self.table.single("ext.builtin.exceptions.group.members") { holds.push((key.to_string(), members)); }
+        }
+        Ok(made)
+    }
+
+    /// A gatherer's kind, heading and members; nothing for a fault that
+    /// gathers nothing.
+    fn gathered(value: &Value) -> Option<(Rc<Blueprint>, Value, Vec<Value>)> {
+        let Value::Thing(thing) = value else { return None };
+        let holds = thing.holds.borrow();
+        let heading = holds.iter().find(|(key, _)| key == "\0heading")?.1.clone();
+        let (_, Value::Tuple(members)) = holds.iter().find(|(key, _)| key == "\0gathered")? else { return None };
+        Some((thing.of.clone(), heading, members.to_vec()))
+    }
+
+    /// Whether a sieve lets a fault through whole: a kind it stands
+    /// under, or a routine that says yes to it.
+    fn sieve_takes(&mut self, value: &Value, sieve: &Sieve) -> Res<bool> {
+        match sieve {
+            Sieve::Kinds(kinds) => Ok(matches!(value, Value::Thing(t) if kinds.iter().any(|kind| Self::fault_descends(&t.of, kind)))),
+            Sieve::Asked(routine) => {
+                let answer = self.apply_class_member(routine.clone(), vec![value.clone()])?;
+                self.object_truth(&answer).map_err(Escape::from)
+            }
+        }
+    }
+
+    /// Divide a fault by a sieve into what passes and what stays, each
+    /// a gatherer shaped like the whole, or nothing. What a gatherer
+    /// holds besides its members is written onto both.
+    fn sieve_faults(&mut self, value: Value, sieve: &Sieve) -> Res<(Option<Value>, Option<Value>)> {
+        if self.sieve_takes(&value, sieve)? { return Ok((Some(value), None)); }
+        let Some((kind, heading, members)) = Self::gathered(&value) else { return Ok((None, Some(value))) };
+        let mut passed = Vec::new();
+        let mut stayed = Vec::new();
+        for member in members {
+            let (through, held) = self.sieve_faults(member, sieve)?;
+            passed.extend(through);
+            stayed.extend(held);
+        }
+        let mut sides = [None, None];
+        for (row, side) in [passed, stayed].into_iter().zip(sides.iter_mut()) {
+            if row.is_empty() { continue; }
+            let made = self.gather_faults(kind.clone(), heading.clone(), row)?;
+            self.write_across(&value, &made);
+            *side = Some(made);
+        }
+        let [passed, stayed] = sides;
+        Ok((passed, stayed))
+    }
+
+    /// A gatherer's notes, cause, hushing flag and traceback go onto a
+    /// gatherer made out of part of it.
+    fn write_across(&self, from: &Value, onto: &Value) {
+        let (Value::Thing(source), Value::Thing(target)) = (from, onto) else { return };
+        let labels = ["ext.builtin.exceptions.notes", "ext.builtin.exceptions.cause", "ext.builtin.exceptions.suppress", "ext.builtin.exceptions.traceback.member"];
+        let source = source.holds.borrow();
+        let mut target = target.holds.borrow_mut();
+        for key in labels.iter().filter_map(|label| self.table.single(label)) {
+            let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
+            let held = match held { Value::Vector(items) => Value::Vector(Rc::new(items.to_vec())), other => other.clone() };
+            match target.iter_mut().find(|(k, _)| k == key) {
+                Some(entry) => entry.1 = held,
+                None => target.push((key.to_string(), held)),
+            }
+        }
+    }
+
+    /// Whether a word names one of the few methods a fault answers itself.
+    fn fault_method_word(&self, word: &str) -> bool {
+        ["ext.builtin.exceptions.note", "ext.builtin.exceptions.traceback.with", "ext.builtin.exceptions.group.split", "ext.builtin.exceptions.group.subgroup", "ext.builtin.exceptions.group.derive"]
+            .iter().any(|label| self.table.single(label) == Some(word))
+    }
+
+    /// The methods a fault answers itself: a note added, a traceback
+    /// set, and a gatherer divided three ways.
+    fn fault_method(&mut self, thing: Rc<Thing>, word: &str, given: &[Value]) -> Res<Value> {
+        let unready = self.argument_fault("ext.builtin.exceptions.unready", None);
+        if self.table.single("ext.builtin.exceptions.note") == Some(word) {
+            let [Value::Text(_)] = given else { return Err(self.argument_fault("ext.builtin.exceptions.note.invalid", None).into()) };
+            let key = self.table.single("ext.builtin.exceptions.notes").unwrap_or_default().to_string();
+            let mut holds = thing.holds.borrow_mut();
+            match holds.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, Value::Vector(items))) => Rc::make_mut(items).push(given[0].clone()),
+                Some(_) => return Err(unready.into()),
+                None => holds.push((key, Value::Vector(Rc::new(given.to_vec())))),
+            }
+            return Ok(Value::Nil);
+        }
+        if self.table.single("ext.builtin.exceptions.traceback.with") == Some(word) {
+            return if matches!(given, [Value::Nil]) { Ok(Value::Thing(thing)) } else { Err(unready.into()) };
+        }
+        let whole = Value::Thing(thing);
+        let Some((kind, heading, _)) = Self::gathered(&whole) else { return Err(unready.into()) };
+        let [chooser] = given else { return Err(self.argument_fault("ext.builtin.exceptions.group.invalid", None).into()) };
+        if self.table.single("ext.builtin.exceptions.group.derive") == Some(word) {
+            let members = match chooser.settled() { Value::Vector(items) | Value::Tuple(items) => items.to_vec(), _ => Vec::new() };
+            return self.gather_faults(kind, heading, members);
+        }
+        let sieve = match chooser {
+            Value::Blueprint(kind) if self.is_fault_kind(kind) => Sieve::Kinds(vec![kind.clone()]),
+            Value::Tuple(items) if items.iter().all(|k| matches!(k, Value::Blueprint(kind) if self.is_fault_kind(kind))) => {
+                Sieve::Kinds(items.iter().filter_map(|k| match k { Value::Blueprint(kind) => Some(kind.clone()), _ => None }).collect())
+            }
+            Value::Routine(_) | Value::Bound(..) | Value::Method(..) => Sieve::Asked(chooser.clone()),
+            _ => return Err(unready.into()),
+        };
+        let (passed, stayed) = self.sieve_faults(whole, &sieve)?;
+        let both = self.table.single("ext.builtin.exceptions.group.split") == Some(word);
+        Ok(if both { Value::Tuple(Rc::new(vec![passed.unwrap_or(Value::Nil), stayed.unwrap_or(Value::Nil)])) } else { passed.unwrap_or(Value::Nil) })
+    }
+
+    /// Writing a cause onto a fault, nil or not, hushes its context.
+    fn context_hushed_by(&self, holder: &Value, key: &str) {
+        let Value::Thing(thing) = holder else { return };
+        if !self.is_fault_kind(&thing.of) || self.table.single("ext.builtin.exceptions.cause") != Some(key) { return };
+        let mut holds = thing.holds.borrow_mut();
+        if let Some(entry) = self.table.single("ext.builtin.exceptions.suppress").and_then(|flag| holds.iter_mut().find(|(k, _)| k == flag)) { entry.1 = Value::Flag(true); }
+    }
+
+    /// The name a complaint says was not there, read out of its words.
+    fn name_not_there(&self, told: &str) -> Option<String> {
+        let told = told.trim_start_matches('\0');
+        if let Some(rest) = told.strip_prefix("Undefined variable") { return Some(rest.trim_start_matches(':').trim().trim_matches('\'').to_string()); }
+        let [head, tail] = self.table.strings("ext.system.fault.name") else { return None };
+        let from = told.find(head.as_str())? + head.len();
+        told[from..].strip_suffix(tail.as_str()).map(str::to_string)
+    }
+
+    /// Where a fault nobody took is an exit, the status the run is to
+    /// end with, after saying whatever the exit carried that is not a
+    /// number: nil for nought, a number as itself, and anything else
+    /// told as a complaint with a status of one.
+    fn exit_status(&self, thing: &Thing) -> Option<i32> {
+        if !thing.of.every_field().iter().any(|(key, _)| key == "\0leaves-run") { return None; }
+        let holds = thing.holds.borrow();
+        let carried = match holds.iter().find(|(key, _)| key == "\0raised-values") {
+            Some((_, Value::Arguments(row))) if row.len() == 1 => row[0].clone(),
+            Some((_, Value::Arguments(row))) if row.is_empty() => Value::Nil,
+            Some((_, other)) => other.clone(),
+            None => Value::Nil,
+        };
+        Some(match carried {
+            Value::Nil => 0,
+            Value::Small(n) => n as i32,
+            Value::Flag(yes) => i32::from(yes),
+            other => { eprintln!("{}", other.render(self.wording())); 1 }
+        })
     }
 
     fn fault_methods(kind: &Blueprint) -> bool {
@@ -434,8 +684,20 @@ impl<'a> Machine<'a> {
                 let call = Form::Apply(Callee::Prim(Prim::Spawn, Rc::from("")), vec![Form::Const(Value::Blueprint(kind))]);
                 self.value_of(&call, frame)
             }
-            Value::Blueprint(_) => Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()),
-            other => Ok(other),
+            Value::Blueprint(_) => Err(self.table.single("ext.stmt.throw.invalid").or(self.table.single("ext.stmt.catch.invalid")).unwrap_or_default().to_string().into()),
+            other => {
+                let Some(invalid) = self.table.single("ext.stmt.throw.invalid") else { return Ok(other) };
+                match &other {
+                    Value::Thing(thing) if self.is_fault_kind(&thing.of) => Ok(other),
+                    // Text opening with a furnished kind's name and a
+                    // colon raises that kind with the words after, the
+                    // way the library has always raised them.
+                    Value::Text(words) if self.class_of_fault(words).map_or(false, |named| self.fault_kinds.contains_key(&named)) => {
+                        self.as_raised(words).ok_or_else(|| invalid.to_string().into())
+                    }
+                    _ => Err(invalid.to_string().into()),
+                }
+            }
         }
     }
 
@@ -500,6 +762,7 @@ impl<'a> Machine<'a> {
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
+            sought_in_vain: None,
             standing: 0,
             would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
@@ -1529,11 +1792,23 @@ impl<'a> Machine<'a> {
             let values = if words.is_empty() || words == format!("{named}:") { vec![] } else { vec![Value::text(&words)] };
             let raised = self.make_fault(of, values, Value::Nil);
             self.keep_context(&raised);
-            match &raised {
-                Value::Thing(object) if self.table.single("ext.stmt.catch.invalid") == Some(told) => {
-                    object.holds.borrow_mut().push(("\0former-complaint".into(), Value::text(told)));
+            // A name fault says which name; an attribute fault says
+            // which and on what.
+            if let Value::Thing(object) = &raised {
+                let mut written: Vec<(Option<&str>, Value)> = Vec::new();
+                if self.table.single("ext.system.fault.class.name") == Some(named.as_str()) {
+                    if let Some(word) = self.name_not_there(told) { written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(&word))); }
                 }
-                _ => {}
+                if self.table.single("ext.system.fault.class.attribute") == Some(named.as_str()) {
+                    if let Some((word, holder)) = self.sought_in_vain.take() {
+                        written.push((self.table.single("ext.builtin.exceptions.name"), Value::text(&word)));
+                        written.push((self.table.single("ext.builtin.exceptions.object"), holder));
+                    }
+                }
+                let mut holds = object.holds.borrow_mut();
+                for (key, value) in written {
+                    if let Some(entry) = key.and_then(|key| holds.iter_mut().find(|(k, _)| k == key)) { entry.1 = value; }
+                }
             }
             return Some(raised);
         }
@@ -1821,8 +2096,16 @@ impl<'a> Machine<'a> {
             Ok(_) | Err(Escape::Done) | Err(Escape::Yield(_)) | Err(Escape::Leave(_)) | Err(Escape::Resume(_)) => Ok(()),
             // A value nobody took is a fault, told the way PHP tells it.
             Err(Escape::Thrown(Value::Thing(thing))) => {
-                let original = thing.holds.borrow().iter().find(|(key, _)| key == "\0former-complaint").map(|(_, value)| value.bare());
-                if let Some(original) = original { return Err(original); }
+                // An exit ends the run with the status it asks, once
+                // what was to run afterward has run.
+                if let Some(status) = self.exit_status(&thing) {
+                    let _ = self.run_afterward();
+                    self.let_things_go();
+                    self.let_go_all();
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                    std::process::exit(status);
+                }
                 if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values")) {
                     return Err(if words.is_empty() { format!("\0{}", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
                 }
@@ -2006,6 +2289,24 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// What a namespace's answerer raised, carried through a place that
+    /// holds only words. A furnished kind goes as its name and its words
+    /// behind the marker, so that the clause around the read and the
+    /// ending of the run alike read the thing raised back out of it;
+    /// anything else goes as a suspension's fault would.
+    fn answerer_fault(&self, fault: Escape) -> String {
+        if let Escape::Thrown(Value::Thing(thing)) = &fault {
+            let carried = thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values");
+            if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| carried) {
+                return match words.is_empty() {
+                    true => format!("\0{}", thing.of.name),
+                    false => format!("\0{}: {}", thing.of.name, words),
+                };
+            }
+        }
+        self.suspension_fault(fault)
+    }
+
     fn generator_words(&self, suffix: &str) -> String {
         self.table.single(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
     }
@@ -2168,12 +2469,31 @@ impl<'a> Machine<'a> {
         let row = self.row;
         let outcome = self.unfold(&mut state, sent);
         self.row = row;
+        // The stop kind raised in the body is the generator's fault,
+        // not the end of its walk.
+        let outcome = match outcome {
+            Err(Escape::Thrown(Value::Thing(t))) if self.table.has_any("ext.stmt.yield.escaped") && self.is_stop_kind(&t.of) => Err(self.stop_got_out()),
+            Err(Escape::Error(said)) if self.table.has_any("ext.stmt.yield.escaped") && self.table.single("ext.builtin.core.exhausted") == Some(said.as_str()) => Err(self.stop_got_out()),
+            other => other,
+        };
         if outcome.is_err() || matches!(outcome, Ok(None)) {
             state.ended = true;
             state.owed.clear();
             state.found.clear();
         }
         outcome
+    }
+
+    /// Whether a kind is the stop kind or stands under it.
+    fn is_stop_kind(&self, kind: &Rc<Blueprint>) -> bool {
+        let Some(word) = self.table.single("ext.stmt.class.special.stop") else { return false };
+        matches!(self.fault_kinds.get(word), Some(Value::Blueprint(stop)) if Self::fault_descends(kind, stop))
+    }
+
+    /// The fault a generator raises when its body raised the stop kind.
+    fn stop_got_out(&mut self) -> Escape {
+        let said = self.generator_words("escaped");
+        self.as_raised(&said).map_or(Escape::Error(said), Escape::Thrown)
     }
 
     fn unfold(&mut self, state: &mut Suspension, mut sent: Value) -> Res<Option<Value>> {
@@ -2650,6 +2970,12 @@ impl<'a> Machine<'a> {
                     _ => named,
                 };
                 let at = self.as_key_spoken(&named);
+                // A key no map can hold is refused before the cell is
+                // taken for the deletion, since the key may be that very
+                // cell and must still be looked into to be named.
+                if matches!(&target, Value::Dict(_)) {
+                    if let Some(words) = self.cannot_key(&at) { return Err(words.into()); }
+                }
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
@@ -2682,7 +3008,6 @@ impl<'a> Machine<'a> {
                         ))
                     }
                     Value::Dict(pairs) => {
-                        if let Some(words) = self.cannot_key(&at) { return Err(words.into()); }
                         // The key is hashed once, as the reference hashes it, before it is sought.
                         let wanted = self.hash_key(&at)?;
                         let present = self.key_held(pairs, &wanted)?;
@@ -2774,10 +3099,11 @@ impl<'a> Machine<'a> {
                 // furnishing none gets a class of the name and nothing else.
                 let raised = match self.table.single("ext.stmt.assert.kind").and_then(|n| self.fault_kinds.get(n)).cloned() {
                     Some(Value::Blueprint(base)) => {
-                        let unsaid = matches!(&held, Value::Text(words) if words.is_empty());
+                        let unsaid = matches!(held, Value::Unset);
                         self.make_fault(base, if unsaid { Vec::new() } else { vec![held] }, Value::Nil)
                     }
                     _ => {
+                        let held = if matches!(held, Value::Unset) { Value::text("") } else { held };
                         let kind = Blueprint {
                             ancestry: vec![], parents: vec![], presentation: None,
                             name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
@@ -2834,6 +3160,12 @@ impl<'a> Machine<'a> {
                         Some(limb) => self.value_of(limb, frame),
                         None => Ok(value),
                     },
+                    Err(Escape::Thrown(raised)) if clauses.iter().any(|clause| clause.grouped) => {
+                        self.holding_fault.push(raised.clone());
+                        let outcome = self.grouped_clauses(clauses, raised, frame);
+                        self.holding_fault.truncate(preceding);
+                        outcome
+                    }
                     Err(Escape::Thrown(raised)) => {
                         self.holding_fault.push(raised.clone());
                         let chosen = (|| {
@@ -3169,7 +3501,8 @@ impl<'a> Machine<'a> {
                         }
                     }
                     if let Some(cause) = values.next() {
-                        let cause = self.raise_class(cause, frame)?;
+                        // A cause of nil is allowed, and hushes the context.
+                        let cause = if matches!(cause, Value::Nil) { cause } else { self.raise_class(cause, frame)? };
                         match &cause {
                             Value::Nil => {},
                             Value::Thing(object) if self.is_fault_kind(&object.of) => {},
@@ -3223,7 +3556,7 @@ impl<'a> Machine<'a> {
                     };
                     if self.is_fault_kind(&class) {
                         if Self::fault_methods(&class) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
-                        return Ok(self.make_fault(class, values, Value::Nil));
+                        return self.fault_from_call(class, values);
                     }
                     self.made += 1;
                     let thing = Rc::new(Thing { of: class.clone(), holds: RefCell::new(class.every_field()), turn: self.made });
@@ -3517,7 +3850,7 @@ impl<'a> Machine<'a> {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.of.presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some()) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
-                            Prim::Onto if values.len()==3=>return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false),
+                            Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
                         }
@@ -3733,6 +4066,9 @@ impl<'a> Machine<'a> {
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
+                if self.is_fault_kind(&thing.of) && self.fault_method_word(name) {
+                    return Some(Value::Member(Rc::new(Value::Thing(thing.clone())), name.to_string()));
+                }
                 if self.is_fault_kind(&thing.of) && self.table.single("ext.builtin.exceptions.cause") == Some(name) {
                     return Some(fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone()).unwrap_or(Value::Nil));
                 }
@@ -3787,7 +4123,7 @@ impl<'a> Machine<'a> {
             if Self::fault_methods(&class) {
                 return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into());
             }
-            return Ok(self.make_fault(class, args, Value::Nil));
+            return self.fault_from_call(class, args);
         }
         if self.has_class_order(){return self.construct_ordered(class,args);}
         self.made += 1;
@@ -3938,7 +4274,85 @@ impl<'a> Machine<'a> {
         self.table.single(&format!("ext.builtin.method.error.{kind}")).unwrap_or_default().to_string()
     }
 
+    /// The starred clauses of a try. Each takes from the raised gatherer
+    /// the members under its kinds, a lone fault standing as a gatherer
+    /// of one with an empty heading. Whatever the clauses leave goes up
+    /// again as it came, a lone fault on its own; whatever they raise
+    /// anew goes up with it in a gatherer of empty heading, or alone
+    /// when it is the only thing there is to raise.
+    fn grouped_clauses(&mut self, clauses: &[Clause], raised: Value, frame: &Rc<Env>) -> Res<Value> {
+        let unready = self.argument_fault("ext.builtin.exceptions.unready", None);
+        let lone = Self::gathered(&raised).is_none();
+        let whole = if lone {
+            let Some(base) = self.furnished_kind(37) else { return Err(unready.into()) };
+            self.gather_faults(base, Value::text(""), vec![raised.clone()])?
+        } else { raised.clone() };
+        let mut left = Some(whole.clone());
+        let mut anew = Vec::new();
+        let mut sent_back = Vec::new();
+        let mut something_taken = false;
+        for clause in clauses {
+            let Some(pending) = left.take() else { break };
+            let mut kinds = Vec::new();
+            for choice in clause.choices.iter().flatten() {
+                match self.value_of(choice, frame)?.settled() {
+                    Value::Blueprint(kind) if self.is_fault_kind(&kind) => kinds.push(kind),
+                    _ => return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()),
+                }
+            }
+            let (taken, rest) = self.sieve_faults(pending, &Sieve::Kinds(kinds))?;
+            left = rest;
+            let Some(taken) = taken else { continue };
+            something_taken = true;
+            if let Some(holding) = self.holding_fault.last_mut() { *holding = taken.clone(); }
+            self.under = None;
+            self.entering = None;
+            if let Some(place) = &clause.held { self.store(place, frame, taken.clone())?; }
+            let answer = self.value_of(&clause.body, frame);
+            if let Some(place) = &clause.held { self.store(place, frame, Value::Unset)?; }
+            match answer {
+                Ok(_) => {}
+                Err(Escape::Thrown(value)) if matches!((&value, &taken), (Value::Thing(a), Value::Thing(b)) if Rc::ptr_eq(a, b)) => sent_back.push(value),
+                Err(Escape::Thrown(value)) => anew.push(value),
+                Err(Escape::Error(said)) => match self.as_raised(&said) { Some(value) => anew.push(value), None => return Err(Escape::Error(said)) },
+                Err(other) => return Err(other),
+            }
+        }
+        // What went back up and what no clause took stand together
+        // again under the heading they came with.
+        let remaining: Vec<Value> = sent_back.into_iter().chain(left).collect();
+        let remaining = match remaining.len() {
+            0 => None,
+            1 => remaining.into_iter().next(),
+            _ => {
+                let Some((kind, heading, _)) = Self::gathered(&whole) else { return Err(unready.into()) };
+                let members = remaining.iter().flat_map(|part| Self::gathered(part).map_or_else(|| vec![part.clone()], |(_, _, items)| items)).collect();
+                let joined = self.gather_faults(kind, heading, members)?;
+                self.write_across(&whole, &joined);
+                Some(joined)
+            }
+        };
+        if anew.is_empty() {
+            return match remaining {
+                None => Ok(Value::Nil),
+                Some(_) if lone && !something_taken => Err(Escape::Thrown(raised)),
+                Some(rest) => Err(Escape::Thrown(rest)),
+            };
+        }
+        if anew.len() == 1 && remaining.is_none() { return Err(Escape::Thrown(anew.remove(0))); }
+        let Some(base) = self.furnished_kind(37) else { return Err(unready.into()) };
+        anew.extend(remaining);
+        let gathered = self.gather_faults(base, Value::text(""), anew)?;
+        Err(Escape::Thrown(gathered))
+    }
+
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if let Value::Thing(thing) = receiver.settled() {
+            if self.is_fault_kind(&thing.of) {
+                if !keywords.is_empty() { return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()); }
+                return self.fault_method(thing, name, &arguments);
+            }
+        }
         if let Value::Span(bounds) = receiver.settled() {
             if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             return match (name, arguments.len()) {
@@ -6328,8 +6742,11 @@ impl<'a> Machine<'a> {
                 }
                 Value::Vector(Rc::new(values))
             }
+            // An iterator or a generator is not gathered: the loop steps
+            // it a member at a time, so what its body said before a later
+            // step raised stands said, and a loop broken off leaves the rest.
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
-                None if matches!(v[0], Value::Iterator(_)) => v[0].clone(),
+                None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
                 None => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
                 Some(walk) => walk,
             },
@@ -6618,7 +7035,7 @@ impl<'a> Machine<'a> {
                             _ => None,
                         };
                         match answerer {
-                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.suspension_fault(fault))?,
+                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.answerer_fault(fault))?,
                             _ => {
                                 let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
                                 return Err(format!("{opening}{word}{ending}"));
@@ -6700,7 +7117,7 @@ impl<'a> Machine<'a> {
                                 let word = self.table.single("ext.system.module.getattr").unwrap_or_default();
                                 let answerer = thing.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
                                 match answerer {
-                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.suspension_fault(fault))?,
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.answerer_fault(fault))?,
                                     _ => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
                                 }
                             }
@@ -6710,10 +7127,16 @@ impl<'a> Machine<'a> {
                                 self.grumble("warning", &format!("Undefined property: {}::${}", thing.of.name, called));
                                 Value::Nil
                             }
-                            None => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
+                            None => {
+                                self.sought_in_vain = Some((called.clone(), Value::Thing(thing.clone())));
+                                return Err(format!("Undefined property: {}::${}", thing.of.name, called));
+                            }
                         }
                     }
-                    other => return Err(format!("Cannot read property '{}' of {}", called, other.bare())),
+                    other => {
+                        self.sought_in_vain = Some((called.clone(), other.clone()));
+                        return Err(format!("Cannot read property '{}' of {}", called, other.bare()));
+                    }
                 }
             }
             Prim::Pluck => {
@@ -6750,6 +7173,7 @@ impl<'a> Machine<'a> {
                 }
                 match &v[0] {
                     Value::Thing(thing) => {
+                        self.context_hushed_by(&v[0], &called);
                         if self.is_fault_kind(&thing.of) && self.table.single("ext.builtin.exceptions.args") == Some(called.as_str()) {
                             let contents = match &v[2] {
                                 Value::Arguments(r) | Value::Vector(r) => Value::Arguments(r.clone()),
@@ -6965,6 +7389,10 @@ impl<'a> Machine<'a> {
                 n(1)?;
                 let w = self.wording();
                 Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
+            }
+            Prim::FaultWhole => {
+                n(0)?;
+                self.holding_fault.last().cloned().unwrap_or(Value::Nil)
             }
             Prim::FaultHeld => {
                 if v.len() > 1 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
@@ -8276,7 +8704,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
                     Value::Text(s) => Value::Small(s.chars().count() as i64),
-                    Value::Vector(l) | Value::Tuple(l) => Value::Small(l.len() as i64),
+                    Value::Vector(l) | Value::Tuple(l) | Value::Arguments(l) => Value::Small(l.len() as i64),
                     Value::Set(members) => Value::Small(members.borrow().keys.len() as i64),
                     Value::TextRow(words, _) => Value::Small(words.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),

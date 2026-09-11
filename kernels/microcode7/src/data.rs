@@ -435,6 +435,9 @@ impl Value {
     pub fn raised_words(&self, words: Names) -> Option<String> {
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
+        // A gatherer, or a system fault with its number, was given the
+        // words to show itself with when it was made.
+        if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
         Some(if row.is_empty() { String::new() }
             else if row.len() > 1 { Self::argument_text(&row, words) }
             else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }

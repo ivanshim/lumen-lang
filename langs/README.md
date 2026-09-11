@@ -1513,14 +1513,20 @@ only. The extension labels so far, all from PHP:
   the innermost clause is holding. `ext.stmt.throw.empty` gives the words
   said when there is no such value. `ext.stmt.throw.invalid` gives the
   words said when what is thrown is no instance of a furnished exception
-  class, where such classes are furnished.
+  class, where such classes are furnished. Text opening with the name of
+  a furnished class and a colon is taken as that class raised with the
+  words after, which is how the library has long raised them.
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
   the call separator and a message. Only a false condition works out the
   message and raises it; `ext.stmt.assert.kind` names the kind so raised.
 - `ext.stmt.catch.group`: a sign before the classes of a clause taking
-  parts of an exception group. The clause is read whole, but reaching the
-  attempt stops with `ext.stmt.catch.group.unsupported`, since the kernels
-  cannot yet part such groups.
+  parts of an exception group. Where `ext.stmt.catch.group.unsupported`
+  holds words, the clause is read whole but reaching the attempt stops
+  with them; where it is empty and the group members are spelled under
+  `ext.builtin.exceptions.group.members`, the clauses part the group.
+  `ext.stmt.catch.amiss` gives the complaint for a try mixing plain and
+  grouped clauses, or a grouped clause naming no class, told when the
+  program is read.
 - `ext.lexical.escape.deferred`: escape letters whose meaning is not
   yet provided in long or prefixed text. The string is read whole, but
   using it says `ext.lexical.escape.unavailable`; such escapes are never
@@ -2830,11 +2836,18 @@ only. The extension labels so far, all from PHP:
   in this order: the root, ordinary faults, arithmetic, division, overflow,
   lookup, index, key, type, value, name, local name, attribute, runtime,
   unimplemented, exhausted walk, assertion, exit, interruption, import,
-  operating system, recursion and Unicode. Ordinary faults stand upon the
-  root, arithmetic children upon arithmetic, lookup children upon lookup,
-  local names upon name, unimplemented and recursion upon runtime, and
-  Unicode upon value. Exit and interruption stand directly upon the root;
-  the rest stand upon ordinary faults. The spellings belong wholly to the
+  operating system, recursion and Unicode, then the warnings and the
+  syntax fault, and last the base exception group and the ordinary
+  exception group. Ordinary faults stand upon the root, arithmetic
+  children upon arithmetic, lookup children upon lookup, local names upon
+  name, unimplemented and recursion upon runtime, and Unicode upon value.
+  Exit and interruption stand directly upon the root, as does the base
+  group; the ordinary group stands upon the base group and upon ordinary
+  faults both, so a clause taking ordinary faults takes it too. The rest
+  stand upon ordinary faults. An exit that nobody takes ends the run
+  with the status its argument gives: none for nought, a whole number as
+  itself, and anything else written out as a complaint with a status of
+  one. The spellings belong wholly to the
   definition. A program may call these classes or stand a class upon one.
   Catching follows the classes themselves and their bases: a new class
   bearing an old name is still another class.
@@ -2854,6 +2867,41 @@ only. The extension labels so far, all from PHP:
   context it had.
 - `ext.builtin.exceptions.traceback`: the name of the kind of the trace
   handed to a context's leaving, which the kind builtin answers for one.
+  `.traceback.member` is the member holding an exception's own traceback,
+  which stands as nothing in this account, and `.traceback.with` the
+  method that would set one and answers with the same exception.
+- `ext.builtin.exceptions.note` and `.notes`: the method adding a text
+  note to an exception and the list the notes stand in, which is absent
+  until the first note is added; `.note.invalid` refuses a note that is
+  not text. A cause written onto an exception's cause member, nothing
+  included, sets the flag of `.suppress` as a throw with a stated cause
+  does.
+- `ext.builtin.exceptions.name` and `.object`: the members holding the
+  name that was absent and the object it was sought upon, filled in for
+  a name fault and an attribute fault, whether raised by the run or made
+  by a call with those words given by name. `.os` holds, in order, the
+  members for an operating-system fault's number and its words, filled
+  in when it is made with two arguments or more; `.os.message` holds the
+  words written before the number and between it and the words when such
+  a fault is shown.
+- `ext.builtin.exceptions.group.message` and `.group.members`: the
+  message and the tuple of members an exception group holds. A group is
+  made from a text and a non-empty sequence of exceptions, or refused
+  with `.group.invalid`; the base group made of ordinary faults alone
+  becomes an ordinary group. `.group.split` parts a group by a class,
+  a tuple of classes or a truth function into the members taken and the
+  rest, keeping nested groups in shape and carrying notes, cause, the
+  hushing flag and the traceback onto both halves; `.group.subgroup`
+  answers with the first half alone; `.group.derive` makes a group of
+  the same message from another sequence of members. `.group.summary`
+  holds the words written after a group's message when it is shown:
+  those before the count of members, those after a count of one, and
+  those after any other count. Where these are spelled, a clause marked
+  with `ext.stmt.catch.group` takes from a raised group the members
+  beneath its classes, a lone exception standing as a group of one with
+  no message; what no clause took is raised again as it was, a lone
+  exception unwrapped, and exceptions the clauses raised afresh go with
+  it in a new group of no message, or alone when there is only one.
 - `ext.builtin.exceptions.unready`: words said when an exception operation
   asks for means the kernel does not yet possess.
 - `ext.builtin.class.name`: the member naming a class itself. Where the
@@ -2916,6 +2964,12 @@ only. The extension labels so far, all from PHP:
   gives the words before and after the kind of a value that is no manager:
   one that is no object, or an object wanting either method. Without
   these words a value with no methods fills the binding as it stands.
+- `ext.stmt.yield.escaped`: the fault raised in place of the exhaustion
+  class when a generator's body raises it, rather than ending the walk.
+- `ext.system.fault.held`: a builtin answering the raised value the
+  innermost clause is holding, itself and whole, or nothing where no
+  clause holds one; `ext.system.fault.current` above answers the same
+  value's kind and words.
 - `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
   have under way at once, the outermost body not counted, and the words
   said by the call that would pass it. The words name a class among the
@@ -3797,12 +3851,28 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.derive` | - | - | `derive` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.invalid` | - | - | `ValueError: second argument (exceptions) must be a non-empty sequence` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.members` | - | - | `exceptions` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.message` | - | - | `message` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.split` | - | - | `split` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.subgroup` | - | - | `subgroup` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.group.summary` | - | - | ` (` ` sub-exception)` ` sub-exceptions)` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.name` | - | - | `name` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.note` | - | - | `add_note` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.note.invalid` | - | - | `TypeError: note must be a str` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.notes` | - | - | `__notes__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.object` | - | - | `obj` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os` | - | - | `errno` `strerror` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.os.message` | - | - | `[Errno ` `] ` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback` | - | - | `traceback` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.exec` | - | - | `exec` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
@@ -4352,6 +4422,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.case.mark` | - | - | - | - | `:` | - | - | - | - | - |
 | `ext.stmt.case.mark.instead` | - | - | - | - | `Case statements followed by a semicolon (;) are deprecated, use a colon (:) instead` | - | - | - | - | - |
 | `ext.stmt.catch` | - | - | `except` | - | `catch` | - | - | - | - | - |
+| `ext.stmt.catch.amiss` | - | - | `SyntaxError: cannot have both 'except' and 'except*' on the same 'try'` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group` | - | - | `*` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.group.unsupported` | - | - | - | - | - | - | - | - | - | - |
@@ -4522,6 +4593,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.busy` | - | - | `ValueError: generator already executing` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.close` | - | - | `close` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.escaped` | - | - | `RuntimeError: generator raised StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
@@ -4602,6 +4674,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.class.walk` | - | - | - | - | `Exception` | - | - | - | - | - |
 | `ext.system.fault.current` | - | - | `__current_fault` | - | - | - | - | - | - | - |
 | `ext.system.fault.division` | - | - | `division by zero` | - | - | - | - | - | - | - |
+| `ext.system.fault.held` | - | - | `__fault_in_hand` | - | - | - | - | - | - | - |
 | `ext.system.fault.index` | - | - | `list index out of range` | - | - | - | - | - | - | - |
 | `ext.system.fault.kind` | - | - | `unsupported operand types` | - | - | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | `ZeroDivisionError: integer modulo by zero` | - | `Modulo by zero` | - | - | - | - | - |

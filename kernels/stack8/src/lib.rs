@@ -355,6 +355,18 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             machine.let_go_all();
             return done.map_err(|f| f.told(&machine.names()));
         }
+        // An exit nobody took ends the run with the status it asked
+        // for, once what was named to run at the end has run.
+        if let Some(status) = machine.exit_asked(&fault) {
+            if let Err(after) = machine.run_when_done() {
+                machine.ended_uncaught(&after);
+            }
+            machine.let_things_go();
+            machine.let_go_all();
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            std::process::exit(status);
+        }
         // A program may put a routine in the way of a value nobody
         // took; the run says nothing of its own where one took it up.
         if !machine.taken_up(&fault) {

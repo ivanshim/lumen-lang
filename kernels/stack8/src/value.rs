@@ -425,6 +425,9 @@ impl Value {
     pub fn exception_message(&self, sp: &Wording) -> Option<String> {
         let args = self.raised_arguments()?;
         let Value::Object(o) = self else { return None };
+        // A group and an operating-system fault carry the words they
+        // are shown with, made when they were.
+        if let Some((_, Value::Text(shown))) = o.fields.borrow().iter().find(|(n, _)| n == "\0shown") { return Some(shown.to_string()); }
         Some(match args.as_slice() {
             [] => String::new(),
             [one] if o.class.all_fields().iter().any(|(n, _)| n == "\0quoted") => one.repr(sp),

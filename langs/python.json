@@ -726,7 +726,9 @@
     "BytesWarning",
     "ResourceWarning",
     "EncodingWarning",
-    "SyntaxError"
+    "SyntaxError",
+    "BaseExceptionGroup",
+    "ExceptionGroup"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -737,11 +739,63 @@
   "ext.builtin.exceptions.context": [
     "__context__"
   ],
+  "ext.builtin.exceptions.group.derive": [
+    "derive"
+  ],
+  "ext.builtin.exceptions.group.invalid": [
+    "ValueError: second argument (exceptions) must be a non-empty sequence"
+  ],
+  "ext.builtin.exceptions.group.members": [
+    "exceptions"
+  ],
+  "ext.builtin.exceptions.group.message": [
+    "message"
+  ],
+  "ext.builtin.exceptions.group.split": [
+    "split"
+  ],
+  "ext.builtin.exceptions.group.subgroup": [
+    "subgroup"
+  ],
+  "ext.builtin.exceptions.group.summary": [
+    " (",
+    " sub-exception)",
+    " sub-exceptions)"
+  ],
+  "ext.builtin.exceptions.name": [
+    "name"
+  ],
+  "ext.builtin.exceptions.note": [
+    "add_note"
+  ],
+  "ext.builtin.exceptions.note.invalid": [
+    "TypeError: note must be a str"
+  ],
+  "ext.builtin.exceptions.notes": [
+    "__notes__"
+  ],
+  "ext.builtin.exceptions.object": [
+    "obj"
+  ],
+  "ext.builtin.exceptions.os": [
+    "errno",
+    "strerror"
+  ],
+  "ext.builtin.exceptions.os.message": [
+    "[Errno ",
+    "] "
+  ],
   "ext.builtin.exceptions.suppress": [
     "__suppress_context__"
   ],
   "ext.builtin.exceptions.traceback": [
     "traceback"
+  ],
+  "ext.builtin.exceptions.traceback.member": [
+    "__traceback__"
+  ],
+  "ext.builtin.exceptions.traceback.with": [
+    "with_traceback"
   ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
@@ -2106,6 +2160,9 @@
   "ext.stmt.catch": [
     "except"
   ],
+  "ext.stmt.catch.amiss": [
+    "SyntaxError: cannot have both 'except' and 'except*' on the same 'try'"
+  ],
   "ext.stmt.catch.as": [
     "as"
   ],
@@ -2576,6 +2633,9 @@
   "ext.stmt.yield.close": [
     "close"
   ],
+  "ext.stmt.yield.escaped": [
+    "RuntimeError: generator raised StopIteration"
+  ],
   "ext.stmt.yield.exhausted": [
     "StopIteration"
   ],
@@ -2758,6 +2818,9 @@
   ],
   "ext.system.fault.division": [
     "division by zero"
+  ],
+  "ext.system.fault.held": [
+    "__fault_in_hand"
   ],
   "ext.system.fault.index": [
     "list index out of range"

@@ -182,6 +182,9 @@ pub enum Prim {
     Gone,
     /// The fault in hand, as the name of its kind and its words.
     FaultHeld,
+    /// The value the innermost clause holds as raised, whole, or nil
+    /// where none is held (ext.system.fault.held).
+    FaultWhole,
     /// What a path names: a file, a directory, or neither.
     PathSort,
     /// The host's facts as a row: directory, system, machine, surroundings.

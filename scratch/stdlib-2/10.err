@@ -1,1 +1,1 @@
-PythonError: Uncaught NotImplementedError: these dataclass options are not supported
+NotImplementedError: these dataclass options are not supported

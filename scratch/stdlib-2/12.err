@@ -1,1 +1,1 @@
-PythonError: Uncaught NotImplementedError: regular expression flags are not supported
+NotImplementedError: regular expression flags are not supported

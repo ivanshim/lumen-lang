@@ -1357,7 +1357,9 @@ impl<'a> Compiler<'a> {
                     self.take();
                     self.expr(0)?;
                 } else {
-                    self.constant(Value::text(""));
+                    // No message at all is a blank, so that the run can
+                    // tell it from a message that is empty text.
+                    self.constant(Value::Blank);
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
@@ -3233,6 +3235,14 @@ impl<'a> Compiler<'a> {
             let arm = self.attempt_body()?;
             clauses.push(Taking { kinds, held, body: arm, grouped, bare });
             self.skip_seps();
+        }
+        // Grouped clauses go together or not at all, and each names
+        // what it takes, where the language has words for the mixing.
+        if let Some(amiss) = &lang.catch_amiss {
+            let grouped = clauses.iter().filter(|arm| arm.grouped).count();
+            if grouped > 0 && (grouped != clauses.len() || clauses.iter().any(|arm| arm.grouped && arm.bare)) {
+                return Err(amiss.clone());
+            }
         }
         let otherwise = if lang.try_else && self.on_keyword(&lang.else_words) {
             self.take();

@@ -1567,7 +1567,8 @@ impl<'a> Builder<'a> {
                 let message = if self.on_any("syntax.call.separator") {
                     self.advance();
                     self.expr(0)?
-                } else { constant(Value::text("")) };
+                // No message given is told apart from empty text.
+                } else { constant(Value::Unset) };
                 return Ok(Form::Assert { condition, message: Box::new(message) });
             }
             if self.key("stmt.foreach") {
@@ -2189,6 +2190,14 @@ impl<'a> Builder<'a> {
             let body = if bare_clauses { self.watched_body()? } else { self.body()? };
             clauses.push(Clause { classes, choices, grouped, takes_all, held, body });
             self.skip_line_ends();
+        }
+        // Where the table has words for it, grouped clauses may not
+        // stand beside plain ones, and each must name its classes.
+        if let Some(amiss) = table.single("ext.stmt.catch.amiss") {
+            let with_star = clauses.iter().filter(|c| c.grouped).count();
+            if with_star > 0 && (with_star < clauses.len() || clauses.iter().any(|c| c.grouped && c.takes_all)) {
+                return Err(amiss.to_string());
+            }
         }
         let otherwise = if table.flag("ext.stmt.try.else") && self.key("stmt.else") {
             self.advance();

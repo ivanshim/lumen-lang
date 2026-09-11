@@ -780,7 +780,7 @@ def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     result = testRunner.run(suite)
     if exit:
         if not result.wasSuccessful():
-            raise 'test run failed'
+            raise SystemExit('test run failed')
         __finish()
     return _TestProgram(result)
 

@@ -139,6 +139,9 @@ pub struct Engine<'a> {
     /// its own, so a throw or an ending is kept here and raised again
     /// where the reading stood.
     carried: Option<Fault>,
+    /// The member last found absent, and the object it was sought on,
+    /// for the attribute fault that tells of it.
+    absent_member: Option<(String, Value)>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints waiting to be handed
     /// over, since one may be raised where the run cannot reach back
@@ -217,7 +220,6 @@ impl Fault {
         match self {
             Fault::Note(note) => note,
             Fault::Thrown(Value::Object(o)) => {
-                if let Some((_, Value::Text(original))) = o.fields.borrow().iter().find(|(n, _)| n == "\0uncaught-words") { return original.to_string(); }
                 if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
                     return if message.is_empty() { format!("\0{}", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
                 }
@@ -237,14 +239,27 @@ impl Fault {
 /// A run that a raised value may stop.
 type Flow<T> = Result<T, Fault>;
 
+/// What parts a group of exceptions: classes its members may stand
+/// beneath, or a routine asked of each member in turn.
+enum Chooser {
+    Kinds(Vec<Rc<Class>>),
+    Test(Value),
+}
+
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
             if at == 0 { fields.push(("\0exception".into(), Value::Flag(true))); }
             if at == 7 { fields.push(("\0quoted".into(), Value::Flag(true))); }
+            // The exit class ends the run when nobody takes it. The two
+            // group classes gather exceptions: the ordinary one takes
+            // ordinary faults alone, and stands upon them as well.
+            if at == 17 { fields.push(("\0exit".into(), Value::Flag(true))); }
+            if at == 37 || at == 38 { fields.push(("\0group".into(), Value::Flag(at == 38))); }
+            if at == 38 { if let Some(ordinary) = classes.get(1) { fields.push(("\0also-beneath".into(), Value::Class(ordinary.clone()))); } }
             classes.push(Rc::new(Class { direct: Vec::new(), lineage: Vec::new(), outline: None,
                 name: name.clone(), base: parents.get(at).copied().flatten().and_then(|i| classes.get(i).cloned()),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
@@ -254,8 +269,39 @@ impl<'a> Engine<'a> {
         classes.into_iter().map(|class| (class.name.clone(), Value::Class(class))).collect()
     }
 
+    /// The furnished class standing at a place in the roster, and
+    /// whether a class stands beneath it.
+    fn furnished(&self, at: usize) -> Option<Rc<Class>> {
+        match self.native_exceptions.get(self.lang.exceptions.get(at)?) { Some(Value::Class(class)) => Some(class.clone()), _ => None }
+    }
+
+    fn stands_on(&self, class: &Rc<Class>, at: usize) -> bool {
+        self.furnished(at).map_or(false, |wanted| Self::exception_beneath(class, &wanted))
+    }
+
     fn exception_instance(&mut self, class: Rc<Class>, args: Vec<Value>, cause: Value) -> Value {
         let mut fields = class.all_fields();
+        let sp = self.wording();
+        // The fuller account of an exception: a traceback standing as
+        // nothing, and the members particular to a name fault, an
+        // attribute fault and an operating-system fault, the last
+        // shown with its number.
+        if let Some(name) = &self.lang.traceback_member { fields.push((name.clone(), Value::Null)); }
+        if self.stands_on(&class, 10) || self.stands_on(&class, 12) {
+            if let Some(name) = &self.lang.absent_name_member { fields.push((name.clone(), Value::Null)); }
+        }
+        if self.stands_on(&class, 12) {
+            if let Some(name) = &self.lang.absent_object_member { fields.push((name.clone(), Value::Null)); }
+        }
+        if self.stands_on(&class, 20) {
+            let numbered = args.len() >= 2;
+            for (at, name) in self.lang.os_members.iter().enumerate() {
+                fields.push((name.clone(), if numbered { args.get(at).cloned().unwrap_or(Value::Null) } else { Value::Null }));
+            }
+            if let ([before, between], true) = (self.lang.os_message.as_slice(), numbered) {
+                fields.push(("\0shown".into(), Value::text(&format!("{before}{}{between}{}", args[0].display(&sp), args[1].display(&sp)))));
+            }
+        }
         let args = Value::Tuple(Rc::new(args));
         fields.push(("\0arguments".into(), args.clone()));
         if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
@@ -324,9 +370,236 @@ impl<'a> Engine<'a> {
         let mut class = Some(actual);
         while let Some(current) = class {
             if Rc::ptr_eq(current, wanted) { return true; }
+            // A class standing upon two is beneath the second as well.
+            if let Some((_, Value::Class(other))) = current.fields.iter().find(|(n, _)| n == "\0also-beneath") {
+                if Self::exception_beneath(other, wanted) { return true; }
+            }
             class = current.base.as_ref();
         }
         false
+    }
+
+    /// An exception made by a call. Its positional arguments become its
+    /// tuple; a group's two are its heading and its members; and the
+    /// only names a call may give are those of an absent name and the
+    /// object it was sought on.
+    fn exception_new(&mut self, class: Rc<Class>, given: Vec<Value>) -> Flow<Value> {
+        let unready = self.lang.exception_unready.clone().unwrap_or_default();
+        let mut args = Vec::new();
+        let mut named = Vec::new();
+        for (key, value) in self.call_items(given)? {
+            match key { Some(key) => named.push((key, value)), None => args.push(value) }
+        }
+        let made = if class.all_fields().iter().any(|(n, _)| n == "\0group") {
+            if args.len() != 2 { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()); }
+            let members = match args[1].contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+            self.make_group(class, args[0].clone(), members)?
+        } else { self.exception_instance(class, args, Value::Null) };
+        if let Value::Object(object) = &made {
+            let mut fields = object.fields.borrow_mut();
+            for (key, value) in named {
+                let allowed = [&self.lang.absent_name_member, &self.lang.absent_object_member].into_iter().flatten().any(|n| *n == key);
+                match fields.iter_mut().find(|(n, _)| *n == key) {
+                    Some(place) if allowed => place.1 = value,
+                    _ => return Err(unready.into()),
+                }
+            }
+        }
+        Ok(made)
+    }
+
+    /// A group of exceptions made from a heading and its members, or
+    /// refused. The base group made of ordinary faults alone becomes
+    /// the ordinary group, as the reference makes it.
+    fn make_group(&mut self, class: Rc<Class>, heading: Value, members: Vec<Value>) -> Flow<Value> {
+        let refused = self.lang.group_invalid.clone().unwrap_or_default();
+        if !matches!(heading, Value::Text(_)) || members.is_empty() { return Err(refused.into()); }
+        if members.iter().any(|m| !matches!(m, Value::Object(o) if self.exception_class(&o.class))) { return Err(refused.into()); }
+        let all_ordinary = members.iter().all(|m| matches!(m, Value::Object(o) if self.stands_on(&o.class, 1)));
+        let strict = class.all_fields().iter().any(|(n, v)| n == "\0group" && matches!(v, Value::Flag(true)));
+        if strict && !all_ordinary { return Err(refused.into()); }
+        let class = match (all_ordinary, self.furnished(37), self.furnished(38)) {
+            (true, Some(base), Some(ordinary)) if Rc::ptr_eq(&class, &base) => ordinary,
+            _ => class,
+        };
+        let sp = self.wording();
+        let count = members.len();
+        let members = Value::Tuple(Rc::new(members));
+        let made = self.exception_instance(class, vec![heading.clone(), members.clone()], Value::Null);
+        if let Value::Object(object) = &made {
+            let mut fields = object.fields.borrow_mut();
+            fields.push(("\0heading".into(), heading.clone()));
+            fields.push(("\0parts".into(), members.clone()));
+            if let [before, one, many] = self.lang.group_summary.as_slice() {
+                fields.push(("\0shown".into(), Value::text(&format!("{}{before}{count}{}", heading.display(&sp), if count == 1 { one } else { many }))));
+            }
+            if let Some(name) = &self.lang.group_message { fields.push((name.clone(), heading)); }
+            if let Some(name) = &self.lang.group_members { fields.push((name.clone(), members)); }
+        }
+        Ok(made)
+    }
+
+    /// A group's class, heading and members; nothing for an exception
+    /// that is no group.
+    fn group_parts(value: &Value) -> Option<(Rc<Class>, Value, Vec<Value>)> {
+        let Value::Object(object) = value else { return None };
+        let held = object.fields.borrow();
+        let heading = held.iter().find(|(n, _)| n == "\0heading")?.1.clone();
+        let (_, Value::Tuple(parts)) = held.iter().find(|(n, _)| n == "\0parts")? else { return None };
+        Some((object.class.clone(), heading, parts.to_vec()))
+    }
+
+    /// Whether a chooser takes an exception whole: a class it stands
+    /// beneath, or a routine answering yes to it.
+    fn chosen(&mut self, value: &Value, chooser: &Chooser) -> Flow<bool> {
+        match chooser {
+            Chooser::Kinds(kinds) => Ok(matches!(value, Value::Object(o) if kinds.iter().any(|kind| Self::exception_beneath(&o.class, kind)))),
+            Chooser::Test(routine) => {
+                self.data.push(value.clone());
+                self.data.push(routine.clone());
+                self.perform(&Action::Invoke(Rc::from("")), 2)?;
+                let answer = self.drop_top()?;
+                Ok(self.truth(&answer))
+            }
+        }
+    }
+
+    /// Part an exception by a chooser into what it takes and what it
+    /// leaves, each a group of the same shape as the whole, or nothing.
+    /// What a group carries besides its members goes onto both halves.
+    fn part_group(&mut self, value: Value, chooser: &Chooser) -> Flow<(Option<Value>, Option<Value>)> {
+        if self.chosen(&value, chooser)? { return Ok((Some(value), None)); }
+        let Some((class, heading, parts)) = Self::group_parts(&value) else { return Ok((None, Some(value))) };
+        let (mut taken, mut left) = (Vec::new(), Vec::new());
+        for part in parts {
+            let (yes, no) = self.part_group(part, chooser)?;
+            taken.extend(yes);
+            left.extend(no);
+        }
+        let mut halves = [None, None];
+        for (row, half) in [taken, left].into_iter().zip(halves.iter_mut()) {
+            if row.is_empty() { continue; }
+            let made = self.make_group(class.clone(), heading.clone(), row)?;
+            self.carry_over(&value, &made);
+            *half = Some(made);
+        }
+        let [taken, left] = halves;
+        Ok((taken, left))
+    }
+
+    /// The notes, the cause, the hushing flag and the traceback of a
+    /// group go onto a group made from part of it.
+    fn carry_over(&self, from: &Value, onto: &Value) {
+        let (Value::Object(source), Value::Object(target)) = (from, onto) else { return };
+        let carried = [&self.lang.notes_member, &self.lang.exception_cause, &self.lang.exception_suppress, &self.lang.traceback_member];
+        let source = source.fields.borrow();
+        let mut target = target.fields.borrow_mut();
+        for key in carried.into_iter().flatten() {
+            let Some((_, held)) = source.iter().find(|(n, _)| n == key) else { continue };
+            let held = match held { Value::Array(row) => Value::array(row.to_vec()), other => other.clone() };
+            match target.iter_mut().find(|(n, _)| n == key) {
+                Some(place) => place.1 = held,
+                None => target.push((key.clone(), held)),
+            }
+        }
+    }
+
+    /// Whether a name is one of the methods an exception answers itself.
+    fn exception_method_named(&self, name: &str) -> bool {
+        [&self.lang.note_method, &self.lang.traceback_setter, &self.lang.group_split, &self.lang.group_subgroup, &self.lang.group_derive]
+            .into_iter().flatten().any(|word| word == name)
+    }
+
+    /// The methods an exception answers itself: adding a note, setting
+    /// a traceback, and parting a group three ways.
+    fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+        let unready = self.lang.exception_unready.clone().unwrap_or_default();
+        if self.lang.note_method.as_deref() == Some(name) {
+            let [Value::Text(_)] = args else { return Err(self.lang.note_invalid.clone().unwrap_or_default().into()) };
+            let key = self.lang.notes_member.clone().unwrap_or_default();
+            let mut fields = object.fields.borrow_mut();
+            match fields.iter_mut().find(|(n, _)| *n == key) {
+                Some((_, Value::Array(row))) => Rc::make_mut(row).push(args[0].clone()),
+                Some(_) => return Err(unready.into()),
+                None => fields.push((key, Value::array(args.to_vec()))),
+            }
+            return Ok(Value::Null);
+        }
+        if self.lang.traceback_setter.as_deref() == Some(name) {
+            return if matches!(args, [Value::Null]) { Ok(Value::Object(object)) } else { Err(unready.into()) };
+        }
+        let derive = self.lang.group_derive.as_deref() == Some(name);
+        let split = self.lang.group_split.as_deref() == Some(name);
+        let whole = Value::Object(object);
+        let Some((class, heading, _)) = Self::group_parts(&whole) else { return Err(unready.into()) };
+        let [given] = args else { return Err(self.lang.group_invalid.clone().unwrap_or_default().into()) };
+        if derive {
+            let members = match given.contents() { Value::Array(row) | Value::Tuple(row) => row.to_vec(), _ => Vec::new() };
+            return self.make_group(class, heading, members);
+        }
+        let chooser = match given {
+            Value::Class(class) if self.exception_class(class) => Chooser::Kinds(vec![class.clone()]),
+            Value::Tuple(row) if row.iter().all(|kind| matches!(kind, Value::Class(class) if self.exception_class(class))) => {
+                Chooser::Kinds(row.iter().filter_map(|kind| match kind { Value::Class(class) => Some(class.clone()), _ => None }).collect())
+            }
+            Value::Routine(_) | Value::Method(..) => Chooser::Test(given.clone()),
+            _ => return Err(unready.into()),
+        };
+        let (taken, left) = self.part_group(whole, &chooser)?;
+        Ok(if split { Value::Tuple(Rc::new(vec![taken.unwrap_or(Value::Null), left.unwrap_or(Value::Null)])) } else { taken.unwrap_or(Value::Null) })
+    }
+
+    /// A cause written onto an exception, nothing included, hushes the
+    /// context, as the reference has it.
+    fn cause_written(&self, holder: &Value, name: &str) {
+        let Value::Object(object) = holder else { return };
+        if !self.exception_class(&object.class) || self.lang.exception_cause.as_deref() != Some(name) { return };
+        let mut fields = object.fields.borrow_mut();
+        if let Some(flag) = self.lang.exception_suppress.as_deref().and_then(|flag| fields.iter_mut().find(|(n, _)| n == flag)) { flag.1 = Value::Flag(true); }
+    }
+
+    /// The name a fault says was absent, read out of its words.
+    fn absent_name(&self, told: &str) -> Option<String> {
+        let told = told.trim_start_matches('\0');
+        if let Some(rest) = told.strip_prefix("Undefined variable") { return Some(rest.trim_start_matches(':').trim().trim_matches('\'').to_string()); }
+        let [before, after] = self.lang.name_words.as_slice() else { return None };
+        let rest = &told[told.find(before.as_str())? + before.len()..];
+        rest.strip_suffix(after.as_str()).map(str::to_string)
+    }
+
+    /// The status an exit nobody took asks the run to end with, and
+    /// what it says on the way out: nothing for none, a whole number as
+    /// itself, and anything else told as a complaint with a status of
+    /// one. Nothing where the fault is no exit.
+    pub fn exit_asked(&self, fault: &Fault) -> Option<i32> {
+        let Fault::Thrown(Value::Object(object)) = fault else { return None };
+        if !object.class.all_fields().iter().any(|(n, _)| n == "\0exit") { return None; }
+        let held = object.fields.borrow();
+        let given = match held.iter().find(|(n, _)| n == "\0arguments") {
+            Some((_, Value::Tuple(row))) if row.len() == 1 => row[0].clone(),
+            Some((_, Value::Tuple(row))) if row.is_empty() => Value::Null,
+            Some((_, other)) => other.clone(),
+            None => Value::Null,
+        };
+        Some(match given {
+            Value::Null => 0,
+            Value::Small(n) => n as i32,
+            Value::Flag(yes) => i32::from(yes),
+            other => { eprintln!("{}", other.display(&self.wording())); 1 }
+        })
+    }
+
+    /// Whether a class is the exhaustion class or stands beneath it.
+    fn stop_class(&self, class: &Rc<Class>) -> bool {
+        let Some(name) = self.lang.special_stop.first() else { return false };
+        matches!(self.native_exceptions.get(name), Some(Value::Class(stop)) if Self::exception_beneath(class, stop))
+    }
+
+    /// The fault raised for a generator whose body raised the
+    /// exhaustion class.
+    fn escaped_stop(&mut self) -> Fault {
+        let words = self.lang.yield_escaped.clone().unwrap_or_default();
+        self.as_fault(&words).map_or_else(|| Fault::Note(words), Fault::Thrown)
     }
 
     fn exception_has_methods(class: &Class) -> bool {
@@ -340,9 +613,19 @@ impl<'a> Engine<'a> {
                 self.perform(&Action::Make, 1)?;
                 return self.drop_top().map_err(Fault::from);
             }
-            return Err(self.lang.catch_invalid.clone().unwrap_or_default().into());
+            return Err(self.lang.throw_invalid.clone().or_else(|| self.lang.catch_invalid.clone()).unwrap_or_default().into());
         }
-        Ok(value)
+        let Some(invalid) = self.lang.throw_invalid.clone() else { return Ok(value) };
+        match &value {
+            Value::Object(object) if self.exception_class(&object.class) => Ok(value),
+            // Text opening with a furnished class's name and a colon is
+            // that class raised with the words after it, which is how
+            // the library has long raised them.
+            Value::Text(words) if self.class_for(words).map_or(false, |named| self.native_exceptions.contains_key(&named)) => {
+                self.as_fault(words).ok_or_else(|| invalid.into())
+            }
+            _ => Err(invalid.into()),
+        }
     }
 
     pub fn new(lang: &'a Lang, registry: crate::compile::Registry) -> Engine<'a> {
@@ -397,6 +680,7 @@ impl<'a> Engine<'a> {
             things_made: RefCell::new(Vec::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
+            absent_member: None,
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             any_waiting: std::cell::Cell::new(false),
@@ -1106,8 +1390,23 @@ impl<'a> Engine<'a> {
             let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
             let value = self.exception_instance(class, args, Value::Null);
             self.chain_context(&value);
-            if self.lang.catch_invalid.as_deref() == Some(told) {
-                if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
+            // A name fault names what was absent; an attribute fault
+            // names it and the object it was sought on.
+            if let Value::Object(object) = &value {
+                let mut filled: Vec<(&Option<String>, Value)> = Vec::new();
+                if self.lang.fault_name.as_deref() == Some(named.as_str()) {
+                    if let Some(name) = self.absent_name(told) { filled.push((&self.lang.absent_name_member, Value::text(&name))); }
+                }
+                if self.lang.fault_attribute.as_deref() == Some(named.as_str()) {
+                    if let Some((name, holder)) = self.absent_member.take() {
+                        filled.push((&self.lang.absent_name_member, Value::text(&name)));
+                        filled.push((&self.lang.absent_object_member, holder));
+                    }
+                }
+                let mut fields = object.fields.borrow_mut();
+                for (key, held) in filled {
+                    if let Some(place) = key.as_ref().and_then(|key| fields.iter_mut().find(|(n, _)| n == key)) { place.1 = held; }
+                }
             }
             return Some(value);
         }
@@ -2051,6 +2350,13 @@ impl<'a> Engine<'a> {
                 }),
                 None => Ok(Passage::Along(plan.after)),
             },
+            Err(Fault::Thrown(raised)) if plan.clauses.iter().any(|arm| arm.grouped) => {
+                self.data.truncate(depth);
+                self.caught.push(raised.clone());
+                let handled = self.grouped_attempt(program, frame, instrs, plan, raised);
+                self.caught.truncate(active);
+                handled
+            }
             Err(Fault::Thrown(raised)) => {
                 self.data.truncate(depth);
                 self.caught.push(raised.clone());
@@ -2127,6 +2433,82 @@ impl<'a> Engine<'a> {
         ending
     }
 
+    /// The clauses of a grouped try, each taking from the raised group
+    /// the members beneath its classes; a lone exception stands as a
+    /// group of one with no heading. What the clauses leave is raised
+    /// again as it was, a lone exception unwrapped, and what they raise
+    /// afresh goes with it in a group of no heading, or alone when it
+    /// is the only thing left to raise.
+    fn grouped_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, raised: Value) -> Flow<Passage> {
+        let unready = self.lang.exception_unready.clone().unwrap_or_default();
+        let alone = Self::group_parts(&raised).is_none();
+        let whole = match alone {
+            false => raised.clone(),
+            true => {
+                let Some(base) = self.furnished(37) else { return Err(unready.into()) };
+                self.make_group(base, Value::text(""), vec![raised.clone()])?
+            }
+        };
+        let mut remainder = Some(whole.clone());
+        let mut afresh = Vec::new();
+        let mut kept_back = Vec::new();
+        let mut any_taken = false;
+        for arm in &plan.clauses {
+            let Some(left) = remainder.take() else { break };
+            let mut kinds = Vec::new();
+            for span in &arm.kinds {
+                self.run_span(program, frame, instrs, *span)?;
+                match self.drop_top()?.contents() {
+                    Value::Class(class) if self.exception_class(&class) => kinds.push(class),
+                    _ => return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()),
+                }
+            }
+            let (taken, rest) = self.part_group(left, &Chooser::Kinds(kinds))?;
+            remainder = rest;
+            let Some(taken) = taken else { continue };
+            any_taken = true;
+            if let Some(holding) = self.caught.last_mut() { *holding = taken.clone(); }
+            self.under = None;
+            self.entering = None;
+            if let Some(cell) = &arm.held { self.store_cell(cell, frame, taken.clone())?; }
+            let outcome = self.run_span(program, frame, instrs, arm.body);
+            if let Some(cell) = &arm.held { self.put_cell(cell, frame, Value::Blank); }
+            match outcome {
+                Ok(Passage::Along(at)) if at == arm.body.1 => {}
+                Ok(other) => return Ok(other),
+                Err(Fault::Thrown(value)) if value.identical(&taken) => kept_back.push(value),
+                Err(Fault::Thrown(value)) => afresh.push(value),
+                Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => afresh.push(value), None => return Err(Fault::Note(words)) },
+                Err(other) => return Err(other),
+            }
+        }
+        // What was raised again and what no clause took go back
+        // together under the heading they came with.
+        let left: Vec<Value> = kept_back.into_iter().chain(remainder).collect();
+        let left = match left.len() {
+            0 => None,
+            1 => left.into_iter().next(),
+            _ => {
+                let Some((class, heading, _)) = Self::group_parts(&whole) else { return Err(unready.into()) };
+                let members = left.iter().flat_map(|part| Self::group_parts(part).map_or_else(|| vec![part.clone()], |(_, _, parts)| parts)).collect();
+                let joined = self.make_group(class, heading, members)?;
+                self.carry_over(&whole, &joined);
+                Some(joined)
+            }
+        };
+        if afresh.is_empty() {
+            return match left {
+                None => Ok(Passage::Along(plan.after)),
+                Some(_) if alone && !any_taken => Err(Fault::Thrown(raised)),
+                Some(left) => Err(Fault::Thrown(left)),
+            };
+        }
+        if afresh.len() == 1 && left.is_none() { return Err(Fault::Thrown(afresh.remove(0))); }
+        let Some(base) = self.furnished(37) else { return Err(unready.into()) };
+        afresh.extend(left);
+        Err(Fault::Thrown(self.make_group(base, Value::text(""), afresh)?))
+    }
+
     fn close_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
         let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
         if let Some(Value::Generator(inner)) = state.delegate.take() { self.close_generator(&inner)?; }
@@ -2172,6 +2554,13 @@ impl<'a> Engine<'a> {
         if let Some(place) = &program.written_in { self.source = place.clone(); }
         self.inside.push(program.within.clone());
         let result = self.run_portion(&program, &mut locals, &program.instrs, (0, program.instrs.len()), Some(&mut kept));
+        // The exhaustion class raised inside the body is a fault of the
+        // generator, not the end of its walk.
+        let result = match result {
+            Err(Fault::Thrown(Value::Object(object))) if self.lang.yield_escaped.is_some() && self.stop_class(&object.class) => Err(self.escaped_stop()),
+            Err(Fault::Note(words)) if self.lang.yield_escaped.is_some() && self.lang.core_words.get("core.exhausted").and_then(|w| w.first()) == Some(&words) => Err(self.escaped_stop()),
+            other => other,
+        };
         self.inside.pop();
         self.source = source;
         self.line = line;
@@ -3125,7 +3514,7 @@ impl<'a> Engine<'a> {
         if self.fuller_classes() {
             let result = match op {
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class.outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
-                Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; Some(self.class_write(o,name,Some(v),false)?) },
+                Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {self.drop_top()?; Some(Value::Flag(true))},
                 Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc == 3 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
@@ -3697,9 +4086,11 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                // A cursor is not gathered here: it is walked one member
-                // at a time, so a loop that breaks off leaves the rest.
-                if matches!(source, Value::Object(_) | Value::Cursor(_)) { self.data.push(source); return Ok(()); }
+                // A cursor is not gathered here, nor a generator: each
+                // is walked one member at a time, so a loop that breaks
+                // off leaves the rest, and what a body says before a
+                // later step raises has already been said.
+                if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Generator(_)) { self.data.push(source); return Ok(()); }
                 // A map held in a cell is walked under watch, so that a
                 // change of its size under the walk is seen.
                 if self.lang.map_resized.is_some() && Self::map_cell(&source).is_some() {
@@ -3927,7 +4318,7 @@ impl<'a> Engine<'a> {
                 };
                 if self.exception_class(&class) {
                     if Self::exception_has_methods(&class) { return Err(self.lang.exception_unready.clone().unwrap_or_default().into()); }
-                    let object = self.exception_instance(class, args, Value::Null);
+                    let object = self.exception_new(class, args)?;
                     self.data.push(object);
                     return Ok(());
                 }
@@ -4011,6 +4402,8 @@ impl<'a> Engine<'a> {
                     else { return Err(crate::complex::fault(self.lang, "unready").into()); }
                 }
                 Value::ValueMethod(_) => return Err(self.lang.class_unready.first().cloned().unwrap_or_default().into()),
+                // An exception answers its own few methods itself.
+                Value::Object(o) if self.exception_class(&o.class) && self.exception_method_named(name) => Value::ValueMethod(Rc::new((Value::Object(o), name.to_string()))),
                 subject if self.descriptor_of(&subject, name).is_some() => {
                     let d = self.descriptor_of(&subject, name).expect("the descriptor");
                     self.descriptor_read(&d, subject)?
@@ -4088,11 +4481,17 @@ impl<'a> Engine<'a> {
                             self.complain(Complaint::Warning, &told);
                             Value::Null
                         }
-                        None => return Err(format!("Undefined property: {}::${}", o.class.name, name).into()),
+                        None => {
+                            self.absent_member = Some((name.to_string(), Value::Object(o.clone())));
+                            return Err(format!("Undefined property: {}::${}", o.class.name, name).into());
+                        }
                     }
                 }
                 Value::Routine(_) | Value::Method(..) if !self.lang.scope_unready.is_empty() => return Err(self.lang.scope_unready[0].clone().into()),
-                v => return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into()),
+                v => {
+                    self.absent_member = Some((name.to_string(), v.clone()));
+                    return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into());
+                }
             },
             // The property becomes a cell the object and the name that
             // takes it both stand for, so a write through either is a
@@ -4170,6 +4569,7 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     Value::Object(o) => {
+                        self.cause_written(&Value::Object(o.clone()), name);
                         if self.exception_class(&o.class) && self.lang.exception_args.as_deref() == Some(name.as_ref()) {
                             let row = match &value.contents() {
                                 Value::Tuple(row) | Value::Array(row) => Value::Tuple(row.clone()),
@@ -4422,13 +4822,16 @@ impl<'a> Engine<'a> {
             }
             Action::AssertFault => {
                 let message = self.drop_top()?;
-                let bare = matches!(&message, Value::Text(words) if words.is_empty());
+                // No message at all is a blank; a furnished class keeps
+                // empty text as its one argument, a made-up one drops it.
+                let unsaid = matches!(message, Value::Blank);
+                let bare = unsaid || matches!(&message, Value::Text(words) if words.is_empty());
                 self.hurled_at.set(self.line);
                 // Where the language furnishes the class, the value raised
                 // is made as any of that class is, its message among the
                 // arguments; elsewhere a class of the name alone is made up.
                 let raised = match self.lang.assert_kind.as_ref().and_then(|n| self.native_exceptions.get(n)).cloned() {
-                    Some(Value::Class(native)) => self.exception_instance(native, if bare { Vec::new() } else { vec![message] }, Value::Null),
+                    Some(Value::Class(native)) => self.exception_instance(native, if unsaid { Vec::new() } else { vec![message] }, Value::Null),
                     _ => {
                         let class = Rc::new(Class {
                             lineage: Vec::new(), direct: Vec::new(), outline: None,
@@ -4468,7 +4871,8 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let (Value::Object(object), Some(cause)) = (&value, cause) {
-                    let cause = self.prepare_raised(cause)?;
+                    // A cause of nothing is allowed, and hushes the context.
+                    let cause = if matches!(cause, Value::Null) { cause } else { self.prepare_raised(cause)? };
                     if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class)) {
                         return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
                     }
@@ -6659,6 +7063,18 @@ impl<'a> Engine<'a> {
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         let contents = receiver.contents();
+        if let Value::Object(object) = &contents {
+            if self.exception_class(&object.class) {
+                if !named.is_empty() { return Err(self.lang.exception_unready.clone().unwrap_or_default()); }
+                return match self.exception_method(object.clone(), operation, &args) {
+                    Ok(answer) => Ok(answer),
+                    Err(Fault::Note(words)) => Err(words),
+                    // A value raised on the way is carried out past the
+                    // words this answer may hold.
+                    Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                };
+            }
+        }
         if let Value::Slice(bounds) = &contents {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             match (operation, args.len()) {
@@ -7364,6 +7780,10 @@ impl<'a> Engine<'a> {
             // The fault in hand: its kind's name and its words, or the
             // pair of nothing when none is being handled. Given a fault,
             // that one is told of instead.
+            Builtin::FaultItself => {
+                arity(0)?;
+                self.caught.last().cloned().unwrap_or(Value::Null)
+            }
             Builtin::FaultInHand => {
                 if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
                 let held = match args.first() { Some(given) => Some(given.clone()), None => self.caught.last().cloned() };

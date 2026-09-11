@@ -119,10 +119,19 @@ def _input(prompt=''):
         return line[:-1]
     return line
 
-# Stub: the direct host spelling still raises a complaint. Numeric
-# process exit status and catchable SystemExit await exception support.
-def exit(status=0):
-    sys.exit(status)
+def exit(status=None):
+    raise SystemExit(status)
+
+# The exception a clause is holding, whole, or None outside every
+# clause; and the older three-part account of the same.
+def exception():
+    return __fault_in_hand()
+
+def exc_info():
+    held = __fault_in_hand()
+    if held is None:
+        return (None, None, None)
+    return (type(held), held, None)
 
 float_repr_style = 'short'
 byteorder = 'little'

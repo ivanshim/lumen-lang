@@ -555,6 +555,9 @@ pub enum Builtin {
     FileGone,
     /// The fault being handled, as its kind's name and its words.
     FaultInHand,
+    /// The raised value the innermost clause is holding, itself and
+    /// whole, or nothing where no clause holds one (ext.system.fault.held).
+    FaultItself,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
     /// The host's own facts: working directory, system, machine, environment.
