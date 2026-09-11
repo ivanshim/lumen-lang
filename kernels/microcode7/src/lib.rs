@@ -462,6 +462,15 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     if ["ext.system.fault.shift", "ext.builtin.to_int.infinity", "ext.builtin.to_int.nan"].iter().any(|label| table.single(label) == Some(words)) { return true; }
     if ["ext.builtin.to_int.digits.amiss", "ext.builtin.to_int.text.detail"].iter().any(|label| table.strings(label).first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))) { return true; }
     if table.single("ext.builtin.bool.result").map_or(false, |opening| !opening.is_empty() && words.starts_with(opening)) { return true; }
+    // A value that is no walk or no iterator, a dictionary that grew
+    // under a walk, and zip's unequal sources: each told under its class.
+    for label in ["ext.builtin.core.not_iterator", "ext.builtin.core.uniterable", "ext.builtin.core.unsized"] {
+        if let [before, after] = table.strings(label) { if !before.is_empty() && words.starts_with(before.as_str()) && words.ends_with(after.as_str()) { return true; } }
+    }
+    if table.single("ext.builtin.core.dict.changed") == Some(words) { return true; }
+    for label in ["ext.builtin.zip.short", "ext.builtin.zip.long"] {
+        if let [opening, alone, span] = table.strings(label) { if !opening.is_empty() && words.starts_with(opening.as_str()) && (words.ends_with(alone.as_str()) || words.contains(span.as_str())) { return true; } }
+    }
     match table.strings("ext.op.order.unsupported") {
         [before, between, and, after] => !before.is_empty() && words.starts_with(before.as_str()) && words.contains(between.as_str()) && words.contains(and.as_str()) && words.ends_with(after.as_str()),
         _ => false,

@@ -136,8 +136,20 @@ pub enum IteratorKind {
     Stored(std::collections::VecDeque<Value>),
     /// A progression stepped through one place at a time.
     Stepping(Rc<Progression>, BigInt),
+    /// A list read through its cell at every step, so that members put
+    /// in before the end are walked as well.
+    Living(Rc<RefCell<Value>>, usize),
+    /// A window upon a dictionary, and the size the dictionary had at
+    /// the start: a different size later stops the walk.
+    Watching { window: Value, at: usize, size: usize },
+    /// A thing read place by place from nought, until the reading fails.
+    Placed(Value, BigInt),
+    /// A callable summoned for each member until it answers the sentinel.
+    Summoned { work: Value, stop: Value },
     Count(Value, BigInt),
-    Parallel { inputs: Vec<Value>, mapper: Option<Value> },
+    /// Inputs walked abreast, mapped where a mapper is given, and made
+    /// to end together where exactness is demanded.
+    Parallel { inputs: Vec<Value>, mapper: Option<Value>, exact: bool },
     Select(Value, Value),
     Busy,
 }

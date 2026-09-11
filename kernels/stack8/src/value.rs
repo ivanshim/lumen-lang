@@ -159,8 +159,20 @@ pub enum CursorSource {
     Items(Vec<Value>, usize),
     /// A counted row walked place by place, never made whole.
     Counted(Rc<Counted>, BigInt),
+    /// A list walked through the cell it lives in, read as it stands at
+    /// each step rather than as it stood at the first.
+    Living(Rc<RefCell<Value>>, usize),
+    /// A window upon a map, with the size the map had when the walk
+    /// began; the walk stops should that size change.
+    Viewed(Value, usize, usize),
+    /// A thing walked by reading its places from nought upward.
+    Indexed(Value, BigInt),
+    /// A callable asked again and again until it answers the sentinel.
+    Called(Value, Value),
     Numbered(Value, BigInt),
-    Combined(Vec<Value>, Option<Value>),
+    /// Walks taken abreast, with the work applied to each row where
+    /// there is any, and whether they must all end together.
+    Combined(Vec<Value>, Option<Value>, bool),
     Selected(Value, Value),
 }
 
