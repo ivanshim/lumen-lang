@@ -640,6 +640,9 @@ impl<'a> Engine<'a> {
         let args: Vec<Value> = args.iter().map(Value::contents).collect();
         match args.as_slice() {
             [Value::Object(o)]=>Ok(Value::Class(o.class.clone())),
+            // A class is of the kind that makes classes, which is the
+            // kind builtin itself, under whatever word spells it.
+            [Value::Class(_)]=>Ok(self.lang.builtins.iter().find(|(_,b)|**b==crate::code::Builtin::SortOf).map_or(Value::Null,|(word,_)|Value::Native(crate::code::Builtin::SortOf,std::rc::Rc::from(word.as_str())))),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){if let Value::Class(c)=b{parents.push(c.clone());}else{return Err(self.class_refusal());}}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}

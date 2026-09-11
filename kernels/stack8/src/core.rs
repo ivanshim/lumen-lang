@@ -7,6 +7,17 @@ use num_traits::{Signed, ToPrimitive};
 use std::hash::{Hash, Hasher};
 
 impl Value {
+    /// What a value of the given sort is called, as CPython names it,
+    /// which is what the kind value standing for the sort answers to
+    /// its name.
+    pub fn sort_called(sort: crate::value::Sort) -> &'static str {
+        use crate::value::Sort;
+        match sort {
+            Sort::Integer => "int", Sort::Rational | Sort::Real => "float", Sort::Text => "str",
+            Sort::Boolean => "bool", Sort::Array => "list", Sort::Set => "set", Sort::Null => "NoneType",
+        }
+    }
+
     pub fn core_kind(&self) -> String {
         match self {
             Value::Complex(_) => "complex",

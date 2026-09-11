@@ -730,6 +730,15 @@
   "ext.builtin.exceptions.cause": [
     "__cause__"
   ],
+  "ext.builtin.exceptions.context": [
+    "__context__"
+  ],
+  "ext.builtin.exceptions.suppress": [
+    "__suppress_context__"
+  ],
+  "ext.builtin.exceptions.traceback": [
+    "traceback"
+  ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
   ],
@@ -2441,10 +2450,13 @@
     "raise"
   ],
   "ext.stmt.throw.empty": [
-    "No active exception to reraise"
+    "RuntimeError: No active exception to reraise"
   ],
   "ext.stmt.throw.from": [
     "from"
+  ],
+  "ext.stmt.throw.invalid": [
+    "TypeError: exceptions must derive from BaseException"
   ],
   "ext.stmt.try": [
     "try"
@@ -2486,6 +2498,10 @@
   ],
   "ext.stmt.with.enter": [
     "__enter__"
+  ],
+  "ext.stmt.with.invalid": [
+    "TypeError: '",
+    "' object does not support the context manager protocol"
   ],
   "ext.stmt.with.leave": [
     "__exit__"
@@ -2706,6 +2722,10 @@
   "ext.system.module.name": [
     "__name__"
   ],
+  "ext.system.recursion.exceeded": [
+    "RecursionError: maximum recursion depth exceeded"
+  ],
+  "ext.system.recursion.limit": 1000,
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

@@ -202,7 +202,7 @@ impl Fault {
             Fault::Thrown(Value::Object(o)) => {
                 if let Some((_, Value::Text(original))) = o.fields.borrow().iter().find(|(n, _)| n == "\0uncaught-words") { return original.to_string(); }
                 if let Some(message) = Value::Object(o.clone()).exception_message(sp).filter(|_| o.fields.borrow().iter().any(|(n, _)| n == "\0arguments")) {
-                    return if message.is_empty() { format!("\0{}:", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
+                    return if message.is_empty() { format!("\0{}", o.class.name) } else { format!("\0{}: {}", o.class.name, message) };
                 }
                 let told = o.fields.borrow().iter().find(|(n, _)| n == "message").map(|(_, v)| v.plain());
                 match told {
@@ -243,8 +243,60 @@ impl<'a> Engine<'a> {
         fields.push(("\0arguments".into(), args.clone()));
         if let Some(name) = &self.lang.exception_args { fields.push((name.clone(), args)); }
         if let Some(name) = &self.lang.exception_cause { fields.push((name.clone(), cause)); }
+        if let Some(name) = &self.lang.exception_context { fields.push((name.clone(), Value::Null)); }
+        if let Some(name) = &self.lang.exception_suppress { fields.push((name.clone(), Value::Flag(false))); }
         self.made += 1;
         Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made }))
+    }
+
+    /// A value raised while another is being handled keeps that other
+    /// as its context, where the language names a member for one: the
+    /// innermost exception held, unless it is the very value raised. A
+    /// chain of contexts that would come back round to the raised value
+    /// is cut where it would, so that no exception ever stands behind
+    /// itself.
+    fn chain_context(&self, raised: &Value) {
+        let Some(name) = &self.lang.exception_context else { return };
+        let Value::Object(object) = raised.contents() else { return };
+        let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
+        if Rc::ptr_eq(&handling, &object) { return; }
+        let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
+        let mut link = handling.clone();
+        while let Some(Value::Object(further)) = behind(&link) {
+            if Rc::ptr_eq(&further, &object) {
+                if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
+                break;
+            }
+            link = further;
+        }
+        let mut fields = object.fields.borrow_mut();
+        match fields.iter_mut().find(|(n, _)| n == name) {
+            Some((_, held)) => *held = Value::Object(handling),
+            None => fields.push((name.clone(), Value::Object(handling))),
+        }
+    }
+
+    /// A fault of the kernel's own, met where exceptions are furnished,
+    /// becomes a raised value of the class the language names for it,
+    /// so that a clause may take it; any other ending stands as it was.
+    fn raised_of_note<T>(&mut self, ending: Flow<T>) -> Flow<T> {
+        match ending {
+            Err(Fault::Note(words)) if !self.lang.exceptions.is_empty() => match self.as_fault(&words) {
+                Some(value) => Err(Fault::Thrown(value)),
+                None => Err(Fault::Note(words)),
+            },
+            other => other,
+        }
+    }
+
+    /// The words for a value that cannot manage a context, its kind
+    /// named between them; the plain protocol complaint where the
+    /// language gives no such words.
+    fn unmanaged(&self, kind: &str) -> String {
+        match self.lang.with_invalid.as_slice() {
+            [before, after] => format!("\0{}{}{}", before, kind, after),
+            _ => self.special_fault(),
+        }
     }
 
     fn exception_class(&self, class: &Class) -> bool {
@@ -1030,6 +1082,7 @@ impl<'a> Engine<'a> {
             let message = self.exception_words(told, &named);
             let args = if message == format!("{}:", named) || message.is_empty() { Vec::new() } else { vec![Value::text(&message)] };
             let value = self.exception_instance(class, args, Value::Null);
+            self.chain_context(&value);
             if self.lang.catch_invalid.as_deref() == Some(told) {
                 if let Value::Object(object) = &value { object.fields.borrow_mut().push(("\0uncaught-words".into(), Value::text(told))); }
             }
@@ -1696,6 +1749,16 @@ impl<'a> Engine<'a> {
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        // A call that would stand deeper than the language allows is
+        // refused before anything of it runs, in the words the language
+        // gives, so that a clause may take the fault and the run go on
+        // beneath the limit. The outermost body is no call and is not
+        // counted.
+        if !program.body_of_all {
+            if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+                if self.calls.len() >= limit { return Err(format!("\0{}", words).into()); }
+            }
+        }
         let n = if let Some(rules) = &program.parameter_rules {
             let given = self.drop_many(n)?;
             let bound = self.bind_call(program, given, rules)?;
@@ -1930,7 +1993,13 @@ impl<'a> Engine<'a> {
             let kept = self.data.len();
             let mut given = vec![object];
             given.extend(args);
-            self.invoke(&method, given)?;
+            // The raised value is held while the manager lets the body
+            // go, so that whatever the leaving raises keeps it as context.
+            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+            let left = self.invoke(&method, given);
+            let left = self.raised_of_note(left);
+            self.caught.truncate(active);
+            left?;
             let answer = self.drop_top()?;
             self.data.truncate(kept);
             if matches!(&ending, Err(Fault::Thrown(_))) && self.special_truth(&answer)? {
@@ -1979,6 +2048,9 @@ impl<'a> Engine<'a> {
                         self.entering = None;
                         if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
                         let outcome = self.run_span(program, frame, instrs, arm.body);
+                        // A fault the clause itself met is raised while the
+                        // value it took is still held, and so has it as context.
+                        let outcome = self.raised_of_note(outcome);
                         if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
                         return outcome.map(|end| match end {
                             Passage::Along(at) if at == arm.body.1 => Passage::Along(plan.after),
@@ -2004,6 +2076,7 @@ impl<'a> Engine<'a> {
             if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
             let saved = self.data.len();
             let finished = self.run_span(program, frame, instrs, last);
+            let finished = self.raised_of_note(finished);
             self.caught.truncate(active);
             match finished {
                 Ok(Passage::Along(at)) if at == last.1 => self.data.truncate(saved),
@@ -3536,6 +3609,15 @@ impl<'a> Engine<'a> {
                 // A cursor is not gathered here: it is walked one member
                 // at a time, so a loop that breaks off leaves the rest.
                 if matches!(source, Value::Object(_) | Value::Cursor(_)) { self.data.push(source); return Ok(()); }
+                // Nor is a list, where walks are lazy: it is walked in the
+                // cell it lives in, so a member the body adds is handed
+                // out in its turn and one the body takes away is not.
+                if self.lang.yield_suspends {
+                    if let Some(living @ CursorSource::Living(..)) = Self::living_source(&source) {
+                        self.data.push(Self::core_cursor(living));
+                        return Ok(());
+                    }
+                }
                 match self.set_walk(&source) {
                     Some(walk) => walk,
                     None => Value::array(self.special_items(&source)?),
@@ -3812,7 +3894,10 @@ impl<'a> Engine<'a> {
                 // A builtin kind's word has a maker, where a class may stand on it.
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
                     && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref()));
-                Value::Flag(kind_maker || text_method || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                // A kind value and a builtin each have a name, where the
+                // language has a member for one.
+                let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
+                Value::Flag(kind_named || kind_maker || text_method || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
@@ -3838,6 +3923,8 @@ impl<'a> Engine<'a> {
                     Value::Fields(o)
                 }
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
+                Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
+                Value::SortOf(sort) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(Value::sort_called(sort)),
                 Value::Text(_) if Lang::spells(&self.lang.format_method, name) => {
                     return Err(self.lang.fmt_text_format_unready.first().cloned().unwrap_or_default().into());
                 }
@@ -4227,28 +4314,35 @@ impl<'a> Engine<'a> {
                 _ => Value::Flag(false),
             },
             Action::Reraise => {
-                let value = self.caught.last().cloned().ok_or_else(|| self.lang.throw_empty.clone().unwrap_or_default())?;
+                // Raising again with nothing held is a fault of its own,
+                // told under whatever class the language's words name.
+                let Some(value) = self.caught.last().cloned() else {
+                    return Err(format!("\0{}", self.lang.throw_empty.as_deref().unwrap_or_default()).into());
+                };
                 return Err(Fault::Thrown(value));
             }
             Action::AssertFault => {
                 let message = self.drop_top()?;
-                let class = Rc::new(Class {
-                    lineage: Vec::new(), direct: Vec::new(), outline: None,
-                    name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
-                    answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
-                    methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
-                });
-                let class = match self.lang.assert_kind.as_ref().and_then(|n| self.native_exceptions.get(n)) {
-                    Some(Value::Class(native)) => native.clone(), _ => class,
-                };
-                self.made += 1;
-                let fields = if matches!(&message, Value::Text(words) if words.is_empty()) {
-                    Vec::new()
-                } else { vec![("message".to_string(), message)] };
-                let raised = Value::Object(Rc::new(Instance {
-                    class, fields: RefCell::new(fields), mark: self.made,
-                }));
+                let bare = matches!(&message, Value::Text(words) if words.is_empty());
                 self.hurled_at.set(self.line);
+                // Where the language furnishes the class, the value raised
+                // is made as any of that class is, its message among the
+                // arguments; elsewhere a class of the name alone is made up.
+                let raised = match self.lang.assert_kind.as_ref().and_then(|n| self.native_exceptions.get(n)).cloned() {
+                    Some(Value::Class(native)) => self.exception_instance(native, if bare { Vec::new() } else { vec![message] }, Value::Null),
+                    _ => {
+                        let class = Rc::new(Class {
+                            lineage: Vec::new(), direct: Vec::new(), outline: None,
+                            name: self.lang.assert_kind.clone().unwrap_or_default(), base: None,
+                            answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(),
+                            methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                        });
+                        self.made += 1;
+                        let fields = if bare { Vec::new() } else { vec![("message".to_string(), message)] };
+                        Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made }))
+                    }
+                };
+                self.chain_context(&raised);
                 return Err(Fault::Thrown(raised));
             }
             Action::Hurl => {
@@ -4267,17 +4361,28 @@ impl<'a> Engine<'a> {
                 }
                     raised
                 } else { self.prepare_raised(value)? };
+                // Where exceptions are furnished and the language has words
+                // for it, nothing but an instance of one may be raised.
+                if let Some(words) = &self.lang.throw_invalid {
+                    if !self.lang.exceptions.is_empty() && !matches!(value.contents(), Value::Object(o) if self.exception_class(&o.class)) {
+                        return Err(format!("\0{}", words).into());
+                    }
+                }
                 if let (Value::Object(object), Some(cause)) = (&value, cause) {
                     let cause = self.prepare_raised(cause)?;
                     if !matches!(&cause, Value::Null) && !matches!(&cause, Value::Object(o) if self.exception_class(&o.class)) {
                         return Err(self.lang.exception_unready.clone().unwrap_or_default().into());
                     }
-                    if let Some(name) = &self.lang.exception_cause {
-                        let mut fields = object.fields.borrow_mut();
-                        if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = cause; }
-                        else { fields.push((name.clone(), cause)); }
+                    // A stated cause, nothing included, hides the context
+                    // without forgetting it.
+                    let mut fields = object.fields.borrow_mut();
+                    for (name, worth) in [(&self.lang.exception_cause, cause), (&self.lang.exception_suppress, Value::Flag(true))] {
+                        let Some(name) = name else { continue };
+                        if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = worth; }
+                        else { fields.push((name.clone(), worth)); }
                     }
                 }
+                self.chain_context(&value);
                 return Err(Fault::Thrown(value));
             }
             Action::Titled => match self.drop_top()? {
@@ -4340,9 +4445,14 @@ impl<'a> Engine<'a> {
             // be walked in its stead. Either way the walk begins here.
             Action::ContextEnter => {
                 let object = self.drop_top()?;
-                if matches!(&object, Value::Object(_)) {
-                    if self.special_value(&object, 34).is_none() { return Err(self.special_fault().into()); }
-                    self.special_call(&object, 33, Vec::new())?.ok_or_else(|| self.special_fault())?
+                let held = object.contents();
+                if let Value::Object(o) = &held {
+                    if self.special_value(&held, 34).is_none() { return Err(self.unmanaged(&o.class.name).into()); }
+                    self.special_call(&held, 33, Vec::new())?.ok_or_else(|| self.unmanaged(&o.class.name))?
+                } else if self.lang.with_invalid.len() == 2 {
+                    // A value that is no object has no such methods at all,
+                    // and a language with words for that says so by kind.
+                    return Err(self.unmanaged(&held.core_kind()).into());
                 } else { object }
             }
             Action::SettleObjects => {
@@ -7828,6 +7938,15 @@ impl<'a> Engine<'a> {
                     if let Some(b) = which { if let Some((word, _)) = self.lang.builtins.iter().find(|(_,v)| **v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
                 }
                 if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
+                // A trace is of no kind the core knows either; a language
+                // that names one for it is answered with a class so named.
+                if let (Value::Trace(_), Some(word)) = (&args[0], &self.lang.exception_traceback) {
+                    return Ok(Value::Class(Rc::new(Class {
+                        lineage: Vec::new(), direct: Vec::new(), outline: None, name: word.clone(), base: None,
+                        answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
+                        constants: Vec::new(), shared: RefCell::new(Vec::new()),
+                    })));
+                }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {

@@ -7,6 +7,16 @@ use num_bigint::BigInt;
 use std::hash::{Hasher, Hash};
 
 impl Value {
+    /// The word for a value of a kind, as CPython has it; a kind value
+    /// gives this as its own name.
+    pub fn word_for_kind(kind: crate::data::Kind) -> &'static str {
+        use crate::data::Kind;
+        match kind {
+            Kind::Whole => "int", Kind::Fraction | Kind::Decimal => "float", Kind::Chars => "str", Kind::Truth => "bool",
+            Kind::Vector => "list", Kind::Set => "set", Kind::Nothing => "NoneType",
+        }
+    }
+
     pub fn kind_word(&self) -> String {
         let word = match self {
             Self::Complex(_) => "complex",
