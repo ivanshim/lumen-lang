@@ -1,0 +1,7 @@
+True
+False True
+True
+True
+yes True True
+True False False True
+'<' not supported between instances of 'NoneType' and 'int'

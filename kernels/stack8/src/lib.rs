@@ -132,7 +132,7 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
              || key == "ext.lexical.string.bytes.ascii" || key == "ext.lexical.string.bytes.mixed")
             && words.first().map_or(false, |word| !word.is_empty() && e.starts_with(word))) { return e; }
         let words = &lang.call_builtin_amiss;
-        if strings::already_named(lang, &e) || crate::formatting::names_fault(lang, &e) || lang.slice_named(&e) || lang.protocol_named(&e) || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
+        if strings::already_named(lang, &e) || crate::formatting::names_fault(lang, &e) || lang.slice_named(&e) || lang.sequence_named(&e) || lang.protocol_named(&e) || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
         else if crate::complex::says(lang, &e) || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })

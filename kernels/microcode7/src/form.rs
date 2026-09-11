@@ -315,6 +315,13 @@ pub enum Prim {
     Append,
     Fetch,
     Replace,
+    /// Writing a place of a container back into what held it, once
+    /// something within that place has changed. It writes as `Replace`
+    /// does, save that where the very thing being written already
+    /// stands in that place nothing is written at all: a container
+    /// holding its places for good is then left as it is, since nothing
+    /// about it was to change.
+    Restore,
     Span,
     /// A map from the values given: a couple is a key and its value,
     /// anything else takes the next whole number as its key.

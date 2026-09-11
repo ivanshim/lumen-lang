@@ -666,6 +666,13 @@ pub enum Builtin {
     Append,
     Fetch,
     Replace,
+    /// Writing a place of a container back into what held it, after
+    /// something within that place has changed. It writes as `Replace`
+    /// does, save that where the very thing being written already
+    /// stands in that place nothing is written at all: a container
+    /// that holds its places for good is then left as it is rather
+    /// than refused, since nothing about it was to change.
+    Restore,
     Span,
 }
 

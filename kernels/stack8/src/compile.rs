@@ -809,7 +809,10 @@ impl<'a> Compiler<'a> {
     /// find the same cell.
     fn read_to_rewrite(&mut self, name: &str) {
         let mut slot = self.cell_to_write(name);
-        slot.moving = true;
+        // Where a language holds its sequences, what is written into is
+        // left where it stands while the write is made: a write that is
+        // refused must leave the name holding what it held before.
+        slot.moving = !self.lang.sequence_values;
         self.put(Instr::Read(slot));
     }
 
@@ -5123,7 +5126,7 @@ impl<'a> Compiler<'a> {
                     self.read(&held[i]);
                     self.read(&made);
                     self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
                     self.write(&made);
                 }
                 if names_handed { return Ok(()); }
@@ -5199,7 +5202,7 @@ impl<'a> Compiler<'a> {
                     self.read(&held[i]);
                     self.read(&made);
                     self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
                     self.write(&made);
                 }
                 self.read(&made);

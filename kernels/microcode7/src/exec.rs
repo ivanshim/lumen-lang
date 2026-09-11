@@ -2653,6 +2653,11 @@ impl<'a> Machine<'a> {
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
+                // A key that could be no key at all is refused before
+                // the map is taken up for writing, since the key may be
+                // the very map the place is taken out of.
+                let keyless = matches!(&*cell.borrow(), Value::Dict(_)).then(|| self.cannot_key(&at)).flatten();
+                if let Some(words) = keyless { return Err(words.into()); }
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     // Whatever a span picks out goes, and the rest
@@ -2661,6 +2666,25 @@ impl<'a> Machine<'a> {
                         let Value::Span(bounds) = &at else { unreachable!() };
                         let (_, picked, _) = self.span_selection(bounds, items.len())?;
                         let retained = items.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, v)| v.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
+                    // A tuple and text hold their places for good: a
+                    // language of sequences refuses to take one out of
+                    // either, and names the kind it was asked of.
+                    held @ (Value::Tuple(_) | Value::Text(_)) if self.works_sequences() => {
+                        return Err(self.deletion_refused(held).into());
+                    }
+                    // A row of such a language counts a place from the
+                    // end as well as from the start, refuses a key of
+                    // the wrong kind by that kind, and tells of a place
+                    // it does not hold in the words for one.
+                    held @ Value::Vector(_) if self.works_sequences() => {
+                        let Value::Vector(items) = held else { unreachable!() };
+                        let Some(offset) = (match &at { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None })
+                            else { return Err(self.key_refused(held, &at).into()) };
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_beyond(held).into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
@@ -2682,7 +2706,6 @@ impl<'a> Machine<'a> {
                         ))
                     }
                     Value::Dict(pairs) => {
-                        if let Some(words) = self.cannot_key(&at) { return Err(words.into()); }
                         // The key is hashed once, as the reference hashes it, before it is sought.
                         let wanted = self.hash_key(&at)?;
                         let present = self.key_held(pairs, &wanted)?;
@@ -3318,7 +3341,7 @@ impl<'a> Machine<'a> {
                     all.extend(values);
                     Ok(self.invoke(program, self.outermost.clone(), all)?)
                 }
-                Prim::Append | Prim::Replace => {
+                Prim::Append | Prim::Replace | Prim::Restore => {
                     let Some(Form::Read(slot)) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
@@ -3376,6 +3399,27 @@ impl<'a> Machine<'a> {
                         if let (Some(index), true) = (&key, self.appointed(&target, 12).is_some()) {
                             self.ask_special(&target, 12, &[index.clone(), value])?;
                             return Ok(Value::Nil);
+                        }
+                    }
+                    // Writing a place back into what held it, once
+                    // something inside it changed: where the very thing
+                    // being written already stands there, nothing about
+                    // the holder is to change and it is left alone.
+                    if *op == Prim::Restore {
+                        let standing = { let cells = f.cells.borrow(); cells[i].clone() };
+                        if let Some(key) = &key {
+                            if Self::one_cell(&value, &self.element(&standing, key, Reading::Plain).unwrap_or(Value::Nil)) {
+                                return Ok(Value::Nil);
+                            }
+                        }
+                    }
+                    // A tuple and text hold their places for good where
+                    // a language of sequences says so, whether one place
+                    // is written into or a whole run of them.
+                    if self.works_sequences() && key.is_some() {
+                        let standing = { let cells = f.cells.borrow(); cells[i].settled() };
+                        if matches!(standing, Value::Tuple(_) | Value::Text(_)) {
+                            return Err(self.writing_refused(&standing).into());
                         }
                     }
                     if let Some(Value::Span(bounds)) = &key {
@@ -3952,6 +3996,37 @@ impl<'a> Machine<'a> {
             };
         }
         let actual = receiver.settled();
+        // A tuple answers to the two methods that only look through it,
+        // and a row searched for a value it does not hold names that
+        // value; the words for both are the table's.
+        if self.works_sequences() && matches!(name, "index" | "count") && matches!(&actual, Value::Tuple(_) | Value::Vector(_)) {
+            let (Value::Tuple(items) | Value::Vector(items)) = &actual else { unreachable!() };
+            let most = if name == "index" { 3 } else { 1 };
+            if !keywords.is_empty() || arguments.is_empty() || arguments.len() > most {
+                return Err(self.method_fault("arguments").into());
+            }
+            let counted = |x: &Value| -> Result<i64, String> { match x.settled() {
+                Value::Small(n) => Ok(n), Value::Flag(t) => Ok(i64::from(t)),
+                Value::Huge(n) => Ok(n.to_i64().unwrap_or(i64::MAX)),
+                _ => Err(self.method_fault("arguments")),
+            }};
+            let inside = |n: i64| -> usize {
+                let place = if n < 0 { n.saturating_add(items.len() as i64) } else { n };
+                place.clamp(0, items.len() as i64) as usize
+            };
+            let from = match arguments.get(1) { Some(x) => inside(counted(x)?), None => 0 };
+            let upto = match arguments.get(2) { Some(x) => inside(counted(x)?), None => items.len() };
+            let matching: Vec<usize> = (from..upto.max(from)).filter(|at| contained_equal(&arguments[0], &items[*at])).collect();
+            if name == "count" { return Ok(Value::Small(matching.len() as i64)); }
+            return match matching.first() {
+                Some(at) => Ok(Value::Small(*at as i64)),
+                None => Err(match &actual {
+                    Value::Tuple(_) => self.sequence_piece("missing", 2).to_owned(),
+                    _ => format!("{}{}{}", self.sequence_piece("missing", 0),
+                        arguments[0].quoted(false), self.sequence_piece("missing", 1)),
+                }.into()),
+            };
+        }
         if name == "encode" && matches!(&actual, Value::Text(_)) {
             let mut options = arguments;
             for (key, value) in keywords {
@@ -5668,6 +5743,9 @@ impl<'a> Machine<'a> {
                 return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned());
             }
             (Prim::Contains | Prim::Absent, [needle, Value::Dict(entries)]) => {
+                // A value that could be no key of a map is in no map,
+                // and the language says so rather than answering no.
+                if let Some(words) = self.cannot_key(needle) { return Err(words); }
                 let key = self.hash_key(needle)?;
                 let mut found = false;
                 for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
@@ -5971,6 +6049,13 @@ impl<'a> Machine<'a> {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
                 self.prim_values(op, name, v)?
+            } else if matches!(op, Prim::OctetAssign(_) | Prim::Pointed) && self.works_sequences()
+                && matches!(v.first(), Some(Value::Shared(_) | Value::Mutable(..))) {
+                // A row written over keeps its cell: the write is made
+                // where the row stands, not on a copy of it, and the
+                // cell must still be the cell when it is handed back to
+                // the name, whatever is asked of it on the way.
+                self.prim_values(op, name, v)?
             } else if matches!(op, Prim::SetAssign(0) | Prim::Backwards | Prim::Iterated | Prim::Erase | Prim::Pointed) && v.first().map_or(false, |first| Self::dict_cell(first).is_some()) {
                 // A map keeps its cell here: written into in place, a
                 // key taken out of it, walked under watch forwards or
@@ -6062,11 +6147,19 @@ impl<'a> Machine<'a> {
             }
             return self.prim(op, name, &as_sets);
         }
-        if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..))) && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod) {
+        if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..)))
+            && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
+            && !(matches!(op, Prim::OctetAssign(_) | Prim::Pointed) && self.works_sequences()) {
             let settled: Vec<Value> = v.iter().map(Value::settled).collect();
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
+        // Rows, tuples and text as a language of sequences works them.
+        // Anything the sequences have no say in falls through to the
+        // readings below, as it would were there no such language.
+        if self.works_sequences() {
+            if let Some(answer) = self.sequence_working(op, v)? { return Ok(answer); }
+        }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
         if v.len() == 2 {
@@ -6203,6 +6296,11 @@ impl<'a> Machine<'a> {
         Ok(match op {
             Prim::Positive => { n(1)?; v[0].clone() }
             Prim::OctetAssign(times) => {
+                // A row written over with these signs is changed where
+                // it stands, so that every name for it sees the change.
+                if self.works_sequences() {
+                    if let Some(kept) = self.sequence_written_over(times, &v[0], &v[1])? { return Ok(kept); }
+                }
                 let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
                 match (&v[0], &changed) {
                     (Value::Octets { cell, changeable: true, .. }, Value::Octets { cell: content, .. }) => {
@@ -6864,7 +6962,17 @@ impl<'a> Machine<'a> {
             }
             Prim::Placed => {
                 n(3)?;
-                if matches!(v[0], Value::Tuple(_) | Value::Set(_)) { return Err(self.core_complaint("core.immutable", &v[0].kind_word())); }
+                // A tuple holds its places for good, and so does text
+                // where a language of sequences says so; the place
+                // written into is looked at through its cell, since a
+                // name hands one over rather than what it holds.
+                let standing = v[0].settled();
+                if self.works_sequences() && matches!(standing, Value::Tuple(_) | Value::Text(_)) {
+                    return Err(self.writing_refused(&standing));
+                }
+                if matches!(standing, Value::Tuple(_) | Value::Set(_)) {
+                    return Err(self.core_complaint("core.immutable", &standing.kind_word()));
+                }
                 match &v[0] {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
@@ -6901,6 +7009,9 @@ impl<'a> Machine<'a> {
                     _ => return Err(self.no_places()),
                 }
             }
+            // A restoring write met as a plain value is a plain write:
+            // the leniency belongs to the place it is written into.
+            Prim::Restore => return self.prim_values(Prim::Placed, name, v),
             Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
             // Source read while the program runs, built against the
             // globals it already has and run where it stands. A file
@@ -7448,6 +7559,25 @@ impl<'a> Machine<'a> {
                         let bounds = self.span_settled(bounds)?;
                         let (_, picked, _) = self.span_selection(&bounds, items.len())?;
                         let retained = items.iter().enumerate().filter(|(at, _)| !picked.contains(at)).map(|(_, x)| x.clone()).collect();
+                        Value::Vector(Rc::new(retained))
+                    }
+                    // A tuple and text hold their places for good: a
+                    // language of sequences refuses to take one out of
+                    // either, and names the kind it was asked of.
+                    held @ (Value::Tuple(_) | Value::Text(_)) if self.works_sequences() => {
+                        return Err(self.deletion_refused(held).into());
+                    }
+                    // A row of such a language counts a place from the
+                    // end as well as from the start, refuses a key of
+                    // the wrong kind by that kind, and tells of a place
+                    // it does not hold in the words for one.
+                    held @ Value::Vector(_) if self.works_sequences() => {
+                        let Value::Vector(items) = held else { unreachable!() };
+                        let Some(offset) = (match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None })
+                            else { return Err(self.key_refused(held, &v[1]).into()) };
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_beyond(held).into()); }
+                        let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
                     Value::Vector(items) if self.table.has_any("ext.stmt.del") => {
@@ -8506,6 +8636,183 @@ impl<'a> Machine<'a> {
         self.as_key(at)
     }
 
+    /// The kind to name where a value cannot be hashed. A tuple is
+    /// hashed by its items, so what is named is the first item that
+    /// cannot be, and not the tuple holding it.
+    fn unhashable_kind(value: &Value) -> String {
+        match value {
+            Value::Shared(cell) | Value::Mutable(cell, _) => Self::unhashable_kind(&cell.borrow()),
+            Value::Tuple(items) | Value::Row(items) => match items.iter().find(|item| item.hash_number().is_none()) {
+                Some(item) => Self::unhashable_kind(item),
+                None => value.kind_word(),
+            },
+            other => other.kind_word(),
+        }
+    }
+
+    /// Whether this table asks for the sequence workings at all.
+    fn works_sequences(&self) -> bool { self.table.flag("ext.op.sequence.values") }
+
+    /// One piece of a sequence label, or nothing where the table is
+    /// silent about it.
+    fn sequence_piece(&self, label: &str, at: usize) -> &str {
+        self.table.strings(&format!("ext.op.sequence.{label}")).get(at).map_or("", String::as_str)
+    }
+
+    /// The refusal of a joining that cannot be made. The kind on the
+    /// left is named twice over: once for what was asked of it, once
+    /// for what the other side would have to be.
+    fn joining_refused(&self, left: &Value, right: &Value) -> String {
+        format!("{}{}{}{}{}{}", self.sequence_piece("concat", 0), left.kind_word(),
+            self.sequence_piece("concat", 1), right.kind_word(),
+            self.sequence_piece("concat", 2), left.kind_word())
+    }
+
+    /// The refusal of a repetition asked for by something that is no
+    /// whole number, naming what was handed over instead.
+    fn repeating_refused(&self, by: &Value) -> String {
+        format!("{}{}{}", self.sequence_piece("repeat", 0), by.kind_word(), self.sequence_piece("repeat", 1))
+    }
+
+    /// The words for a count of repetitions too wide to stand for a
+    /// place in a row.
+    fn repeating_too_wide(&self) -> String { self.sequence_piece("repeat", 2).to_owned() }
+
+    /// The words for a place a sequence does not hold. Text is spoken
+    /// of by its longer name here, as the words themselves have it.
+    fn place_beyond(&self, of: &Value) -> String {
+        let kind = match of { Value::Text(_) => "string".to_owned(), other => other.kind_word() };
+        format!("{}{}{}", self.sequence_piece("index", 0), kind, self.sequence_piece("index", 1))
+    }
+
+    /// Whether two values are one and the same holding place, so that
+    /// writing either where the other stands changes nothing.
+    fn one_cell(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Shared(x) | Value::Mutable(x, _), Value::Shared(y) | Value::Mutable(y, _)) => Rc::ptr_eq(x, y),
+            _ => false,
+        }
+    }
+
+    /// The refusal of a write into a sequence that cannot be changed.
+    fn writing_refused(&self, of: &Value) -> String {
+        format!("{}{}{}", self.sequence_piece("assign", 0), of.kind_word(), self.sequence_piece("assign", 1))
+    }
+
+    /// The refusal of a deletion from a sequence that cannot be changed.
+    fn deletion_refused(&self, of: &Value) -> String {
+        format!("{}{}{}", self.sequence_piece("delete", 0), of.kind_word(), self.sequence_piece("delete", 1))
+    }
+
+    /// The refusal of a key of the wrong kind. Text has wording of its
+    /// own, taking no run of places for a key.
+    fn key_refused(&self, of: &Value, key: &Value) -> String {
+        match of {
+            Value::Text(_) => format!("{}{}{}", self.sequence_piece("subscript", 2), key.kind_word(), self.sequence_piece("subscript", 3)),
+            other => format!("{}{}{}{}", self.sequence_piece("subscript", 0), other.kind_word(),
+                self.sequence_piece("subscript", 1), key.kind_word()),
+        }
+    }
+
+    /// How often a sequence is to be repeated. A count too wide to name
+    /// a place is refused whichever way it leans; one under nought
+    /// leaves the sequence with nothing in it.
+    fn repeat_count(&self, by: &Value) -> Result<usize, String> {
+        let often = match by {
+            Value::Small(n) => BigInt::from(*n),
+            Value::Huge(n) => n.as_ref().clone(),
+            Value::Flag(t) => BigInt::from(u8::from(*t)),
+            other => return Err(self.repeating_refused(other)),
+        };
+        if often.to_isize().is_none() { return Err(self.repeating_too_wide()); }
+        Ok(often.to_usize().unwrap_or(0))
+    }
+
+    /// A row laid down again and again, with room asked for first.
+    fn laid_again(&self, items: &[Value], often: usize) -> Result<Vec<Value>, String> {
+        let wanted = items.len().checked_mul(often).ok_or_else(|| self.repeating_too_wide())?;
+        let mut row: Vec<Value> = Vec::new();
+        row.try_reserve(wanted).map_err(|_| self.repeating_too_wide())?;
+        for _ in 0..often { row.extend(items.iter().cloned()); }
+        Ok(row)
+    }
+
+    /// The workings a language of sequences gives rows, tuples and text:
+    /// joining, repeating, and the order two of a kind stand in, which
+    /// is settled place by place. Nothing at all where the operation
+    /// belongs to none of them.
+    fn sequence_working(&mut self, op: Prim, v: &[Value]) -> Result<Option<Value>, String> {
+        let [left, right] = v else { return Ok(None) };
+        let strung = |x: &Value| matches!(x, Value::Vector(_) | Value::Tuple(_));
+        let inside = |x: &Value| match x { Value::Vector(row) | Value::Tuple(row) => row.as_ref().clone(), _ => Vec::new() };
+        match op {
+            Prim::Plus if strung(left) || strung(right) => {
+                let mut row = inside(left);
+                match (left, right) {
+                    (Value::Vector(_), Value::Vector(_)) => { row.extend(inside(right)); Ok(Some(Value::Vector(Rc::new(row)))) }
+                    (Value::Tuple(_), Value::Tuple(_)) => { row.extend(inside(right)); Ok(Some(Value::Tuple(Rc::new(row)))) }
+                    _ => Err(self.joining_refused(left, right)),
+                }
+            }
+            Prim::Times if strung(left) || strung(right) => {
+                let (row, by) = if strung(left) { (left, right) } else { (right, left) };
+                let laid = self.laid_again(&inside(row), self.repeat_count(by)?)?;
+                Ok(Some(match row { Value::Tuple(_) => Value::Tuple(Rc::new(laid)), _ => Value::Vector(Rc::new(laid)) }))
+            }
+            // Text laid down again is counted out below; only a count
+            // that is no whole number is answered here, so that it is
+            // refused in these words rather than the reader's.
+            Prim::Times if matches!(left, Value::Text(_)) || matches!(right, Value::Text(_)) => {
+                let by = if matches!(left, Value::Text(_)) { right } else { left };
+                match by {
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(None),
+                    other => Err(self.repeating_refused(other)),
+                }
+            }
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if strung(left) && strung(right) && left.kind_word() == right.kind_word() => {
+                let (first, second) = (inside(left), inside(right));
+                let mut place = 0;
+                let rank = loop {
+                    match (first.get(place), second.get(place)) {
+                        (None, None) => break std::cmp::Ordering::Equal,
+                        (None, Some(_)) => break std::cmp::Ordering::Less,
+                        (Some(_), None) => break std::cmp::Ordering::Greater,
+                        (Some(x), Some(y)) => {
+                            let alike = self.prim(Prim::Eq, "", &[x.clone(), y.clone()])?;
+                            if self.stands_true(&alike) { place += 1; continue; }
+                            let under = self.prim(Prim::Lt, "", &[x.clone(), y.clone()])?;
+                            break match self.stands_true(&under) { true => std::cmp::Ordering::Less, false => std::cmp::Ordering::Greater };
+                        }
+                    }
+                };
+                Ok(Some(Value::Flag(match op {
+                    Prim::Lt => rank.is_lt(), Prim::Le => rank.is_le(), Prim::Gt => rank.is_gt(), _ => rank.is_ge(),
+                })))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// A row written over with `+=` or `*=`. The row keeps its cell and
+    /// is changed where it stands; adding takes in whatever can be
+    /// walked, and not only another row. Nothing at all where the place
+    /// written into holds no row, so the plain working answers instead.
+    fn sequence_written_over(&mut self, repeat: bool, target: &Value, given: &Value) -> Result<Option<Value>, String> {
+        let (Value::Shared(cell) | Value::Mutable(cell, _)) = target else { return Ok(None) };
+        let cell = cell.clone();
+        let Value::Vector(items) = cell.borrow().clone() else { return Ok(None) };
+        let row = if repeat {
+            self.laid_again(&items, self.repeat_count(&given.settled())?)?
+        } else {
+            let mut row = items.as_ref().clone();
+            let kind = given.kind_word();
+            row.extend(self.gathered_members(given).map_err(|_| self.core_complaint("core.uniterable", &kind))?);
+            row
+        };
+        cell.replace(Value::Vector(Rc::new(row)));
+        Ok(Some(target.clone()))
+    }
+
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
@@ -8526,12 +8833,19 @@ impl<'a> Machine<'a> {
             return place.and_then(|p| row.get(p)).cloned().ok_or_else(|| format!("\0{}: {}", self.table.single("ext.system.fault.class.index").unwrap_or_default(), self.table.single("ext.system.fault.index").unwrap_or_default()));
         }
         if let Value::Tuple(values)=target {
+            if self.works_sequences() && !matches!(at, Value::Span(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                return Err(self.key_refused(target, at));
+            }
             let selected=if let Value::Span(bounds)=at {
                 let (_,places,_)=self.span_selection(bounds,values.len())?;
                 Value::Tuple(Rc::new(places.into_iter().map(|i|values[i].clone()).collect()))
             }else{
                 let index=at.as_big()?;let index=if index<BigInt::from(0){index+values.len()}else{index};
-                index.to_usize().and_then(|i|values.get(i)).cloned().ok_or_else(||self.detail("unready").to_owned())?
+                let beyond = || match self.works_sequences() {
+                    true => format!("\0{}", self.place_beyond(target)),
+                    false => self.detail("unready").to_owned(),
+                };
+                index.to_usize().and_then(|i|values.get(i)).cloned().ok_or_else(beyond)?
             };
             return Ok(selected);
         }
@@ -8668,6 +8982,9 @@ impl<'a> Machine<'a> {
         }
         if self.table.flag("ext.op.index.text.negative") && !matches!(at,Value::Span(_)) {
             if let Value::Text(word) = target {
+                if self.works_sequences() && !matches!(at, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return Err(self.key_refused(target, at));
+                }
                 let number = match at {
                     Value::Flag(f) => if *f {1} else {0}, Value::Small(i) => *i,
                     Value::Huge(i) => i.to_i64().ok_or_else(||crate::text::complaint(self.table,"index"))?,
@@ -8686,6 +9003,22 @@ impl<'a> Machine<'a> {
             let offset = match at { Value::Small(i) => *i, Value::Flag(f) => if *f {1} else {0}, _ => return Err(crate::text::complaint(self.table,"integer")) };
             let place = if offset >= 0 {offset} else {(row.len() as i64).saturating_add(offset)};
             return match row.get(place as usize) {Some(word) => Ok(Value::text(word)),None => Err(self.span_complaint("bounds"))};
+        }
+        // A row of a language of sequences counts its places from the
+        // end as well as from the start, and names its own kind both
+        // where the key is wrong and where the place is not there.
+        if self.works_sequences() && !matches!(at, Value::Span(_)) {
+            if let Value::Vector(values) = target {
+                let Some(number) = (match at {
+                    Value::Small(n) => Some(i128::from(*n)),
+                    Value::Flag(t) => Some(i128::from(*t)),
+                    Value::Huge(n) => Some(n.to_i128().unwrap_or(i128::MAX)),
+                    _ => None,
+                }) else { return Err(self.key_refused(target, at)) };
+                let place = if number < 0 { number + values.len() as i128 } else { number };
+                return usize::try_from(place).ok().and_then(|i| values.get(i)).cloned()
+                    .ok_or_else(|| format!("\0{}", self.place_beyond(target)));
+            }
         }
         if let Value::Span(bounds) = at {
             let row = match target {
@@ -10593,7 +10926,7 @@ impl Machine<'_> {
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
-                input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &input[0].kind_word()))
+                input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &Self::unhashable_kind(&input[0])))
             }
             IdentityOf => {
                 require(1, 1)?;
@@ -10749,6 +11082,28 @@ impl Machine<'_> {
                 for value in entries {
                     let criterion = match &ordering { None | Some(Value::Nil) => value.clone(), Some(work) => self.core_run(work, vec![value.clone()])? };
                     decorated.push((criterion, value));
+                }
+                if self.works_sequences() {
+                    // Where the language orders its sequences, the rank
+                    // is asked of the language itself, so that rows and
+                    // tuples are set against one another place by place
+                    // as they are everywhere else. The places keep the
+                    // order they came in where neither comes first.
+                    let mut ranked: Vec<(Value, Value)> = Vec::new();
+                    for (criterion, value) in decorated {
+                        let mut at = ranked.len();
+                        while at > 0 {
+                            let under = self.prim(Prim::Lt, name, &[criterion.clone(), ranked[at - 1].0.clone()])?;
+                            let over = self.prim(Prim::Lt, name, &[ranked[at - 1].0.clone(), criterion.clone()])?;
+                            let first = match descending || op == Greatest { true => self.stands_true(&over), false => self.stands_true(&under) };
+                            if first { at -= 1; } else { break; }
+                        }
+                        ranked.insert(at, (criterion, value));
+                    }
+                    return match op {
+                        Ordered => Ok(Value::Vector(Rc::new(ranked.into_iter().map(|pair| pair.1).collect())).keep(true)),
+                        _ => Ok(ranked.remove(0).1),
+                    };
                 }
                 let mut failure = None;
                 decorated.sort_by(|a, b| {
