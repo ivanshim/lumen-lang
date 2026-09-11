@@ -48,7 +48,7 @@ fn shown(value: &Value, words: &Wording) -> String {
     value.representation(words)
 }
 
-fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
+pub fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
     if depth > 100 { return true; }
     match value {
         Value::Collection(held, _) => Rc::ptr_eq(held,cell) || reaches(&held.borrow(),cell,depth+1),
@@ -173,7 +173,18 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     }
                     return Ok(Value::array(parts.iter().map(|x| Value::text(x)).collect()).held(true));
                 }
-                "join" => { arity(1,1)?; members(&a[0],fault)?.iter().map(|x| text(x,fault)).collect::<Result<Vec<_>,_>>()?.join(s) }
+                // Gathered straight into the one answer: a row of
+                // pieces made to be thrown away again costs more than
+                // the joining does.
+                "join" => {
+                    arity(1,1)?;
+                    let mut gathered = String::new();
+                    for (at, item) in members(&a[0],fault)?.iter().enumerate() {
+                        if at != 0 { gathered.push_str(s); }
+                        gathered.push_str(&text(item,fault)?);
+                    }
+                    gathered
+                }
                 "replace" => { arity(2,3)?; let n = a.get(2).map(|v| integer(v,fault)).transpose()?.unwrap_or(-1); s.replacen(&text(&a[0],fault)?, &text(&a[1],fault)?, if n < 0 { usize::MAX } else { n as usize }) }
                 "find" | "rfind" | "index" | "count" | "startswith" | "endswith" => {
                     arity(1,3)?;

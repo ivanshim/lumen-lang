@@ -107,7 +107,22 @@ pub struct Progression {
 }
 
 impl Progression {
+    /// Where the three bounds each sit inside a machine word, the size
+    /// of the walk and every member of it can be reckoned in the wider
+    /// word, sparing the great numbers. A stride of nought is refused
+    /// here and left to the older road, which answers as it always did.
+    fn plain_bounds(&self) -> Option<(i128, i128, i128)> {
+        let stride = i128::from(self.stride.to_i64()?);
+        if stride == 0 { return None; }
+        let first = i128::from(self.first.to_i64()?);
+        let limit = i128::from(self.limit.to_i64()?);
+        let span = if stride < 0 { first - limit } else { limit - first };
+        let size = if span > 0 { (span - 1) / stride.abs() + 1 } else { 0 };
+        Some((first, stride, size))
+    }
+
     pub fn count(&self) -> BigInt {
+        if let Some((_, _, size)) = self.plain_bounds() { return BigInt::from(size); }
         let forward = self.stride > BigInt::zero();
         if (forward && self.first >= self.limit) || (!forward && self.first <= self.limit) {
             return BigInt::zero();
@@ -116,6 +131,16 @@ impl Progression {
     }
 
     pub fn item(&self, position: &BigInt) -> Option<Value> {
+        // A loop over a progression asks this at every turn, so the
+        // plain answer is given without a great number being made.
+        if let Some((first, stride, size)) = self.plain_bounds() {
+            if let Some(asked) = position.to_i64() {
+                let mut offset = i128::from(asked);
+                if offset < 0 { offset += size; }
+                if offset < 0 || offset >= size { return None; }
+                return Some(Value::Small((first + stride * offset) as i64));
+            }
+        }
         let count = self.count();
         let offset = if position < &BigInt::zero() { position + &count } else { position.clone() };
         if offset < BigInt::zero() || offset >= count { return None; }
@@ -526,6 +551,13 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        // Most askings are of two small numbers, two great ones, or two
+        // pieces of text, and all three can be settled here and now.
+        // Left to the ratios below, a pair of small numbers would have
+        // two great numbers made of it and then be cross-multiplied.
+        if let (Value::Small(here), Value::Small(there)) = (self, other) { return here == there; }
+        if let (Value::Huge(here), Value::Huge(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
+        if let (Value::Text(here), Value::Text(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         match (self, other) {

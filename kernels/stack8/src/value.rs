@@ -106,13 +106,43 @@ pub struct Counted {
 }
 
 impl Counted {
+    /// The three bounds as machine words where they all fit in one,
+    /// and nothing where any of them does not. A stride of nought is
+    /// left to the great-number road, which complains of it as before.
+    fn narrow(&self) -> Option<(i128, i128, i128)> {
+        let step = i128::from(self.step.to_i64()?);
+        if step == 0 { return None; }
+        Some((i128::from(self.start.to_i64()?), i128::from(self.stop.to_i64()?), step))
+    }
+
+    /// How many places a walk of those bounds holds. Wide words are
+    /// roomy enough: the two ends lie within one word each, so their
+    /// distance lies within two.
+    fn places(start: i128, stop: i128, step: i128) -> i128 {
+        let distance = if step > 0 { stop - start } else { start - stop };
+        if distance <= 0 { 0 } else { (distance - 1) / step.abs() + 1 }
+    }
+
     pub fn length(&self) -> BigInt {
+        if let Some((start, stop, step)) = self.narrow() {
+            return BigInt::from(Self::places(start, stop, step));
+        }
         let distance = if self.step.is_positive() { &self.stop - &self.start } else { &self.start - &self.stop };
         if distance <= BigInt::zero() { BigInt::zero() }
         else { (distance - 1) / self.step.abs() + 1 }
     }
 
     pub fn at(&self, mut index: BigInt) -> Option<Value> {
+        // A walk within the machine's words is counted in words. This
+        // is the road a loop over a counted row takes at every step,
+        // and the great numbers cost more than the walk itself.
+        if let (Some((start, stop, step)), Some(wanted)) = (self.narrow(), index.to_i64()) {
+            let length = Self::places(start, stop, step);
+            let mut place = i128::from(wanted);
+            if place < 0 { place += length; }
+            if place < 0 || place >= length { return None; }
+            return Some(Value::Small((start + place * step) as i64));
+        }
         let length = self.length();
         if index.is_negative() { index += &length; }
         (index >= BigInt::zero() && index < length).then(|| Value::of_big(&self.start + index * &self.step))
@@ -601,6 +631,15 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        // Two of a kind, and that kind a plain one: answered outright,
+        // before the number tower is entered or a cell is looked into.
+        // These three are the great bulk of all the asking.
+        match (self, other) {
+            (Value::Small(here), Value::Small(there)) => return here == there,
+            (Value::Huge(here), Value::Huge(there)) => return here == there,
+            (Value::Text(here), Value::Text(there)) => return here == there,
+            _ => {}
+        }
         if let Value::Collection(cell, _) = self { return cell.borrow().equals(&other.contents()); }
         if let Value::Collection(cell, _) = other { return self.equals(&cell.borrow()); }
         if let Some(order) = crate::arith::order_values(self, other) {
