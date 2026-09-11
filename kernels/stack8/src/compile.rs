@@ -3373,7 +3373,11 @@ impl<'a> Compiler<'a> {
         while self.on_any(&lang.decorator_words) {
             self.take();
             let word = self.look().lexeme.clone();
-            let kind = if self.look_ahead(1).shape == Shape::LineEnd {
+            // Where the definition spells the descriptor protocol, every
+            // decorator is an expression applied to the member, the
+            // wrapping builtins among them; else the three are known.
+            let kind = if lang.class_details.get("descriptor.get").map_or(false, |v| !v.is_empty()) { 0 }
+            else if self.look_ahead(1).shape == Shape::LineEnd {
                 if Lang::spells(&lang.class_static, &word) { 1 }
                 else if Lang::spells(&lang.class_method, &word) { 2 }
                 else if Lang::spells(&lang.class_property, &word) { 3 }

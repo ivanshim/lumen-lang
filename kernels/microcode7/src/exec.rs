@@ -145,6 +145,8 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
     ancestor: Option<Rc<Blueprint>>,
+    /// The blueprint of properties, once one has been asked for.
+    property_kind: Option<Rc<Blueprint>>,
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
@@ -373,7 +375,7 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             imported: HashMap::new(),
-            ancestor: None, native_kinds: Vec::new(), routine_members: Vec::new(),
+            ancestor: None, property_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -2243,7 +2245,9 @@ impl<'a> Machine<'a> {
             // both.
             Form::ShareField(of, called) => {
                 let thing = self.value_of(of, frame)?;
-                if self.has_class_order() && called.as_ref() == self.detail("namespace") && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..)) {
+                // A namespace is not a field kept under that name but a
+                // view of the thing's own, and is written into as one.
+                if self.has_class_order() && called.as_ref() == self.detail("namespace") && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Thing(_)) {
                     return self.read_class_member(thing, called, false);
                 }
                 let Value::Thing(thing) = thing else {
@@ -2647,6 +2651,8 @@ impl<'a> Machine<'a> {
                         Some(Value::Blueprint(b)) => Some(b),
                         // A native kind the table lets a class stand on.
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
+                        // The property builtin, stood on as a class.
+                        Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
                             return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into());
                         }
@@ -2658,6 +2664,7 @@ impl<'a> Machine<'a> {
                     match given.next() {
                         Some(Value::Blueprint(b)) => answers.push(b),
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
+                        Some(named) if self.has_class_order() && self.spells_property_kind(&named) => { let kind = self.property_blueprint(); answers.push(kind); }
                         _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
                     }
                 }
@@ -3199,6 +3206,8 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let mut values = self.value_list(args, frame)?;
+                    // The property builtin takes its accessors by name; making the property sorts them out.
+                    if *op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
                         let (mut positions, keywords) = self.open_arguments(values)?;
                         if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
@@ -3377,6 +3386,7 @@ impl<'a> Machine<'a> {
         let name = word.to_string();
         Some((|| {
             let mut values = self.value_list(args, frame)?;
+            if op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
             if matches!(stands, Value::Intrinsic(_)) && self.table.flag("ext.syntax.call.bind_names") {
                 let (mut positions, names) = self.open_arguments(values)?;
                 if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
@@ -7239,6 +7249,8 @@ impl<'a> Machine<'a> {
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
                     (Value::Bound(a,_), Value::Bound(b,_)) => Rc::ptr_eq(a,b),
+                    // Every read of a method ties it afresh: two reads are never one value.
+                    (Value::Method(..), Value::Method(..)) => false,
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
                     (Value::Thing(a), Value::Thing(b)) => Rc::ptr_eq(a, b),
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),

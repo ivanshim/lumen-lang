@@ -2157,6 +2157,60 @@
   "ext.stmt.class.detail.unready": [
     "NotImplementedError: this class operation is not supported"
   ],
+  "ext.stmt.class.detail.descriptor.delete": [
+    "__delete__"
+  ],
+  "ext.stmt.class.detail.descriptor.foreign": [
+    "TypeError: descriptor '",
+    "' for '",
+    "' objects doesn't apply to a '",
+    "' object"
+  ],
+  "ext.stmt.class.detail.descriptor.get": [
+    "__get__"
+  ],
+  "ext.stmt.class.detail.descriptor.name": [
+    "__set_name__"
+  ],
+  "ext.stmt.class.detail.descriptor.set": [
+    "__set__"
+  ],
+  "ext.stmt.class.detail.property.deleter": [
+    "deleter"
+  ],
+  "ext.stmt.class.detail.property.doc": [
+    "doc"
+  ],
+  "ext.stmt.class.detail.property.fdel": [
+    "fdel"
+  ],
+  "ext.stmt.class.detail.property.fget": [
+    "fget"
+  ],
+  "ext.stmt.class.detail.property.fset": [
+    "fset"
+  ],
+  "ext.stmt.class.detail.property.getter": [
+    "getter"
+  ],
+  "ext.stmt.class.detail.property.readonly": [
+    "AttributeError: readonly attribute"
+  ],
+  "ext.stmt.class.detail.property.undeletable": [
+    "AttributeError: property",
+    " of '",
+    "' object has no deleter"
+  ],
+  "ext.stmt.class.detail.property.unreadable": [
+    "AttributeError: property",
+    " of '",
+    "' object has no getter"
+  ],
+  "ext.stmt.class.detail.property.unwritable": [
+    "AttributeError: property",
+    " of '",
+    "' object has no setter"
+  ],
   "ext.stmt.class.detail.varnames": [
     "co_varnames"
   ],

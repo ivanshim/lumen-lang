@@ -2277,12 +2277,16 @@ impl<'a> Builder<'a> {
         while self.on_any("ext.stmt.decorator") {
             self.advance();
             let mut manner = 'd';
-            if self.glance(1).shape == Shape::LineEnd {
+            // With the descriptor protocol in the table, every decorator
+            // is an expression applied to the member, the three wrapping
+            // builtins with the rest; without it they are told apart.
+            let told_apart = self.table.single("ext.stmt.class.detail.descriptor.get").is_none();
+            if told_apart && self.glance(1).shape == Shape::LineEnd {
                 for (label, mark) in [("ext.stmt.class.static", 's'), ("ext.stmt.class.classmethod", 'c'), ("ext.stmt.class.property", 'p')] {
                     if self.table.spells(label, &self.look().lexeme) { manner = mark; }
                 }
             }
-            let setter = self.table.spells("ext.op.member", &self.glance(1).lexeme)
+            let setter = told_apart && self.table.spells("ext.op.member", &self.glance(1).lexeme)
                 && self.table.spells("ext.stmt.class.property.setter", &self.glance(2).lexeme)
                 && self.glance(3).shape == Shape::LineEnd;
             let kept = match (manner, setter) {

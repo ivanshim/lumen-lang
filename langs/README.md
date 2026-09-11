@@ -1276,6 +1276,38 @@ only. The extension labels so far, all from PHP:
   `mro.amiss` gives the words for an ordering that cannot be made.
   `attribute.amiss` gives three pieces enclosing the class and member
   names in a complaint; `unready` refuses a working not yet furnished.
+- `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
+  `descriptor.delete` and `descriptor.name`: the words a class member
+  answers the descriptor protocol with, each a list of words. With
+  `descriptor.get` spelled, a member whose class furnishes that reader
+  is read through it, told the thing (or nothing, on a read through the
+  class) and the class the read came through; a member whose class
+  furnishes a writer or a remover takes writes and removals, and speaks
+  before the thing's own fields, where a member with a reader alone
+  gives way to them. The naming hook is called for every member a class
+  declares, once the class stands and before its forebears hear of it,
+  with the class and the member's name. Functions, the static and class
+  wrappers and slots each read as a member that binds, so their reader
+  may be called by the program; a slot answers the writer and remover
+  too, and keeps its value in the thing under the slot's name and the
+  class that declared it, so that two classes of one line naming the
+  same slot keep two. `descriptor.foreign` gives four pieces enclosing
+  the slot's name, its class and the class of a thing it does not apply
+  to. Decorators are then ordinary expressions applied to the member,
+  the wrapping builtins among them; the `property` builtin becomes a
+  class a program may stand on, whose things keep their accessors and
+  answer the protocol with them. `property.fget`, `property.fset` and
+  `property.fdel` name the kept accessors, read-only, `property.readonly`
+  refusing a write to one; `property.getter`, `property.deleter` and the
+  earlier `property.setter` name the calls making a fresh property with
+  one accessor changed; `property.doc` names the argument giving its first
+  string, which is otherwise the getter's own. `property.unreadable`,
+  `property.unwritable` and `property.undeletable` each give three pieces
+  around the property's name, where it has been told one, and the class
+  of the thing, for an accessor the property has not. A method is bound
+  afresh at every read, so two reads are never one value, though they
+  compare alike. A read that ends in a missing member, wherever it ended
+  so, is offered to the class's fallback `reader` before it is reported.
 - `ext.builtin.isinstance` and `ext.builtin.issubclass` ask whether a
   thing or class belongs beneath a class, or any class in a tuple.
   `ext.builtin.callable` asks whether a value may be called.
@@ -4224,6 +4256,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.delete` | - | - | `__delete__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.foreign` | - | - | `TypeError: descriptor '` `' for '` `' objects doesn't apply to a '` `' object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.get` | - | - | `__get__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.name` | - | - | `__set_name__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.set` | - | - | `__set__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |
@@ -4237,6 +4274,16 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.name` | - | - | `__name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.deleter` | - | - | `deleter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.doc` | - | - | `doc` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.fdel` | - | - | `fdel` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.fget` | - | - | `fget` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.fset` | - | - | `fset` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.getter` | - | - | `getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.readonly` | - | - | `AttributeError: readonly attribute` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.undeletable` | - | - | `AttributeError: property` ` of '` `' object has no deleter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.unreadable` | - | - | `AttributeError: property` ` of '` `' object has no getter` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.property.unwritable` | - | - | `AttributeError: property` ` of '` `' object has no setter` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.qualified` | - | - | `__qualname__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.receiver` | - | - | `__self__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.remove` | - | - | `__delattr__` | - | - | - | - | - | - | - |

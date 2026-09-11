@@ -92,11 +92,206 @@ impl<'a> Engine<'a> {
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: RefCell::new(members) });
+        self.furnish_slots(&c)?;
+        // Each member that asks to be told its name is told it, once the
+        // class stands, before any forebear hears of the new class.
+        if !self.class_word("descriptor.name").is_empty() {
+            let declared = c.shared.borrow().clone();
+            for (member, held) in declared {
+                let Some(told) = self.descriptor_hook(&held, "descriptor.name") else { continue };
+                self.call_descriptor(&held, told, vec![Value::Class(c.clone()), Value::text(&member)])?;
+            }
+        }
         if let Some(hook) = c.lineage.iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
             if matches!(&hook,Value::Adapter(w) if w.0==5){let bound=self.bind_class_value(hook,None,c.clone())?;self.class_apply(bound,vec![])?;}
             else{self.class_apply(hook, vec![Value::Class(c.clone())])?;}
         }
         Ok(Value::Class(c))
+    }
+    /// The slots a class names become members of it, each a descriptor
+    /// that keeps the slot's value in the thing under a name of its own,
+    /// so that two classes of one line naming the same slot keep two.
+    fn furnish_slots(&mut self, c: &Rc<Class>) -> Flow<()> {
+        if self.class_word("descriptor.get").is_empty() { return Ok(()); }
+        let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else { return Ok(()) };
+        let named: Vec<Value> = match slots.contents() { Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(), single => vec![single] };
+        for slot in named {
+            let Value::Text(word) = slot else { return Err(self.class_refusal()) };
+            if word.as_ref() == self.class_word("namespace") { continue; }
+            if Self::own_class_value(c, &word).is_some() { return Err(self.class_refusal()); }
+            c.shared.borrow_mut().push((word.to_string(), Self::adapter(16, vec![Value::Text(word.clone()), Value::Class(c.clone())])));
+        }
+        Ok(())
+    }
+    /// Where a slot's value is kept in a thing: under the slot's name and
+    /// the class that declared it. A thing not of that class has no such
+    /// place, and the descriptor says so.
+    fn slot_place(&self, thing: &Value, parts: &[Value]) -> Flow<String> {
+        let (Value::Object(o), Some(Value::Class(owner))) = (thing, parts.get(1)) else { return Err(self.class_refusal()) };
+        let word = parts[0].plain();
+        if !Rc::ptr_eq(&o.class, owner) && !o.class.lineage.iter().any(|b| Rc::ptr_eq(b, owner)) {
+            let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
+            if pieces.len() != 4 { return Err(self.class_refusal()); }
+            return Err(format!("{}{word}{}{}{}{}{}", pieces[0], pieces[1], owner.name, pieces[2], o.class.name, pieces[3]).into());
+        }
+        Ok(format!("\0slot:{word}:{:p}", Rc::as_ptr(owner)))
+    }
+    fn slot_read(&self, thing: &Value, parts: &[Value]) -> Flow<Value> {
+        let place = self.slot_place(thing, parts)?;
+        let Value::Object(o) = thing else { return Err(self.class_refusal()) };
+        let kept = o.fields.borrow().iter().find(|(n, _)| *n == place).map(|(_, v)| v.clone());
+        kept.ok_or_else(|| self.missing_member(thing, &parts[0].plain()))
+    }
+    fn slot_write(&self, thing: &Value, parts: &[Value], value: Option<Value>) -> Flow<Value> {
+        let place = self.slot_place(thing, parts)?;
+        let Value::Object(o) = thing else { return Err(self.class_refusal()) };
+        Self::write_members(&mut o.fields.borrow_mut(), &place, value, false).map_err(|_| self.missing_member(thing, &parts[0].plain()))?;
+        Ok(Value::Null)
+    }
+    /// The class every property is a thing of, made once. Its members
+    /// are the workings of the protocol -- reading, writing and removing
+    /// through the accessors a property keeps -- and the calls that make
+    /// a fresh property from an old one with one accessor changed. A
+    /// class written to stand on it inherits all of them.
+    pub(super) fn property_class(&mut self) -> Rc<Class> {
+        if let Some(c) = &self.property_class { return c.clone(); }
+        let root = self.root_class();
+        let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::ClassTool(11)).map(|(n, _)| n.clone()).unwrap_or_default();
+        let mut members = Vec::new();
+        let workings = [("descriptor.get", 20), ("descriptor.set", 21), ("descriptor.delete", 22), ("property.getter", 23), ("property.deleter", 25), ("descriptor.name", 27)];
+        for (part, tag) in workings { members.push((self.class_word(part).to_string(), Self::adapter(tag, vec![]))); }
+        if let Some(word) = self.lang.property_setter.first() { members.push((word.clone(), Self::adapter(24, vec![]))); }
+        if let Some(word) = &self.lang.constructor { members.push((word.clone(), Self::adapter(26, vec![]))); }
+        for part in ["property.fget", "property.fset", "property.fdel", "doc"] {
+            members.push((self.class_word(part).to_string(), Self::adapter(28, vec![Value::text(Self::accessor_place(part))])));
+        }
+        let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
+            direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
+            methods: vec![], constants: vec![], shared: RefCell::new(members) });
+        self.property_class = Some(c.clone());
+        c
+    }
+    /// Where a property keeps each accessor among its own members, under
+    /// names no program can spell.
+    fn accessor_place(part: &str) -> &'static str {
+        match part { "property.fget" => "\0fget", "property.fset" => "\0fset", "property.fdel" => "\0fdel", "doc" => "\0doc", _ => "\0name" }
+    }
+    /// Whether a value read as a class names the property class: the
+    /// builtin's word, read before anything was written to that name.
+    pub(super) fn names_property_class(&self, value: &Value) -> bool {
+        let word = match value { Value::Native(_, word) => word.as_ref(), Value::Adapter(w) if w.0 == 8 => match &w.1[0] { Value::Text(t) => t.as_ref(), _ => return false }, _ => return false };
+        self.lang.builtins.get(word) == Some(&Builtin::ClassTool(11))
+    }
+    fn property_accessor(property: &Instance, place: &str) -> Option<Value> {
+        property.fields.borrow().iter().find(|(n, _)| n == place).map(|(_, v)| v.clone()).filter(|v| !matches!(v, Value::Null))
+    }
+    /// A property's complaint about an accessor it has not: the words of
+    /// the label around the property's name, where it was told one, and
+    /// the class of the thing it was asked about.
+    fn property_complaint(&self, part: &str, property: &Instance, thing: &Value) -> Fault {
+        let pieces = self.lang.class_details.get(part).cloned().unwrap_or_default();
+        if pieces.len() != 3 { return self.class_refusal(); }
+        let named = Self::property_accessor(property, "\0name").map(|n| format!(" '{}'", n.plain())).unwrap_or_default();
+        let of = match thing { Value::Object(o) => o.class.name.clone(), Value::Class(c) => c.name.clone(), other => other.plain() };
+        format!("{}{named}{}{of}{}", pieces[0], pieces[1], pieces[2]).into()
+    }
+    /// The workings of the property class, each handed the property
+    /// first and then what the program gave.
+    fn property_work(&mut self, tag: u8, args: Vec<Value>) -> Flow<Value> {
+        let Some(Value::Object(property)) = args.first().cloned() else { return Err(self.class_refusal()) };
+        let given = &args[1..];
+        match tag {
+            20 => {
+                let thing = given.first().cloned().unwrap_or(Value::Null);
+                if matches!(thing, Value::Null) { return Ok(args[0].clone()); }
+                let Some(getter) = Self::property_accessor(&property, "\0fget") else { return Err(self.property_complaint("property.unreadable", &property, &thing)) };
+                self.class_apply(getter, vec![thing])
+            }
+            21 => {
+                let [thing, value] = given else { return Err(self.class_refusal()) };
+                let Some(setter) = Self::property_accessor(&property, "\0fset") else { return Err(self.property_complaint("property.unwritable", &property, thing)) };
+                self.class_apply(setter, vec![thing.clone(), value.clone()])?;
+                Ok(Value::Null)
+            }
+            22 => {
+                let [thing] = given else { return Err(self.class_refusal()) };
+                let Some(remover) = Self::property_accessor(&property, "\0fdel") else { return Err(self.property_complaint("property.undeletable", &property, thing)) };
+                self.class_apply(remover, vec![thing.clone()])?;
+                Ok(Value::Null)
+            }
+            // A fresh property of the same class, one accessor changed;
+            // its name is left for the class that takes it to give.
+            23..=25 => {
+                let [accessor] = given else { return Err(self.class_refusal()) };
+                let place = ["\0fget", "\0fset", "\0fdel"][(tag - 23) as usize];
+                let mut fields: Vec<(String, Value)> = property.fields.borrow().iter().filter(|(n, _)| n != place && n != "\0name").cloned().collect();
+                fields.push((place.to_string(), accessor.clone()));
+                self.made += 1;
+                Ok(Value::Object(Rc::new(Instance { class: property.class.clone(), fields: RefCell::new(fields), mark: self.made })))
+            }
+            26 => {
+                let parts = ["property.fget", "property.fset", "property.fdel", "property.doc"];
+                let mut kept: Vec<Value> = vec![Value::Null; 4];
+                let mut at = 0;
+                for (key, value) in self.call_items(given.to_vec())? {
+                    let place = match key {
+                        Some(key) => parts.iter().position(|p| self.class_word(p) == key).ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?,
+                        None => { at += 1; at - 1 }
+                    };
+                    if place >= 4 { return Err(self.class_refusal()); }
+                    kept[place] = value;
+                }
+                let mut fields = property.fields.borrow_mut();
+                for (place, value) in ["\0fget", "\0fset", "\0fdel", "\0doc"].iter().zip(kept) { fields.push((place.to_string(), value)); }
+                Ok(Value::Null)
+            }
+            27 => {
+                let [_, name] = given else { return Err(self.class_refusal()) };
+                let _ = Self::write_members(&mut property.fields.borrow_mut(), "\0name", Some(name.clone()), false);
+                Ok(Value::Null)
+            }
+            _ => Err(self.class_refusal()),
+        }
+    }
+    /// What a property's kept accessor reads as: the accessor itself, or
+    /// for its first string, the one it was given, else its getter's.
+    fn property_reading(&self, property: &Instance, place: &str) -> Value {
+        if let Some(v) = Self::property_accessor(property, place) { return v; }
+        if place == "\0doc" {
+            if let Some(Value::Routine(getter)) = Self::property_accessor(property, "\0fget") {
+                return getter.doc.clone().map_or(Value::Null, |s| Value::text(&s));
+            }
+        }
+        Value::Null
+    }
+    /// The hook a class member answers the protocol with, where the
+    /// member is a thing whose class furnishes one.
+    fn descriptor_hook(&self, member: &Value, part: &str) -> Option<Value> {
+        let word = self.class_word(part);
+        if word.is_empty() { return None; }
+        let Value::Object(o) = member else { return None };
+        self.class_value(&o.class, word)
+    }
+    fn call_descriptor(&mut self, member: &Value, hook: Value, args: Vec<Value>) -> Flow<Value> {
+        let Value::Object(o) = member else { return Err(self.class_refusal()) };
+        let bound = self.bind_class_value(hook, Some(member.clone()), o.class.clone())?;
+        self.class_apply(bound, args)
+    }
+    /// A member that takes writes as well as reads: it is asked before a
+    /// thing's own fields, where one that only reads gives way to them.
+    fn takes_writes(&self, member: &Value) -> bool {
+        if let Value::Adapter(w) = member { return matches!(w.0, 6 | 16 | 28); }
+        self.descriptor_hook(member, "descriptor.set").is_some() || self.descriptor_hook(member, "descriptor.delete").is_some()
+    }
+    /// Whether a fault is a missing member's, however it was raised.
+    fn attribute_fault(&self, fault: &Fault) -> bool {
+        let kind = self.class_word("attribute.amiss").split(':').next().unwrap_or_default();
+        if kind.is_empty() { return false; }
+        match fault {
+            Fault::Note(told) => told.split(':').next() == Some(kind),
+            Fault::Thrown(Value::Object(o)) => std::iter::once(&o.class).chain(o.class.lineage.iter()).any(|c| c.name == kind),
+            _ => false,
+        }
     }
     fn own_class_value(c: &Class, name: &str) -> Option<Value> {
         if let Some((_,v)) = c.shared.borrow().iter().find(|(n,_)| n == name) { return Some(v.clone()); }
@@ -143,6 +338,22 @@ impl<'a> Engine<'a> {
                     if w.0 == 10 { self.class_get(subject,name,true) }
                     else { self.class_write(subject,name,if w.0 == 11 {args.get(2).cloned()} else {None},true) }
                 }
+                // The reader of a member that binds: given the thing, or
+                // nothing and the class, it answers what a read through
+                // that thing or class would.
+                15 if !args.is_empty() && args.len() <= 2 => {
+                    let thing = match &args[0] { Value::Null => None, other => Some(other.clone()) };
+                    let owner = match (args.get(1), &thing) {
+                        (Some(Value::Class(c)), _) => c.clone(),
+                        (_, Some(Value::Object(o))) => o.class.clone(),
+                        (_, Some(_)) => self.root_class(),
+                        (_, None) => return Err(self.class_refusal()),
+                    };
+                    self.bind_class_value(w.1[0].clone(), thing, owner)
+                }
+                17 if args.len() == 2 => self.slot_write(&args[0], &w.1, Some(args[1].clone())),
+                18 if args.len() == 1 => self.slot_write(&args[0], &w.1, None),
+                20..=27 => self.property_work(w.0, args),
                 _ => Err(self.class_refusal()),
             },
             Value::Text(word) => {
@@ -190,17 +401,55 @@ impl<'a> Engine<'a> {
                 4 => Ok(w.1[0].clone()),
                 5 => Ok(Self::adapter(3,vec![w.1[0].clone(),Value::Class(class)])),
                 6 if subject.is_some() => self.class_apply(w.1[0].clone(),vec![subject.unwrap()]),
+                16 if subject.is_some() => self.slot_read(&subject.unwrap(), &w.1),
+                // A working of the property class, read through a
+                // property: bound to it. Its kept accessors read plainly.
+                20..=27 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                28 => match subject { Some(Value::Object(o)) => Ok(self.property_reading(&o, &w.1[0].plain())), _ => Ok(value) },
                 _ => Ok(value),
             };
         }
+        // A member whose class furnishes a reader is read through it,
+        // told the thing -- or nothing, for a read on the class -- and
+        // the class the read went through.
+        if let Some(reader) = self.descriptor_hook(&value, "descriptor.get") {
+            return self.call_descriptor(&value, reader, vec![subject.unwrap_or(Value::Null), Value::Class(class)]);
+        }
         match (value,subject) {
             (Value::Routine(f),Some(Value::Object(o))) => Ok(Value::Method(o,f)),
+            (Value::Routine(f),Some(other)) => Ok(Self::adapter(3, vec![Value::Routine(f), other])),
             (v,_) => Ok(v),
         }
     }
+    /// A member read that ends in a missing member -- whether the class's
+    /// own reading hook said so, or a property's getter, or nothing was
+    /// found -- is offered to the class's fallback reader before it is
+    /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        let answer = self.class_read(subject.clone(), name, plain);
+        if plain { return answer; }
+        let Err(fault) = &answer else { return answer };
+        let Value::Object(o) = &subject else { return answer };
+        if !self.attribute_fault(fault) { return answer; }
+        let Some(reader) = self.lang.reader.as_deref().and_then(|n| self.class_value(&o.class, n)) else { return answer };
+        let bound = self.bind_class_value(reader, Some(subject.clone()), o.class.clone())?;
+        self.class_apply(bound, vec![Value::text(name)])
+    }
+    fn class_read(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
         if let Value::Adapter(property) = &subject {
             if property.0 == 6 && Lang::spells(&self.lang.property_setter, name) { return Ok(Self::adapter(13, vec![subject])); }
+        }
+        // A routine, a wrapped routine and a slot each read as a member
+        // that binds; the slot writes and removes as well.
+        if name == self.class_word("descriptor.get") && !name.is_empty()
+            && (matches!(&subject, Value::Routine(_)) || matches!(&subject, Value::Adapter(w) if matches!(w.0, 4 | 5 | 16))) {
+            return Ok(Self::adapter(15, vec![subject]));
+        }
+        if let Value::Adapter(w) = &subject {
+            if w.0 == 16 && !name.is_empty() {
+                if name == self.class_word("descriptor.set") { return Ok(Self::adapter(17, w.1.clone())); }
+                if name == self.class_word("descriptor.delete") { return Ok(Self::adapter(18, w.1.clone())); }
+            }
         }
         match &subject {
             // A builtin kind's word, read as a class: its maker, and its name.
@@ -238,10 +487,11 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Fields(o.clone()));
                 }
                 let member=self.class_value(&o.class,name);
-                if let Some(Value::Adapter(w))=&member {if w.0==6 {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}}
+                // A member that takes writes speaks before the thing's own
+                // fields; any other member speaks after them.
+                if member.as_ref().map_or(false,|m|self.takes_writes(m)) {return self.bind_class_value(member.unwrap(),Some(subject.clone()),o.class.clone());}
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class.clone());}
-                if !plain {if let Some(f)=self.lang.reader.as_deref().and_then(|n|self.class_value(&o.class,n)){return self.class_apply(f,vec![subject.clone(),Value::text(name)]);}}
                 // The worth a thing keeps answers for the methods of its kind.
                 if let (Some(worth),Some(op))=(Self::worth_of(&subject),self.lang.value_methods.get(name).cloned()) {
                     return Ok(Value::ValueMethod(Rc::new((worth,op))));
@@ -320,6 +570,27 @@ impl<'a> Engine<'a> {
                             return Err(absent);
                         }
                     }
+                }
+                // A member that takes writes takes this one: a slot keeps
+                // the value, a property's kept accessor refuses, and any
+                // other asks its class's writer or remover.
+                if let Some(member)=self.class_value(&o.class,name) {
+                    if let Value::Adapter(w)=&member {
+                        if w.0==16 {return self.slot_write(&subject,&w.1,value);}
+                        if w.0==28 {return Err(self.class_word("property.readonly").to_string().into());}
+                    }
+                    if self.takes_writes(&member) {
+                        let part=if value.is_some(){"descriptor.set"}else{"descriptor.delete"};
+                        let hook=self.descriptor_hook(&member,part).ok_or_else(||self.missing_member(&subject,name))?;
+                        let mut args=vec![subject.clone()];args.extend(value);
+                        self.call_descriptor(&member,hook,args)?;
+                        return Ok(Value::Null);
+                    }
+                }
+                // A thing's own namespace, written back to it after an
+                // entry was put in, is where it was: nothing to do.
+                if name==self.class_word("namespace") {
+                    if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
                 }
                 if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
                 if value.is_some() && !self.slots_allow(&o.class,name) {return Err(absent);}
@@ -410,11 +681,11 @@ impl<'a> Engine<'a> {
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
-            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(Fault::Note(s)) if s.starts_with(self.class_word("attribute.amiss"))=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17|18|20..=27))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
+            3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}
-                Err(s.into())},Err(e)=>Err(e)}},
+                Err(fault)},Err(e)=>Err(e)}},
             4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.class_refusal());};self.class_write(one,n,args.get(2).cloned(),false)},
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{
@@ -423,6 +694,9 @@ impl<'a> Engine<'a> {
                 else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
                 names.sort();names.dedup();Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()))
             }
+            // A property is a thing of the property class, where the
+            // definition spells the protocol; else the older wrapper.
+            11 if !self.class_word("descriptor.get").is_empty()=>{let class=self.property_class();self.class_make(class,args)},
             9..=11 if !args.is_empty()=>Ok(Self::adapter(which-5,args)),
             _=>Err(self.class_refusal()),
         }
