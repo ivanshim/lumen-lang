@@ -11,4 +11,8 @@ def round(x, decimals):
         r = (y * 2 + 1) // 2
     else:
         r = (y * 2 - 1) // 2
-    return r / scale
+    q = r // scale
+    if q * scale == r:
+        return q
+    else:
+        return r / scale
