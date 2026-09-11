@@ -89,6 +89,28 @@ impl Value {
         }
     }
 
+    /// Whether this is the very same value as that one, rather than
+    /// one like it: a small number by what it stands for, and anything
+    /// held behind a pointer by that pointer.
+    pub fn one_and_same(&self, other: &Self) -> bool {
+        use std::rc::Rc;
+        match (self, other) {
+            (Self::Progression(a), Self::Progression(b)) => Rc::ptr_eq(a, b),
+            (Self::Mutable(a, _), Self::Mutable(b, _)) => Rc::ptr_eq(a, b),
+            (Self::Shared(a), Self::Shared(b)) => Rc::ptr_eq(a, b),
+            (Self::Vector(a), Self::Vector(b)) => Rc::ptr_eq(a, b),
+            (Self::Tuple(a), Self::Tuple(b)) => Rc::ptr_eq(a, b),
+            (Self::Dict(a), Self::Dict(b)) => Rc::ptr_eq(a, b),
+            (Self::Set(a), Self::Set(b)) => Rc::ptr_eq(a, b),
+            (Self::Text(a), Self::Text(b)) => Rc::ptr_eq(a, b),
+            (Self::Thing(a), Self::Thing(b)) => Rc::ptr_eq(a, b),
+            (Self::Small(a), Self::Small(b)) => a == b,
+            (Self::Flag(a), Self::Flag(b)) => a == b,
+            (Self::Nil, Self::Nil) => true,
+            _ => false,
+        }
+    }
+
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
             Self::Complex(pair) => {

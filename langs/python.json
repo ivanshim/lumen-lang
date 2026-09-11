@@ -1129,7 +1129,17 @@
     "IndexError: range object index out of range"
   ],
   "ext.builtin.range.integer": [
-    "TypeError: range() arguments must be integers"
+    "TypeError: '",
+    "' object cannot be interpreted as an integer"
+  ],
+  "ext.builtin.range.members": [
+    "start",
+    "stop",
+    "step"
+  ],
+  "ext.builtin.range.missing": [
+    "ValueError: ",
+    " is not in range"
   ],
   "ext.builtin.range.non_integer": [
     "TypeError: range needs whole-number bounds"

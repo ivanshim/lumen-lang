@@ -575,6 +575,28 @@ impl Value {
 
     /// Equal: numbers by value across kinds, arrays elementwise, programs
     /// by identity, the rest by content.
+    /// Whether these are one value and not two alike: a small number
+    /// by its worth, and whatever is kept behind a pointer by that
+    /// pointer.
+    pub fn same_value(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
+            (Value::Collection(x, _), Value::Collection(y, _)) => Rc::ptr_eq(x, y),
+            (Value::Bond(x), Value::Bond(y)) => Rc::ptr_eq(x, y),
+            (Value::Binding(x), Value::Binding(y)) => Rc::ptr_eq(x, y),
+            (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
+            (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
+            (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+            (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
+            (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
+            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Small(x), Value::Small(y)) => x == y,
+            (Value::Flag(x), Value::Flag(y)) => x == y,
+            (Value::Null, Value::Null) => true,
+            _ => false,
+        }
+    }
+
     pub fn equals(&self, other: &Value) -> bool {
         if let Value::Collection(cell, _) = self { return cell.borrow().equals(&other.contents()); }
         if let Value::Collection(cell, _) = other { return self.equals(&cell.borrow()); }
@@ -611,6 +633,10 @@ impl Value {
             (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
             (Value::Descriptor(a), Value::Descriptor(b)) => Rc::ptr_eq(a, b),
             (Value::Method(a, p), Value::Method(b, q)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(p, q),
+            // Two readings of a value's own method come to the same
+            // method where the word is the word and the value read is
+            // the very value, not merely one equal to it.
+            (Value::ValueMethod(a), Value::ValueMethod(b)) => Rc::ptr_eq(a, b) || a.1 == b.1 && a.0.same_value(&b.0),
             (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))

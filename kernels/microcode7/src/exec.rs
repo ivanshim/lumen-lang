@@ -3716,6 +3716,13 @@ impl<'a> Machine<'a> {
         if let Value::Span(bounds) = value {
             return self.span_bound_named(name).map(|i| bounds[i].clone());
         }
+        // A stepped walk holds three numbers and no places; each of the
+        // three answers to its own word.
+        if let Value::Progression(walk) = value {
+            if let Some(which) = self.walk_member_named(name) {
+                return Some(Value::from_big(match which { 0 => walk.first.clone(), 1 => walk.limit.clone(), _ => walk.stride.clone() }));
+            }
+        }
         match value {
             Value::Thing(t) if names.get(35).map_or(false, |s| s == name) => return Some(Value::Blueprint(t.of.clone())),
             Value::Thing(t) if names.get(36).map_or(false, |s| s == name) => return Some(Value::Attributes(t.clone())),
@@ -3985,6 +3992,17 @@ impl<'a> Machine<'a> {
                 return crate::text::apply(self.table, *work, name, &given, self.wording()).map_err(Escape::from);
             }
         }
+        if let Value::Progression(walk) = &actual {
+            if matches!(name, "index" | "count") {
+                if !keywords.is_empty() || arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                let along = Self::walk_position(walk, &arguments[0]);
+                if name == "count" { return Ok(Value::Small(if along.is_some() { 1 } else { 0 })); }
+                return match along {
+                    Some(position) => Ok(Value::from_big(position)),
+                    None => Err(self.walk_fault("ext.builtin.range.missing", Some(&arguments[0].quoted(false))).into()),
+                };
+            }
+        }
         if matches!(receiver.settled(), Value::Set(_)) {
             let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None };
             if let Some(code) = code {
@@ -4071,6 +4089,24 @@ impl<'a> Machine<'a> {
             sorted.insert(at, pair);
         }
         Ok(sorted.into_iter().map(|entry| entry.1).collect())
+    }
+
+    /// Which of a stepped walk's three numbers this word asks for,
+    /// where the table has words for them at all.
+    fn walk_member_named(&self, name: &str) -> Option<usize> {
+        self.table.strings("ext.builtin.range.members").iter().position(|word| !word.is_empty() && word == name)
+    }
+
+    /// How far along a stepped walk a worth stands, or nowhere at all.
+    /// A worth that is no whole number lies nowhere, and so does one
+    /// the stride passes over.
+    fn walk_position(walk: &crate::data::Progression, worth: &Value) -> Option<BigInt> {
+        let whole = worth.as_big().ok().filter(|n| worth.equals(&Value::from_big(n.clone())))?;
+        let forward = walk.stride > BigInt::from(0);
+        let reached = if forward { whole >= walk.first && whole < walk.limit } else { whole <= walk.first && whole > walk.limit };
+        let along = &whole - &walk.first;
+        if !reached || &along % &walk.stride != BigInt::from(0) { return None; }
+        Some(along / &walk.stride)
     }
 
     /// Which bound a name reads, where the table names the three.
@@ -4400,6 +4436,17 @@ impl<'a> Machine<'a> {
     fn too_many_figures(&self, limit: usize) -> String {
         let (head, tail) = self.table.around("ext.builtin.to_int.digits.amiss").unwrap_or(("", ""));
         format!("{head}{limit}{tail}")
+    }
+
+    /// What a stepped walk complains of. The table's words already open
+    /// with the class the complaint answers to, so the reply is marked
+    /// as told in full and nothing further is written over it.
+    fn walk_fault(&self, key: &str, named: Option<&str>) -> String {
+        let said = self.argument_fault(key, named);
+        match said.is_empty() || !self.table.has_any("ext.builtin.exceptions") {
+            true => said,
+            false => format!("\0{said}"),
+        }
     }
 
     fn argument_fault(&self, key: &str, name: Option<&str>) -> String {
@@ -6402,7 +6449,7 @@ impl<'a> Machine<'a> {
                         else { Value::Small(i64::from(*cell.borrow().get(at).ok_or_else(|| self.octet_error("index"))?)) },
                     Value::Progression(walk) => {
                         if wants_key { Value::Small(at as i64) }
-                        else { walk.item(&BigInt::from(at)).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None))? }
+                        else { walk.item(&BigInt::from(at)).ok_or_else(|| self.walk_fault("ext.builtin.range.index", None))? }
                     }
                     Value::TextRow(row, _) => {
                         let word = row.get(at).ok_or_else(||self.span_complaint("bounds"))?;
@@ -6658,6 +6705,7 @@ impl<'a> Machine<'a> {
                 let (class, own) = match &v[0] {
                     Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
                     Value::Span(_) => (None, self.span_bound_named(&word).is_some()),
+                    Value::Progression(_) => (None, self.walk_member_named(&word).is_some()),
                     Value::Thing(o) => (Some(&o.of), self.member_place(&o.holds.borrow(), &word).is_some()),
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
@@ -8118,6 +8166,17 @@ impl<'a> Machine<'a> {
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                // The total of a stepped walk follows from its three
+                // numbers; the places are never laid out, so a walk of
+                // a thousand million adds up as quickly as a short one.
+                if let Value::Progression(walk) = v[0].settled() {
+                    let how_many = walk.count();
+                    let added = if how_many == BigInt::from(0) { BigInt::from(0) }
+                        else { (&walk.first + (&walk.first + (&how_many - 1) * &walk.stride)) * &how_many / 2 };
+                    let opening = match v.get(1).cloned() { Some(Value::Flag(flag)) => Value::Small(flag as i64), Some(given) => given, None => Value::Small(0) };
+                    return math::compute(Calc::Plus, &opening, &Value::from_big(added))
+                        .unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()));
+                }
                 if self.table.flag("ext.stmt.yield.suspends") {
                     let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
                     let counted = |value| if let Value::Flag(flag) = value { Value::Small(flag as i64) } else { value };
@@ -8128,9 +8187,9 @@ impl<'a> Machine<'a> {
                         answer = math::compute(Calc::Plus, &answer, &counted(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()))?;
                     }
                 }
-                let members = self.gathered_members(&v[0])?;
                 let start = v.get(1).cloned().unwrap_or(Value::Small(0));
                 let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
+                let members = self.gathered_members(&v[0])?;
                 members.into_iter().try_fold(number(start), |prior, item| {
                     math::compute(Calc::Plus, &prior, &number(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or("Invalid collection argument").into()))
                 })?
@@ -8142,7 +8201,7 @@ impl<'a> Machine<'a> {
                     Value::Huge(big) => Ok((**big).clone()),
                     Value::Small(small) => Ok(BigInt::from(*small)),
                     Value::Flag(flag) => Ok(BigInt::from(if *flag { 1 } else { 0 })),
-                    _ => Err(self.argument_fault("ext.builtin.range.integer", None)),
+                    _ => Err(self.walk_fault("ext.builtin.range.integer", Some(&item.kind_word()))),
                 };
                 let (first, limit) = if v.len() == 1 { (BigInt::from(0), integer(&v[0])?) }
                     else { (integer(&v[0])?, integer(&v[1])?) };
@@ -8537,9 +8596,9 @@ impl<'a> Machine<'a> {
         }
         if let Value::Progression(walk) = target {
             match at {
-                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.argument_fault("ext.builtin.range.index", None)),
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => return walk.item(&at.as_big()?).ok_or_else(|| self.walk_fault("ext.builtin.range.index", None)),
                 Value::Span(_) => return Err(self.span_complaint("unsupported")),
-                _ => return Err(self.argument_fault("ext.builtin.range.integer", None)),
+                _ => return Err(self.walk_fault("ext.builtin.range.integer", Some(&at.kind_word()))),
             }
         }
         // A place holding a cell that names share reads as whatever the
@@ -10743,6 +10802,17 @@ impl Machine<'_> {
             Ordered | Least | Greatest => {
                 require(1, if op == Ordered { 1 } else { usize::MAX })?;
                 if input.len() > 1 && fallback.is_some() { return Err(self.core_complaint("core.default.many", "")); }
+                // The smallest and the largest of a stepped walk are the
+                // two ends of it, which its numbers give outright.
+                if op != Ordered && input.len() == 1 && matches!(ordering, None | Some(Value::Nil)) {
+                    if let Value::Progression(walk) = input[0].settled() {
+                        let how_many = walk.count();
+                        if how_many == BigInt::from(0) { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)); }
+                        let other_end = &walk.first + (&how_many - 1) * &walk.stride;
+                        let (under, over) = if walk.stride > BigInt::from(0) { (walk.first.clone(), other_end) } else { (other_end, walk.first.clone()) };
+                        return Ok(Value::from_big(if op == Greatest { over } else { under }));
+                    }
+                }
                 let entries = if input.len() > 1 { input.clone() } else { self.core_collect(&input[0])? };
                 if entries.is_empty() && op != Ordered { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)); }
                 let mut decorated = Vec::new();

@@ -402,7 +402,19 @@ only. The extension labels so far, all from PHP:
   and walks need no array made beforehand. A slice of it remains wanting.
   `ext.builtin.range.zero`, `.integer` and `.index` give plain complaints
   for a step of nought, a bound or index of the wrong kind, and a place
-  beyond the walk.
+  beyond the walk. The words of `.integer` are given in two pieces, the
+  kind that was handed over standing between them.
+- `ext.builtin.range.members`: the three words a range answers to for its
+  own bounds, in the order start, end, step. Reading one of them hands
+  back the number the range was made with rather than any place in it, so
+  a range of a thousand million tells its bounds as readily as a short
+  one. Where the label is empty a range has no members to read, and the
+  words are asked for of whatever else the definition allows.
+- `ext.builtin.range.missing`: the words, in two pieces, for a worth that
+  stands nowhere in a range, said when the range is asked where that
+  worth lies. The worth itself is written between the two pieces. The
+  tally of how often a worth stands in a range wants no words, being
+  nought or one.
 - `ext.builtin.write.operator`: a switch; the writer (`builtin.write`) is
   read the same way, as an operator and not as a call, so a bracket after
   it groups what follows rather than holding its argument. It takes the
@@ -3961,7 +3973,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.builtin.range.index` | - | - | `IndexError: range object index out of range` | - | - | - | - | - | - | - |
-| `ext.builtin.range.integer` | - | - | `TypeError: range() arguments must be integers` | - | - | - | - | - | - | - |
+| `ext.builtin.range.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
+| `ext.builtin.range.members` | - | - | `start` `stop` `step` | - | - | - | - | - | - | - |
+| `ext.builtin.range.missing` | - | - | `ValueError: ` ` is not in range` | - | - | - | - | - | - | - |
 | `ext.builtin.range.non_integer` | - | - | `TypeError: range needs whole-number bounds` | - | - | - | - | - | - | - |
 | `ext.builtin.range.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
