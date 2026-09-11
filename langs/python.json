@@ -877,6 +877,9 @@
   "ext.builtin.method.error.pop": [
     "IndexError: pop from empty list"
   ],
+  "ext.builtin.method.error.popitem": [
+    "KeyError: 'popitem(): dictionary is empty'"
+  ],
   "ext.builtin.method.error.remove": [
     "ValueError: list.remove(x): x not in list"
   ],
@@ -903,6 +906,10 @@
   ],
   "ext.builtin.method.format": [
     "format"
+  ],
+  "ext.builtin.method.fromkeys": [
+    "dict.fromkeys",
+    "fromkeys"
   ],
   "ext.builtin.method.get": [
     "get"
@@ -957,6 +964,9 @@
   ],
   "ext.builtin.method.pop": [
     "pop"
+  ],
+  "ext.builtin.method.popitem": [
+    "popitem"
   ],
   "ext.builtin.method.remove": [
     "remove"
@@ -2575,6 +2585,14 @@
   "ext.syntax.map.spread.unmapped": [
     "TypeError: value is not a mapping"
   ],
+  "ext.syntax.map.resized": [
+    "RuntimeError: dictionary changed size during iteration"
+  ],
+  "ext.syntax.map.unhashable": [
+    "TypeError: unhashable type: '",
+    "'"
+  ],
+  "ext.syntax.map.value_keys": true,
   "ext.syntax.names.shadow_builtins": true,
   "ext.syntax.set": true,
   "ext.system.args.list": [

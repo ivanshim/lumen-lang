@@ -299,6 +299,9 @@ pub struct Names<'a> {
     /// is one byte and the width of a piece of text is how many
     /// characters it has rather than what the letters would take.
     pub kept_as_bytes: bool,
+    /// Whether a map's keys are compared by worth: a flag as the number
+    /// it counts for, a whole number as one key with its real.
+    pub keys_by_worth: bool,
 }
 
 impl Value {
@@ -340,6 +343,7 @@ impl Value {
     }
 
     pub fn repr(&self, names: &Names) -> String {
+        if let Value::Mutable(cell, _) | Value::Shared(cell) = self { return within_cell(cell, |inner| inner.repr(names)); }
         let settled = self.settled();
         match &settled {
             Value::Text(_) => settled.in_field(*names, "", "r").unwrap_or_else(|| settled.bare()),
@@ -645,13 +649,13 @@ impl Value {
     pub fn render(&self, w: Names) -> String {
         if let Some(words) = self.raised_words(w) { return words; }
         match self {
-            Value::Mutable(cell, true) => cell.borrow().repr(&w),
-            Value::Mutable(cell, false) => cell.borrow().render(w),
+            Value::Mutable(cell, true) => within_cell(cell, |inner| inner.repr(&w)),
+            Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
-            Value::Shared(cell) => cell.borrow().render(w),
+            Value::Shared(cell) => within_cell(cell, |inner| inner.render(w)),
             Value::Set(items) => items.borrow().written(|item| item.set_member_spelling(w)),
 
             Value::Flag(true) if w.flag_counted => "1".to_string(),
@@ -797,7 +801,7 @@ impl Value {
         match self {
             Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
-            Value::Mutable(place, _) => place.borrow().bare(),
+            Value::Mutable(place, _) => within_cell(place, Value::bare),
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
@@ -1200,11 +1204,31 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: boo
 }
 
 thread_local! {
+    /// The cells being written out at this moment, the outermost first.
+    /// A collection that reaches itself is met here on the way round,
+    /// and an ellipsis is written for it in its own stead.
+    static UNDERWAY: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     /// Where a language names them, the cells a run keeps its counts of
     /// figures in: how many a real written plainly carries, and how many
     /// one shown with its kind carries. A language that names neither
     /// leaves both standing empty.
     static COUNTS: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Write out a cell's contents by the writer given, or an ellipsis where
+/// the same cell is already being written further out.
+fn within_cell(cell: &Rc<RefCell<Value>>, writer: impl FnOnce(&Value) -> String) -> String {
+    let address = Rc::as_ptr(cell) as usize;
+    let met_before = UNDERWAY.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let seen = stack.contains(&address);
+        if !seen { stack.push(address); }
+        seen
+    });
+    if met_before { return String::from("[...]"); }
+    let text = writer(&cell.borrow());
+    UNDERWAY.with(|stack| { stack.borrow_mut().pop(); });
+    text
 }
 
 /// Give the kernel the cells the run keeps its counts of figures in.

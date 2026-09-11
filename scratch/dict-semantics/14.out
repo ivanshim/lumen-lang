@@ -1,0 +1,5 @@
+1 1 True True
+['a', 'b'] [1, 2] dict_keys(['a', 'b']) dict_values([1, 2])
+1
+2
+0 0

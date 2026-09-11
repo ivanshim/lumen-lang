@@ -135,13 +135,16 @@ pub struct Generator {
     pub sent: Value,
     pub items: Vec<Value>,
     pub current: Option<Value>,
+    /// The cell of a map the walk hands the items of, with the size the
+    /// map had when the walk began, so a step may see it has changed.
+    pub watched: Option<(Rc<RefCell<Value>>, usize)>,
 }
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
-            delegate: None, sent: Value::Null, current: None }
+            delegate: None, sent: Value::Null, current: None, watched: None }
     }
 }
 
@@ -327,6 +330,9 @@ pub struct Wording<'a> {
     pub text_is_bytes: bool,
     pub guarded_word: Option<&'a str>,
     pub hidden_word: Option<&'a str>,
+    /// Whether a map's keys stand for their worth, a flag being the
+    /// number it counts as and a whole number one key with its real.
+    pub value_keys: bool,
 }
 
 impl Value {
@@ -366,7 +372,7 @@ impl Value {
 
     pub fn representation(&self, words: &Wording) -> String {
         match self {
-            Value::Collection(cell, _) => cell.borrow().representation(words),
+            Value::Collection(cell, _) => shown_once(cell, |held| held.representation(words)),
             Value::Text(_) => self.string_field(words, "", "r").unwrap_or_else(|| self.plain()),
             Value::Array(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
             Value::Tuple(row) => format!("({}{})", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
@@ -677,11 +683,11 @@ impl Value {
     pub fn display(&self, sp: &Wording) -> String {
         if let Some(told) = self.exception_message(sp) { return told; }
         match self {
-            Value::Collection(cell, quote) => if *quote { cell.borrow().representation(sp) } else { cell.borrow().display(sp) },
+            Value::Collection(cell, quote) => shown_once(cell, |held| if *quote { held.representation(sp) } else { held.display(sp) }),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
-            Value::Bond(shared) | Value::Binding(shared) => shared.borrow().display(sp),
+            Value::Bond(shared) | Value::Binding(shared) => shown_once(shared, |held| held.display(sp)),
             Value::Set(s) => s.borrow().show(|v| v.member_text(sp)),
 
             Value::Flag(true) => match sp.flag_counts {
@@ -816,7 +822,7 @@ impl Value {
         match self {
             Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
-            Value::Collection(cell, _) => cell.borrow().plain(),
+            Value::Collection(cell, _) => shown_once(cell, |held| held.plain()),
             Value::ValueMethod(_) => "<built-in method>".to_string(),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Native(_, word) => format!("<built-in function {}>", word),
@@ -1217,12 +1223,32 @@ pub fn to_binary_width(v: Value, bits: Option<usize>, places: usize, shortest: b
 }
 
 thread_local! {
+    /// The cells whose contents are being written out at this moment,
+    /// outermost first, so that a collection holding itself, however
+    /// far down, is written as an ellipsis where it comes round again.
+    static SHOWING: RefCell<Vec<*const RefCell<Value>>> = const { RefCell::new(Vec::new()) };
     /// The cells a run keeps its counts of figures in, where the
     /// language gives those counts a name of their own: how many
     /// figures a real written plainly carries, and how many one shown
     /// with its kind carries. Both stand empty for a language that
     /// keeps no such count.
     static FIGURES: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Write out what a cell holds, unless that cell is already being
+/// written out further up, where an ellipsis stands in its stead.
+fn shown_once(cell: &Rc<RefCell<Value>>, write: impl FnOnce(&Value) -> String) -> String {
+    let place = Rc::as_ptr(cell);
+    let come_round = SHOWING.with(|held| {
+        let mut held = held.borrow_mut();
+        if held.contains(&place) { return true; }
+        held.push(place);
+        false
+    });
+    if come_round { return "[...]".to_string(); }
+    let written = write(&cell.borrow());
+    SHOWING.with(|held| { held.borrow_mut().pop(); });
+    written
 }
 
 /// Hand the kernel the cells the run keeps its counts of figures in.
