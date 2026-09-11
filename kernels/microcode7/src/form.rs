@@ -156,6 +156,18 @@ pub enum Prim {
     /// already has and run where it stands, and what it answers with is
     /// what it gives back.
     Weigh,
+    /// The dictionary of the outermost names, handed out as it stands
+    /// and kept beside them from then on (ext.builtin.globals).
+    WorldBook,
+    /// The names about the call: a copy inside a routine, the outermost
+    /// dictionary outside one (ext.builtin.locals).
+    HereBook,
+    /// Text read and run as statements (ext.builtin.exec).
+    Perform,
+    /// Text checked and kept as a code value (ext.builtin.compile).
+    Prepare,
+    /// A namespace fetched by name (ext.builtin.import).
+    Summon,
     Bring,
     /// The same as the one above, but only where that file has not been
     /// read before in this run (ext.builtin.include.once); one read

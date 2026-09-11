@@ -168,6 +168,9 @@ pub struct Builder<'a> {
 pub struct Built {
     pub program: Rc<Routine>,
     pub globals: Vec<String>,
+    /// The names the outermost statements declared global, which text
+    /// read into two dictionaries writes to the outer one.
+    pub outer_aliases: Vec<String>,
     pub seen: HashMap<String, Signature>,
     /// Which parameters of which routines take a cell rather than a
     /// value, and which routines hand a cell back. Text read while the
@@ -250,18 +253,30 @@ pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed
     build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true).map_err(|said| (said, at.get()))
 }
 
+/// Text handed over to be read while the run goes: as one expression
+/// and nothing after it where it is to be weighed, else as statements;
+/// said besides which file it came out of, and which builtin words are
+/// to be read as names the program bound, in front of the builtins.
+pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, value_only: bool, shadowed: &[String]) -> Res<Built> {
+    let mut words = HashMap::new();
+    if table.flag("ext.stmt.function.closes_over") {
+        build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), None, None, None, true, &mut words, true, value_only, shadowed)?;
+    }
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, None, None, None, true, &mut words, false, value_only, shadowed)
+}
+
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
     let mut words = HashMap::new();
     if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true)?;
+        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, false, &[])?;
     }
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false)
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, false, &[])
 }
 
-fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool) -> Res<Built> {
+fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String]) -> Res<Built> {
     let mut beginnings = seeded.to_vec();
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
@@ -280,7 +295,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: Vec::new(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -289,7 +304,16 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         tells_place: ["ext.system.complaint.warning", "ext.system.complaint.notice", "ext.system.complaint.deprecated", "ext.system.complaint.fatal"]
             .iter()
             .any(|key| table.single(key).is_some()) || table.flag("ext.system.source.marked") };
-    let body = if table.rpn {
+    let body = if value_only {
+        // One expression, with line ends about it and nothing else.
+        r.skip_line_ends();
+        let value = r.comma_value()?;
+        r.skip_line_ends();
+        if !r.exhausted() {
+            return Err(format!("Unexpected '{}'", r.look().lexeme));
+        }
+        value
+    } else if table.rpn {
         let (mut stmts, rest) = match r.rpn_body(&[], Mode::Body) {
             Ok(got) => got,
             Err(said) => {
@@ -314,9 +338,11 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         // call written above it finds it (ext.stmt.function.hoisted).
         let mut stmts = Vec::new();
         let mut ahead = Vec::new();
+        let mut opening = true;
         r.skip_line_ends();
         while !r.exhausted() {
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
+            let own_line = r.look().row > before;
             // Where the reading stops, the row it had reached is kept,
             // so a language with a word for such a stopping names it.
             let stmt = match r.stmt() {
@@ -329,6 +355,19 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                     return Err(said);
                 }
             };
+            // Text standing alone as the first statement of a program
+            // is the program's own documentation, kept under the name
+            // the language gives it (ext.system.module.doc).
+            if opening && own_line && within.is_none() {
+                let first = match &stmt { Form::OnLine(_, inner) => inner.as_ref(), other => other };
+                if let Form::Const(Value::Text(said)) = first {
+                    for name in table.strings("ext.system.module.doc") {
+                        let slot = r.global_address(name);
+                        stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                    }
+                }
+            }
+            if own_line { opening = false; }
             if defines {
                 ahead.push(stmt);
             } else {
@@ -352,12 +391,13 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let top = r.layers.pop().unwrap();
     // Where the text stands inside a routine, the layer just popped is
     // that routine's and the one under it holds the globals.
+    let outer_aliases: Vec<String> = top.aliases.iter().map(|(name, _)| name.clone()).collect();
     let globals = match r.layers.pop() {
         Some(under) => under.idents,
         None => top.idents.clone(),
     };
     let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
-    Ok(Built { program: Rc::new(program), globals, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
+    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
 }
 
 /// Which parameters of each program are written with the reference sign.

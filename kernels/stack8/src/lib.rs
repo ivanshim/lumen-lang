@@ -221,6 +221,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in &lang.module_names {
         registry.slot(name);
     }
+    for name in &lang.module_doc {
+        registry.slot(name);
+    }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
@@ -232,6 +235,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
+    }
+    // A module with no opening documentation keeps nothing under the
+    // name, rather than no name at all.
+    for name in &lang.module_doc {
+        machine.define(name, Value::Null);
     }
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));

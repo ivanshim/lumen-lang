@@ -33,6 +33,23 @@ pub struct Engine<'a> {
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
     world: Vec<Value>,
+    /// The dictionary the outermost names are read from and written
+    /// to once the program has asked for it: what the program writes
+    /// into the dictionary the names then show, and the other way about.
+    outer_book: Option<Rc<RefCell<Value>>>,
+    /// Text read into dictionaries handed over: each keeps the slots it
+    /// was given, the dictionary its names live in and, where two were
+    /// handed over, the outer one its declared globals go to.
+    text_books: Vec<TextBook>,
+    /// Which of those the run stands inside at present, if any.
+    reading_in: Option<usize>,
+    /// The dictionary of builtin words, and the class of a code value,
+    /// each made once a program asks for it.
+    natives: Option<Rc<RefCell<Value>>>,
+    code_class: Option<Rc<Class>>,
+    /// Whether each definition reached makes a function of its own,
+    /// which a language that tells values apart by identity wants.
+    fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
     /// The names of the globals, kept whole so that source read while
@@ -222,7 +239,7 @@ type Flow<T> = Result<T, Fault>;
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -334,6 +351,12 @@ impl<'a> Engine<'a> {
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
             reading_amiss: None,
+            outer_book: None,
+            text_books: Vec::new(),
+            reading_in: None,
+            natives: None,
+            code_class: None,
+            fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             modules: HashMap::new(),
             registry,
@@ -1339,6 +1362,9 @@ impl<'a> Engine<'a> {
         if self.lang.closes_over && !slot.near.is_empty() {
             return Err(Self::named_fault(&self.lang.local_unbound, &slot.ident));
         }
+        if let Some(kept) = self.book_of(slot.far) {
+            if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
+        }
         if let Value::Bond(shared) = &self.world[slot.far] {
             return Ok(if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
         }
@@ -1417,7 +1443,10 @@ impl<'a> Engine<'a> {
     fn put_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) {
         match slot.near.first() {
             Some(&s) => frame[s] = v,
-            None => self.world[slot.far] = v,
+            None => {
+                if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, Some(v.clone())); }
+                self.world[slot.far] = v;
+            }
         }
     }
 
@@ -1432,7 +1461,9 @@ impl<'a> Engine<'a> {
                 return false;
             }
         }
-        matches!(self.world[slot.far], Value::Bond(_))
+        // A name living in a dictionary is read and written the long
+        // way too, since what it holds is kept there and not here.
+        matches!(self.world[slot.far], Value::Bond(_)) || self.book_of(slot.far).is_some()
     }
 
     /// The cell a binding lives in, for reading in place.
@@ -2126,7 +2157,15 @@ impl<'a> Engine<'a> {
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }
-                Instr::Const(v) => self.data.push(self.keep_collection(v.clone())),
+                Instr::Const(v) => {
+                    // A definition reached again makes a function of its
+                    // own, the same words though it has.
+                    let value = match v {
+                        Value::Routine(body) if self.fresh_routines => Value::Routine(Rc::new((**body).clone())),
+                        other => other.clone(),
+                    };
+                    self.data.push(self.keep_collection(value));
+                }
                 Instr::Read(slot) => match self.load_cell(slot, frame) {
                     Ok(v) => self.data.push(v),
                     Err(told) => match self.offer_to_guard(&told, &mut guards) {
@@ -2187,7 +2226,12 @@ impl<'a> Engine<'a> {
                     // names, as the reference has it, and only the
                     // outermost body has none but the globals.
                     let done = match op {
-                        Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 => self.run_text_here(program, frame),
+                        Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 && self.lang.compile_modes.is_empty() => self.run_text_here(program, frame),
+                        // The names standing where the call is made are
+                        // only to be seen from here, where the frame is.
+                        Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
+                            self.names_about(program, frame, *kind).map(|names| self.data.push(names))
+                        }
                         // What a call was given is read back as it
                         // stands now: a parameter written to since holds
                         // what was written, and one handed a cell reads
@@ -2307,6 +2351,7 @@ impl<'a> Engine<'a> {
                         frame[s] = Value::Blank;
                     }
                     if slot.near.is_empty() {
+                        if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, None); }
                         self.world[slot.far] = Value::Blank;
                     }
                 }
@@ -6222,6 +6267,9 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
+            return self.text_builtin(builtin, name, items);
+        }
         let mut args = Vec::new();
         let mut named: Vec<(String, Value)> = Vec::new();
         for (key, value) in items {
@@ -6973,6 +7021,12 @@ impl<'a> Engine<'a> {
                 }
                 Value::text(&taken)
             }
+            // The readers of text and the handing out of names are
+            // answered before the arguments are opened, where the
+            // language spells the manners text may be read in; a
+            // language spelling the words without the manners is
+            // refused here.
+            Builtin::OuterNames | Builtin::NearNames | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
             // Source read while the program runs, assembled against
             // the same globals and run where it stands. A file that
             // cannot be read gives false back, as such a language says.
@@ -9406,6 +9460,435 @@ impl Engine<'_> {
         let child = format!("{path}.{name}");
         if self.module_sources.contains_key(&child) { return self.import_module(&child); }
         Err(Self::named_fault(&self.lang.import_member_missing, name).into())
+    }
+}
+
+/// Text read into dictionaries of its own. Its names were given slots
+/// of their own in the world, but what those names hold is kept in the
+/// dictionaries: the near one first, and the outer one for whatever the
+/// near one has not and for the names the text declared global.
+struct TextBook {
+    near: Rc<RefCell<Value>>,
+    outer: Option<Rc<RefCell<Value>>>,
+    from: usize,
+    upto: usize,
+    declared: Vec<String>,
+}
+
+/// Where a name's value is kept when it is not kept in the world: in
+/// the dictionary of the outermost names, or in those of a text read in.
+#[derive(Clone, Copy)]
+enum Kept {
+    Outer,
+    Text(usize),
+}
+
+/// Whether a dictionary key spells this name, through whatever it is
+/// wrapped in.
+fn key_spells(key: &Value, name: &str) -> bool {
+    match key {
+        Value::Text(word) => word.as_ref() == name,
+        Value::Hashed(pair) => key_spells(&pair.0, name),
+        Value::Bond(cell) => key_spells(&cell.borrow(), name),
+        _ => false,
+    }
+}
+
+/// What a dictionary kept in a cell holds under a name, if anything.
+fn book_entry(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
+    match &*book.borrow() {
+        Value::Map(pairs) => pairs.iter().find(|(key, _)| key_spells(key, name)).map(|(_, held)| held.clone()),
+        _ => None,
+    }
+}
+
+/// Put a value under a name in such a dictionary, or take the name out
+/// of it where nothing is given.
+fn book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) {
+    if let Value::Map(pairs) = &mut *book.borrow_mut() {
+        let pairs = Rc::make_mut(pairs);
+        let at = pairs.iter().position(|(key, _)| key_spells(key, name));
+        match (at, value) {
+            (Some(at), Some(held)) => pairs[at].1 = held,
+            (Some(at), None) => { pairs.remove(at); }
+            (None, Some(held)) => pairs.push((Value::text(name), held)),
+            (None, None) => {}
+        }
+    }
+}
+
+impl Engine<'_> {
+    /// A name the program may spell, as against the cells the kernel
+    /// keeps for itself.
+    fn public_name(name: &str) -> bool {
+        !name.starts_with('#') && !name.contains('\0')
+    }
+
+    /// The dictionary a global slot's value is kept in, if it is kept
+    /// in one: a slot text was given, or any the program may name once
+    /// the outermost dictionary has been handed out.
+    fn book_of(&self, far: usize) -> Option<Kept> {
+        if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
+        let name = self.registry.idents.get(far)?;
+        if !Self::public_name(name.rsplit(':').next().unwrap_or(name)) { return None; }
+        if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
+        if self.outer_book.is_some() && Self::public_name(name) { return Some(Kept::Outer); }
+        None
+    }
+
+    /// Whether the outermost dictionary left this name out when it was
+    /// made: a builtin standing under its own name, a native class, or
+    /// a name nothing was ever written to. Such a name goes on being
+    /// read from the world.
+    fn left_out(&self, name: &str, held: &Value) -> bool {
+        match held {
+            Value::Native(_, word) => word.as_ref() == name,
+            Value::Class(class) => class.name == name && (self.native_exceptions.contains_key(name) || name == self.class_word("root")),
+            Value::Blank | Value::Gap => true,
+            _ => false,
+        }
+    }
+
+    /// What a builtin word stands for: an exception class, a native
+    /// routine, or the root class.
+    fn native_named(&mut self, name: &str) -> Option<Value> {
+        if let Some(held) = self.native_exceptions.get(name) { return Some(held.clone()); }
+        if let Some(builtin) = self.lang.builtins.get(name) { return Some(Value::Native(*builtin, Rc::from(name))); }
+        if self.fuller_classes() && name == self.class_word("root") { return Some(Value::Class(self.root_class())); }
+        None
+    }
+
+    /// Read a name out of the dictionary it is kept in. Nothing means
+    /// the world is to be read after all.
+    fn read_booked(&mut self, kept: Kept, far: usize, name: &str) -> Option<Res<Value>> {
+        match kept {
+            Kept::Outer => {
+                let book = self.outer_book.clone()?;
+                if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
+                if self.left_out(name, &self.world[far]) { return None; }
+                Some(Err(format!("Undefined variable: {}", name)))
+            }
+            Kept::Text(at) => {
+                let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
+                if let Some(held) = book_entry(&near, name) { return Some(Ok(held)); }
+                if let Some(outer) = &outer {
+                    if let Some(held) = book_entry(outer, name) { return Some(Ok(held)); }
+                }
+                // What neither holds may be a builtin, read through the
+                // dictionary of builtins the outer one names, so that a
+                // program handing over a dictionary of its own chooses
+                // what the text may reach.
+                let roots = outer.unwrap_or(near);
+                let found = match self.lang.module_builtins.first().and_then(|word| book_entry(&roots, word)) {
+                    Some(Value::Bond(natives)) => book_entry(&natives, name),
+                    Some(_) => None,
+                    None => self.native_named(name),
+                };
+                Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
+            }
+        }
+    }
+
+    /// Write a name into the dictionary it is kept in, or take it out.
+    fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>) {
+        match kept {
+            Kept::Outer => if let Some(book) = &self.outer_book { book_write(book, name, value) },
+            Kept::Text(at) => {
+                let book = &self.text_books[at];
+                let target = match &book.outer {
+                    Some(outer) if book.declared.iter().any(|word| word == name) => outer,
+                    _ => &book.near,
+                };
+                book_write(target, name, value);
+            }
+        }
+    }
+
+    /// The dictionary of every builtin word, made once.
+    fn natives_book(&mut self) -> Rc<RefCell<Value>> {
+        if let Some(book) = &self.natives { return book.clone(); }
+        let mut names: Vec<String> = self.lang.builtins.keys().cloned().collect();
+        names.extend(self.lang.exceptions.iter().cloned());
+        names.sort();
+        names.dedup();
+        let mut pairs = Vec::with_capacity(names.len());
+        for name in names {
+            if let Some(held) = self.native_named(&name) { pairs.push((Value::text(&name), held)); }
+        }
+        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+        self.natives = Some(book.clone());
+        book
+    }
+
+    /// The dictionary of the outermost names, made the first time it
+    /// is asked for from what the world holds then, and read and
+    /// written through from then on.
+    fn outer_book_made(&mut self) -> Rc<RefCell<Value>> {
+        if let Some(book) = &self.outer_book { return book.clone(); }
+        let mut pairs = Vec::new();
+        for (at, name) in self.registry.idents.iter().enumerate() {
+            if !Self::public_name(name) || self.text_books.iter().any(|book| at >= book.from && at < book.upto) { continue; }
+            let held = &self.world[at];
+            if self.left_out(name, held) { continue; }
+            pairs.push((Value::text(name), held.clone()));
+        }
+        let natives = self.natives_book();
+        for name in &self.lang.module_builtins {
+            if !pairs.iter().any(|(key, _)| key_spells(key, name)) { pairs.push((Value::text(name), Value::Bond(natives.clone()))); }
+        }
+        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+        self.outer_book = Some(book.clone());
+        book
+    }
+
+    /// The dictionary standing for the names where the run is: the
+    /// text book being run, else the outermost one. Asked for the outer
+    /// names, a text read into two dictionaries answers with its outer.
+    fn book_here(&mut self, outer: bool) -> Rc<RefCell<Value>> {
+        if let Some(at) = self.reading_in {
+            let book = &self.text_books[at];
+            return match (&book.outer, outer) {
+                (Some(outer), true) => outer.clone(),
+                _ => book.near.clone(),
+            };
+        }
+        self.outer_book_made()
+    }
+
+    /// The names about a call with nothing given: the outermost
+    /// dictionary, or inside a routine a fresh dictionary of its own
+    /// names; listed in order for dir.
+    fn names_about(&mut self, program: &Rc<Routine>, frame: &[Value], kind: Builtin) -> Flow<Value> {
+        let book = if kind == Builtin::OuterNames || program.body_of_all {
+            self.book_here(kind == Builtin::OuterNames)
+        } else {
+            let mut pairs = Vec::new();
+            for (name, held) in program.idents.iter().zip(frame.iter()) {
+                if !Self::public_name(name) { continue; }
+                let value = match held { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
+                if matches!(value, Value::Blank | Value::Gap) { continue; }
+                pairs.push((Value::text(name), value));
+            }
+            Rc::new(RefCell::new(Value::Map(Rc::new(pairs))))
+        };
+        if kind == Builtin::ClassTool(8) {
+            let mut names: Vec<String> = match &*book.borrow() {
+                Value::Map(pairs) => pairs.iter().map(|(key, _)| key.plain()).collect(),
+                _ => Vec::new(),
+            };
+            names.sort();
+            return Ok(Value::array(names.iter().map(|name| Value::text(name)).collect()));
+        }
+        Ok(Value::Bond(book))
+    }
+
+    /// The class of a code value, made once.
+    fn code_class(&mut self) -> Rc<Class> {
+        if let Some(class) = &self.code_class { return class.clone(); }
+        let class = Rc::new(Class {
+            direct: Vec::new(), lineage: Vec::new(), outline: None, name: self.lang.compile_kind.clone().unwrap_or_default(),
+            base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: RefCell::new(Vec::new()),
+        });
+        self.code_class = Some(class.clone());
+        class
+    }
+
+    fn source_unready(&self) -> String {
+        self.lang.source_unready.clone().unwrap_or_default()
+    }
+
+    /// The tokens of text handed over to be read, or the language's
+    /// words for text that cannot be read.
+    fn text_tokens(&self, source: &str) -> Res<Vec<crate::lex::Token>> {
+        crate::lex::lex_at(source, self.lang)
+            .and_then(|tokens| crate::layout::layout(tokens, self.lang, 0))
+            .map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())
+    }
+
+    /// The builtins that read text, hand out names, or fetch a module.
+    /// Only compile takes its arguments by name; the readers take theirs
+    /// in order alone, as the reference has it.
+    fn text_builtin(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        let mut args = Vec::new();
+        let mut named = Vec::new();
+        for (key, value) in items {
+            match key { Some(key) => named.push((key, value)), None => args.push(value) }
+        }
+        for (key, value) in named {
+            let at = self.lang.compile_parameters.iter().position(|word| word == &key).filter(|_| builtin == Builtin::ReadyText)
+                .ok_or_else(|| Self::named_fault(&self.lang.call_unknown, &key))?;
+            if at < args.len() && !matches!(args[at], Value::Gap) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
+            if args.len() <= at { args.resize(at + 1, Value::Gap); }
+            args[at] = value;
+        }
+        for value in &mut args { if matches!(value, Value::Gap) { *value = Value::Null; } }
+        match builtin {
+            Builtin::OuterNames | Builtin::NearNames => {
+                if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
+                Ok(Value::Bond(self.book_here(builtin == Builtin::OuterNames)))
+            }
+            Builtin::Summon => {
+                let Some(Value::Text(path)) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
+                match self.import_module(&path) {
+                    Ok(module) => Ok(module),
+                    Err(Fault::Note(told)) => Err(told),
+                    Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                }
+            }
+            Builtin::ReadyText => self.text_readied(name, args),
+            _ => self.text_run(builtin == Builtin::Eval, args),
+        }
+    }
+
+    /// Text checked ahead of time and kept as a code value, with the
+    /// file and the manner it is to be read in.
+    fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
+        if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
+        let (Value::Text(source), Value::Text(file), Value::Text(manner)) = (args[0].contents(), args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err(self.source_unready()) };
+        // Flags and inheritance are read and let be; another setting of
+        // optimisation than the ordinary is not honoured.
+        if args.get(5).map_or(false, |value| !matches!(value, Value::Null | Value::Small(-1) | Value::Small(0))) { return Err(self.source_unready()); }
+        let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
+        let mut trial = crate::compile::Registry::default();
+        trial.value_only = mode == 1;
+        crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))).map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())?;
+        let class = self.code_class();
+        let words = &self.lang.compile_parameters;
+        let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64))];
+        self.made += 1;
+        Ok(Value::Object(Rc::new(Instance { class, fields: RefCell::new(fields), mark: self.made })))
+    }
+
+    /// Text, or a code value, run: as one expression where it was asked
+    /// to be weighed, else as statements; in the dictionaries handed
+    /// over, else where the call stands.
+    fn text_run(&mut self, weighing: bool, args: Vec<Value>) -> Res<Value> {
+        let Some(first) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
+        let (source, file, mode) = match first {
+            Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
+            Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class.name.as_str()) => {
+                let fields = code.fields.borrow();
+                let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
+                (fields[0].1.plain(), Some(fields[1].1.plain()), mode)
+            }
+            _ => return Err(self.source_unready()),
+        };
+        if args.len() > 3 { return Err(self.source_unready()); }
+        // An expression to be weighed may stand in from the edge of its text.
+        let source = if mode == 1 { source.trim().to_string() } else { source };
+        let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
+            match value {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::Bond(cell)) if matches!(&*cell.borrow(), Value::Map(_)) => Ok(Some(cell.clone())),
+                Some(_) => Err(self.source_unready()),
+            }
+        };
+        let outer = as_book(args.get(1))?;
+        let near = as_book(args.get(2))?;
+        let (outer, near) = match (outer, near) {
+            (None, None) => return self.run_text_here_about(&source, file, mode),
+            (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
+            (Some(outer), near) => (outer, near),
+            (None, near) => (self.book_here(true), near),
+        };
+        // A dictionary given for the outer names is given the builtins
+        // too, unless it names a dictionary of its own for them.
+        if let Some(word) = self.lang.module_builtins.first() {
+            if book_entry(&outer, word).is_none() {
+                let natives = self.natives_book();
+                book_write(&outer, word, Some(Value::Bond(natives)));
+            }
+        }
+        self.run_text_booked(&source, file, mode, outer, near)
+    }
+
+    /// Text run where the call stands: inside a text book, in that
+    /// book; else against the outermost names.
+    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize) -> Res<Value> {
+        if let Some(at) = self.reading_in {
+            let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
+            return match outer {
+                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near)),
+                None => self.run_text_booked(source, file, mode, near, None),
+            };
+        }
+        let tokens = self.text_tokens(source)?;
+        let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        self.text_finished(&program, &file, shown)
+    }
+
+    /// Text run in dictionaries of its own: its names are given slots
+    /// of their own in the world, and a book is kept for them.
+    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>) -> Res<Value> {
+        let tokens = self.text_tokens(source)?;
+        let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let offset = self.registry.idents.len();
+        let mut local = crate::compile::Registry::default();
+        for at in 0..offset { local.slot(&format!("\0outside:{at}")); }
+        // Where the outer dictionary names a dictionary of builtins of
+        // its own, every builtin word is read as a name, so that the
+        // text reaches only what that dictionary holds.
+        let roots = near.as_ref().map_or(&outer, |_| &outer);
+        let own_natives = match self.lang.module_builtins.first().and_then(|word| book_entry(roots, word)) {
+            Some(Value::Bond(cell)) => self.natives.as_ref().map_or(true, |natives| !Rc::ptr_eq(&cell, natives)),
+            _ => false,
+        };
+        if own_natives {
+            for word in self.lang.builtins.keys() { local.program_bound.insert(word.clone()); }
+        }
+        let (program, shown) = self.text_program(&tokens, &file, mode, Some(&mut local))?;
+        let names: Vec<String> = local.idents[offset..].to_vec();
+        for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
+        self.text_books.push(TextBook { near, outer, from: offset, upto: offset + names.len(), declared: local.declared_outer });
+        let was_reading = self.reading_in.replace(self.text_books.len() - 1);
+        let answer = self.text_finished(&program, &file, shown);
+        self.reading_in = was_reading;
+        answer
+    }
+
+    /// The program of a text: one expression where it is to be weighed;
+    /// one statement shown as it runs, which is an expression written
+    /// out where it is one; else statements. Answers whether what the
+    /// program leaves is to be written out.
+    fn text_program(&mut self, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
+        let syntax = self.lang.source_syntax.clone().unwrap_or_default();
+        let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
+        if mode == 2 {
+            registry.value_only = true;
+            if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+        }
+        registry.value_only = mode == 1;
+        let program = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())).map_err(|_| syntax)?;
+        Ok((program, false))
+    }
+
+    /// Run a text's program as standing in its file, and answer what it
+    /// left: a value weighed, else nothing.
+    fn text_finished(&mut self, program: &Rc<Routine>, file: &Rc<str>, shown: bool) -> Res<Value> {
+        let (was_written_in, was_on) = (self.source.clone(), self.line);
+        self.source = file.clone();
+        let base = self.data.len();
+        let ran = self.invoke(program, Vec::new());
+        self.source = was_written_in;
+        self.line = was_on;
+        match ran {
+            Ok(()) => {}
+            Err(Fault::Note(told)) => { self.data.truncate(base); return Err(told); }
+            Err(fled) => { self.data.truncate(base); self.carried = Some(fled); return Err(String::new()); }
+        }
+        let answer = if self.data.len() > base { self.drop_top()? } else { Value::Null };
+        self.data.truncate(base);
+        if shown && !matches!(answer, Value::Null) {
+            let written = self.core_call(Builtin::Repr, "repr", vec![answer], Vec::new())?;
+            self.utter(&format!("{}\n", written.plain()));
+            return Ok(Value::Null);
+        }
+        Ok(answer)
     }
 }
 

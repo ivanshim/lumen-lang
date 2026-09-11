@@ -523,6 +523,23 @@ pub enum Builtin {
     /// (ext.builtin.include). It is assembled against the same globals
     /// and run where it stands, and what it gives back is its answer.
     Eval,
+    /// The dictionary the outermost names live in, handed out live
+    /// (ext.builtin.globals): what is written into it a name sees, and
+    /// what is written to a name it shows.
+    OuterNames,
+    /// The names standing where the call is made (ext.builtin.locals):
+    /// inside a routine a copy of its own, outside the same dictionary
+    /// as the outermost names.
+    NearNames,
+    /// Text read and run as statements, in dictionaries handed over or
+    /// where the call stands (ext.builtin.exec).
+    RunText,
+    /// Text read ahead of time and kept as a code value for a later
+    /// reading to run (ext.builtin.compile).
+    ReadyText,
+    /// A module fetched by its name, as the import statement would
+    /// fetch it (ext.builtin.import).
+    Summon,
     Include,
     /// The same, but only where that file has not been read before in
     /// this run (ext.builtin.include.once); a file read already answers

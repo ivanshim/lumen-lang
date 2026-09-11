@@ -619,6 +619,24 @@ pub struct Lang {
     pub member_absent: Vec<String>,
     pub module_cache: Vec<String>,
     pub module_names: Vec<String>,
+    /// The name a module keeps its opening documentation under
+    /// (ext.system.module.doc), and the one it keeps the dictionary of
+    /// builtin words under (ext.system.module.builtins).
+    pub module_doc: Vec<String>,
+    pub module_builtins: Vec<String>,
+    /// The three ways text may be read ahead of time: as statements, as
+    /// one expression, and as one statement shown as it runs
+    /// (ext.builtin.compile.modes); the names compile gives its
+    /// arguments (ext.builtin.compile.parameters); the class of the code
+    /// value it hands back (ext.builtin.compile.kind).
+    pub compile_modes: Vec<String>,
+    pub compile_parameters: Vec<String>,
+    pub compile_kind: Option<String>,
+    /// The complaint for text that cannot be read
+    /// (ext.builtin.source.syntax), and for a reading that cannot yet be
+    /// honoured (ext.builtin.source.unready).
+    pub source_syntax: Option<String>,
+    pub source_unready: Option<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
@@ -1113,7 +1131,8 @@ n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
  | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready
-w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long ";
+w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -1638,6 +1657,11 @@ impl Lang {
             ("ext.builtin.setattr", Builtin::SetAttr),
             ("ext.builtin.delattr", Builtin::DelAttr),
             ("ext.builtin.vars", Builtin::Vars),
+            ("ext.builtin.globals", Builtin::OuterNames),
+            ("ext.builtin.locals", Builtin::NearNames),
+            ("ext.builtin.exec", Builtin::RunText),
+            ("ext.builtin.compile", Builtin::ReadyText),
+            ("ext.builtin.import", Builtin::Summon),
             ("ext.builtin.sum", Builtin::Sum),
             ("ext.builtin.list", Builtin::List),
             ("ext.builtin.any", Builtin::Any),
@@ -2280,6 +2304,13 @@ impl Lang {
             member_absent: r.strings("ext.builtin.member.absent")?,
             module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
+            module_doc: r.strings("ext.system.module.doc")?,
+            module_builtins: r.strings("ext.system.module.builtins")?,
+            compile_modes: r.strings("ext.builtin.compile.modes")?,
+            compile_parameters: r.strings("ext.builtin.compile.parameters")?,
+            compile_kind: r.head("ext.builtin.compile.kind")?,
+            source_syntax: r.head("ext.builtin.source.syntax")?,
+            source_unready: r.head("ext.builtin.source.unready")?,
             class_details: ["call", "locals", "root", "mro", "order", "name", "qualified", "bases", "namespace", "kind", "allocate", "subclass", "slots", "set", "remove", "get", "getitem", "doc", "module", "defaults", "code", "argcount", "varnames", "receiver", "function", "main", "mro.amiss", "attribute.amiss", "unready", "descriptor.get", "descriptor.set", "descriptor.delete", "descriptor.name", "descriptor.foreign", "property.fget", "property.fset", "property.fdel", "property.getter", "property.deleter", "property.doc", "property.readonly", "property.unreadable", "property.unwritable", "property.undeletable"].into_iter().map(|part| Ok((part.to_string(), r.strings(&format!("ext.stmt.class.detail.{}", part))?))).collect::<Result<_, String>>()?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,

@@ -228,6 +228,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
     seeded.extend(table.strings("ext.system.module.name").iter().cloned());
+    seeded.extend(table.strings("ext.system.module.doc").iter().cloned());
     let before: u32 = request
         .iter()
         .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
@@ -262,6 +263,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
     table.strings("ext.system.module.name").iter().for_each(|binding| {
         machine.define(binding, Value::text("__main__"));
+    });
+    // The documentation of a program that opens with none is nothing,
+    // under its name all the same.
+    table.strings("ext.system.module.doc").iter().for_each(|binding| {
+        machine.define(binding, Value::Nil);
     });
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
