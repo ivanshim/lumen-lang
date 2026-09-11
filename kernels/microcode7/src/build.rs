@@ -4987,7 +4987,7 @@ impl<'a> Builder<'a> {
                 });
                 for i in (0..deep).rev() {
                     let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                    steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
                 }
                 // The cells the rewriting stood on were scaffolding, and
                 // are let go now the write has landed: a cell the program
@@ -5072,7 +5072,7 @@ impl<'a> Builder<'a> {
                 });
                 for i in (0..deep).rev() {
                     let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Replace, vec![holds, key, done]));
+                    steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
                 }
                 let back = self.read(&in_cells[0]);
                 steps.push(self.write(&name, back));

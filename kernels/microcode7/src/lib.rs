@@ -72,7 +72,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
             if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
         }
         if text::bears_kind(&table, &e) { return e; }
-        if crate::complex::already_named(&table, &e) || span_complaint_named(&table, &e) || protocol_complaint_named(&table, &e) { return e; }
+        if crate::complex::already_named(&table, &e) || span_complaint_named(&table, &e) || sequence_complaint_named(&table, &e) || protocol_complaint_named(&table, &e) { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
@@ -457,6 +457,34 @@ fn span_complaint_named(table: &Table, words: &str) -> bool {
     let whole = ["ext.op.index.slice.zero", "ext.op.index.slice.bounds", "ext.op.index.slice.assign", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"];
     if whole.iter().any(|label| table.single(label).map_or(false, |said| !said.is_empty() && said == words)) { return true; }
     table.strings("ext.op.index.slice.length").first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))
+}
+
+/// Whether the words are a complaint of the sequence workings, which
+/// the table words itself. Such a complaint is told in the language's
+/// own voice, with no name of the kernel's put before it. Both sides of
+/// each wording are looked for: the opening alone would claim every
+/// complaint that begins with the same class.
+fn sequence_complaint_named(table: &Table, words: &str) -> bool {
+    if !table.flag("ext.op.sequence.values") { return false; }
+    let pieces = |label: &str| table.strings(&format!("ext.op.sequence.{label}"));
+    let paired = |label: &str, opens: usize, closes: usize| {
+        let said = pieces(label);
+        match (said.get(opens), said.get(closes)) {
+            (Some(head), Some(tail)) if !head.is_empty() && !tail.is_empty() =>
+                words.starts_with(head.as_str()) && words[head.len()..].contains(tail.as_str()),
+            _ => false,
+        }
+    };
+    let opening = |label: &str, at: usize| pieces(label).get(at).map_or(false, |head| !head.is_empty() && words.starts_with(head.as_str()));
+    let whole = |label: &str, at: usize| pieces(label).get(at).map_or(false, |said| !said.is_empty() && words == said.as_str());
+    paired("concat", 0, 1)
+        || paired("repeat", 0, 1) || whole("repeat", 2)
+        || paired("index", 0, 1)
+        || paired("delete", 0, 1)
+        || paired("subscript", 0, 1) || opening("subscript", 2)
+        || paired("missing", 0, 1) || whole("missing", 2)
+        || paired("assign", 0, 1)
+        || paired("assign", 0, 1)
 }
 
 /// Whether the words are a complaint of the value protocol, which the

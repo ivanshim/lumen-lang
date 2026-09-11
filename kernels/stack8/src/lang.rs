@@ -103,6 +103,14 @@ pub struct Lang {
     pub with_unready: Vec<String>,
     pub yield_from: Vec<String>,
     pub member_pipes: bool,
+    pub sequence_values: bool,
+    pub sequence_concat: Vec<String>,
+    pub sequence_repeat: Vec<String>,
+    pub sequence_index: Vec<String>,
+    pub sequence_delete: Vec<String>,
+    pub sequence_subscript: Vec<String>,
+    pub sequence_missing: Vec<String>,
+    pub sequence_assign: Vec<String>,
     pub tuple_unready: Vec<String>,
     pub byte_words: HashMap<String, Vec<String>>,
     pub bytes_unready: Vec<String>,
@@ -1203,7 +1211,7 @@ w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
  | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready
 w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long
-w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins ";
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -1474,6 +1482,30 @@ impl Lang {
             || ["ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"].iter()
                 .any(|label| self.slice_parts.get(*label).map_or(false, |words| !words.is_empty() && words == said))
             || self.slice_length.first().map_or(false, |opening| !opening.is_empty() && said.starts_with(opening.as_str()))
+    }
+
+    /// Whether these are words the definition gave for a fault of the
+    /// sequence workings. Such a fault is told in the language's own
+    /// voice, with no name of the kernel's put before it.
+    pub fn sequence_named(&self, said: &str) -> bool {
+        if !self.sequence_values { return false; }
+        // A fault of these workings is known by the words on both sides
+        // of what is written between them; the opening alone would
+        // claim every complaint of that name.
+        let paired = |words: &[String], opens: usize, closes: usize| match (words.get(opens), words.get(closes)) {
+            (Some(head), Some(tail)) if !head.is_empty() && !tail.is_empty() =>
+                said.starts_with(head.as_str()) && said[head.len()..].contains(tail.as_str()),
+            _ => false,
+        };
+        let opening = |words: &[String], at: usize| words.get(at).map_or(false, |head| !head.is_empty() && said.starts_with(head.as_str()));
+        let whole = |words: &[String], at: usize| words.get(at).map_or(false, |word| !word.is_empty() && said == word.as_str());
+        paired(&self.sequence_concat, 0, 1)
+            || paired(&self.sequence_repeat, 0, 1) || whole(&self.sequence_repeat, 2)
+            || paired(&self.sequence_index, 0, 1)
+            || paired(&self.sequence_delete, 0, 1)
+            || paired(&self.sequence_subscript, 0, 1) || opening(&self.sequence_subscript, 2)
+            || paired(&self.sequence_missing, 0, 1) || whole(&self.sequence_missing, 2)
+            || paired(&self.sequence_assign, 0, 1)
     }
 
     pub fn parse(text: &str) -> Result<Lang, String> {
@@ -1995,6 +2027,14 @@ impl Lang {
             with_unready: r.strings("ext.stmt.with.unready")?,
             yield_from: r.strings("ext.stmt.yield.from")?,
             member_pipes: r.flag("ext.op.member.pipes")?,
+            sequence_values: r.flag("ext.op.sequence.values")?,
+            sequence_concat: r.strings("ext.op.sequence.concat")?,
+            sequence_repeat: r.strings("ext.op.sequence.repeat")?,
+            sequence_index: r.strings("ext.op.sequence.index")?,
+            sequence_delete: r.strings("ext.op.sequence.delete")?,
+            sequence_subscript: r.strings("ext.op.sequence.subscript")?,
+            sequence_missing: r.strings("ext.op.sequence.missing")?,
+            sequence_assign: r.strings("ext.op.sequence.assign")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             byte_words: ["ext.builtin.bytes.signed", "ext.system.bytes.strict", "ext.builtin.bytes", "ext.builtin.bytearray", "ext.builtin.bytes.encode", "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower", "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace", "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.from_int", "ext.builtin.bytes.to_int", "ext.builtin.isinstance", "ext.builtin.hash", "ext.system.bytes.repr", "ext.system.bytes.type", "ext.system.bytes.encodings", "ext.system.bytes.order", "ext.system.bytes.unready", "ext.system.bytes.arguments", "ext.system.bytes.range", "ext.system.bytes.negative", "ext.system.bytes.index", "ext.system.bytes.immutable", "ext.system.bytes.unhashable", "ext.system.bytes.separator", "ext.system.bytes.hex", "ext.system.bytes.overflow", "ext.system.bytes.unsigned", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"].iter().map(|key| Ok((key.to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,

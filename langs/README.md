@@ -1723,6 +1723,41 @@ only. The extension labels so far, all from PHP:
   order among themselves and texts among themselves; two of one kind
   are left to order themselves, as sets do; a thing is left to its own
   methods; nothing and a dictionary stand in no order at all.
+- `ext.op.sequence.values`: a switch turning on the workings a language
+  of sequences gives its rows, tuples and text. Adding joins two of one
+  kind and gives a third; multiplying by a whole number lays one down
+  that many times, a count at nought or below leaving nothing; and which
+  of two of a kind comes first is settled place by place, the shorter
+  coming first where it runs out. A row counts its places from the end
+  as well as from the start, and a tuple and text hold theirs for good.
+  With the switch off a kernel goes on exactly as it did before.
+  `+=` and `*=` on a row change it where it stands, so that every name
+  for that row sees the change; `+=` takes in whatever can be walked,
+  and not only another row. A tuple written over with either sign is
+  left as it was and the name given a new tuple, as adding always does.
+- `ext.op.sequence.concat`: three pieces refusing a joining that cannot
+  be made, written around the kinds: the words before the kind on the
+  left, those before the kind on the right, and those before the kind
+  on the left named a second time (`can only concatenate list (not
+  "tuple") to list`).
+- `ext.op.sequence.repeat`: two pieces refusing a repetition asked for
+  by something that is no whole number, written around that kind, and a
+  third piece, a whole complaint of its own, for a count too wide to
+  name a place in a row.
+- `ext.op.sequence.index`: two pieces around the kind, for a place a
+  sequence does not hold. Text is named by its longer word here, as the
+  reference names it.
+- `ext.op.sequence.assign` and `ext.op.sequence.delete`: two pieces each
+  around the kind, refusing a write into, or a deletion from, a sequence
+  that holds its places for good.
+- `ext.op.sequence.subscript`: four pieces refusing a key of the wrong
+  kind. The first two stand around the kind asked of and before the kind
+  of the key; the last two are text's own wording, which takes no run of
+  places for a key.
+- `ext.op.sequence.missing`: three pieces for a search that found
+  nothing. The first two stand around the value sought, as a row names
+  it; the third is the whole complaint a tuple gives, which names no
+  value.
 - `ext.op.compare.chained`: a switch; comparisons beside one another
   ask each adjacent pair in turn. A middle value is worked out once
   and kept; after a false comparison no further operand runs. Equality,
@@ -4443,6 +4478,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.rem.formats_text` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.rem.real_zero` | - | - | `ZeroDivisionError: float modulo` | - | - | - | - | - | - | - |
 | `ext.op.scope` | - | - | - | - | `::` | - | - | - | - | - |
+| `ext.op.sequence.assign` | - | - | `TypeError: '` `' object does not support item assignment` | - | - | - | - | - | - | - |
+| `ext.op.sequence.concat` | - | - | `TypeError: can only concatenate ` ` (not "` `") to ` | - | - | - | - | - | - | - |
+| `ext.op.sequence.delete` | - | - | `TypeError: '` `' object doesn't support item deletion` | - | - | - | - | - | - | - |
+| `ext.op.sequence.index` | - | - | `IndexError: ` ` index out of range` | - | - | - | - | - | - | - |
+| `ext.op.sequence.missing` | - | - | `ValueError: ` ` is not in list` `ValueError: tuple.index(x): x not in tuple` | - | - | - | - | - | - | - |
+| `ext.op.sequence.repeat` | - | - | `TypeError: can't multiply sequence by non-int of type '` `'` `OverflowError: cannot fit 'int' into an index-sized integer` | - | - | - | - | - | - | - |
+| `ext.op.sequence.subscript` | - | - | `TypeError: ` ` indices must be integers or slices, not ` `TypeError: string indices must be integers, not '` `'` | - | - | - | - | - | - | - |
+| `ext.op.sequence.values` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.spelled` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.op.ternary` | - | - | - | - | `?` `:` | - | - | - | - | - |
 | `ext.op.tuple` | - | - | `,` | - | - | - | - | - | - | - |

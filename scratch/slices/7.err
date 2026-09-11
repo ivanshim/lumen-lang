@@ -1,1 +1,1 @@
-PythonError: this slice operation is not supported
+TypeError: 'str' object does not support item assignment
