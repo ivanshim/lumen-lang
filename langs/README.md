@@ -1762,6 +1762,24 @@ only. The extension labels so far, all from PHP:
   or merge pairs and named arguments. `.pop` takes a map key too.
   `.keys`, `.values` and `.items` yield views which follow later changes
   to the map; items are pairs. The views may be gathered and walked.
+- `ext.builtin.method.popitem` and `.fromkeys`: take the pair written
+  last out of a map and hand it back as a tuple, and make a new map with
+  a key for each member of an iterable, every key holding the one value
+  given or nothing. The latter is spelled with the class before it
+  (`dict.fromkeys`) as `float.fromhex` is. `ext.builtin.method.error.popitem`
+  gives the complaint for taking a pair out of an empty map.
+- `ext.syntax.map.value_keys`: a switch; a map's keys stand for their
+  worth, so a flag is the number it counts as, a whole number and the
+  real it equals name one key, and two tuples name one key when their
+  items do. Reading, writing, deleting, membership and the map methods
+  all look keys up this way, and a literal or update that writes a key
+  twice keeps the first spelling with the last value.
+  `ext.syntax.map.unhashable` gives the words before and after the kind
+  of a value that cannot key a map (a list, a map or a set, at any depth
+  inside a tuple), told under its own class. `ext.syntax.map.resized`
+  gives the words a walk over a map, its keys, values or pairs, or its
+  reversal stops with when the map has changed size since the walk
+  began; they are told under their own class too.
 - `ext.builtin.method.bit_length`, `.is_integer`, `.hex` and
   `.as_integer_ratio`: the width of a whole number's magnitude, whether
   a number is whole, a real's hexadecimal spelling, and a number's
@@ -3728,6 +3746,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.error.missing` | - | - | `IndexError: Replacement index out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.mixed` | - | - | `ValueError: cannot switch from automatic field numbering to manual field specification` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.pop` | - | - | `IndexError: pop from empty list` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.popitem` | - | - | `KeyError: 'popitem(): dictionary is empty'` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.remove` | - | - | `ValueError: list.remove(x): x not in list` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.spec` | - | - | `NotImplementedError: this format specification cannot be rendered` | - | - | - | - | - | - | - |
@@ -3738,6 +3757,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
+| `ext.builtin.method.fromkeys` | - | - | `dict.fromkeys` `fromkeys` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.imag` | - | - | `imag` | - | - | - | - | - | - | - |
@@ -3759,6 +3779,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.lstrip` | - | - | `lstrip` | - | - | - | - | - | - | - |
 | `ext.builtin.method.numerator` | - | - | `numerator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.method.popitem` | - | - | `popitem` | - | - | - | - | - | - | - |
 | `ext.builtin.method.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.method.remove` | - | - | `remove` | - | - | - | - | - | - | - |
 | `ext.builtin.method.replace` | - | - | `replace` | - | - | - | - | - | - | - |
@@ -4376,8 +4397,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: value is not iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
+| `ext.syntax.map.unhashable` | - | - | `TypeError: unhashable type: '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.map.value_keys` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.names.shadow_builtins` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |

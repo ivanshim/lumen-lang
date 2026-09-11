@@ -69,6 +69,17 @@ impl Request<'_> {
                 if self.given.len()<=at{self.given.resize(at+1,Value::Nil);}self.given[at]=value.clone();
             }
         }
+        // A new map with a key for each member of the receiver, every one
+        // holding the single value given, or nothing.
+        if self.operation=="fromkeys"{
+            self.takes(0,1)?;
+            let filling=self.given.first().cloned().unwrap_or(Value::Nil);
+            let mut entries:Vec<(Value,Value)>=Vec::new();
+            for key in gather(self.target,self.complaint)?{
+                if entries.iter().all(|e|!same_item(&e.0,&key,self.names.keys_by_worth)){entries.push((key,filling.clone()));}
+            }
+            return Ok(Value::Dict(Rc::new(entries)).keep(false));
+        }
         match self.target.settled(){
             Value::Text(chars)=>self.on_text(&chars),
             Value::Vector(items)=>self.on_list(items.to_vec()),
@@ -236,7 +247,7 @@ impl Request<'_> {
                 self.takes(1,if self.operation=="index"{3}else{1})?;
                 let start=place(self.number(1,0)?,values.len());let stop=place(self.number(2,values.len() as i64)?,values.len());
                 let mut first=None;let mut count=0;
-                for (at,value) in values.iter().enumerate().take(stop).skip(start){if same_item(value,&self.given[0]){count+=1;if first.is_none(){first=Some(at);}}}
+                for (at,value) in values.iter().enumerate().take(stop).skip(start){if same_item(value,&self.given[0],self.names.keys_by_worth){count+=1;if first.is_none(){first=Some(at);}}}
                 if self.operation=="count"{return Ok(Value::Small(count));}
                 let at=first.ok_or_else(||self.fail(if self.operation=="remove"{"remove"}else{"list_index"}))?;
                 if self.operation=="index"{return Ok(Value::Small(at as i64));}values.remove(at);
@@ -245,8 +256,22 @@ impl Request<'_> {
         }
         self.replace(Value::Vector(Rc::new(values)))
     }
+    // A pair written over the value its key already holds, or added last.
+    fn enter(&self,entries:&mut Vec<(Value,Value)>,key:Value,value:Value){
+        match entries.iter_mut().find(|e|same_item(&e.0,&key,self.names.keys_by_worth)){
+            Some(entry)=>entry.1=value,
+            None=>entries.push((key,value)),
+        }
+    }
     fn on_map(&self,mut entries:Vec<(Value,Value)>)->ResultValue{
         match self.operation{
+            // The pair written last comes out, key and value together.
+            "popitem"=>{
+                self.takes(0,0)?;
+                let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
+                self.replace(Value::Dict(Rc::new(entries)))?;
+                return Ok(Value::Tuple(Rc::new(vec![key,value])));
+            }
             "keys"|"values"|"items"=>{
                 self.takes(0,0)?;
                 let portion=if self.operation=="keys"{'k'}else if self.operation=="values"{'v'}else{'i'};
@@ -257,22 +282,32 @@ impl Request<'_> {
             "get"|"setdefault"|"pop"=>{
                 self.takes(1,2)?;let key=&self.given[0];
                 if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
-                if let Some(index)=entries.iter().position(|e|same_item(&e.0,key)){
+                if let Some(index)=entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth)){
                     let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
                 }
                 if self.operation=="pop"&&self.given.len()==1{return Err(self.fail("key")+&key.repr(&self.names));}
                 let answer=self.given.get(1).cloned().unwrap_or(Value::Nil);
                 if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
             }
+            // Each pair goes in as it is met, so that the pairs read before
+            // an ill-shaped one are kept when the call stops on it.
             "update"=>{
-                self.takes(0,1)?;let mut incoming=Vec::new();
+                self.takes(0,1)?;let mut stopped=None;
                 if let Some(source)=self.given.first(){
-                    match source.settled(){Value::Dict(d)=>incoming=d.to_vec(),other=>{
-                        for item in gather(&other,self.complaint)?{let values=gather(&item,self.complaint)?;if values.len()!=2{return Err(self.fail("arguments"));}incoming.push((values[0].clone(),values[1].clone()));}
-                    }}
+                    match source.settled(){
+                        Value::Dict(d)=>{for (key,value) in d.iter(){self.enter(&mut entries,key.clone(),value.clone());}}
+                        other=>{
+                            for item in gather(&other,self.complaint)?{
+                                let values=gather(&item,self.complaint)?;
+                                if values.len()!=2{stopped=Some(self.fail("arguments"));break;}
+                                self.enter(&mut entries,values[0].clone(),values[1].clone());
+                            }
+                        }
+                    }
                 }
-                for (key,value) in self.named{incoming.push((Value::text(key),value.clone()));}
-                for (key,value) in incoming{match entries.iter_mut().find(|entry|entry.0.equals(&key)){Some(entry)=>entry.1=value,None=>entries.push((key,value))}}
+                if stopped.is_none(){for (key,value) in self.named{self.enter(&mut entries,Value::text(key),value.clone());}}
+                self.replace(Value::Dict(Rc::new(entries)))?;
+                return match stopped{Some(words)=>Err(words),None=>Ok(Value::Nil)};
             }
             _=>return Err(self.fail("attribute")),
         }
@@ -346,9 +381,24 @@ fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)-
     false
 }
 
-fn same_item(left:&Value,right:&Value)->bool{
+fn same_item(left:&Value,right:&Value,by_worth:bool)->bool{
+    if by_worth {return worth_alike(left,right);}
     if let (Value::Frac(a),Value::Frac(b))=(left,right){if Rc::ptr_eq(a,b){return true;}}
     left.equals(right)
+}
+
+// Two keys of a map compared by worth: a flag counts for its number, a
+// whole number is one key with the real it equals, and tuples are one
+// key when each item of the one is so with its fellow in the other.
+fn worth_alike(left:&Value,right:&Value)->bool{
+    let (left,right)=(left.settled(),right.settled());
+    if let Value::Flag(f)=left {return worth_alike(&Value::Small(f as i64),&right);}
+    if let Value::Flag(f)=right {return worth_alike(&left,&Value::Small(f as i64));}
+    if let (Value::Frac(a),Value::Frac(b))=(&left,&right){if Rc::ptr_eq(a,b){return true;}}
+    if let (Value::Tuple(a)|Value::Row(a),Value::Tuple(b)|Value::Row(b))=(&left,&right){
+        return a.len()==b.len()&&a.iter().zip(b.iter()).all(|(x,y)|worth_alike(x,y));
+    }
+    left.equals(&right)
 }
 
 /// A real from its hexadecimal spelling: an optional sign, `0x`, figures

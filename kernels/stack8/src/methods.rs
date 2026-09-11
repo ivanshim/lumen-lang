@@ -9,8 +9,30 @@ use crate::value::{Value, Wording};
 
 type Answer = Result<Value, String>;
 
-fn alike(a: &Value, b: &Value) -> bool {
+fn alike(a: &Value, b: &Value, words: &Wording) -> bool {
+    if words.value_keys { return keyed_alike(a, b); }
     match (a,b) { (Value::Real(x),Value::Real(y)) if Rc::ptr_eq(x,y) => true, _ => a.equals(b) }
+}
+
+/// Whether two keys name one place in a map whose keys are their worth:
+/// a flag is the number it counts as, a whole number and the real it
+/// equals are one, and tuples are one when their items are, in order.
+fn keyed_alike(a: &Value, b: &Value) -> bool {
+    let (a, b) = (a.contents(), b.contents());
+    match (&a, &b) {
+        (Value::Flag(f), other) | (other, Value::Flag(f)) => keyed_alike(&Value::Small(i64::from(*f)), other),
+        (Value::Tuple(x), Value::Tuple(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| keyed_alike(p, q)),
+        (Value::Real(x), Value::Real(y)) if Rc::ptr_eq(x, y) => true,
+        _ => a.equals(&b),
+    }
+}
+
+/// Write a key over the value it holds, or at the end of the pairs.
+fn put_pair(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value, words: &Wording) {
+    match pairs.iter_mut().find(|(k, _)| alike(k, &key, words)) {
+        Some(slot) => slot.1 = value,
+        None => pairs.push((key, value)),
+    }
 }
 
 fn shown(value: &Value, words: &Wording) -> String {
@@ -84,6 +106,17 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     let store = |v: Value| -> Answer {
         if let Value::Collection(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
+    // A map keyed by the members of whatever it was asked of, each key
+    // holding the one value given, or nothing where none was.
+    if op == "fromkeys" {
+        arity(0,1)?;
+        let filling = a.first().cloned().unwrap_or(Value::Null);
+        let mut pairs: Vec<(Value, Value)> = Vec::new();
+        for key in members(&held, fault)? {
+            if !pairs.iter().any(|(k, _)| alike(k, &key, words)) { pairs.push((key, filling.clone())); }
+        }
+        return Ok(Value::Map(Rc::new(pairs)).held(false));
+    }
     match &held {
         // A real read from its hexadecimal spelling, as float.fromhex reads it.
         Value::Text(s) if op=="fromhex" => {
@@ -202,7 +235,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(1,if op=="index" {3} else {1})?;
                     let lo=a.get(1).map(|v|integer(v,fault)).transpose()?.map_or(0,|n|bound(n,row.len()));
                     let hi=a.get(2).map(|v|integer(v,fault)).transpose()?.map_or(row.len(),|n|bound(n,row.len()));
-                    let hits:Vec<usize>=(lo..hi).filter(|i|alike(&row[*i],&a[0])).collect();
+                    let hits:Vec<usize>=(lo..hi).filter(|i|alike(&row[*i],&a[0],words)).collect();
                     if op=="count" {return Ok(Value::Small(hits.len() as i64));}
                     let at=*hits.first().ok_or_else(||fault(if op=="remove" {"remove"} else {"list_index"}))?;
                     if op=="index" {return Ok(Value::Small(at as i64));} row.remove(at);
@@ -220,20 +253,39 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "get" | "setdefault" | "pop" => {
                     arity(1,2)?;
                     if matches!(a[0].contents(), Value::Array(_) | Value::Map(_)) {return Err(fault("arguments"));}
-                    let at=pairs.iter().position(|(k,_)| alike(k,&a[0]));
+                    let at=pairs.iter().position(|(k,_)| alike(k,&a[0],words));
                     if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
                     let value=a.get(1).cloned().unwrap_or(Value::Null);
                     if op=="pop" && a.len()==1 {return Err(fault("key")+&a[0].representation(words));}
                     if op=="setdefault" {pairs.push((a[0].clone(),value.clone()));store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
                 }
                 "keys" | "values" | "items" => {arity(0,0)?;return Ok(Value::View(Rc::new((receiver.clone(),op.to_string()))));}
+                // The last pair written is taken out and handed back.
+                "popitem" => {
+                    arity(0,0)?;
+                    let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
+                    store(Value::Map(Rc::new(pairs)))?;
+                    return Ok(Value::Tuple(Rc::new(vec![key,value])));
+                }
                 "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}
+                // Pairs are written as they are read, so those before an
+                // ill-shaped one stand written when it stops the call.
                 "update" => {
-                    arity(0,1)?;let mut entries=Vec::new();
-                    if let Some(v)=a.first() {entries=match v.contents() {Value::Map(p)=>p.as_ref().clone(),v=>{let mut out=Vec::new();for item in members(&v,fault)? {let pair=members(&item,fault)?;if pair.len()!=2{return Err(fault("arguments"));}out.push((pair[0].clone(),pair[1].clone()));}out}};}
-                    entries.extend(names.iter().map(|(k,v)|(Value::text(k),v.clone())));
-                    for (k,v) in entries {if let Some(at)=pairs.iter().position(|(key,_)|key.equals(&k)){pairs[at].1=v;}else{pairs.push((k,v));}}
+                    arity(0,1)?;let mut amiss=None;
+                    if let Some(v)=a.first() {
+                        match v.contents() {
+                            Value::Map(p)=>{for (k,v) in p.iter() {put_pair(&mut pairs,k.clone(),v.clone(),words);}}
+                            other=>{for item in members(&other,fault)? {
+                                let pair=members(&item,fault)?;
+                                if pair.len()!=2 {amiss=Some(fault("arguments"));break;}
+                                put_pair(&mut pairs,pair[0].clone(),pair[1].clone(),words);
+                            }}
+                        }
+                    }
+                    if amiss.is_none() {for (k,v) in names {put_pair(&mut pairs,Value::text(k),v.clone(),words);}}
+                    store(Value::Map(Rc::new(pairs)))?;
+                    return match amiss {Some(told)=>Err(told),None=>Ok(Value::Null)};
                 }
                 _ => return Err(fault("attribute")),
             }
