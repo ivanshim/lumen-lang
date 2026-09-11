@@ -71,9 +71,14 @@ def getitem(a, b):
     return a[b]
 
 def index(a):
-    if type(a) != type(1) and type(a) != type(True):
-        raise 'TypeError: value cannot be interpreted as an integer'
-    return int(a)
+    if type(a) == type(1) or type(a) == type(True):
+        return int(a)
+    if hasattr(a, '__index__'):
+        answer = a.__index__()
+        if type(answer) == type(1) or type(answer) == type(True):
+            return int(answer)
+        raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
+    raise 'TypeError: value cannot be interpreted as an integer'
 
 class _ItemGetter:
     def __init__(self, names):

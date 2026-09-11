@@ -1360,12 +1360,42 @@ only. The extension labels so far, all from PHP:
   entering and leaving a with block for objects (other values keep the
   earlier binding-only rule), the class, attribute map and class
   name members, the whole-number, real, magnitude and positive forms,
-  and lastly a walk backwards, which the reversed builtin asks of a
-  thing that has it. An absent list leaves ordinary operations as they
-  stood.
+  and a walk backwards, which the reversed builtin asks of a thing that
+  has it. The list goes on with the index method, by which a thing
+  stands for a whole number wherever a row, a text or a range is
+  indexed, sliced, written into or shortened, and wherever a radix
+  rendering or a range wants one; inversion; the matrix product and
+  its reflection; the thirteen in-place operations a compound write
+  asks of the place it lands on before the plain operation, in the
+  order addition, subtraction, multiplication, division, whole
+  division, remainder, power, matrix product, the two shifts, and,
+  or, exclusive or, a declined answer falling back to the plain one;
+  division with remainder and its reflection; the two shifts and the
+  three bit operations, then their five reflections; formatting, asked
+  with the specification by the format builtin and by a formatted
+  string field, a thing without it accepting only an empty
+  specification and showing as its text; rounding, asked with the
+  places if any were given; complex conversion, which must answer a
+  complex; and the directory, whose answer the dir builtin sorts. An
+  absent list leaves ordinary operations as they stood.
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
+- `ext.stmt.class.index.amiss`: two pieces enclosing the kind an index
+  method answered with when it was not a whole number.
+  `ext.stmt.class.binary.amiss`: four pieces enclosing the sign and the
+  two operand kinds of an arithmetic, matrix or bit operation that
+  neither operand's methods would take, a plain object standing on one
+  side or the other; the builtins for division with remainder and power
+  give their own name with parentheses for the sign. A class header may
+  carry keyword arguments; they are handed on, by name, to the parent's
+  subclass hook, and refused where no hook is there to take them.
+  `ext.stmt.class.metaclass` names the one keyword no hook receives:
+  a header carrying it asks for a metaclass, which no class form runs,
+  so the form stays unready. `ext.stmt.class.format.amiss`: two pieces enclosing the
+  class name of a thing given a format specification it has no method
+  for. Each of these complaints names its own fault kind and is told
+  without the language's title before it.
 - `ext.stmt.class.special.declined` names the single value with which a
   method declines an operation, leaving the other operand to answer.
   `ext.stmt.class.special.stop` names the fault which ends a walk.
@@ -3180,9 +3210,10 @@ only. The extension labels so far, all from PHP:
 - `ext.op.matrix`: the matrix product sign, taking its place among the
   binary operators by `op.precedence`. The compound assignment switch
   gives it a writing form as well. Both operands are read whole; where
-  the run reaches the product, `ext.op.matrix.unready` supplies the
-  complaint, since the methods for a matrix product are not yet called.
-  A product in a routine never called raises nothing.
+  the run reaches the product, the methods the special list names for
+  it are asked of a thing, and `ext.op.matrix.unready` supplies the
+  complaint for any other operands, since no product of numbers is
+  worked out. A product in a routine never called raises nothing.
 - `ext.builtin.format`: the builtin that writes one value according to a
   specification, empty when omitted. Its spelling also gives formatted
   string fields and text remainder their fuller account. An explicit
@@ -4434,6 +4465,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.annotations` | - | - | `__annotations__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
+| `ext.stmt.class.binary.amiss` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` | - | - | - | - | - | - | - |
 | `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
@@ -4485,11 +4517,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
 | `ext.stmt.class.extends` | - | - | - | - | `extends` | - | - | - | - | - |
+| `ext.stmt.class.format.amiss` | - | - | `TypeError: unsupported format string passed to ` `.__format__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.guarded` | - | - | - | - | `protected` | - | - | - | - | - |
 | `ext.stmt.class.hidden` | - | - | - | - | `private` | - | - | - | - | - |
 | `ext.stmt.class.implements` | - | - | - | - | `implements` | - | - | - | - | - |
+| `ext.stmt.class.index.amiss` | - | - | `TypeError: __index__ returned non-int (type ` `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.interface` | - | - | - | - | `interface` | - | - | - | - | - |
 | `ext.stmt.class.layout` | - | - | `TypeError: multiple bases have instance lay-out conflict` | - | - | - | - | - | - | - |
+| `ext.stmt.class.metaclass` | - | - | `metaclass` | - | - | - | - | - | - | - |
 | `ext.stmt.class.missing` | - | - | `__missing__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.modifier` | - | - | - | - | `public` `private` `protected` `final` `abstract` `readonly` `var` | - | - | - | - | - |
 | `ext.stmt.class.new` | - | - | - | - | `new` | - | - | - | - | - |
@@ -4499,7 +4534,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |

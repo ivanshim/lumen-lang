@@ -16,7 +16,14 @@ def fabs(x):
         return __math('fdiv', -x, 1.0)
     return __math('fdiv', x, 1.0)
 
+def _answers_own(x, name):
+    if type(x) == type(1) or type(x) == type(1.0) or type(x) == type(True):
+        return False
+    return hasattr(x, name)
+
 def floor(x):
+    if _answers_own(x, '__floor__'):
+        return x.__floor__()
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer floor'
     n = int(x)
@@ -25,6 +32,8 @@ def floor(x):
     return n
 
 def ceil(x):
+    if _answers_own(x, '__ceil__'):
+        return x.__ceil__()
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer ceiling'
     n = int(x)
@@ -33,6 +42,8 @@ def ceil(x):
     return n
 
 def trunc(x):
+    if _answers_own(x, '__trunc__'):
+        return x.__trunc__()
     if isinf(x) or isnan(x):
         raise 'ValueError: a non-finite value has no integer truncation'
     return int(x)

@@ -181,8 +181,12 @@ pub enum Action {
     Step(bool),
     Sub,
     Mul,
-    /// A matrix product, awaiting the language's method protocol.
+    /// A matrix product, answered by the methods a language's protocol
+    /// names for it.
     Matrix,
+    /// A compound write's working, which first asks the place it lands
+    /// on for its own in-place answer where the protocol names one.
+    InPlace(Box<Action>),
     Div,
     DivReal,
     IntDiv,

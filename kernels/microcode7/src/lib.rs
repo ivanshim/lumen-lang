@@ -475,6 +475,16 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
         if let [before, after] = table.strings(label) { if !before.is_empty() && words.starts_with(before.as_str()) && words.ends_with(after.as_str()) { return true; } }
     }
     if table.single("ext.builtin.core.dict.changed") == Some(words) { return true; }
+    // An index method's wrong answer, and a format specification no
+    // method takes: each opens and closes with its own pieces.
+    for label in ["ext.stmt.class.index.amiss", "ext.stmt.class.format.amiss"] {
+        if let [opening, closing] = table.strings(label) { if !opening.is_empty() && words.starts_with(opening.as_str()) && words.ends_with(closing.as_str()) { return true; } }
+    }
+    // A dyad neither operand's methods would take names its sign and
+    // both kinds between four pieces.
+    if let [opening, sign_end, joining, closing] = table.strings("ext.stmt.class.binary.amiss") {
+        if !opening.is_empty() && words.starts_with(opening.as_str()) && words.contains(sign_end.as_str()) && words.contains(joining.as_str()) && words.ends_with(closing.as_str()) { return true; }
+    }
     for label in ["ext.builtin.zip.short", "ext.builtin.zip.long"] {
         if let [opening, alone, span] = table.strings(label) { if !opening.is_empty() && words.starts_with(opening.as_str()) && (words.ends_with(alone.as_str()) || words.contains(span.as_str())) { return true; } }
     }

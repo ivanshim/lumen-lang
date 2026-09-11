@@ -122,7 +122,7 @@ ext.system.complaint.markup.setting:L ext.system.complaint.markup.kind:L ext.sys
 ext.system.complaint.reference.setting:L ext.system.complaint.reference.page:L ext.system.complaint.reference.mark:L \
 ext.builtin.include.demanded:L ext.builtin.include.demanded.missing:L \
  ext.stmt.with.unready:L ext.op.member.pipes:B ext.op.tuple.unready:L ext.lexical.string.prefix.bytes.unready:L ext.lexical.string.prefix.format.unready:L ext.stmt.assign.chain:B ext.lexical.escape.deferred:L  ext.builtin.complex:L ext.builtin.complex.real:L ext.builtin.complex.imag:L ext.builtin.method.conjugate:L ext.builtin.complex.invalid:L ext.builtin.complex.integer:L ext.builtin.complex.order:L ext.builtin.complex.floor:L ext.builtin.complex.zero:L ext.builtin.complex.power.zero:L ext.builtin.complex.unready:L \
- ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B \
+ ext.builtin.core.unsized:L ext.builtin.core.dict.changed:L ext.builtin.zip.strict:L ext.builtin.zip.short:L ext.builtin.zip.long:L ext.builtin.method.error.popitem:L ext.builtin.method.fromkeys:L ext.builtin.method.popitem:L ext.syntax.map.resized:L ext.syntax.map.unhashable:L ext.syntax.map.value_keys:B ext.stmt.class.index.amiss:L ext.stmt.class.binary.amiss:L ext.stmt.class.format.amiss:L ext.stmt.class.metaclass:L \
  ext.builtin.globals:L ext.builtin.locals:L ext.builtin.exec:L ext.builtin.compile:L ext.builtin.compile.modes:L ext.builtin.compile.parameters:L ext.builtin.compile.kind:L ext.builtin.source.syntax:L ext.builtin.source.unready:L ext.builtin.import:L ext.system.module.doc:L ext.system.module.builtins:L ";
 
 fn tag_shapes(table: &'static str) -> Vec<(&'static str, char)> {
@@ -509,6 +509,54 @@ impl Table {
 
     pub fn flag(&self, key: &str) -> bool {
         matches!(self.cells.get(key), Some(Entry::Flag(true)))
+    }
+
+    /// The number of the in-place method a compound working asks the
+    /// place it lands on for, counted from the first such method in
+    /// the special list; none where the list stops short of them, or
+    /// where the working has no in-place form.
+    pub fn landing_place(&self, op: Prim) -> Option<u8> {
+        if self.strings("ext.stmt.class.special").len() <= 59 { return None; }
+        Some(match op {
+            Prim::Plus | Prim::OctetAssign(false) => 0,
+            Prim::Minus | Prim::SetAssign(2) => 1,
+            Prim::Times | Prim::OctetAssign(true) => 2,
+            Prim::Over | Prim::OverReal => 3,
+            Prim::IntDiv => 4,
+            Prim::Mod => 5,
+            Prim::Power => 6,
+            Prim::MatrixProduct => 7,
+            Prim::BitsUp => 8,
+            Prim::BitsDown => 9,
+            Prim::BitsBoth | Prim::SetAssign(1) => 10,
+            Prim::BitsEither | Prim::SetAssign(0) => 11,
+            Prim::BitsOne | Prim::SetAssign(3) => 12,
+            _ => return None,
+        })
+    }
+
+    /// The plain working a numbered landing falls back to, spelled the
+    /// way a compound write of this table spells it: over bytes and
+    /// sets where the table has them, and with the division the table
+    /// writes.
+    pub fn landing_working(&self, place: u8) -> Prim {
+        let octets = self.has_any("ext.builtin.bytes");
+        let sets = self.flag("ext.syntax.set");
+        match place {
+            0 => if octets { Prim::OctetAssign(false) } else { Prim::Plus },
+            1 => if sets { Prim::SetAssign(2) } else { Prim::Minus },
+            2 => if octets { Prim::OctetAssign(true) } else { Prim::Times },
+            3 => self.compound.values().find(|p| matches!(p, Prim::Over | Prim::OverReal)).copied().unwrap_or(Prim::OverReal),
+            4 => Prim::IntDiv,
+            5 => Prim::Mod,
+            6 => Prim::Power,
+            7 => Prim::MatrixProduct,
+            8 => Prim::BitsUp,
+            9 => Prim::BitsDown,
+            10 => if sets { Prim::SetAssign(1) } else { Prim::BitsBoth },
+            11 => if sets { Prim::SetAssign(0) } else { Prim::BitsEither },
+            _ => if sets { Prim::SetAssign(3) } else { Prim::BitsOne },
+        }
     }
 
     pub fn count(&self, key: &str) -> Option<usize> {
