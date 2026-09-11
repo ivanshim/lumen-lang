@@ -94,27 +94,43 @@ Not spelled: `clone`, `declare`, `enddeclare`, `goto`, `insteadof`, `match`, `na
 
 | Suite | Tests | stack8 | microcode7 |
 |---|---|---|---|
-| `python` | 50 | pass 0, differs 0, error 50, skipped 0 | pass 0, differs 0, error 50, skipped 0 |
+| `python` | 50 | pass 0, differs 2, error 48, skipped 0 | pass 0, differs 2, error 48, skipped 0 |
 
 | Reason | Tests |
 |---|---|
-| Unexpected character '@' | 16 |
-| Unexpected token: : | 10 |
-| Unexpected character '\' | 9 |
-| Unexpected character '~' | 4 |
-| Unexpected character '&' | 3 |
-| Unexpected token: , | 2 |
-| Unexpected character '\|' | 2 |
-| Unexpected character '?' | 1 |
-| Expected identifier as a parameter name, got '*' | 1 |
-| Expected an expression | 1 |
-| Invalid indentation at line 1436 | 1 |
+| Uncaught test run failed | 13 |
+| ModuleNotFoundError: No module named 'doctest' | 6 |
+| ran to the end without asserting anything | 2 |
+| ModuleNotFoundError: No module named 'ast' | 2 |
+| Cannot coerce array to number | 2 |
+| NotImplementedError: this class operation is not supported | 2 |
+| ModuleNotFoundError: No module named 'collections.abc' | 2 |
+| ModuleNotFoundError: No module named 'types' | 2 |
+| NotImplementedError: this class form cannot run yet | 1 |
+| Undefined variable: globals | 1 |
+| ModuleNotFoundError: No module named 'test.test_math' | 1 |
+| ModuleNotFoundError: No module named 'threading' | 1 |
+| ImportError: cannot import name 'BOM_UTF8' | 1 |
+| ModuleNotFoundError: No module named 'errno' | 1 |
+| Undefined variable: __file__ | 1 |
+| ModuleNotFoundError: No module named 'numbers' | 1 |
+| ModuleNotFoundError: No module named 'annotationlib' | 1 |
+| ImportError: cannot import name 'mock' | 1 |
+| ModuleNotFoundError: No module named 'signal' | 1 |
+| this slice operation is not supported | 1 |
+| invalid syntax | 1 |
+| ModuleNotFoundError: No module named 'dis' | 1 |
+| Unexpected token: , | 1 |
+| ImportError: cannot import name 'loads' | 1 |
+| ModuleNotFoundError: No module named '_string' | 1 |
+| ModuleNotFoundError: No module named 'shutil' | 1 |
+| Invalid assignment target before '=' | 1 |
 
-### Reserved words: 17 of 35 spelled
+### Reserved words: 35 of 35 spelled
 
-Spelled: `False`, `None`, `True`, `and`, `break`, `continue`, `def`, `elif`, `else`, `for`, `if`, `in`, `not`, `or`, `pass`, `return`, `while`
+Spelled: `False`, `None`, `True`, `and`, `as`, `assert`, `async`, `await`, `break`, `class`, `continue`, `def`, `del`, `elif`, `else`, `except`, `finally`, `for`, `from`, `global`, `if`, `import`, `in`, `is`, `lambda`, `nonlocal`, `not`, `or`, `pass`, `raise`, `return`, `try`, `while`, `with`, `yield`
 
-Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finally`, `from`, `global`, `import`, `is`, `lambda`, `nonlocal`, `raise`, `try`, `with`, `yield`
+Not spelled: 
 
 ### Most-called functions in the suite, and whether the definition spells them
 
@@ -123,37 +139,37 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `assertEqual` | 5435 | no |
 | `assertRaises` | 1637 | no |
 | `range` | 850 | yes |
-| `F` | 803 | no |
-| `f` | 595 | no |
+| `F` | 803 | yes |
+| `f` | 595 | yes |
 | `Traceback` | 587 | no |
 | `assertTrue` | 549 | no |
-| `format` | 525 | no |
-| `list` | 437 | no |
+| `format` | 525 | yes |
+| `list` | 437 | yes |
 | `assertIs` | 429 | no |
 | `type` | 419 | yes |
-| `complex` | 398 | no |
+| `complex` | 398 | yes |
 | `check` | 369 | no |
 | `int` | 357 | yes |
 | `len` | 339 | yes |
 | `float` | 336 | yes |
 | `str` | 286 | yes |
 | `assertRaisesRegex` | 271 | no |
-| `set` | 267 | no |
+| `set` | 267 | yes |
 | `assertFalse` | 257 | no |
 | `fromHex` | 253 | no |
 | `identical` | 252 | no |
-| `pow` | 224 | no |
-| `next` | 197 | no |
-| `__init__` | 183 | no |
-| `repr` | 179 | no |
-| `_` | 171 | no |
+| `pow` | 224 | yes |
+| `next` | 197 | yes |
+| `__init__` | 183 | yes |
+| `repr` | 179 | yes |
+| `_` | 171 | yes |
 | `assertIn` | 168 | no |
 | `eval` | 161 | no |
 | `testcommon` | 161 | no |
 | `isnan` | 153 | no |
 | `ftest` | 145 | no |
-| `round` | 143 | no |
-| `iter` | 141 | no |
+| `round` | 143 | yes |
+| `iter` | 141 | yes |
 | `fail` | 139 | no |
 | `g` | 137 | no |
 | `pow_op` | 135 | no |
@@ -587,53 +603,53 @@ Not spelled: `as`, `assert`, `async`, `await`, `class`, `del`, `except`, `finall
 | `php/lang/type_hints_002.phpt` | pass | pass |  |
 | `php/lang/type_hints_003.phpt` | pass | pass |  |
 | `php/lang/zend_throw_exception_001.phpt` | pass | pass |  |
-| `python/test_augassign.py` | error | error | Unexpected character '&' |
-| `python/test_bigmem.py` | error | error | Unexpected character '@' |
-| `python/test_binop.py` | error | error | Unexpected token: , |
-| `python/test_bool.py` | error | error | Unexpected character '~' |
-| `python/test_builtin.py` | error | error | Unexpected character '\' |
-| `python/test_class.py` | error | error | Unexpected character '@' |
-| `python/test_cmath.py` | error | error | Unexpected character '\' |
-| `python/test_compare.py` | error | error | Unexpected token: : |
-| `python/test_complex.py` | error | error | Unexpected character '@' |
-| `python/test_contains.py` | error | error | Unexpected token: : |
-| `python/test_decorators.py` | error | error | Unexpected character '@' |
-| `python/test_dict.py` | error | error | Unexpected character '\|' |
-| `python/test_dictcomps.py` | error | error | Unexpected token: : |
-| `python/test_enumerate.py` | error | error | Unexpected character '@' |
-| `python/test_eof.py` | error | error | Unexpected character '@' |
-| `python/test_exceptions.py` | error | error | Unexpected character '@' |
-| `python/test_float.py` | error | error | Unexpected character '@' |
-| `python/test_format.py` | error | error | Unexpected character '\' |
-| `python/test_fractions.py` | error | error | Unexpected character '@' |
-| `python/test_fstring.py` | error | error | Unexpected character '\' |
-| `python/test_funcattrs.py` | error | error | Unexpected character '@' |
-| `python/test_generators.py` | error | error | Unexpected character '@' |
-| `python/test_genexps.py` | error | error | Unexpected character '?' |
-| `python/test_global.py` | error | error | Unexpected token: : |
-| `python/test_grammar.py` | error | error | Unexpected character '\' |
-| `python/test_index.py` | error | error | Unexpected token: : |
-| `python/test_int.py` | error | error | Unexpected character '@' |
-| `python/test_int_literal.py` | error | error | Unexpected token: : |
-| `python/test_iter.py` | error | error | Unexpected character '@' |
-| `python/test_keywordonlyarg.py` | error | error | Expected identifier as a parameter name, got '*' |
-| `python/test_list.py` | error | error | Unexpected character '@' |
-| `python/test_listcomps.py` | error | error | Unexpected token: : |
-| `python/test_long.py` | error | error | Unexpected character '~' |
-| `python/test_math.py` | error | error | Unexpected character '~' |
-| `python/test_opcodes.py` | error | error | Unexpected token: : |
-| `python/test_positional_only_arg.py` | error | error | Unexpected character '\' |
-| `python/test_pow.py` | error | error | Unexpected character '&' |
-| `python/test_print.py` | error | error | Expected an expression |
-| `python/test_range.py` | error | error | Invalid indentation at line 1436 |
-| `python/test_scope.py` | error | error | Unexpected character '@' |
-| `python/test_set.py` | error | error | Unexpected character '\|' |
-| `python/test_setcomps.py` | error | error | Unexpected token: : |
-| `python/test_slice.py` | error | error | Unexpected token: , |
-| `python/test_str.py` | error | error | Unexpected character '\' |
-| `python/test_string_literals.py` | error | error | Unexpected character '\' |
-| `python/test_syntax.py` | error | error | Unexpected character '\' |
-| `python/test_tuple.py` | error | error | Unexpected character '&' |
-| `python/test_unary.py` | error | error | Unexpected character '~' |
-| `python/test_unpack.py` | error | error | Unexpected token: : |
-| `python/test_with.py` | error | error | Unexpected character '@' |
+| `python/test_augassign.py` | error | error | Uncaught test run failed |
+| `python/test_bigmem.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_binop.py` | error | error | NotImplementedError: this class form cannot run yet |
+| `python/test_bool.py` | error | error | Uncaught test run failed |
+| `python/test_builtin.py` | error | error | ModuleNotFoundError: No module named 'ast' |
+| `python/test_class.py` | error | error | Undefined variable: globals |
+| `python/test_cmath.py` | error | error | ModuleNotFoundError: No module named 'test.test_math' |
+| `python/test_compare.py` | error | error | Cannot coerce array to number |
+| `python/test_complex.py` | error | error | NotImplementedError: this class operation is not supported |
+| `python/test_contains.py` | error | error | Uncaught test run failed |
+| `python/test_decorators.py` | error | error | Uncaught test run failed |
+| `python/test_dict.py` | error | error | ModuleNotFoundError: No module named 'collections.abc' |
+| `python/test_dictcomps.py` | error | error | Uncaught test run failed |
+| `python/test_enumerate.py` | error | error | ModuleNotFoundError: No module named 'threading' |
+| `python/test_eof.py` | error | error | ImportError: cannot import name 'BOM_UTF8' |
+| `python/test_exceptions.py` | error | error | ModuleNotFoundError: No module named 'errno' |
+| `python/test_float.py` | error | error | Undefined variable: __file__ |
+| `python/test_format.py` | error | error | Uncaught test run failed |
+| `python/test_fractions.py` | error | error | ModuleNotFoundError: No module named 'numbers' |
+| `python/test_fstring.py` | error | error | ModuleNotFoundError: No module named 'ast' |
+| `python/test_funcattrs.py` | error | error | ModuleNotFoundError: No module named 'types' |
+| `python/test_generators.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
+| `python/test_genexps.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
+| `python/test_global.py` | error | error | ModuleNotFoundError: No module named 'types' |
+| `python/test_grammar.py` | error | error | ModuleNotFoundError: No module named 'annotationlib' |
+| `python/test_index.py` | error | error | NotImplementedError: this class operation is not supported |
+| `python/test_int.py` | error | error | ImportError: cannot import name 'mock' |
+| `python/test_int_literal.py` | differs | differs | ran to the end without asserting anything |
+| `python/test_iter.py` | error | error | ModuleNotFoundError: No module named 'collections.abc' |
+| `python/test_keywordonlyarg.py` | error | error | Uncaught test run failed |
+| `python/test_list.py` | error | error | ModuleNotFoundError: No module named 'signal' |
+| `python/test_listcomps.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
+| `python/test_long.py` | error | error | Cannot coerce array to number |
+| `python/test_math.py` | error | error | this slice operation is not supported |
+| `python/test_opcodes.py` | error | error | invalid syntax |
+| `python/test_positional_only_arg.py` | error | error | ModuleNotFoundError: No module named 'dis' |
+| `python/test_pow.py` | error | error | Uncaught test run failed |
+| `python/test_print.py` | error | error | Uncaught test run failed |
+| `python/test_range.py` | error | error | Uncaught test run failed |
+| `python/test_scope.py` | error | error | Uncaught test run failed |
+| `python/test_set.py` | error | error | Unexpected token: , |
+| `python/test_setcomps.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
+| `python/test_slice.py` | error | error | ImportError: cannot import name 'loads' |
+| `python/test_str.py` | error | error | ModuleNotFoundError: No module named '_string' |
+| `python/test_string_literals.py` | error | error | ModuleNotFoundError: No module named 'shutil' |
+| `python/test_syntax.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
+| `python/test_tuple.py` | error | error | Uncaught test run failed |
+| `python/test_unary.py` | error | error | Uncaught test run failed |
+| `python/test_unpack.py` | error | error | ModuleNotFoundError: No module named 'doctest' |
+| `python/test_with.py` | error | error | Invalid assignment target before '=' |
