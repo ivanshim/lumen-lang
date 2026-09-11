@@ -1849,6 +1849,15 @@ only. The extension labels so far, all from PHP:
   `ext.builtin.method.sort.key` and `.sort.reverse` name the two sorting
   arguments; `.split.sep` and `.split.maxsplit` name the separator and
   limit for either direction of splitting.
+- `ext.builtin.method.sort.modified`: the complaint made when the array
+  being ordered in place is written into while the ordering is going on.
+  Where a language gives these words, the array is set aside for the
+  length of the ordering and an empty one waits in its place, so that a
+  key routine reaching for the array finds nothing in it; a key that
+  writes into the waiting array is told of with these words once the
+  ordering is done, and the ordered array stands. A key that raises
+  leaves the array exactly as it was. Where a language gives no words,
+  the array is ordered where it lies and nothing is watched for.
 - `ext.builtin.method.get`, `.setdefault` and `.update`: look up a map
   key with an optional default, keep the default where a key is absent,
   or merge pairs and named arguments. `.pop` takes a map key too.
@@ -4031,6 +4040,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.slice_hash` | - | - | `__hash__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort` | - | - | `sort` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.key` | - | - | `key` | - | - | - | - | - | - | - |
+| `ext.builtin.method.sort.modified` | - | - | `ValueError: list modified during sort` | - | - | - | - | - | - | - |
 | `ext.builtin.method.sort.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
 | `ext.builtin.method.split` | - | - | `split` | - | - | - | - | - | - | - |
 | `ext.builtin.method.split.maxsplit` | - | - | `maxsplit` | - | - | - | - | - | - | - |

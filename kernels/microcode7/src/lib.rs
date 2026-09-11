@@ -469,9 +469,10 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     if ["ext.system.fault.shift", "ext.builtin.to_int.infinity", "ext.builtin.to_int.nan"].iter().any(|label| table.single(label) == Some(words)) { return true; }
     if ["ext.builtin.to_int.digits.amiss", "ext.builtin.to_int.text.detail"].iter().any(|label| table.strings(label).first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))) { return true; }
     if table.single("ext.builtin.bool.result").map_or(false, |opening| !opening.is_empty() && words.starts_with(opening)) { return true; }
-    // A value that is no walk or no iterator, a dictionary that grew
-    // under a walk, and zip's unequal sources: each told under its class.
-    for label in ["ext.builtin.core.not_iterator", "ext.builtin.core.uniterable", "ext.builtin.core.unsized"] {
+    // A value that is no walk or no iterator, a row asked for the least
+    // or the greatest of nothing at all, a dictionary that grew under a
+    // walk, and zip's unequal sources: each told under its class.
+    for label in ["ext.builtin.core.not_iterator", "ext.builtin.core.uniterable", "ext.builtin.core.unsized", "ext.builtin.core.empty"] {
         if let [before, after] = table.strings(label) { if !before.is_empty() && words.starts_with(before.as_str()) && words.ends_with(after.as_str()) { return true; } }
     }
     if table.single("ext.builtin.core.dict.changed") == Some(words) { return true; }

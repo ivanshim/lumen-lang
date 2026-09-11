@@ -3419,7 +3419,45 @@ impl<'a> Engine<'a> {
             while let Some(item) = self.core_step(b)? { if Self::member_matches(a, &item) { found = true; break; } }
             return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
         }
+        if self.lang.order_unsupported.len() == 4 && matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            if let Some(told) = self.ordered_apart(op, a, b)? { return Ok(told); }
+        }
         self.dyadic(op, a, b)
+    }
+
+    /// Two rows, or two tuples, stand in order member by member: the
+    /// first pair that are not each other's equal settles the matter,
+    /// and where neither has differed by the time the shorter runs out,
+    /// the shorter goes before. A thing whose class said nothing of the
+    /// order is refused outright, named by its class, since no ordering
+    /// of things is the kernel's to invent. Anything else is left to the
+    /// plain working, which knows its own kinds.
+    fn ordered_apart(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Option<Value>> {
+        let stretched = |v: &Value| match v { Value::Array(items) | Value::Tuple(items) => Some(Rc::clone(items)), _ => None };
+        let alike = matches!(a, Value::Array(_)) == matches!(b, Value::Array(_));
+        if let (Some(left), Some(right), true) = (stretched(a), stretched(b), alike) {
+            for (one, other) in left.iter().zip(right.iter()) {
+                if Self::member_matches(one, other) { continue; }
+                let same = self.special_dyad(&Action::Eq, one, other)?;
+                if self.special_truth(&same)? { continue; }
+                return self.special_dyad(op, one, other).map(Some);
+            }
+            let order = left.len().cmp(&right.len());
+            let answer = match op { Action::Lt => order.is_lt(), Action::Le => order.is_le(), Action::Gt => order.is_gt(), _ => order.is_ge() };
+            return Ok(Some(Value::Flag(answer)));
+        }
+        if matches!(a, Value::Object(_)) || matches!(b, Value::Object(_)) {
+            return Err(self.orderless_fault(op, a, b));
+        }
+        Ok(None)
+    }
+
+    /// The complaint that two values stand in no order, with the sign
+    /// that was asked for and both kinds named as the language names them.
+    fn orderless_fault(&self, op: &Action, a: &Value, b: &Value) -> String {
+        let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
+        let words = &self.lang.order_unsupported;
+        format!("{}{}{}{}{}{}{}", words[0], sign, words[1], a.core_kind(), words[2], b.core_kind(), words[3])
     }
 
     fn special_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Option<Value>> {
@@ -7436,9 +7474,26 @@ impl<'a> Engine<'a> {
         } else { named };
         if operation == "sort" {
             if !args.is_empty() || !matches!(receiver.contents(), Value::Array(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
-            let row = self.order_values(receiver, &named)?;
             let Value::Collection(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
-            *cell.borrow_mut() = Value::array(row);
+            if self.lang.sort_modified.is_empty() {
+                let row = self.order_values(receiver, &named)?;
+                *cell.borrow_mut() = Value::array(row);
+                return Ok(Value::Null);
+            }
+            // While the row is being put in order it is set aside and an
+            // empty one left in its place, so that a key looking at the
+            // row sees nothing there. A key that raises leaves the row as
+            // it was; a key that writes into the empty row has the
+            // ordering told of afterwards, the ordered row standing.
+            let vacant = Rc::new(Vec::new());
+            let held = cell.replace(Value::Array(Rc::clone(&vacant)));
+            let outcome = self.order_values(&held, &named);
+            let meddled = !matches!(&*cell.borrow(), Value::Array(row) if Rc::ptr_eq(row, &vacant));
+            match outcome {
+                Err(told) => { *cell.borrow_mut() = held; return Err(told); }
+                Ok(row) => *cell.borrow_mut() = Value::array(row),
+            }
+            if meddled { return Err(format!("\0{}", self.lang.sort_modified[0])); }
             return Ok(Value::Null);
         }
         crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone())
@@ -7452,34 +7507,32 @@ impl<'a> Engine<'a> {
             if !seen.insert(name) { return Err(self.lang.method_errors["arguments"].clone()); }
             match self.lang.method_keywords.get(name).map(String::as_str).unwrap_or("") { "reverse" => { if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.lang.method_errors["arguments"].clone()); } backwards = self.truth(value); }, "key" => key = value.clone(), _ => return Err(self.lang.method_errors["arguments"].clone()) }
         }
-        let mut decorated = Vec::new();
-        for item in crate::methods::members(source, &|key| self.lang.method_errors[key].clone())? {
-            let rank = match &key {
-                Value::Null => item.clone(),
-                Value::Native(b, word) => self.builtin(*b, word, &mut vec![item.clone()])?,
-                Value::Routine(routine) => {
-                    self.invoke(routine, vec![item.clone()]).map_err(|_| self.lang.method_errors["unready"].clone())?;
-                    self.drop_top()?
-                }
-                Value::ValueMethod(method) => self.value_method(&method.0, &method.1, vec![item.clone()], Vec::new())?,
-                Value::Text(word) => {
-                    let native = self.lang.builtins.get(word.as_ref()).copied().ok_or_else(|| self.lang.method_errors["arguments"].clone())?;
-                    self.builtin(native, word, &mut vec![item.clone()])?
-                }
-                _ => return Err(self.lang.method_errors["unready"].clone()),
-            };
-            decorated.push((rank, item));
+        let items = self.core_members(source)?;
+        self.steady_order(items, &key, backwards)
+    }
+
+    /// Members put in order and kept steady: each is weighed against the
+    /// one before it and moved back only while it stands below, so two
+    /// that weigh alike are left in the order they came in. The key and
+    /// the weighing are the program's own working, and what either of
+    /// them raises is carried out rather than swallowed.
+    fn steady_order(&mut self, items: Vec<Value>, key: &Value, backwards: bool) -> Res<Vec<Value>> {
+        let mut ranked: Vec<(Value, Value)> = Vec::with_capacity(items.len());
+        for item in items {
+            let rank = if matches!(key, Value::Null) { item.clone() } else { self.core_apply(key, vec![item.clone()])? };
+            ranked.push((rank, item));
         }
-        for i in 1..decorated.len() {
-            let mut j = i;
-            while j > 0 {
-                let (left, right) = if backwards { (&decorated[j-1].0, &decorated[j].0) } else { (&decorated[j].0, &decorated[j-1].0) };
-                let lower = match (left.contents(), right.contents()) { (Value::Text(a), Value::Text(b)) => a < b, _ => self.truth(&self.dyadic(&Action::Lt, left, right).map_err(|_| self.lang.method_errors["unready"].clone())?) };
-                if !lower { break; }
-                decorated.swap(j, j-1); j -= 1;
+        for at in 1..ranked.len() {
+            let mut place = at;
+            while place > 0 {
+                let (left, right) = if backwards { (ranked[place-1].0.clone(), ranked[place].0.clone()) } else { (ranked[place].0.clone(), ranked[place-1].0.clone()) };
+                let below = self.special_dyad(&Action::Lt, &left, &right)?;
+                if !self.special_truth(&below)? { break; }
+                ranked.swap(place, place - 1);
+                place -= 1;
             }
         }
-        Ok(decorated.into_iter().map(|(_, value)| value).collect())
+        Ok(ranked.into_iter().map(|(_, item)| item).collect())
     }
 
     fn integer_call(&self, args: &[Value]) -> Res<Value> {
@@ -10239,8 +10292,13 @@ impl Engine<'_> {
                 while let Some(value) = self.core_step(&walk)? { if !self.truth(&value) { return Ok(Value::Flag(false)); } }
                 Value::Flag(true)
             }
-            Builtin::Minimum | Builtin::Maximum | Builtin::Sorted => {
-                arity(1, if b == Builtin::Sorted { 1 } else { usize::MAX })?;
+            Builtin::Sorted => {
+                arity(1, 1)?;
+                let items = self.core_members(&args[0])?;
+                Value::array(self.steady_order(items, &key, reverse)?).held(true)
+            }
+            Builtin::Minimum | Builtin::Maximum => {
+                arity(1, usize::MAX)?;
                 if args.len() > 1 && default.is_some() { return Err(self.core_fault("core.default.many", "")); }
                 // The least and the greatest of a counted row are its
                 // two ends, which the bounds give without the places.
@@ -10253,26 +10311,23 @@ impl Engine<'_> {
                         return Ok(Value::of_big(if b == Builtin::Maximum { above } else { below }));
                     }
                 }
-                let values = if args.len() == 1 { self.core_members(&args[0])? } else { args.clone() };
-                if values.is_empty() && b != Builtin::Sorted { return default.ok_or_else(|| self.core_fault("core.empty", name)); }
-                let mut ranked: Vec<(Value,Value)> = Vec::new();
-                for value in values {
-                    let k = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
-                    let mut at = ranked.len();
-                    while at > 0 {
-                        let less = match (&k, &ranked[at-1].0) {
-                            (Value::Text(a), Value::Text(z)) => a < z,
-                            (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Less,
-                        };
-                        let greater = match (&k, &ranked[at-1].0) {
-                            (Value::Text(a), Value::Text(z)) => a > z,
-                            (a,z) => arith::order_values(&number(a), &number(z)).ok_or_else(|| self.core_fault("core.unready", name))? == std::cmp::Ordering::Greater,
-                        };
-                        if if reverse || b == Builtin::Maximum { greater } else { less } { at -= 1; } else { break; }
-                    }
-                    ranked.insert(at, (k,value));
+                // The members are taken one at a time and each weighed as
+                // it arrives, so that a walk is read no further than it
+                // must be and the key is asked in the order they come.
+                // The one standing keeps its place against an equal, so
+                // that the first of several alike is the one answered.
+                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(args.clone(), 0)) };
+                let wanted = if b == Builtin::Maximum { Action::Gt } else { Action::Lt };
+                let mut standing: Option<(Value, Value)> = None;
+                while let Some(value) = self.core_step(&walk)? {
+                    let rank = if matches!(key, Value::Null) { value.clone() } else { self.core_apply(&key, vec![value.clone()])? };
+                    let takes = match &standing {
+                        None => true,
+                        Some((held, _)) => { let told = self.special_dyad(&wanted, &rank, &held.clone())?; self.special_truth(&told)? }
+                    };
+                    if takes { standing = Some((rank, value)); }
                 }
-                if b == Builtin::Sorted { Value::array(ranked.into_iter().map(|(_,v)| v).collect()).held(true) } else { ranked.remove(0).1 }
+                match standing { Some((_, value)) => value, None => return default.ok_or_else(|| self.core_fault("core.empty", name)) }
             }
             Builtin::Absolute => {
                 arity(1, 1)?;

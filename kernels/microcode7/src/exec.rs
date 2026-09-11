@@ -4470,9 +4470,27 @@ impl<'a> Machine<'a> {
             return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says }.answer().map_err(Escape::from);
         }
         if !arguments.is_empty() || !matches!(receiver.settled(), Value::Vector(_)) { return Err(self.method_fault("arguments").into()); }
-        let ordered = self.ordered_members(receiver, &keywords)?;
-        if let Value::Mutable(place, _) = receiver { place.replace(Value::Vector(Rc::new(ordered))); Ok(Value::Nil) }
-        else { Err(self.method_fault("unready").into()) }
+        let Value::Mutable(place, _) = receiver else { return Err(self.method_fault("unready").into()) };
+        if !self.table.has_any("ext.builtin.method.sort.modified") {
+            let ordered = self.ordered_members(receiver, &keywords)?;
+            place.replace(Value::Vector(Rc::new(ordered)));
+            return Ok(Value::Nil);
+        }
+        // The row stands aside while it is being ordered and an empty one
+        // waits in its cell, so a key that reaches for the row finds
+        // nothing in it. Should the key raise, the row goes back as it
+        // stood; should the key have written into the waiting row, the
+        // ordered row is put in place and the meddling told of after.
+        let bare = Rc::new(Vec::new());
+        let kept = place.replace(Value::Vector(Rc::clone(&bare)));
+        let outcome = self.ordered_members(&kept, &keywords);
+        let meddled = !matches!(&*place.borrow(), Value::Vector(row) if Rc::ptr_eq(row, &bare));
+        let ordered = match outcome { Err(away) => { place.replace(kept); return Err(away); }, Ok(row) => row };
+        place.replace(Value::Vector(Rc::new(ordered)));
+        match meddled {
+            false => Ok(Value::Nil),
+            true => Err(format!("\0{}", self.table.single("ext.builtin.method.sort.modified").unwrap_or_default()).into()),
+        }
     }
 
     fn ordered_members(&mut self, receiver: &Value, keywords: &[(String, Value)]) -> Res<Vec<Value>> {
@@ -4489,34 +4507,34 @@ impl<'a> Machine<'a> {
             }
             else { return Err(self.method_fault("arguments").into()); }
         }
-        let items = crate::members::gather(receiver, &|kind| self.method_fault(kind))?;
-        let mut keys = Vec::new();
-        for value in items {
-            let compared = match &using {
-                Value::Nil => value.clone(),
-                Value::Intrinsic(word) => { let operation = *self.table.prims.get(word.as_ref()).ok_or_else(|| self.method_fault("arguments"))?; self.prim(operation, word, &[value.clone()])? }
-                Value::Bound(routine, environment) => self.invoke(routine.clone(), environment.clone(), vec![value.clone()])?,
-                Value::Member(subject, word) => self.value_member(subject, word, vec![value.clone()], Vec::new())?,
-                Value::Text(word) => {
-                    let operation = self.table.prims.get(word.as_ref()).copied().ok_or_else(|| self.method_fault("arguments"))?;
-                    self.prim(operation, word, &[value.clone()])?
-                }
-                _ => return Err(self.method_fault("unready").into()),
-            };
-            keys.push((compared, value));
+        let items = self.core_collect(receiver)?;
+        self.arranged(items, &using, reverse).map_err(Escape::from)
+    }
+
+    /// The members arranged and left steady: each is set against those
+    /// already placed and walks back only for as long as it weighs
+    /// below them, so that two weighing alike keep the order in which
+    /// they arrived. What the key or the weighing raises is carried out
+    /// whole, since a raised fault is the program's answer and not a
+    /// sign that the arranging could not be done.
+    fn arranged(&mut self, items: Vec<Value>, using: &Value, reverse: bool) -> Result<Vec<Value>, String> {
+        let mut weighed = Vec::with_capacity(items.len());
+        for item in items {
+            let mark = match using { Value::Nil => item.clone(), work => self.core_run(work, vec![item.clone()])? };
+            weighed.push((mark, item));
         }
-        let mut sorted: Vec<(Value, Value)> = Vec::new();
-        for pair in keys {
-            let mut at = sorted.len();
+        let mut placed: Vec<(Value, Value)> = Vec::with_capacity(weighed.len());
+        for pair in weighed {
+            let mut at = placed.len();
             while at != 0 {
-                let arguments = if reverse { [sorted[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), sorted[at-1].0.clone()] };
-                let lower = if let (Value::Text(a), Value::Text(b)) = (&arguments[0], &arguments[1]) { a < b } else { self.prim(Prim::Lt, "", &arguments).map_err(|_| self.method_fault("unready"))?.is_true() };
-                if !lower { break; }
+                let both = if reverse { [placed[at-1].0.clone(), pair.0.clone()] } else { [pair.0.clone(), placed[at-1].0.clone()] };
+                let below = self.prim(Prim::Lt, "", &both)?;
+                if !self.object_truth(&below)? { break; }
                 at -= 1;
             }
-            sorted.insert(at, pair);
+            placed.insert(at, pair);
         }
-        Ok(sorted.into_iter().map(|entry| entry.1).collect())
+        Ok(placed.into_iter().map(|entry| entry.1).collect())
     }
 
     /// Which of a stepped walk's three numbers this word asks for,
@@ -6446,6 +6464,43 @@ impl<'a> Machine<'a> {
         Ok(Some(value))
     }
 
+    /// Two rows are weighed member against member, and so are two
+    /// tuples: the first pair of members that are not each other's equal
+    /// says which goes first, and where no pair differed the shorter of
+    /// the two goes before the longer. A thing whose blueprint appointed
+    /// no method for the ordering is refused and named by its blueprint,
+    /// since the kernel invents no order among things. Anything else is
+    /// handed back untouched, for the plain working knows its own kinds.
+    fn weighed_member_wise(&mut self, op: Prim, one: &Value, two: &Value) -> Result<Option<Value>, String> {
+        let members = |value: &Value| match value { Value::Vector(held) | Value::Tuple(held) | Value::Row(held) => Some(Rc::clone(held)), _ => None };
+        let rows = matches!(one, Value::Vector(_)) == matches!(two, Value::Vector(_));
+        if let (Some(left), Some(right), true) = (members(one), members(two), rows) {
+            for place in 0..left.len().min(right.len()) {
+                if contained_equal(&left[place], &right[place]) { continue; }
+                let same = self.prim(Prim::Eq, "", &[left[place].clone(), right[place].clone()])?;
+                if self.object_truth(&same)? { continue; }
+                return self.prim(op, "", &[left[place].clone(), right[place].clone()]).map(Some);
+            }
+            let rank = left.len().cmp(&right.len());
+            let settled = match op { Prim::Lt => rank.is_lt(), Prim::Le => rank.is_le(), Prim::Gt => rank.is_gt(), _ => rank.is_ge() };
+            return Ok(Some(Value::Flag(settled)));
+        }
+        if matches!(one, Value::Thing(_)) || matches!(two, Value::Thing(_)) {
+            return Err(self.unordered_complaint(op, one, two));
+        }
+        Ok(None)
+    }
+
+    /// The complaint that two values stand in no order at all, carrying
+    /// the sign that was asked for and the name of each of the kinds.
+    fn unordered_complaint(&self, op: Prim, one: &Value, two: &Value) -> String {
+        let sign = match op { Prim::Le => "<=", Prim::Gt => ">", Prim::Ge => ">=", _ => "<" };
+        match self.table.strings("ext.op.order.unsupported") {
+            [before, between, and, after] => format!("{before}{sign}{between}{}{and}{}{after}", one.kind_word(), two.kind_word()),
+            _ => String::new(),
+        }
+    }
+
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
         match one { Value::Shared(cell) => return self.equal_contents(&cell.borrow(), other), _ => {} }
         match other { Value::Shared(cell) => return self.equal_contents(one, &cell.borrow()), _ => {} }
@@ -6692,6 +6747,10 @@ impl<'a> Machine<'a> {
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
+        if let ([one, two], true) = (v, matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) && self.table.strings("ext.op.order.unsupported").len() == 4) {
+            let (one, two) = (one.clone(), two.clone());
+            if let Some(answer) = self.weighed_member_wise(op, &one, &two)? { return Ok(answer); }
+        }
         // A landing no thing answered for itself is the plain working,
         // given what it was handed: a map written into keeps its cell,
         // so that every name for it sees what was written.
@@ -11406,8 +11465,15 @@ impl Machine<'_> {
                     }
                 }
             }
-            Ordered | Least | Greatest => {
-                require(1, if op == Ordered { 1 } else { usize::MAX })?;
+            Ordered => {
+                require(1, 1)?;
+                let key = ordering.unwrap_or(Value::Nil);
+                let entries = self.core_collect(&input[0])?;
+                let row = self.arranged(entries, &key, descending)?;
+                Ok(Value::Vector(Rc::new(row)).keep(true))
+            }
+            Least | Greatest => {
+                require(1, usize::MAX)?;
                 if input.len() > 1 && fallback.is_some() { return Err(self.core_complaint("core.default.many", "")); }
                 // The smallest and the largest of a stepped walk are the
                 // two ends of it, which its numbers give outright.
@@ -11420,28 +11486,28 @@ impl Machine<'_> {
                         return Ok(Value::from_big(if op == Greatest { over } else { under }));
                     }
                 }
-                let entries = if input.len() > 1 { input.clone() } else { self.core_collect(&input[0])? };
-                if entries.is_empty() && op != Ordered { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)); }
-                let mut decorated = Vec::new();
-                for value in entries {
-                    let criterion = match &ordering { None | Some(Value::Nil) => value.clone(), Some(work) => self.core_run(work, vec![value.clone()])? };
-                    decorated.push((criterion, value));
+                let key = ordering.unwrap_or(Value::Nil);
+                // The members come one at a time and each is weighed the
+                // moment it arrives, so a walk is drawn on no further
+                // than it need be and the key is asked of the members in
+                // the order they appear. A member weighing the same as
+                // the one standing does not displace it, so the first of
+                // several alike is the one answered with.
+                // A generator is walked where it stands, for gathering it
+                // first would run it to its end before a single member
+                // had been weighed.
+                let walk = if input.len() > 1 { Self::cursor_value(IteratorKind::Stored(input.clone().into_iter().collect())) }
+                    else if matches!(input[0], Value::Generator(_)) { input[0].clone() }
+                    else { self.iterated_value(&input[0])? };
+                let Some(mut choice) = self.next_value(&walk)? else { return fallback.ok_or_else(|| self.core_complaint("core.empty", name)) };
+                let mut standing = match &key { Value::Nil => choice.clone(), work => self.core_run(work, vec![choice.clone()])? };
+                let wanted = if op == Least { Prim::Lt } else { Prim::Gt };
+                while let Some(further) = self.next_value(&walk)? {
+                    let mark = match &key { Value::Nil => further.clone(), work => self.core_run(work, vec![further.clone()])? };
+                    let answer = self.prim(wanted, "", &[mark.clone(), standing.clone()])?;
+                    if self.object_truth(&answer)? { choice = further; standing = mark; }
                 }
-                let mut failure = None;
-                decorated.sort_by(|a, b| {
-                    let answer = match (&a.0, &b.0) {
-                        (Value::Text(x), Value::Text(y)) => x.cmp(y),
-                        (x, y) => match (math::below(&as_number(x), &as_number(y)), math::below(&as_number(y), &as_number(x))) {
-                            (Some(true), _) => std::cmp::Ordering::Less, (_, Some(true)) => std::cmp::Ordering::Greater,
-                            (Some(false), Some(false)) => std::cmp::Ordering::Equal,
-                            _ => { failure = Some(self.core_complaint("core.unready", name)); std::cmp::Ordering::Equal }
-                        },
-                    };
-                    if descending || op == Greatest { answer.reverse() } else { answer }
-                });
-                if let Some(complaint) = failure { return Err(complaint); }
-                if op == Ordered { Ok(Value::Vector(Rc::new(decorated.into_iter().map(|pair| pair.1).collect())).keep(true)) }
-                else { Ok(decorated.remove(0).1) }
+                Ok(choice)
             }
             Magnitude => {
                 require(1, 1)?;
