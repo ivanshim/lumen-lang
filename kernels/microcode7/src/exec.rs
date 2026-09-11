@@ -2412,6 +2412,13 @@ impl<'a> Machine<'a> {
                     asked?;
                     return Ok(Value::Nil);
                 }
+                // A thing standing for a whole number is that number
+                // where a row or a text is shortened at a place.
+                let named = if matches!(target, Value::Vector(_) | Value::Text(_)) && matches!(named, Value::Thing(_)) {
+                    let asked = self.stood_for_whole(&named);
+                    if let Some(away) = self.got_away.take() { return Err(away); }
+                    asked?.unwrap_or(named)
+                } else { named };
                 let named = match &named {
                     Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
                         let settled = self.span_settled(bounds);
@@ -3066,7 +3073,7 @@ impl<'a> Machine<'a> {
                     let (f, i) = self.locate(slot, frame)?;
                     let mut values = values;
                     let value = values.pop().unwrap();
-                    let key = values.pop().map(|k| self.as_key_spoken(&k));
+                    let mut key = values.pop().map(|k| self.as_key_spoken(&k));
                     if self.table.has_any("ext.stmt.class.special") {
                         let original = self.fetch(slot, frame)?;
                         // A thing over a native worth is written into
@@ -3076,6 +3083,13 @@ impl<'a> Machine<'a> {
                             Some(Value::Mutable(cell, _)) => { let held = cell.borrow().clone(); (held, Some(cell)) }
                             _ => (original.settled(), None),
                         };
+                        // A thing standing for a whole number is that
+                        // number where a row or a text is written into.
+                        if let (Some(index @ Value::Thing(_)), Value::Vector(_) | Value::Text(_)) = (key.clone(), &target) {
+                            let asked = self.stood_for_whole(&index);
+                            if let Some(away) = self.got_away.take() { return Err(away); }
+                            if let Some(whole) = asked? { key = Some(whole); }
+                        }
                         if let (Some(key), Value::Dict(entries)) = (&key, &target) {
                             let key = self.hash_key(key)?;
                             let mut entries = entries.to_vec();
@@ -5213,14 +5227,69 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The whole number a thing stands for by its index method: nothing
+    /// where it has none, the number where it answered one, and a
+    /// complaint naming the kind where it answered anything else.
+    fn stood_for_whole(&mut self, item: &Value) -> Result<Option<Value>, String> {
+        let Some(answer) = self.ask_special(item, 43, &[])? else { return Ok(None) };
+        match answer {
+            Value::Flag(truth) => Ok(Some(Value::Small(i64::from(truth)))),
+            Value::Small(_) | Value::Huge(_) => Ok(Some(answer)),
+            other => {
+                let pieces = self.table.strings("ext.stmt.class.index.amiss");
+                Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), other.kind_word(), pieces.get(1).map_or("", String::as_str)))
+            }
+        }
+    }
+
+    /// The complaint for a working neither operand's methods would
+    /// take: its sign and the two kinds set among the four pieces the
+    /// table gives.
+    fn operands_refused(&self, sign: &str, left: &Value, right: &Value) -> String {
+        let pieces = self.table.strings("ext.stmt.class.binary.amiss");
+        if pieces.len() != 4 { return self.bad_answer(); }
+        format!("{}{sign}{}{}{}{}{}", pieces[0], pieces[1], left.kind_word(), pieces[2], right.kind_word(), pieces[3])
+    }
+
+    /// A thing written to a specification: by its own method, by the
+    /// worth beneath it, or as its text where nothing was specified.
+    pub(super) fn thing_in_spec(&mut self, item: &Value, spec: &str) -> Result<String, String> {
+        match self.ask_special(item, 72, &[Value::text(spec)])? {
+            Some(Value::Text(shown)) => return Ok(shown.to_string()),
+            Some(_) => return Err(self.bad_answer()),
+            None => (),
+        }
+        if let Some(worth) = Self::underlying(item) {
+            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+            return layout.present(&worth.settled(), spec, "");
+        }
+        if spec.is_empty() { return self.object_words(item, false); }
+        let pieces = self.table.strings("ext.stmt.class.format.amiss");
+        Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), item.kind_word(), pieces.get(1).map_or("", String::as_str)))
+    }
+
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
         if self.table.strings("ext.stmt.class.special").is_empty() { return Ok(None); }
+        // A compound write asks the thing it lands on for its in-place
+        // answer first; declined or absent, the plain working runs.
+        if let (Prim::Landing(place), [held, by]) = (operation, operands) {
+            let thing = held.settled();
+            if matches!(thing, Value::Thing(_)) {
+                if let Some(answer) = self.ask_special(&thing, 47 + usize::from(place), std::slice::from_ref(by))? {
+                    if !matches!(answer, Value::Refusal(_)) { return Ok(Some(answer)); }
+                }
+            }
+            return Ok(None);
+        }
         if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),
             Prim::Over | Prim::OverReal => Some((21, 29)), Prim::IntDiv => Some((22, 30)),
             Prim::Mod => Some((23, 31)), Prim::Power => Some((24, 32)),
+            Prim::MatrixProduct => Some((45, 46)),
+            Prim::BitsUp => Some((62, 67)), Prim::BitsDown => Some((63, 68)),
+            Prim::BitsBoth => Some((64, 69)), Prim::BitsEither => Some((65, 70)), Prim::BitsOne => Some((66, 71)),
             Prim::Lt => Some((4, 6)), Prim::Gt => Some((6, 4)), Prim::Le => Some((5, 7)), Prim::Ge => Some((7, 5)),
             Prim::Eq => Some((2, 2)), Prim::Ne => Some((3, 3)), Prim::At => Some((11, usize::MAX)),
             _ => None,
@@ -5245,7 +5314,14 @@ impl<'a> Machine<'a> {
                     if !matches!(result, Value::Refusal(_)) { return Ok(Some(result)); }
                 }
             }
-
+            // An arithmetic, matrix or bit working with a thing of no
+            // native worth on either side, which no method took, is
+            // refused with its sign and both kinds named.
+            let bare = |v: &Value| matches!(v, Value::Thing(_)) && Self::underlying(v).is_none();
+            if forward >= 18 && (bare(left) || bare(right)) {
+                let sign = self.written_as(&operation);
+                return Err(self.operands_refused(&sign, left, right));
+            }
         }
         // A thing over a native worth is written into through that
         // worth, answers an absent key through the method the table
@@ -5298,9 +5374,95 @@ impl<'a> Machine<'a> {
             (Prim::Of | Prim::HasMember, [Value::Backtrace(words), _]) => return Err(words.to_string()),
             // What whole number, real, magnitude, or positive form a thing
             // stands for, by its own methods where it has them.
-            (Prim::AsInt | Prim::AsReal | Prim::Magnitude | Prim::Positive, [subject @ Value::Thing(_)]) => {
+            (Prim::AsInt | Prim::AsReal | Prim::Magnitude | Prim::Positive | Prim::NumberAlone, [subject @ Value::Thing(_)]) => {
                 let index = match operation { Prim::AsInt => 38, Prim::AsReal => 39, Prim::Magnitude => 40, _ => 41 };
                 match self.ask_special(subject, index, &[])? { Some(answer) => answer, None => return Ok(None) }
+            }
+            // Inversion is the thing's own where it has the method, and
+            // its worth's where it stands on a native kind.
+            (Prim::BitsOver, [subject @ Value::Thing(_)]) => match self.ask_special(subject, 44, &[])? {
+                Some(answer) => answer,
+                None => match Self::underlying(subject) {
+                    Some(worth) => self.prim(operation, "", &[worth.settled()])?,
+                    None => return Ok(None),
+                },
+            },
+            // A thing standing for a whole number is that number where a
+            // row, a text, a tuple or a progression is read, or a row or
+            // a text shortened, at a place.
+            (Prim::At | Prim::Fetch | Prim::Toward | Prim::Apart | Prim::Erase, [row, key @ Value::Thing(_)]) if matches!(row.settled(), Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_)) => {
+                match self.stood_for_whole(key)? {
+                    Some(whole) => self.prim(operation, "", &[row.clone(), whole])?,
+                    None => return Ok(None),
+                }
+            }
+            // A range wants whole numbers: each thing among its bounds
+            // is asked for the one it stands for.
+            (Prim::Span, _) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => {
+                let mut told = Vec::with_capacity(operands.len());
+                for bound in operands {
+                    told.push(match self.stood_for_whole(bound)? { Some(whole) => whole, None => bound.clone() });
+                }
+                let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
+                self.prim(operation, &word, &told)?
+            }
+            // So does a radix rendering.
+            (Prim::Hexadecimal | Prim::Octal | Prim::Binary, [item @ Value::Thing(_)]) => {
+                let Some(whole) = self.stood_for_whole(item)? else { return Ok(None) };
+                let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
+                self.prim(operation, &word, &[whole])?
+            }
+            // Rounding is the thing's own where it has the method, given
+            // the places if any were asked.
+            (Prim::Rounded, [item @ Value::Thing(_), places @ ..]) => match self.ask_special(item, 73, places)? {
+                Some(answer) => answer,
+                None => return Ok(None),
+            },
+            // Division with remainder asks the left thing, then the right
+            // one reflected; refused by both, it is refused by name.
+            (Prim::QuotRem, [left, right]) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => {
+                for (subject, place, other) in [(left, 60, right), (right, 61, left)] {
+                    if let Some(answer) = self.ask_special(subject, place, std::slice::from_ref(other))? {
+                        if !matches!(answer, Value::Refusal(_)) { return Ok(Some(answer)); }
+                    }
+                }
+                let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
+                return Err(self.operands_refused(&format!("{word}()"), left, right));
+            }
+            // Power without a modulus is the ordinary dyad; with one, the
+            // modulus goes along to the power method and its reflection.
+            (Prim::Powered, [_, _]) if operands.iter().any(|v| matches!(v, Value::Thing(_))) => self.prim(Prim::Power, "", operands)?,
+            (Prim::Powered, [base, exponent, modulus]) if operands[..2].iter().any(|v| matches!(v, Value::Thing(_))) => {
+                for (subject, place, other) in [(base, 24, exponent), (exponent, 32, base)] {
+                    if let Some(answer) = self.ask_special(subject, place, &[other.clone(), modulus.clone()])? {
+                        if !matches!(answer, Value::Refusal(_)) { return Ok(Some(answer)); }
+                    }
+                }
+                let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
+                return Err(self.operands_refused(&format!("{word}()"), base, exponent));
+            }
+            // A thing may say what complex number it stands for, and must
+            // answer with one.
+            (Prim::ComplexMade, [item @ Value::Thing(_)]) => match self.ask_special(item, 74, &[])? {
+                Some(answer @ Value::Complex(_)) => answer,
+                Some(_) => return Err(self.bad_answer()),
+                None => return Ok(None),
+            },
+            // Formatting, by the builtin or by a field of a formatted
+            // string; a conversion asked in the field shows the thing as
+            // text first.
+            (Prim::FormatValue, [item @ Value::Thing(_)]) => Value::text(&self.thing_in_spec(item, "")?),
+            (Prim::FormatValue, [item @ Value::Thing(_), Value::Text(spec)]) => {
+                let spec = spec.to_string();
+                Value::text(&self.thing_in_spec(item, &spec)?)
+            }
+            (Prim::RenderField, [item @ Value::Thing(_), spec, conversion]) => {
+                let (spec, conversion) = (spec.bare(), conversion.bare());
+                let shown = if conversion.is_empty() { self.thing_in_spec(item, &spec)? } else {
+                    let text = Value::text(&self.object_words(item, conversion != "s")?);
+                    crate::formatting::Layout { table: self.table, names: self.wording() }.present(&text, &spec, "")?
+                };
+                Value::text(&shown)
             }
             (Prim::StartContext, [manager]) => {
                 if matches!(manager, Value::Thing(_)) {
@@ -5643,6 +5805,11 @@ impl<'a> Machine<'a> {
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
+        // A landing no thing answered for itself is the plain working.
+        if let Prim::Landing(place) = op {
+            let plain = self.table.landing_working(place);
+            return self.prim(plain, name, v);
+        }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
         if v.len() == 2 {
@@ -5778,6 +5945,8 @@ impl<'a> Machine<'a> {
         }
         Ok(match op {
             Prim::Positive => { n(1)?; v[0].clone() }
+            // A landing was settled into its plain working above.
+            Prim::Landing(_) => unreachable!(),
             Prim::OctetAssign(times) => {
                 let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
                 match (&v[0], &changed) {
@@ -7298,8 +7467,14 @@ impl<'a> Machine<'a> {
             Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
             Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
-                if self.inherited_entry(class,self.detail("getitem")).is_none(){return Err(self.detail("unready").to_owned());}
-                v[0].clone()
+                // The class's own item entry answers with the key: a
+                // class method bound to the class, a plain routine given
+                // the class before the key.
+                let Some(entry)=self.inherited_entry(class,self.detail("getitem")) else{return Err(self.detail("unready").to_owned())};
+                let asked=if matches!(&entry,Value::Wrapped(5,_)){
+                    match self.member_binding(entry,None,class.clone()){Ok(bound)=>self.apply_class_member(bound,vec![v[1].clone()]),Err(escape)=>Err(escape)}
+                }else{self.apply_class_member(entry,vec![v[0].clone(),v[1].clone()])};
+                asked.map_err(|fault|self.suspension_fault(fault))?
             }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
             Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,

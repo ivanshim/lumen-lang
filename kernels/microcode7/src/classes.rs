@@ -59,8 +59,12 @@ impl<'a> Machine<'a> {
         self.made+=1;
         Ok(Value::Thing(Rc::new(Thing{of:class,holds:RefCell::new(vec![("\0underlying".to_owned(),kept)]),turn:self.made})))
     }
-    pub(super) fn build_class_value(&mut self,title:String,mut parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>)->Res {
+    pub(super) fn build_class_value(&mut self,title:String,mut parents:Vec<Rc<Blueprint>>,entries:Vec<(String,Value)>)->Res {
         if parents.is_empty(){parents.push(self.common_ancestor());}
+        // What the header handed over by keyword is no entry of the
+        // class: each goes by its name to the forebears' subclass hook.
+        let (handed,mut entries):(Vec<_>,Vec<_>)=entries.into_iter().partition(|(k,_)|k.starts_with("\0handed:"));
+        let handed:Vec<Value>=handed.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k["\0handed:".len()..]),v)))).collect();
         let mut queues=Vec::new();
         for base in &parents {
             let mut queue=Vec::with_capacity(base.ancestry.len()+1);
@@ -104,9 +108,11 @@ impl<'a> Machine<'a> {
         }
         let hook=class.ancestry.iter().find_map(|b|Self::own_entry(b,self.detail("subclass")));
         if let Some(f)=hook {
-            if matches!(&f,Value::Wrapped(5,_)){let bound=self.member_binding(f,None,class.clone())?;self.apply_class_member(bound,Vec::new())?;}
-            else{self.apply_class_member(f,vec![Value::Blueprint(class.clone())])?;}
+            if matches!(&f,Value::Wrapped(5,_)){let bound=self.member_binding(f,None,class.clone())?;self.apply_class_member(bound,handed)?;}
+            else{let mut given=vec![Value::Blueprint(class.clone())];given.extend(handed);self.apply_class_member(f,given)?;}
         }
+        // What was handed over with no hook to take it is refused.
+        else if !handed.is_empty(){return Err(self.class_unready());}
         Ok(Value::Blueprint(class))
     }
     fn protocol_spelled(&self)->bool {!self.detail("descriptor.get").is_empty()}
@@ -325,6 +331,12 @@ impl<'a> Machine<'a> {
                     }
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
                     4|8=>self.apply_class_member(kept[0].clone(),values),
+                    // The root's formatting of a thing to a specification.
+                    59 if values.len()==2=>{
+                        let Value::Text(spec)=&values[1] else{return Err(self.class_unready())};
+                        let spec=spec.to_string();
+                        self.thing_in_spec(&values[0],&spec).map(|shown|Value::text(&shown)).map_err(Escape::from)
+                    }
                     13 if values.len()==1=>{
                         let Value::Wrapped(6, property)=&kept[0] else{return Err(self.class_unready());};
                         let mut parts=property.as_ref().clone();
@@ -387,7 +399,7 @@ impl<'a> Machine<'a> {
         if parts.len()<3{return self.class_unready();}
         format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
     }
-    fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
+    pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
             Value::Wrapped(5,items)=>return Ok(Self::wrap(3,vec![items[0].clone(),Value::Blueprint(owner)])),
@@ -468,6 +480,9 @@ impl<'a> Machine<'a> {
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            // The formatting every blueprint has from the root: a thing
+            // and a specification, answered as the format builtin would.
+            if self.table.strings("ext.stmt.class.special").get(72).map_or(false,|word|word==key){return Ok(Self::wrap(59,Vec::new()));}
             {
                 let tag=if key==self.detail("allocate"){1}else if self.table.single("ext.stmt.class.constructor")==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
@@ -670,7 +685,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn work_on_class(&mut self,op:u8,values:Vec<Value>)->Res {
         if op<=1 && values.len()==2{return Ok(Value::Flag(self.is_beneath(&values[0],&values[1],op==1)?));}
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
         if (op==3||op==6)&&values.len()>=2{
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
             // Asking whether a name is there, or reading it with something
@@ -693,6 +708,15 @@ impl<'a> Machine<'a> {
         }
         if op==7&&values.len()==1{let key=self.detail("namespace").to_owned();return self.read_class_member(values[0].clone(),&key,true);}
         if op==8&&values.len()==1{
+            // A thing with a directory method of its own answers with it,
+            // and the names it gives are set in order.
+            if matches!(&values[0],Value::Thing(_)){
+                if let Some(answer)=self.ask_special(&values[0],75,&[])?{
+                    let mut names=self.object_members(&answer)?;
+                    names.sort_by_key(|name|name.bare());
+                    return Ok(Value::Vector(Rc::new(names)));
+                }
+            }
             let mut names=Vec::new();
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.of)},Value::Blueprint(b)=>Some(b),_=>None};
             if let Some(b)=class{for c in std::iter::once(b).chain(b.ancestry.iter()){names.extend(c.shared.borrow().iter().map(|(k,_)|k.clone()));}}

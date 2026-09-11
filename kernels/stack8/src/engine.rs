@@ -2627,6 +2627,98 @@ impl<'a> Engine<'a> {
         Ok(self.truth(value))
     }
 
+    /// A thing of a class standing on nothing builtin: one that answers
+    /// for itself alone, with no worth beneath it.
+    fn plain_thing(value: &Value) -> bool {
+        matches!(value, Value::Object(_)) && Self::worth_of(value).is_none()
+    }
+
+    /// Whether a value is read at numbered places: a row, a text, a
+    /// tuple or a range, and never a map, whose keys are things entire.
+    fn counts_places(value: &Value) -> bool {
+        matches!(value.contents(), Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_))
+    }
+
+    /// The name a complaint gives a value: its class for a thing, and
+    /// the core kind for anything else.
+    fn shown_kind(value: &Value) -> String {
+        match value { Value::Object(o) => o.class.name.clone(), other => other.core_kind() }
+    }
+
+    /// The sign the language writes a dyadic action with.
+    fn sign_of(&self, op: &Action) -> String {
+        let wanted = std::mem::discriminant(op);
+        self.lang.dyadic.iter().find(|(_, spelled)| std::mem::discriminant(&spelled.action) == wanted).map(|(sign, _)| sign.clone()).unwrap_or_default()
+    }
+
+    /// The words for a dyad neither operand's methods would take, its
+    /// sign and both kinds between the four pieces the definition gives.
+    fn operands_complaint(&self, sign: &str, a: &Value, b: &Value) -> String {
+        match self.lang.operands_amiss.as_slice() {
+            [before, after_sign, between, after] => format!("{before}{sign}{after_sign}{}{between}{}{after}", Self::shown_kind(a), Self::shown_kind(b)),
+            _ => self.special_fault(),
+        }
+    }
+
+    /// The whole number a thing stands for, by its index method: none
+    /// where it has no such method, and a complaint naming the kind
+    /// where the method answered with something else.
+    fn special_index(&mut self, value: &Value) -> Res<Option<Value>> {
+        Ok(match self.special_call(value, 43, Vec::new())? {
+            None => None,
+            Some(Value::Flag(flag)) => Some(Value::Small(i64::from(flag))),
+            Some(whole @ (Value::Small(_) | Value::Huge(_))) => Some(whole),
+            Some(other) => {
+                let pieces = &self.lang.index_answer_amiss;
+                return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), other.core_kind(), pieces.get(1).map_or("", String::as_str)));
+            }
+        })
+    }
+
+    /// A thing written to a format specification: by its own method,
+    /// by the worth it keeps, or as its text where nothing was asked.
+    fn special_format(&mut self, value: &Value, spec: &str) -> Res<String> {
+        if let Some(answer) = self.special_call(value, 72, vec![Value::text(spec)])? {
+            return match answer { Value::Text(text) => Ok(text.to_string()), _ => Err(self.special_fault()) };
+        }
+        if let Some(worth) = Self::worth_of(value) {
+            let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+            return writer.field(&worth.contents(), spec, "");
+        }
+        if spec.is_empty() { return self.special_text(value, false); }
+        let pieces = &self.lang.format_spec_amiss;
+        Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), Self::shown_kind(value), pieces.get(1).map_or("", String::as_str)))
+    }
+
+    /// The place in the protocol of the in-place method a compound
+    /// write's working asks for, where the working has one.
+    fn in_place_method(op: &Action) -> Option<usize> {
+        Some(match op {
+            Action::Add | Action::ByteAssign(false) => 47,
+            Action::Sub | Action::SetWrite(2) => 48,
+            Action::Mul | Action::ByteAssign(true) => 49,
+            Action::Div | Action::DivReal => 50,
+            Action::IntDiv => 51, Action::Mod => 52, Action::Power => 53, Action::Matrix => 54,
+            Action::BitUp => 55, Action::BitDown => 56,
+            Action::BitBoth | Action::SetWrite(1) => 57,
+            Action::BitEither | Action::SetWrite(0) => 58,
+            Action::BitOne | Action::SetWrite(3) => 59,
+            _ => return None,
+        })
+    }
+
+    /// What the place a compound write lands on answers for itself: its
+    /// in-place method's answer, unless it has none or declined.
+    fn settled_in_place(&mut self, op: &Action, held: &Value, by: &Value) -> Res<Option<Value>> {
+        let Some(place) = Self::in_place_method(op) else { return Ok(None) };
+        let thing = held.contents();
+        if !matches!(thing, Value::Object(_)) { return Ok(None); }
+        Ok(match self.special_call(&thing, place, vec![by.clone()])? {
+            Some(Value::Declined(_)) | None => None,
+            answer => answer,
+        })
+    }
+
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
         if matches!(a, Value::Collection(..) | Value::Bond(_)) || matches!(b, Value::Collection(..) | Value::Bond(_)) { return self.special_dyad(op, &a.contents(), &b.contents()); }
         // Two slices are alike when their bounds are, each pair asked
@@ -2655,9 +2747,32 @@ impl<'a> Engine<'a> {
             Action::Mul => Some((20, 28)), Action::Div | Action::DivReal => Some((21, 29)),
             Action::IntDiv => Some((22, 30)), Action::Mod => Some((23, 31)),
             Action::Power => Some((24, 32)),
+            Action::Matrix => Some((45, 46)),
+            Action::BitUp => Some((62, 67)), Action::BitDown => Some((63, 68)),
+            Action::BitBoth => Some((64, 69)), Action::BitEither => Some((65, 70)), Action::BitOne => Some((66, 71)),
             Action::At | Action::Apart | Action::Toward => Some((11, usize::MAX)),
             _ => None,
         };
+        // A class read at a key answers by its own item method: a class
+        // method is bound to the class first, a plain routine is given
+        // the class before the key.
+        if let (Action::At, Value::Class(c), true) = (op, a, self.fuller_classes()) {
+            if let Some(hook) = self.class_value(c, self.class_word("getitem")) {
+                let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
+                    match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
+                } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
+                return match asked {
+                    Ok(answer) => Ok(answer),
+                    Err(Fault::Note(words)) => Err(words),
+                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+                };
+            }
+        }
+        // A thing standing for a whole number is that number wherever a
+        // row, a text or a range is read at a place.
+        if let (Some((11, _)), Value::Object(_), true) = (places, b, Self::counts_places(a)) {
+            if let Some(index) = self.special_index(b)? { return self.special_dyad(op, a, &index); }
+        }
         if let Some((direct, reflected)) = places {
             let first_right = match (a, b) {
                 (Value::Object(left), Value::Object(right)) if left.class.name != right.class.name && right.class.named(&left.class.name, false) => {
@@ -2681,7 +2796,13 @@ impl<'a> Engine<'a> {
             if !first_right && (direct < 8 || !same_class) {
                 if let Some(answer) = self.special_call(b, reflected, vec![a.clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(answer); } }
             }
-
+            // An arithmetic, matrix or bit working that a plain thing
+            // stands in and neither side's methods took is refused with
+            // its sign and both kinds named.
+            if direct >= 18 && (Self::plain_thing(a) || Self::plain_thing(b)) {
+                let sign = self.sign_of(op);
+                return Err(self.operands_complaint(&sign, a, b));
+            }
         }
         if matches!(op, Action::Contains | Action::Lacks) {
             if let Value::Map(entries) = b {
@@ -2764,6 +2885,24 @@ impl<'a> Engine<'a> {
                 return Ok(Some(place.clone()));
             }
         }
+        // A thing standing for a whole number is that number where a
+        // row is written into or shortened at a place.
+        if let (Builtin::Replace | Builtin::Erase, true) = (op, args.len() >= 2) {
+            let (at, row) = if op == Builtin::Replace { (0, 2) } else { (1, 0) };
+            if let (Some(key @ Value::Object(_)), Some(target)) = (args.get(at), args.get(row)) {
+                if Self::counts_places(target) {
+                    if let Some(index) = self.special_index(key)? {
+                        let mut settled = args.to_vec();
+                        settled[at] = index;
+                        let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
+                        // The answer goes back bare: the caller keeps the
+                        // row's own cell, and a cell made here would be
+                        // stored inside it.
+                        return Ok(Some(self.builtin_values(op, &word, &mut settled)?));
+                    }
+                }
+            }
+        }
         let places: &[usize] = match op {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
@@ -2798,6 +2937,57 @@ impl<'a> Engine<'a> {
             Builtin::ToInt | Builtin::AsReal | Builtin::Absolute if args.len() == 1 && matches!(&args[0], Value::Object(_)) => {
                 let place = match op { Builtin::ToInt => 38, Builtin::AsReal => 39, _ => 40 };
                 match self.special_call(&args[0], place, Vec::new())? { Some(answer) => answer, None => return Ok(None) }
+            }
+            // A radix rendering, or a range, wants whole numbers: a thing
+            // among the arguments is asked for the one it stands for.
+            Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Span if args.iter().any(|v| matches!(v, Value::Object(_))) => {
+                let mut settled = args.to_vec();
+                for value in settled.iter_mut() {
+                    if let Some(index) = self.special_index(value)? { *value = index; }
+                }
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
+                self.builtin(op, &word, &mut settled)?
+            }
+            // Rounding is the thing's own where it has a method for it,
+            // given the places if any were asked.
+            Builtin::Round if matches!(args.first(), Some(Value::Object(_))) => {
+                match self.special_call(&args[0], 73, args[1..].to_vec())? { Some(answer) => answer, None => return Ok(None) }
+            }
+            // Division with remainder asks the left thing, then the right
+            // one reflected; power with a modulus likewise, the modulus
+            // handed along; power without one is the ordinary dyad.
+            Builtin::Divmod if args.len() == 2 && args.iter().any(|v| matches!(v, Value::Object(_))) => {
+                if let Some(answer) = self.special_call(&args[0], 60, vec![args[1].clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); } }
+                if let Some(answer) = self.special_call(&args[1], 61, vec![args[0].clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); } }
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
+                return Err(self.operands_complaint(&format!("{word}()"), &args[0], &args[1]));
+            }
+            Builtin::Power if args.len() == 2 && args.iter().any(|v| matches!(v, Value::Object(_))) => self.special_dyad(&Action::Power, &args[0], &args[1])?,
+            Builtin::Power if args.len() == 3 && args[..2].iter().any(|v| matches!(v, Value::Object(_))) => {
+                if let Some(answer) = self.special_call(&args[0], 24, vec![args[1].clone(), args[2].clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); } }
+                if let Some(answer) = self.special_call(&args[1], 32, vec![args[0].clone(), args[2].clone()])? { if !matches!(answer, Value::Declined(_)) { return Ok(Some(answer)); } }
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == op).map(|(w, _)| w.clone()).unwrap_or_default();
+                return Err(self.operands_complaint(&format!("{word}()"), &args[0], &args[1]));
+            }
+            // A thing may say what complex number it stands for, and
+            // must answer with one.
+            Builtin::Complex if args.len() == 1 && matches!(&args[0], Value::Object(_)) => {
+                match self.special_call(&args[0], 74, Vec::new())? {
+                    Some(answer @ Value::Complex(_)) => answer,
+                    Some(_) => return Err(self.special_fault()),
+                    None => return Ok(None),
+                }
+            }
+            Builtin::Format if matches!(args.first(), Some(Value::Object(_))) && args.len() <= 2 => {
+                let spec = match args.get(1) {
+                    None => String::new(),
+                    Some(Value::Text(s)) => s.to_string(),
+                    Some(other) => {
+                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                        return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(other)]));
+                    }
+                };
+                Value::text(&self.special_format(&args[0], &spec)?)
             }
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Map(_)) => {
                 let Value::Map(entries) = &args[2] else { unreachable!() };
@@ -3173,6 +3363,13 @@ impl<'a> Engine<'a> {
                 }
                 let named = match &named {
                     Value::Slice(bounds) if self.lang.slice_values() => Value::Slice(Rc::new(self.slice_settled(bounds)?)),
+                    // A thing standing for a whole number is that number
+                    // where a row or a text is shortened at a place.
+                    Value::Object(_) if Self::counts_places(&target) => {
+                        let asked = self.special_index(&named);
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        asked?.unwrap_or_else(|| named.clone())
+                    }
                     _ => named,
                 };
                 let at = self.key_quietly(&named);
@@ -3270,10 +3467,12 @@ impl<'a> Engine<'a> {
             }
             Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
                 let v = self.drop_top()?;
+                if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
                 Value::of_big(!self.whole_bits(&v)?)
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;
+                if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
                 match &v {
                     _ if self.lang.whole_bits => Value::of_big(!self.whole_for_bits(&v)?),
                     Value::Text(s) => {
@@ -3284,7 +3483,12 @@ impl<'a> Engine<'a> {
                 }
             }
             Action::Positive => {
-                match self.drop_top()? {
+                let v = self.drop_top()?;
+                if let Some(answer) = self.special_call(&v, 41, Vec::new())? {
+                    self.data.push(answer);
+                    return Ok(());
+                }
+                match v {
                     Value::Imaginary(_, words) => return Err(words.to_string().into()),
                     Value::Flag(flag) => Value::Small(i64::from(flag)),
                     number @ (Value::Complex(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
@@ -3655,7 +3859,36 @@ impl<'a> Engine<'a> {
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
             }
-            Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_default().into()),
+            Action::InPlace(inner) => {
+                let by = self.drop_top()?;
+                let held = self.drop_top()?;
+                let asked = self.settled_in_place(inner, &held, &by);
+                // What the method raised on the way out is raised on.
+                if let Some(fled) = self.carried.take() { return Err(fled); }
+                match asked? {
+                    Some(answer) => answer,
+                    // With a plain thing on either side the working goes
+                    // the way any dyad goes, so the thing's ordinary
+                    // methods are heard; the byte and set writings stand
+                    // for their plain dyads there.
+                    None if Self::plain_thing(&held.contents()) || Self::plain_thing(&by.contents()) => {
+                        let plain = match &**inner {
+                            Action::ByteAssign(repeat) => if *repeat { Action::Mul } else { Action::Add },
+                            Action::SetWrite(0) => Action::BitEither,
+                            Action::SetWrite(1) => Action::BitBoth,
+                            Action::SetWrite(2) => Action::Sub,
+                            Action::SetWrite(_) => Action::BitOne,
+                            other => other.clone(),
+                        };
+                        self.special_dyad(&plain, &held, &by)?
+                    }
+                    None => {
+                        self.data.push(held);
+                        self.data.push(by);
+                        return self.perform(inner, 2);
+                    }
+                }
+            }
             Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
             Action::Slice => {
                 let step = self.drop_top()?;
@@ -4551,7 +4784,16 @@ impl<'a> Engine<'a> {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
-                if self.lang.format_builtin.is_empty() {
+                // A thing in a field is formatted by its own method, or
+                // shown as text first where a conversion was asked.
+                if matches!(value.contents(), Value::Object(_)) && !self.lang.class_special.is_empty() {
+                    let thing = value.contents();
+                    let shown = if conversion.is_empty() { self.special_format(&thing, &specification)? } else {
+                        let text = Value::text(&self.special_text(&thing, conversion != "s")?);
+                        crate::formatting::Writer { lang: self.lang, words: self.wording() }.field(&text, &specification, "")?
+                    };
+                    Value::text(&shown)
+                } else if self.lang.format_builtin.is_empty() {
                 let rendered = value.string_field(&self.wording(), &specification, &conversion)
                     .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_else(|| "This formatted value is not supported".into()))?;
                 Value::text(&rendered)

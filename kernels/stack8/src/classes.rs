@@ -67,6 +67,13 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn form_class(&mut self, name: String, mut bases: Vec<Rc<Class>>, mut members: Vec<(String, Value)>) -> Flow<Value> {
         if bases.is_empty() { bases.push(self.root_class()); }
+        // The keywords the header carried are no members: they go by
+        // name to the forebear's subclass hook.
+        let mut carried = Vec::new();
+        members.retain(|(n, v)| match n.strip_prefix("\0keyword:") {
+            Some(word) => { carried.push(Value::Tie(Rc::new((Value::text(word), v.clone())))); false }
+            None => true,
+        });
         let mut lines: Vec<Vec<Rc<Class>>> = bases.iter().map(|b| {
             let mut line = vec![b.clone()]; line.extend(b.lineage.iter().cloned()); line
         }).collect();
@@ -103,9 +110,11 @@ impl<'a> Engine<'a> {
             }
         }
         if let Some(hook) = c.lineage.iter().find_map(|b| Self::own_class_value(b, self.class_word("subclass"))) {
-            if matches!(&hook,Value::Adapter(w) if w.0==5){let bound=self.bind_class_value(hook,None,c.clone())?;self.class_apply(bound,vec![])?;}
-            else{self.class_apply(hook, vec![Value::Class(c.clone())])?;}
+            if matches!(&hook,Value::Adapter(w) if w.0==5){let bound=self.bind_class_value(hook,None,c.clone())?;self.class_apply(bound,carried)?;}
+            else{let mut given=vec![Value::Class(c.clone())];given.extend(carried);self.class_apply(hook, given)?;}
         }
+        // Keywords with no hook to receive them are refused.
+        else if !carried.is_empty() { return Err(self.class_refusal()); }
         Ok(Value::Class(c))
     }
     /// The slots a class names become members of it, each a descriptor
@@ -353,6 +362,11 @@ impl<'a> Engine<'a> {
                 }
                 17 if args.len() == 2 => self.slot_write(&args[0], &w.1, Some(args[1].clone())),
                 18 if args.len() == 1 => self.slot_write(&args[0], &w.1, None),
+                19 if args.len() == 2 => {
+                    let Value::Text(spec) = &args[1] else { return Err(self.class_refusal()) };
+                    let spec = spec.to_string();
+                    self.special_format(&args[0], &spec).map(|shown| Value::text(&shown)).map_err(Fault::Note)
+                }
                 20..=27 => self.property_work(w.0, args),
                 _ => Err(self.class_refusal()),
             },
@@ -395,7 +409,7 @@ impl<'a> Engine<'a> {
         if pieces.len()!=3 { return self.class_refusal(); }
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
     }
-    fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
+    pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
             return match w.0 {
                 4 => Ok(w.1[0].clone()),
@@ -468,6 +482,9 @@ impl<'a> Engine<'a> {
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                // The formatting every class has from the root: a thing
+                // and a specification, answered as the format builtin would.
+                if self.lang.class_special.get(72).map_or(false,|word|word==name) {return Ok(Self::adapter(19,vec![]));}
                 {
                     let index = if name==self.class_word("allocate") {Some(1)}
                         else if self.lang.constructor.as_deref()==Some(name) || name==self.class_word("subclass") {Some(2)}
@@ -681,7 +698,7 @@ impl<'a> Engine<'a> {
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17|18|20..=27))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
             3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}
@@ -689,6 +706,15 @@ impl<'a> Engine<'a> {
             4|5 if args.len()==if which==4{3}else{2}=>{let Value::Text(n)=&args[1]else{return Err(self.class_refusal());};self.class_write(one,n,args.get(2).cloned(),false)},
             7 if args.len()==1=>{let word=self.class_word("namespace").to_string();self.class_get(one,&word,true)},
             8 if args.len()==1=>{
+                // A thing with a directory method of its own answers with
+                // it, and the names it gives are put in order.
+                if matches!(&one,Value::Object(_)) {
+                    if let Some(answer)=self.special_call(&one,75,vec![]).map_err(Fault::Note)? {
+                        let mut names=self.special_items(&answer).map_err(Fault::Note)?;
+                        names.sort_by_key(Value::plain);
+                        return Ok(Value::array(names));
+                    }
+                }
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
                 else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}

@@ -2343,6 +2343,7 @@ impl<'a> Builder<'a> {
         let mut setup = Vec::new();
         let mut parent = None;
         let mut other_parents = Vec::new();
+        let mut handed_words: Vec<(String, Form)> = Vec::new();
         let mut cannot = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
@@ -2352,9 +2353,22 @@ impl<'a> Builder<'a> {
                 let expanded = table.spells("op.mul", &self.look().lexeme) || table.spells("op.pow", &self.look().lexeme);
                 if expanded { self.advance(); cannot = true; }
                 let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
-                if keyword { self.pos += 2; cannot = true; }
+                // A keyword in the header goes, under a name no program
+                // can spell, to the forebears' subclass hook; a table
+                // without such a hook cannot run the form, nor can any
+                // table run the keyword that names a metaclass.
+                let mut handed = None;
+                if keyword {
+                    let word = self.advance().lexeme;
+                    self.advance();
+                    if table.has_any("ext.stmt.class.detail.subclass") && !table.spells("ext.stmt.class.metaclass", &word) { handed = Some(word); } else { cannot = true; }
+                }
                 let value = self.expr(0)?;
-                if !keyword && !expanded && (first || table.has_any("ext.stmt.class.detail.root")) {
+                if let Some(word) = handed {
+                    let slot = self.gensym("handed");
+                    setup.push(Form::Write(slot.clone(), Box::new(value)));
+                    handed_words.push((format!("\0handed:{word}"), Form::Read(slot)));
+                } else if !keyword && !expanded && (first || table.has_any("ext.stmt.class.detail.root")) {
                     let slot = self.gensym("parent");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
                     if first { parent = Some(slot); } else { other_parents.push(slot); }
@@ -2488,6 +2502,12 @@ impl<'a> Builder<'a> {
         if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
             attributes.push(word.clone());
             values.push(constant(Value::Dict(Rc::new(annotated_names))));
+        }
+        // The header's keywords ride along as entries under their hidden
+        // names, for the building of the class to hand on.
+        for (word, read) in handed_words {
+            attributes.push(word);
+            values.push(read);
         }
         let plan = Plan {
             name: named.clone(), answers: other_parents.len(), field_names: vec![], field_reach: vec![],
@@ -4710,6 +4730,9 @@ impl<'a> Builder<'a> {
             if self.table.has_any("ext.builtin.bytes") && matches!(op, Prim::Plus | Prim::Times) { Prim::OctetAssign(op == Prim::Times) }
             else { op }
         });
+        // Where the special list reaches the in-place methods, the
+        // working is numbered so the place written to is asked first.
+        let compound = compound.map(|op| self.table.landing_place(op).map_or(op, Prim::Landing));
         // A target kept quiet is a write kept quiet: the muting comes
         // off the reading and goes round the writing instead.
         if let Form::Silenced(inner) = expr {

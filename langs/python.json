@@ -2079,11 +2079,20 @@
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"
   ],
+  "ext.stmt.class.metaclass": [
+    "metaclass"
+  ],
   "ext.stmt.class.missing": [
     "__missing__"
   ],
   "ext.stmt.class.bases.open": [
     "("
+  ],
+  "ext.stmt.class.binary.amiss": [
+    "TypeError: unsupported operand type(s) for ",
+    ": '",
+    "' and '",
+    "'"
   ],
   "ext.stmt.class.classmethod": [
     "classmethod"
@@ -2234,6 +2243,14 @@
   "ext.stmt.class.detail.varnames": [
     "co_varnames"
   ],
+  "ext.stmt.class.format.amiss": [
+    "TypeError: unsupported format string passed to ",
+    ".__format__"
+  ],
+  "ext.stmt.class.index.amiss": [
+    "TypeError: __index__ returned non-int (type ",
+    ")"
+  ],
   "ext.stmt.class.parent": [
     "super"
   ],
@@ -2289,7 +2306,40 @@
     "__float__",
     "__abs__",
     "__pos__",
-    "__reversed__"
+    "__reversed__",
+    "__index__",
+    "__invert__",
+    "__matmul__",
+    "__rmatmul__",
+    "__iadd__",
+    "__isub__",
+    "__imul__",
+    "__itruediv__",
+    "__ifloordiv__",
+    "__imod__",
+    "__ipow__",
+    "__imatmul__",
+    "__ilshift__",
+    "__irshift__",
+    "__iand__",
+    "__ior__",
+    "__ixor__",
+    "__divmod__",
+    "__rdivmod__",
+    "__lshift__",
+    "__rshift__",
+    "__and__",
+    "__or__",
+    "__xor__",
+    "__rlshift__",
+    "__rrshift__",
+    "__rand__",
+    "__ror__",
+    "__rxor__",
+    "__format__",
+    "__round__",
+    "__complex__",
+    "__dir__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"

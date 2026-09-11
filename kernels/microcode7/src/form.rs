@@ -46,6 +46,9 @@ pub enum Prim {
     DrawIn,
     Octets(u8),
     OctetAssign(bool),
+    /// A compound write's working, numbered by the in-place method the
+    /// place it lands on is asked before the plain working runs.
+    Landing(u8),
     Textual(crate::text::Work),
     ClassWork(u8),
     ComplexMade,

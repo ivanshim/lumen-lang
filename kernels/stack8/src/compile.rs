@@ -3433,6 +3433,9 @@ impl<'a> Compiler<'a> {
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
         let mut further = Vec::new();
+        // The keywords a header carries, each kept for the parent's
+        // subclass hook under a name no program can spell.
+        let mut carried_words: Vec<(String, String)> = Vec::new();
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
@@ -3443,10 +3446,21 @@ impl<'a> Compiler<'a> {
                 let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
                 if spread { self.take(); unready = true; }
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
-                if keyword { self.take(); self.take(); unready = true; }
+                let mut handed = None;
+                if keyword {
+                    let word = self.take().lexeme;
+                    self.take();
+                    // A metaclass is named by a keyword no class form
+                    // runs, so the form stays unready with it.
+                    if lang.class_details.get("subclass").map_or(true, |v| v.is_empty()) || Lang::spells(&lang.metaclass_word, &word) { unready = true; } else { handed = Some(word); }
+                }
                 let from = self.mark();
                 self.expr(0)?;
-                if !keyword && !spread && (count == 0 || lang.class_details.get("root").map_or(false,|v|!v.is_empty())) {
+                if let Some(word) = handed {
+                    let held = self.gensym("keyword");
+                    self.write(&held);
+                    carried_words.push((format!("\0keyword:{word}"), held));
+                } else if !keyword && !spread && (count == 0 || lang.class_details.get("root").map_or(false,|v|!v.is_empty())) {
                     let held = self.gensym("base");
                     self.write(&held);
                     if count == 0 { base = Some(held); } else { further.push(held); }
@@ -3471,7 +3485,7 @@ impl<'a> Compiler<'a> {
         }
         self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
-        let mut shared: Vec<(String, String)> = Vec::new();
+        let mut shared: Vec<(String, String)> = carried_words;
         let mut annotated: Vec<(Value, Value)> = Vec::new();
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
@@ -4899,6 +4913,9 @@ impl<'a> Compiler<'a> {
         let op = if !self.lang.byte_prefixes.is_empty() && matches!(op, Action::Add | Action::Mul) {
             Action::ByteAssign(matches!(op, Action::Mul))
         } else { op };
+        // Where the protocol reaches the in-place methods, the place
+        // written to is asked for its own answer before the working.
+        let op = if self.lang.in_place_methods() { Action::InPlace(Box::new(op)) } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
