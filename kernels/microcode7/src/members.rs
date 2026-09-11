@@ -154,7 +154,15 @@ impl Request<'_> {
         }
         if op=="split"||op=="rsplit"{return self.split_text(s);}
         if op=="join"{
-            self.takes(1,1)?;let mut strings=Vec::new();for item in gather(&self.given[0],self.complaint)?{strings.push(letters(&item,self.complaint)?);}return Ok(Value::text(&strings.join(s)));
+            // Written into the one answer as the members come, rather
+            // than into a row of pieces that is then thrown away.
+            self.takes(1,1)?;
+            let mut whole=String::new();
+            for (at,item) in gather(&self.given[0],self.complaint)?.iter().enumerate(){
+                if at!=0{whole.push_str(s);}
+                whole.push_str(&letters(item,self.complaint)?);
+            }
+            return Ok(Value::text(&whole));
         }
         if op=="replace"{
             self.takes(2,3)?;let limit=self.number(2,-1)?;let old=self.string(0)?;let new=self.string(1)?;
@@ -366,19 +374,19 @@ impl Request<'_> {
     }
 }
 
-fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)->bool {
+pub fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)->bool {
     if level>=101{return true;}
     if let Value::Mutable(place,_) = value {
         return Rc::ptr_eq(place,receiver)||circular(&place.borrow(),receiver,level+1);
     }
-    let parts=match value {
-        Value::Vector(items)|Value::Row(items)=>items.to_vec(),
-        Value::Window(owner,_)=>vec![owner.as_ref().clone()],
-        Value::Dict(entries)=>entries.iter().flat_map(|(key,value)|[key.clone(),value.clone()]).collect(),
-        _=>return false,
-    };
-    for part in parts {if circular(&part,receiver,level+1){return true;}}
-    false
+    // Looked through where the parts lie. Gathering them into a row of
+    // their own first was a copy of the whole at every step down.
+    match value {
+        Value::Vector(items)|Value::Row(items)=>items.iter().any(|part|circular(part,receiver,level+1)),
+        Value::Window(owner,_)=>circular(owner,receiver,level+1),
+        Value::Dict(entries)=>entries.iter().any(|(key,worth)|circular(key,receiver,level+1)||circular(worth,receiver,level+1)),
+        _=>false,
+    }
 }
 
 fn same_item(left:&Value,right:&Value,by_worth:bool)->bool{

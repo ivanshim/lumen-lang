@@ -284,6 +284,12 @@ pub struct Machine<'a> {
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
     builds_places: bool,
+    /// Whether a call fits its arguments to names. The rule is settled
+    /// once for the whole run, so a name being read or written need not
+    /// go looking for the word again at every turn.
+    names_in_calls: bool,
+    /// The words the language shows its worths in, gathered once.
+    words: Names<'a>,
     /// Whether text is a row of places holding one letter each. Where it
     /// is, such a place takes a letter as well as giving one, and a place
     /// named by text is the number that text opens with.
@@ -309,6 +315,31 @@ fn ascend(frame: &Rc<Env>, depth: usize) -> &Rc<Env> {
         f = f.outer.as_ref().expect("a frame above");
     }
     f
+}
+
+/// The words a language shows its worths in. Not one of them changes
+/// while a program runs, so they are gathered once at the outset and
+/// handed out from there; gathering them afresh meant a dozen lookups
+/// by name for every working of arithmetic.
+fn words_of(table: &Table) -> Names<'_> {
+    Names {
+        truth: table.single("literal.true").unwrap_or("true"),
+        falsity: table.single("literal.false").unwrap_or("false"),
+        flag_counted: table.flag("system.flag.counts"),
+        brief_reals: table.lone("system.real.render") == Some("shortest"),
+        // A language may show nothing as no text at all, as PHP does,
+        // rather than as the word a program writes for it.
+        real_figures: table.count("ext.system.real.bits").and(table.count("ext.system.real.digits")),
+        bit_reals: table.count("ext.system.real.bits").is_some(),
+        nil: match table.flag("literal.null.silent") {
+            true => "",
+            false => table.single("literal.null").unwrap_or("null"),
+        },
+        within_word: table.single("ext.stmt.class.guarded"),
+        alone_word: table.single("ext.stmt.class.hidden"),
+        kept_as_bytes: table.flag("ext.system.text.bytes"),
+        keys_by_worth: table.flag("ext.syntax.map.value_keys"),
+    }
 }
 
 impl<'a> Machine<'a> {
@@ -510,6 +541,8 @@ impl<'a> Machine<'a> {
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
             builds_places: table.flag("ext.op.index.makes"),
+            names_in_calls: table.flag("ext.syntax.call.bind_names"),
+            words: words_of(table),
             letter_places: table.flag("ext.op.index.text"),
             spelled_stands: table.flag("ext.op.spelled"),
             classes_either_way: table.flag("ext.system.class.folded"),
@@ -662,7 +695,7 @@ impl<'a> Machine<'a> {
                 return Ok(Self::cursor_value(living));
             }
         }
-        if self.table.flag("ext.syntax.call.bind_names") && v.iter().any(|x| matches!(x, Value::Shared(_))) {
+        if self.names_in_calls && v.iter().any(|x| matches!(x, Value::Shared(_))) {
             let items: Vec<Value> = v.iter().map(collection_read).collect();
             return self.walking(op, name, &items);
         }
@@ -1387,24 +1420,7 @@ impl<'a> Machine<'a> {
     }
 
     fn wording(&self) -> Names<'a> {
-        Names {
-            truth: self.table.single("literal.true").unwrap_or("true"),
-            falsity: self.table.single("literal.false").unwrap_or("false"),
-            flag_counted: self.table.flag("system.flag.counts"),
-            brief_reals: self.table.lone("system.real.render") == Some("shortest"),
-            // A language may show nothing as no text at all, as PHP does,
-            // rather than as the word a program writes for it.
-            real_figures: self.table.count("ext.system.real.bits").and(self.table.count("ext.system.real.digits")),
-            bit_reals: self.table.count("ext.system.real.bits").is_some(),
-            nil: match self.table.flag("literal.null.silent") {
-                true => "",
-                false => self.table.single("literal.null").unwrap_or("null"),
-            },
-            within_word: self.table.single("ext.stmt.class.guarded"),
-            alone_word: self.table.single("ext.stmt.class.hidden"),
-            kept_as_bytes: self.table.flag("ext.system.text.bytes"),
-            keys_by_worth: self.table.flag("ext.syntax.map.value_keys"),
-        }
+        self.words
     }
 
     /// A fault of the kernel's own as a value of the class the language
@@ -1883,7 +1899,7 @@ impl<'a> Machine<'a> {
         }
         let mut v = f.cells.borrow()[slot.at].clone();
         if let Value::Shared(cell) = &v {
-            if self.table.flag("ext.syntax.call.bind_names") && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
+            if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.table.flag("ext.stmt.function.closes_over") { return Ok(held); }
             v = held;
@@ -1921,7 +1937,7 @@ impl<'a> Machine<'a> {
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
-        if self.table.flag("ext.syntax.call.bind_names") {
+        if self.names_in_calls {
             let destination = ascend(frame, slot.up);
             let stored = self.collection_cell(value);
             if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") {
@@ -2334,7 +2350,7 @@ impl<'a> Machine<'a> {
                     _ => held,
                 };
                 Ok(match held {
-                    Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
+                    Value::Shared(cell) if !self.names_in_calls => cell.borrow().clone(),
                     other => other,
                 })
             }
@@ -2600,7 +2616,7 @@ impl<'a> Machine<'a> {
                 if Rc::ptr_eq(f, &self.outermost) { self.booked_write(slot.at, &slot.ident, None); }
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
-                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.table.flag("ext.syntax.call.bind_names") => *cell.borrow_mut() = Value::Unset,
+                    Value::Shared(cell) if self.table.flag("ext.stmt.function.closes_over") && !self.names_in_calls => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
@@ -2653,6 +2669,13 @@ impl<'a> Machine<'a> {
                 let Value::Shared(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".to_string().into());
                 };
+                // A key no map can hold is refused before the holding
+                // place is taken in hand, because the key offered may be
+                // that very place: looking into it to name its kind
+                // whilst it is held for writing stops the run outright.
+                if matches!(&*cell.borrow(), Value::Dict(_)) {
+                    if let Some(words) = self.cannot_key(&at) { return Err(words.into()); }
+                }
                 let mut inside = cell.borrow_mut();
                 let left = match &*inside {
                     // Whatever a span picks out goes, and the rest
@@ -2682,7 +2705,6 @@ impl<'a> Machine<'a> {
                         ))
                     }
                     Value::Dict(pairs) => {
-                        if let Some(words) = self.cannot_key(&at) { return Err(words.into()); }
                         // The key is hashed once, as the reference hashes it, before it is sought.
                         let wanted = self.hash_key(&at)?;
                         let present = self.key_held(pairs, &wanted)?;
@@ -3323,7 +3345,7 @@ impl<'a> Machine<'a> {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
                     let mut values = self.value_list(&args[1..], frame)?;
-                    if self.table.flag("ext.syntax.call.bind_names") {
+                    if self.names_in_calls {
                         let (plain, named) = self.open_arguments(values)?;
                         if !named.is_empty() { return Err(self.builtin_keyword_fault(name).into()); }
                         values = plain;
@@ -3362,7 +3384,7 @@ impl<'a> Machine<'a> {
                         }
                         if let (Some(index), Some(cell)) = (&key, &worth_cell) {
                             let letter = self.letter_places.then(|| value.render(self.wording()));
-                            written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?;
+                            written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
                             return Ok(Value::Nil);
                         }
                         if let (Some(Value::Text(word)), Value::Attributes(t)) = (&key, &target) {
@@ -3412,11 +3434,11 @@ impl<'a> Machine<'a> {
                     let over = match shared {
                         Some(cell) => {
                             let mut held = cell.borrow_mut();
-                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
+                            written_into(&mut held, key, value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?
                         }
                         None => {
                             let mut slots = f.cells.borrow_mut();
-                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter, !self.table.flag("ext.syntax.call.bind_names"))?
+                            written_into(&mut slots[i], key, value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?
                         }
                     };
                     // More letters handed to a place in text than it has
@@ -3494,7 +3516,7 @@ impl<'a> Machine<'a> {
                     }
                     // The property builtin takes its accessors by name; making the property sorts them out.
                     if *op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
-                    if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
+                    if self.names_in_calls && self.table.prims.contains_key(name.as_ref()) {
                         let (mut positions, keywords) = self.open_arguments(values)?;
                         if let Some(answer) = self.builtin_names(*op, name, &mut positions, keywords)? {
                             return Ok(answer);
@@ -3673,7 +3695,7 @@ impl<'a> Machine<'a> {
         Some((|| {
             let mut values = self.value_list(args, frame)?;
             if op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
-            if matches!(stands, Value::Intrinsic(_)) && self.table.flag("ext.syntax.call.bind_names") {
+            if matches!(stands, Value::Intrinsic(_)) && self.names_in_calls {
                 let (mut positions, names) = self.open_arguments(values)?;
                 if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
                 values = positions;
@@ -3939,6 +3961,21 @@ impl<'a> Machine<'a> {
     }
 
     fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        // One more member set on the end of a list, in the place the
+        // list already occupies. This comes first of all: further down
+        // the contents are read out into a worth of their own, and a
+        // list two worths hold must be copied before either may write
+        // to it. The member coming in is looked at for a way home to
+        // the cell; the ones already there were looked at on the way in.
+        if name == "append" && keywords.is_empty() && arguments.len() == 1 {
+            if let Value::Mutable(cell, _) = receiver {
+                if matches!(&*cell.borrow(), Value::Vector(_)) {
+                    if crate::members::circular(&arguments[0], cell, 1) { return Err(self.method_fault("unready").into()); }
+                    if let Value::Vector(members) = &mut *cell.borrow_mut() { Rc::make_mut(members).push(arguments[0].clone()); }
+                    return Ok(Value::Nil);
+                }
+            }
+        }
         if let Value::Span(bounds) = receiver.settled() {
             if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             return match (name, arguments.len()) {
@@ -4458,6 +4495,15 @@ impl<'a> Machine<'a> {
     }
 
     fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
+        // Where every place is an ordinary one, none of the worths given
+        // carries a name or a scattering, and there are exactly as many
+        // of them as there are places, the row given is already the row
+        // wanted; the sorting below would only build it again.
+        if manners.len() == values.len()
+            && manners.iter().all(|how| matches!(how, 'b' | 'p'))
+            && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset)) {
+            return Ok(values);
+        }
         let (positional, named) = self.open_arguments(values)?;
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
@@ -5891,7 +5937,7 @@ impl<'a> Machine<'a> {
 
     fn collection_cell(&self, value: Value) -> Value {
         match value {
-            Value::Vector(_) | Value::Dict(_) if self.table.flag("ext.syntax.call.bind_names") =>
+            Value::Vector(_) | Value::Dict(_) if self.names_in_calls =>
                 Value::Shared(Rc::new(RefCell::new(value))),
             _ => value,
         }
@@ -5966,7 +6012,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if self.table.flag("ext.syntax.call.bind_names") {
+        if self.names_in_calls {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
@@ -6027,7 +6073,7 @@ impl<'a> Machine<'a> {
         // A key taken out of a map held in a cell is taken out of the
         // map in that cell, so every name for the map sees it gone.
         if let (Prim::Erase, [target, key]) = (op, v) {
-            if let Some(cell) = Self::dict_cell(target).filter(|_| self.table.flag("ext.syntax.call.bind_names")) {
+            if let Some(cell) = Self::dict_cell(target).filter(|_| self.names_in_calls) {
                 let at = self.as_key(key);
                 if let Some(words) = self.cannot_key(&at) { return Err(words); }
                 let entries = match &*cell.borrow() { Value::Dict(held) => held.to_vec(), _ => Vec::new() };
@@ -8546,7 +8592,7 @@ impl<'a> Machine<'a> {
         // cell holds: the sharing lies between the names, not in the
         // value itself.
         return self.element_within(target, at, how).map(|found| match found {
-            Value::Shared(cell) if !self.table.flag("ext.syntax.call.bind_names") => cell.borrow().clone(),
+            Value::Shared(cell) if !self.names_in_calls => cell.borrow().clone(),
             held => held,
         });
     }

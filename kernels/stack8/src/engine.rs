@@ -1736,6 +1736,15 @@ impl<'a> Engine<'a> {
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
     fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
+        // The common call: as many plain arguments as there are plain
+        // places, none of them named or spread and none of them a hole.
+        // Such a row already stands in the order the frame wants, so it
+        // is handed over whole rather than taken apart and put together.
+        if args.len() == rules.len()
+            && rules.iter().all(|rule| *rule < 2)
+            && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank)) {
+            return Ok(args);
+        }
         let items = self.call_items(args)?;
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
@@ -6658,6 +6667,22 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        // A row lengthened where it lies, instead of copied out, added
+        // to, and written back. It stands ahead of the reading below
+        // because that reading would hold the row a second time, and a
+        // row held twice has to be copied before it can be written.
+        // Only the newcomer is searched for a way back to the holding
+        // cell; whatever is in the row already was searched when it
+        // went in.
+        if operation == "append" && named.is_empty() && args.len() == 1 {
+            if let Value::Collection(cell, _) = receiver {
+                if matches!(&*cell.borrow(), Value::Array(_)) {
+                    if crate::methods::reaches(&args[0], cell, 1) { return Err(self.lang.method_errors["unready"].clone()); }
+                    if let Value::Array(row) = &mut *cell.borrow_mut() { Rc::make_mut(row).push(args[0].clone()); }
+                    return Ok(Value::Null);
+                }
+            }
+        }
         let contents = receiver.contents();
         if let Value::Slice(bounds) = &contents {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
