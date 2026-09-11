@@ -6070,10 +6070,15 @@ impl<'a> Compiler<'a> {
                 };
                 self.act(Action::Make, argc + 1);
             }
-            // Outside any class the parent word, unless it opens a call,
-            // is a name like another: it may be bound, listed or passed.
+            // Outside any class the parent word the program has bound,
+            // unless it opens a call, is a name like another: it may be
+            // read, listed or passed. Unbound, it stands for the parent
+            // call itself, as the arm below gives it.
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
                 && self.within.is_none()
+                && (self.registry.program_bound.contains(tok.lexeme.as_str())
+                    || self.look_ahead(1).shape == Shape::Sign
+                        && (Lang::spells(&lang.assign_words, &self.look_ahead(1).lexeme) || lang.compound.contains_key(&self.look_ahead(1).lexeme)))
                 && lang.calling.as_ref().map_or(true, |call| !self.look_ahead(1).is_lexeme(Shape::Sign, &call.open)) => {
                 self.take();
                 self.read(&tok.lexeme);

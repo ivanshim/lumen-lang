@@ -215,6 +215,21 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 fn main() {
+    // A language may allow a program to go a thousand calls deep before
+    // it complains, which wants more of the machine's stack than a run
+    // is given by default; the whole run is therefore made on a thread
+    // with room for it.
+    let roomy = std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(run_all)
+        .expect("a thread for the run");
+    match roomy.join() {
+        Ok(()) => {}
+        Err(panicked) => std::panic::resume_unwind(panicked),
+    }
+}
+
+fn run_all() {
     let args: Vec<OsString> = env::args_os().collect();
     let inv = parse_args(&args);
 

@@ -5697,10 +5697,15 @@ impl<'a> Builder<'a> {
                 }
                 prim_call(Prim::Spawn, given)
             }
-            // Beyond every class body the parent word not opening a call
-            // is an ordinary name, to be bound, listed or handed on.
+            // Beyond every class body the parent word the program has
+            // bound, not opening a call, is an ordinary name, to be read,
+            // listed or handed on. Unbound, it stands for the parent call
+            // itself, as the arm below hands it over.
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.lexeme)
                 && self.within.is_none()
+                && (self.named_in_program.iter().any(|word| word == &t.lexeme)
+                    || self.glance(1).shape == Shape::Sign
+                        && (table.spells("stmt.assign", &self.glance(1).lexeme) || table.compound.contains_key(&self.glance(1).lexeme)))
                 && table.single("syntax.call.open").map_or(true, |open| !(self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == open)) => {
                 self.advance();
                 self.read(&t.lexeme)
