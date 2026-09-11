@@ -5886,6 +5886,15 @@ impl<'a> Builder<'a> {
                 Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
                     let at = args.pop().unwrap();
                     match args.pop().unwrap() {
+                        // Where a list lives in the cell its name stands
+                        // for, the place is taken out of the list as it
+                        // lies, and a walk still under way over it sees
+                        // the shortening; elsewhere the name is written
+                        // afresh with what is left.
+                        Form::Read(slot) if self.table.has_any("ext.stmt.del") => {
+                            let cell = self.cell_of(Form::Read(slot))?;
+                            Form::ForgetWithin(Box::new(cell), Box::new(at))
+                        }
                         Form::Read(slot) => {
                             let held = slot.ident.to_string();
                             let array = self.read(&held);

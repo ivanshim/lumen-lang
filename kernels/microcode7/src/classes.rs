@@ -622,6 +622,9 @@ impl<'a> Machine<'a> {
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let values: Vec<Value> = values.iter().map(Value::settled).collect();
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.of.clone()));}}
+        // A class is of the kind that makes classes: the kind primitive
+        // itself, under whatever word the table spells it by.
+        if values.len()==1 {if let Value::Blueprint(_)=&values[0]{return Ok(self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map_or(Value::Nil,|(word,_)|Value::Intrinsic(Rc::from(word.as_str()))));}}
         if let [Value::Text(title),sequence,Value::Dict(entries)]=values.as_slice(){
             let bases=match sequence{Value::Vector(v)|Value::Tuple(v)=>v,_=>return Err(self.class_unready())};
             let mut parents=Vec::new();for c in bases.iter(){if let Value::Blueprint(b)=c{parents.push(b.clone());}else{return Err(self.class_unready());}}

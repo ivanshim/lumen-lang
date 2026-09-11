@@ -1504,7 +1504,9 @@ only. The extension labels so far, all from PHP:
   and set aside unless native exception classes are furnished, when it
   is worked out and kept as the cause. Where spelled, a throw without a value raises again what
   the innermost clause is holding. `ext.stmt.throw.empty` gives the words
-  said when there is no such value.
+  said when there is no such value. `ext.stmt.throw.invalid` gives the
+  words said when what is thrown is no instance of a furnished exception
+  class, where such classes are furnished.
 - `ext.stmt.assert`: a condition that must hold, followed, if wished, by
   the call separator and a message. Only a false condition works out the
   message and raises it; `ext.stmt.assert.kind` names the kind so raised.
@@ -2805,6 +2807,17 @@ only. The extension labels so far, all from PHP:
   made with no arguments. A cause is worked out and kept where these
   classes are furnished. Argument tuples can be shown, counted and indexed;
   ordinary tuple expressions still heed their own label.
+- `ext.builtin.exceptions.context` and `.suppress`: the member holding the
+  exception that was being handled when this one was raised, and the flag
+  that hides it. A value raised inside a handler, or inside a last part or
+  a context's leaving, keeps the exception held there as its context,
+  unless it is that very exception; a chain that would come back round
+  to the value raised is cut where it would. A throw with a stated cause
+  sets the flag, a cause of nothing included, so the context is kept
+  but not shown. A value raised again without a value keeps whatever
+  context it had.
+- `ext.builtin.exceptions.traceback`: the name of the kind of the trace
+  handed to a context's leaving, which the kind builtin answers for one.
 - `ext.builtin.exceptions.unready`: words said when an exception operation
   asks for means the kernel does not yet possess.
 - `ext.builtin.class.name`: the member naming a class itself. Where the
@@ -2863,8 +2876,16 @@ only. The extension labels so far, all from PHP:
   enter and leave a context. Where a manager has them, entry supplies
   the bound value and leaving is guaranteed on an outward step or a
   fault. The leaving method receives the fault's class, value and an
-  empty traceback; a true answer takes the fault. Managers without the
-  named methods retain the earlier binding-only form at this stage.
+  empty traceback; a true answer takes the fault. `ext.stmt.with.invalid`
+  gives the words before and after the kind of a value that is no manager:
+  one that is no object, or an object wanting either method. Without
+  these words a value with no methods fills the binding as it stands.
+- `ext.system.recursion.limit` and `.exceeded`: the most calls a run may
+  have under way at once, the outermost body not counted, and the words
+  said by the call that would pass it. The words name a class among the
+  furnished exceptions, so a clause may take the fault and the run go
+  on beneath the limit. Without a count, calls go as deep as the host
+  allows.
 - `ext.stmt.import.value`: a switch; imports fetch source the host has
   kept under its module name, read it once in its own namespace, and
   bind that namespace or the requested members. Without the switch the
@@ -3736,6 +3757,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
@@ -4424,8 +4448,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.terminator` | - | - | `;` | - | - | - | - | - | - | - |
 | `ext.stmt.terminator.only` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.throw` | - | - | `raise` | - | `throw` | - | - | - | - | - |
-| `ext.stmt.throw.empty` | - | - | `No active exception to reraise` | - | - | - | - | - | - | - |
+| `ext.stmt.throw.empty` | - | - | `RuntimeError: No active exception to reraise` | - | - | - | - | - | - | - |
 | `ext.stmt.throw.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.throw.invalid` | - | - | `TypeError: exceptions must derive from BaseException` | - | - | - | - | - | - | - |
 | `ext.stmt.try` | - | - | `try` | - | `try` | - | - | - | - | - |
 | `ext.stmt.try.else` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.type_alias` | - | - | `type` | - | - | - | - | - | - | - |
@@ -4441,6 +4466,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.with.enter` | - | - | `__enter__` | - | - | - | - | - | - | - |
+| `ext.stmt.with.invalid` | - | - | `TypeError: '` `' object does not support the context manager protocol` | - | - | - | - | - | - | - |
 | `ext.stmt.with.leave` | - | - | `__exit__` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unready` | - | - | `NotImplementedError: context managers are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.with.unrun` | - | - | `NotImplementedError: context managers cannot be run` | - | - | - | - | - | - | - |
@@ -4552,6 +4578,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.real.digits` | - | - | - | - | `14` | - | - | - | - | - |
 | `ext.system.real.figures` | - | - | - | - | `$__real_figures` | - | - | - | - | - |
 | `ext.system.real.figures.shown` | - | - | - | - | `$__real_figures_shown` | - | - | - | - | - |
+| `ext.system.recursion.exceeded` | - | - | `RecursionError: maximum recursion depth exceeded` | - | - | - | - | - | - | - |
+| `ext.system.recursion.limit` | - | - | `1000` | - | - | - | - | - | - | - |
 | `ext.system.request.all` | - | - | - | - | `$_REQUEST` | - | - | - | - | - |
 | `ext.system.request.amiss` | - | - | - | - | `$__request_amiss` | - | - | - | - | - |
 | `ext.system.request.amiss.body.large` | - | - | - | - | `PHP Request Startup: POST Content-Length of %s bytes exceeds the limit of %s bytes` | - | - | - | - | - |

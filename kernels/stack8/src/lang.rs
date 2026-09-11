@@ -471,6 +471,13 @@ pub struct Lang {
     pub exceptions: Vec<String>,
     pub exception_args: Option<String>,
     pub exception_cause: Option<String>,
+    /// The member holding the exception that was being handled when
+    /// this one was raised, and the flag that hides it; nothing where the
+    /// language has no names for them.
+    pub exception_context: Option<String>,
+    pub exception_suppress: Option<String>,
+    /// The name of the kind of a trace, where the language has one.
+    pub exception_traceback: Option<String>,
     pub class_name: Option<String>,
     pub exception_unready: Option<String>,
     pub fault_index: Option<String>,
@@ -980,6 +987,16 @@ pub struct Lang {
     pub try_else: bool,
     pub throw_from: Vec<String>,
     pub throw_empty: Option<String>,
+    /// Words for a thrown value that is no exception, where exceptions
+    /// are furnished.
+    pub throw_invalid: Option<String>,
+    /// Words before and after the kind of a value that cannot manage a
+    /// context.
+    pub with_invalid: Vec<String>,
+    /// The most calls that may be under way at once, and the words said
+    /// by the one that would pass it.
+    pub recursion_limit: Option<usize>,
+    pub recursion_exceeded: Option<String>,
     pub try_words: Vec<String>,
     pub catch_words: Vec<String>,
     pub finally_words: Vec<String>,
@@ -1096,7 +1113,7 @@ w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.cla
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.print.redirect | w ext.builtin.input | w ext.builtin.input.reader | w ext.builtin.stream.write | w ext.builtin.stream.read | w ext.builtin.stream.amiss | w ext.builtin.stream.failed | w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | b ext.builtin.clock.parts | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
+w ext.builtin.print.redirect | w ext.builtin.input | w ext.builtin.input.reader | w ext.builtin.stream.write | w ext.builtin.stream.read | w ext.builtin.stream.amiss | w ext.builtin.stream.failed | w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | b ext.builtin.clock.parts | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short | w ext.builtin.exceptions.context | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.stmt.throw.invalid | w ext.stmt.with.invalid | n ext.system.recursion.limit | w ext.system.recursion.exceeded
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
@@ -2169,6 +2186,9 @@ impl Lang {
             exceptions: r.strings("ext.builtin.exceptions")?,
             exception_args: r.head("ext.builtin.exceptions.args")?,
             exception_cause: r.head("ext.builtin.exceptions.cause")?,
+            exception_context: r.head("ext.builtin.exceptions.context")?,
+            exception_suppress: r.head("ext.builtin.exceptions.suppress")?,
+            exception_traceback: r.head("ext.builtin.exceptions.traceback")?,
             class_name: r.head("ext.builtin.class.name")?,
             exception_unready: r.head("ext.builtin.exceptions.unready")?,
             division_words: r.head("ext.system.fault.division")?,
@@ -2541,6 +2561,10 @@ impl Lang {
             try_else: r.flag("ext.stmt.try.else")?,
             throw_from: r.strings("ext.stmt.throw.from")?,
             throw_empty: r.head("ext.stmt.throw.empty")?,
+            throw_invalid: r.head("ext.stmt.throw.invalid")?,
+            with_invalid: r.strings("ext.stmt.with.invalid")?,
+            recursion_limit: r.count("ext.system.recursion.limit")?,
+            recursion_exceeded: r.head("ext.system.recursion.exceeded")?,
             try_words: r.strings("ext.stmt.try")?,
             catch_words: r.strings("ext.stmt.catch")?,
             finally_words: r.strings("ext.stmt.finally")?,

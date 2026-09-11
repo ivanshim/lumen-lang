@@ -188,6 +188,9 @@ pub struct Machine<'a> {
     /// call itself was written, and where among the arguments kept the
     /// ones it was handed stand.
     calls: Vec<Called>,
+    /// How many calls stand under way, one in tail position counted as
+    /// deepening the run though it takes the place of the call before.
+    standing: usize,
     /// The calls a fault was raised under, written out as they stood
     /// then, since by the time it is told they are all left behind. The
     /// first fault to leave a call writes this; a trap taking one
@@ -327,11 +330,75 @@ impl<'a> Machine<'a> {
         self.made += 1;
         let values = Value::Arguments(Rc::new(row));
         let mut holds = kind.every_field();
-        for (label, value) in [("ext.builtin.exceptions.args", values.clone()), ("ext.builtin.exceptions.cause", because)] {
+        let seeded = [
+            ("ext.builtin.exceptions.args", values.clone()), ("ext.builtin.exceptions.cause", because),
+            ("ext.builtin.exceptions.context", Value::Nil), ("ext.builtin.exceptions.suppress", Value::Flag(false)),
+        ];
+        for (label, value) in seeded {
             if let Some(key) = self.table.single(label) { holds.push((key.to_string(), value)); }
         }
         holds.push(("\0raised-values".into(), values));
         Value::Thing(Rc::new(Thing { of: kind, turn: self.made, holds: RefCell::new(holds) }))
+    }
+
+    /// What was being handled when a value is raised stays with that
+    /// value as its context, where the table names a member for it: the
+    /// innermost fault held, unless that is the value itself. Should the
+    /// contexts behind the held fault lead back round to the value
+    /// raised, the link that would is emptied first, so that no fault
+    /// ever stands behind itself.
+    fn keep_context(&self, raised: &Value) {
+        let Some(key) = self.table.single("ext.builtin.exceptions.context") else { return };
+        let Value::Thing(thing) = raised.settled() else { return };
+        let Some(Value::Thing(handled)) = self.holding_fault.last().map(Value::settled) else { return };
+        if Rc::ptr_eq(&handled, &thing) { return; }
+        let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
+        let mut step = handled.clone();
+        while let Some(Value::Thing(older)) = context_of(&step) {
+            if Rc::ptr_eq(&older, &thing) {
+                if let Some((_, slot)) = step.holds.borrow_mut().iter_mut().find(|(k, _)| k == key) { *slot = Value::Nil; }
+                break;
+            }
+            step = older;
+        }
+        let mut holds = thing.holds.borrow_mut();
+        match holds.iter_mut().find(|(k, _)| k == key) {
+            Some((_, slot)) => *slot = Value::Thing(handled),
+            None => holds.push((key.to_string(), Value::Thing(handled))),
+        }
+    }
+
+    /// A fault of the kernel's own, met where exceptions are furnished,
+    /// is raised as a value of the class the table names for it, so a
+    /// clause may take it; every other outcome passes as it came.
+    fn raised_if_error<T>(&mut self, outcome: Result<T, Escape>) -> Result<T, Escape> {
+        match outcome {
+            Err(Escape::Error(told)) if self.table.has_any("ext.builtin.exceptions") => match self.as_raised(&told) {
+                Some(value) => Err(Escape::Thrown(value)),
+                None => Err(Escape::Error(told)),
+            },
+            other => other,
+        }
+    }
+
+    /// One more call under way, unless the table's limit on them is
+    /// reached already, when the words it gives for that are the fault.
+    fn deeper(&mut self) -> Result<(), Escape> {
+        if let (Some(limit), Some(words)) = (self.table.count("ext.system.recursion.limit"), self.table.single("ext.system.recursion.exceeded")) {
+            if self.standing >= limit { return Err(format!("\0{words}").into()); }
+        }
+        self.standing += 1;
+        Ok(())
+    }
+
+    /// The words for a value that cannot manage a context, its kind set
+    /// between them, or the plain wrong-answer complaint where the table
+    /// gives no such words.
+    fn no_manager(&self, kind: &str) -> String {
+        match self.table.strings("ext.stmt.with.invalid") {
+            [before, after] => format!("\0{before}{kind}{after}"),
+            _ => self.bad_answer(),
+        }
     }
 
     fn fault_descends(kind: &Rc<Blueprint>, ancestor: &Rc<Blueprint>) -> bool {
@@ -414,6 +481,7 @@ impl<'a> Machine<'a> {
             things: RefCell::new(Vec::new()),
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
+            standing: 0,
             would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
@@ -567,6 +635,14 @@ impl<'a> Machine<'a> {
     /// asked of the thing where it is one, and counted through as an
     /// array is where it is not.
     fn walking(&mut self, op: &Prim, name: &str, v: &[Value]) -> Result<Value, Escape> {
+        // A list that a lazy walk begins on is walked in its own cell
+        // rather than settled into a copy, so a member the body adds is
+        // reached in its turn and one the body takes away is passed over.
+        if matches!(op, Prim::Walked) && self.table.flag("ext.stmt.yield.suspends") {
+            if let Some(living @ IteratorKind::Living(..)) = v.first().and_then(Self::live_walk) {
+                return Ok(Self::cursor_value(living));
+            }
+        }
         if self.table.flag("ext.syntax.call.bind_names") && v.iter().any(|x| matches!(x, Value::Shared(_))) {
             let items: Vec<Value> = v.iter().map(collection_read).collect();
             return self.walking(op, name, &items);
@@ -1433,6 +1509,7 @@ impl<'a> Machine<'a> {
             let words = self.fault_words(told, &named);
             let values = if words.is_empty() || words == format!("{named}:") { vec![] } else { vec![Value::text(&words)] };
             let raised = self.make_fault(of, values, Value::Nil);
+            self.keep_context(&raised);
             match &raised {
                 Value::Thing(object) if self.table.single("ext.stmt.catch.invalid") == Some(told) => {
                     object.holds.borrow_mut().push(("\0former-complaint".into(), Value::text(told)));
@@ -1728,7 +1805,7 @@ impl<'a> Machine<'a> {
                 let original = thing.holds.borrow().iter().find(|(key, _)| key == "\0former-complaint").map(|(_, value)| value.bare());
                 if let Some(original) = original { return Err(original); }
                 if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values")) {
-                    return Err(if words.is_empty() { format!("\0{}:", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
+                    return Err(if words.is_empty() { format!("\0{}", thing.of.name) } else { format!("\0{}: {}", thing.of.name, words) });
                 }
                 let told = thing.holds.borrow().iter().find(|(k, _)| k == "message").map(|(_, x)| x.bare());
                 let said = match told.filter(|m| !m.is_empty()) {
@@ -2659,26 +2736,34 @@ impl<'a> Machine<'a> {
             Form::Again => {
                 match self.holding_fault.last() {
                     Some(value) => Err(Escape::Thrown(value.clone())),
-                    None => Err(self.table.single("ext.stmt.throw.empty").unwrap_or_default().to_string().into()),
+                    None => Err(format!("\0{}", self.table.single("ext.stmt.throw.empty").unwrap_or_default()).into()),
                 }
             }
             Form::Assert { condition, message } => {
                 let tested = self.value_of(condition, frame)?;
                 if self.object_truth(&tested)? { return Ok(Value::Nil); }
                 let held = self.value_of(message, frame)?;
-                let kind = Blueprint {
-                    ancestry: vec![], parents: vec![], presentation: None,
-                    name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
-                    fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
-                    shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
-                };
                 self.raised_on = self.row;
-                Err(Escape::Thrown(Value::Thing(Rc::new(Thing {
-                    of: match self.table.single("ext.stmt.assert.kind").and_then(|n| self.fault_kinds.get(n)) {
-                        Some(Value::Blueprint(base)) => base.clone(), _ => Rc::new(kind),
-                    }, turn: 0,
-                    holds: RefCell::new(vec![("message".to_string(), held)]),
-                }))))
+                // A furnished class is raised as any fault of its kind is,
+                // the message its one argument where there is one; a table
+                // furnishing none gets a class of the name and nothing else.
+                let raised = match self.table.single("ext.stmt.assert.kind").and_then(|n| self.fault_kinds.get(n)).cloned() {
+                    Some(Value::Blueprint(base)) => {
+                        let unsaid = matches!(&held, Value::Text(words) if words.is_empty());
+                        self.make_fault(base, if unsaid { Vec::new() } else { vec![held] }, Value::Nil)
+                    }
+                    _ => {
+                        let kind = Blueprint {
+                            ancestry: vec![], parents: vec![], presentation: None,
+                            name: self.table.single("ext.stmt.assert.kind").unwrap_or_default().to_string(),
+                            fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+                            shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
+                        };
+                        Value::Thing(Rc::new(Thing { of: Rc::new(kind), turn: 0, holds: RefCell::new(vec![("message".to_string(), held)]) }))
+                    }
+                };
+                self.keep_context(&raised);
+                Err(Escape::Thrown(raised))
             }
             Form::Attempt { context, body, clauses, last, otherwise } => {
                 if self.table.has_any("ext.stmt.catch.group.unsupported") && clauses.iter().any(|part| part.grouped) {
@@ -2686,6 +2771,9 @@ impl<'a> Machine<'a> {
                 }
                 let preceding = self.holding_fault.len();
                 let body_result = match self.value_of(body, frame) {
+                    // What a thing's own method raised on the way is what
+                    // the body ended in, not the words that stood in for it.
+                    Err(Escape::Error(_)) if self.got_away.is_some() => Err(self.got_away.take().expect("what got away")),
                     Err(Escape::Error(told)) => match self.as_raised(&told) {
                         Some(value) => Err(Escape::Thrown(value)),
                         None => Err(Escape::Error(told)),
@@ -2702,7 +2790,15 @@ impl<'a> Machine<'a> {
                         let kind = match v { Value::Thing(t) => Value::Blueprint(t.of.clone()), _ => Value::Nil };
                         vec![kind, v.clone(), Value::Backtrace(Rc::from(self.table.single("ext.stmt.class.special.unready").unwrap_or_default()))]
                     } else { vec![Value::Nil; 3] };
-                    let answer = self.ask_special(&manager, 34, &arguments)?.ok_or_else(|| self.bad_answer())?;
+                    // The raised value stays held while the manager lets
+                    // the body go, so whatever the leaving raises keeps it
+                    // as context; and what the leaving raises comes back
+                    // as raised rather than as a wrong answer.
+                    if let Err(Escape::Thrown(value)) = &body_result { self.holding_fault.push(value.clone()); }
+                    let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+                    let asked = self.raised_if_error(asked);
+                    self.holding_fault.truncate(preceding);
+                    let answer = asked?.ok_or_else(|| self.bad_answer())?;
                     return match body_result {
                         Err(Escape::Thrown(_)) if self.object_truth(&answer)? => Ok(Value::Nil),
                         outcome => outcome,
@@ -2749,6 +2845,9 @@ impl<'a> Machine<'a> {
                                     self.entering = None;
                                     if let Some(place) = &clause.held { self.store(place, frame, raised.clone())?; }
                                     let answer = self.value_of(&clause.body, frame);
+                                    // A fault the clause itself met is raised
+                                    // while the value it took is still held.
+                                    let answer = self.raised_if_error(answer);
                                     if clause.choices.is_some() {
                                         if let Some(place) = &clause.held { self.store(place, frame, Value::Unset)?; }
                                     }
@@ -2771,6 +2870,7 @@ impl<'a> Machine<'a> {
                 if let Some(limb) = last {
                     if let Err(Escape::Thrown(value)) = &ending { self.holding_fault.push(value.clone()); }
                     let final_result = self.value_of(limb, frame);
+                    let final_result = self.raised_if_error(final_result);
                     self.holding_fault.truncate(preceding);
                     final_result?;
                 }
@@ -3036,6 +3136,13 @@ impl<'a> Machine<'a> {
                     };
                         raised
                     };
+                    // Where the table furnishes exceptions and has words
+                    // for it, nothing but an instance of one is raised.
+                    if let Some(words) = self.table.single("ext.stmt.throw.invalid") {
+                        if self.table.has_any("ext.builtin.exceptions") && !matches!(raised.settled(), Value::Thing(of) if self.is_fault_kind(&of.of)) {
+                            return Err(format!("\0{words}").into());
+                        }
+                    }
                     if let Some(cause) = values.next() {
                         let cause = self.raise_class(cause, frame)?;
                         match &cause {
@@ -3043,13 +3150,19 @@ impl<'a> Machine<'a> {
                             Value::Thing(object) if self.is_fault_kind(&object.of) => {},
                             _ => return Err(self.argument_fault("ext.builtin.exceptions.unready", None).into()),
                         }
-                        if let (Value::Thing(thing), Some(key)) = (&raised, self.table.single("ext.builtin.exceptions.cause")) {
+                        // A cause stated, nothing included, hides the
+                        // context without forgetting it.
+                        if let Value::Thing(thing) = &raised {
                             let mut holds = thing.holds.borrow_mut();
-                            match holds.iter_mut().find(|(k, _)| k == key) {
-                                Some((_, value)) => *value = cause, None => holds.push((key.into(), cause)),
+                            for (label, worth) in [("ext.builtin.exceptions.cause", cause), ("ext.builtin.exceptions.suppress", Value::Flag(true))] {
+                                let Some(key) = self.table.single(label) else { continue };
+                                match holds.iter_mut().find(|(k, _)| k == key) {
+                                    Some((_, value)) => *value = worth, None => holds.push((key.into(), worth)),
+                                }
                             }
                         }
                     }
+                    self.keep_context(&raised);
                     self.raised_on = self.row;
                     Err(Escape::Thrown(raised))
                 }
@@ -3343,6 +3456,12 @@ impl<'a> Machine<'a> {
                 }
                 op => {
                     let mut values = self.value_list(args, frame)?;
+                    // A list that a lazy walk is to begin on is not gathered
+                    // into a copy: it goes on in its own cell, so the walk
+                    // reaches what the body adds and misses what it takes.
+                    if *op == Prim::Iterated && self.table.flag("ext.stmt.yield.suspends") {
+                        if let Some(living @ IteratorKind::Living(..)) = values.first().and_then(Self::live_walk) { return Ok(Self::cursor_value(living)); }
+                    }
                     // The property builtin takes its accessors by name; making the property sorts them out.
                     if *op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
                     if self.table.flag("ext.syntax.call.bind_names") && self.table.prims.contains_key(name.as_ref()) {
@@ -3575,6 +3694,8 @@ impl<'a> Machine<'a> {
         }
         if self.table.single("ext.builtin.class.name") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
+            if let Value::Intrinsic(word) = value { return Some(Value::text(word)); }
+            if let Value::KindOf(kind) = value { return Some(Value::text(Value::word_for_kind(*kind))); }
         }
         if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
             return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
@@ -4623,6 +4744,15 @@ impl<'a> Machine<'a> {
         if program.generator && self.table.flag("ext.stmt.yield.suspends") {
             return Ok(Value::Generator(Rc::new(RefCell::new(Suspension::body(&program, frame)))));
         }
+        // A call that would stand deeper than the table allows is refused
+        // before it runs, in the table's own words, so that a clause may
+        // take the fault and the run go on beneath the limit. An arm of
+        // a branch is no call of anybody's and is not counted.
+        let mut counted = 0usize;
+        if !program.frameless {
+            self.deeper()?;
+            counted += 1;
+        }
         let memo = program.traps == Traps::Yields && self.memo_cell.map_or(false, |i| matches!(self.outermost.cells.borrow()[i], Value::Flag(true)));
         let key = memo.then(|| {
             let mut k = format!("{}(", program.ident);
@@ -4712,6 +4842,12 @@ impl<'a> Machine<'a> {
                     }
                     program = p;
                     frame = f;
+                    // A call in tail position deepens the run as any
+                    // call does, though it takes the place of the last.
+                    if !program.frameless {
+                        if let Err(too_deep) = self.deeper() { break Err(too_deep); }
+                        counted += 1;
+                    }
                     // A program holding no names of its own is a piece
                     // of the one it was reached from and runs in its
                     // frame and its class: stepping into one does not
@@ -4777,6 +4913,7 @@ impl<'a> Machine<'a> {
                 Err(e) => break Err(e),
             }
         };
+        self.standing -= counted;
         if mine {
             self.frames_named.pop();
             self.inside.pop();
@@ -5473,9 +5610,14 @@ impl<'a> Machine<'a> {
                 match self.ask_special(subject, index, &[])? { Some(answer) => answer, None => return Ok(None) }
             }
             (Prim::StartContext, [manager]) => {
-                if matches!(manager, Value::Thing(_)) {
-                    if self.appointment(manager, 34).is_none() { return Err(self.bad_answer()); }
-                    self.ask_special(manager, 33, &[])?.ok_or_else(|| self.bad_answer())?
+                let plain = manager.settled();
+                if let Value::Thing(thing) = &plain {
+                    if self.appointment(&plain, 34).is_none() { return Err(self.no_manager(&thing.of.name)); }
+                    self.ask_special(&plain, 33, &[])?.ok_or_else(|| self.no_manager(&thing.of.name))?
+                } else if self.table.strings("ext.stmt.with.invalid").len() == 2 {
+                    // What is no thing has no such methods at all, and a
+                    // table with words for that says so by kind.
+                    return Err(self.no_manager(&plain.kind_word()));
                 } else { manager.clone() }
             }
             (Prim::Onto, [_, Value::Text(name), _]) if self.table.strings("ext.stmt.class.special").get(35..38).map_or(false, |members| members.iter().any(|word| word == name.as_ref())) => {
@@ -6459,6 +6601,9 @@ impl<'a> Machine<'a> {
                 n(2)?;
                 if self.has_class_order() && matches!(&v[0],Value::Thing(_)|Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Wrapped(..)){return Ok(Value::Flag(true));}
                 let word = v[1].bare();
+                // A kind value and an intrinsic are each named, where the
+                // table has a member for a name.
+                if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(_)) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
                 if let Value::Intrinsic(kind) = &v[0] {
                     if self.table.spells("ext.stmt.class.builtin", kind) && (word == self.detail("allocate") || word == self.detail("name") || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
@@ -8150,6 +8295,15 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if let Value::Octets { changeable, .. } = &v[0] { return Ok(self.octet_type(*changeable)); }
+                // A trace is of no kind the core knows either; where the
+                // table names one, a blueprint of that name is the answer.
+                if let (Value::Backtrace(_), Some(word)) = (&v[0], self.table.single("ext.builtin.exceptions.traceback")) {
+                    return Ok(Value::Blueprint(Rc::new(Blueprint {
+                        ancestry: vec![], parents: vec![], presentation: None, name: word.to_string(),
+                        fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+                        shared: RefCell::new(Vec::new()), reaches: Vec::new(), under: None, answers: Vec::new(),
+                    })));
+                }
                 // A thing is of no kind the core knows, so a language
                 // with a word of its own for one answers with that.
                 if let (Value::Thing(_), Some(word)) = (&v[0], self.table.single("ext.system.kind.object")) {

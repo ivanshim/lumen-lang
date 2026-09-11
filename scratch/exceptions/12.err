@@ -1,1 +1,1 @@
-PythonError: Uncaught outer
+TypeError: exceptions must derive from BaseException
