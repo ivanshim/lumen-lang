@@ -2732,6 +2732,13 @@ impl<'a> Engine<'a> {
             }
             return self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
         }
+        // Membership in a cursor takes members until the one sought is
+        // found, and leaves the cursor standing after it.
+        if matches!(op, Action::Contains | Action::Lacks) && matches!(b, Value::Cursor(_)) {
+            let mut found = false;
+            while let Some(item) = self.core_step(b)? { if Self::member_matches(a, &item) { found = true; break; } }
+            return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+        }
         self.dyadic(op, a, b)
     }
 
@@ -2868,13 +2875,23 @@ impl<'a> Engine<'a> {
             }
             Builtin::List if args.len() == 1 => {
                 let row = Value::array(self.special_items(&args[0])?);
-                if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_)) { row.held(true) } else { row }
+                // What a cursor hands out is quoted as a window's members are.
+                if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_)) { row.held(true) } else { row }
             },
             Builtin::Iter if args.len() == 1 => {
                 if matches!(&args[0], Value::Walk(_)) { return Ok(Some(args[0].clone())); }
                 if let Some(answer) = self.special_call(&args[0], 15, Vec::new())? { answer }
+                else if let Some(places) = self.indexed_walk(&args[0]) { places }
                 else { Value::Walk(Rc::new(RefCell::new((self.comprehension_items(&args[0])?, 0)))) }
             }
+            Builtin::Iter if args.len() == 2 => return Ok(None),
+            // A thing with a method for walking backwards is asked for
+            // that walk, and the builtin goes on from what it answers.
+            Builtin::Reversed if args.len() == 1 && matches!(&args[0], Value::Object(_)) => match self.special_call(&args[0], 42, Vec::new())? {
+                Some(walk) if matches!(walk, Value::Object(_)) => walk,
+                Some(walk) => self.core_iterator(&walk)?,
+                None => return Ok(None),
+            },
             Builtin::Next if args.len() == 2 => {
                 self.special_step(&args[0])?.unwrap_or_else(|| args[1].clone())
             }
@@ -2933,6 +2950,7 @@ impl<'a> Engine<'a> {
             while let Some(item) = self.special_step(&iterator)? { items.push(item); }
             return Ok(items);
         }
+        if let Some(places) = self.indexed_walk(value) { return self.core_members(&places); }
         self.comprehension_items(value)
     }
 
@@ -3481,6 +3499,14 @@ impl<'a> Engine<'a> {
                         }
                         found
                     }
+                    ref cursor @ Value::Cursor(_) => {
+                        let mut found = Vec::new();
+                        while rest.is_some() || found.len() <= *count {
+                            let Some(value) = self.core_step(cursor)? else { break };
+                            found.push(value);
+                        }
+                        found
+                    }
                     Value::Set(set) => set.borrow().items(),
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
@@ -3503,7 +3529,9 @@ impl<'a> Engine<'a> {
             }
             Action::ComprehensionItems => {
                 let source = self.drop_top()?;
-                if matches!(source, Value::Object(_)) { self.data.push(source); return Ok(()); }
+                // A cursor is not gathered here: it is walked one member
+                // at a time, so a loop that breaks off leaves the rest.
+                if matches!(source, Value::Object(_) | Value::Cursor(_)) { self.data.push(source); return Ok(()); }
                 match self.set_walk(&source) {
                     Some(walk) => walk,
                     None => Value::array(self.special_items(&source)?),
@@ -4336,6 +4364,7 @@ impl<'a> Engine<'a> {
                 }
                 if let Some(walk) = self.set_walk(&handed) { self.data.push(walk); return Ok(()); }
                 if self.lang.yield_suspends && !matches!(handed, Value::Object(_)) {
+                    if matches!(handed, Value::Cursor(_)) { self.data.push(handed); return Ok(()); }
                     let walk = self.iterator(handed)?;
                     self.data.push(walk);
                     return Ok(());
@@ -7729,7 +7758,10 @@ impl<'a> Engine<'a> {
                     Value::Words(items, _) => Value::Small(items.len() as i64),
                     Value::Map(pairs) => Value::Small(pairs.len() as i64),
                     Value::Counted(r) => Value::of_big(r.length()),
-                    _ => return Err(format!("{}() requires a string or array argument", name)),
+                    other => return Err(match self.lang.core_words.get("core.unsized").map(Vec::as_slice) {
+                        Some(words @ [_, _]) => Self::named_fault(words, &other.core_kind()),
+                        _ => format!("{}() requires a string or array argument", name),
+                    }),
                 }
             }
             Builtin::CharAtIndex => {
@@ -8669,6 +8701,26 @@ impl Engine<'_> {
     fn core_step(&mut self, walk: &Value) -> Res<Option<Value>> {
         if let Value::Generator(state) = walk { return self.resume_generator(state, Value::Null).map_err(|f| f.told(&self.wording())); }
         let Value::Cursor(cell) = walk else { return Err(self.core_fault("core.not_iterator", &walk.core_kind())); };
+        // A callable asked for a member may itself ask this same cursor
+        // for members before it answers, so it is asked with the cursor
+        // left free, and its answer is judged against the state the
+        // cursor is in once it has answered.
+        let summoned = match &cell.borrow().source { CursorSource::Called(work, stop) => Some((work.clone(), stop.clone())), _ => None };
+        if let Some((work, stop)) = summoned {
+            {
+                let mut state = cell.borrow_mut();
+                if let Some(value) = state.pending.take() { return Ok(Some(value)); }
+                if state.finished { return Ok(None); }
+            }
+            let answered = match self.core_apply(&work, Vec::new()) {
+                Ok(value) => value,
+                Err(words) => { if self.stop_raised() { cell.borrow_mut().finished = true; return Ok(None); } return Err(words); }
+            };
+            let mut state = cell.borrow_mut();
+            if state.finished { return Ok(None); }
+            if Self::member_matches(&stop, &answered) { state.finished = true; return Ok(None); }
+            return Ok(Some(answered));
+        }
         let mut source = {
             let mut state = cell.borrow_mut();
             if state.busy { return Err(self.core_fault("core.unready", "next")); }
@@ -8688,21 +8740,65 @@ impl Engine<'_> {
                 if found.is_some() { *place += 1; }
                 Ok(found)
             }
+            CursorSource::Living(home, place) => {
+                let found = match home.borrow().contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                if found.is_some() { *place += 1; }
+                Ok(found)
+            }
+            CursorSource::Viewed(window, place, size) => {
+                if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                if found.is_some() { *place += 1; }
+                Ok(found)
+            }
+            // The summoned callable was answered above, with the cursor free.
+            CursorSource::Called(..) => Ok(None),
+            CursorSource::Indexed(thing, place) => match self.special_call(thing, 11, vec![Value::of_big(place.clone())]) {
+                Ok(Some(item)) => { *place += 1; Ok(Some(item)) }
+                Ok(None) => Ok(None),
+                Err(words) => if self.places_over() { Ok(None) } else { Err(words) },
+            },
             CursorSource::Numbered(inner, count) => {
                 let Some(value) = self.core_step(inner)? else { return Ok(None); };
                 let numbered = Value::Tuple(Rc::new(vec![Value::of_big(count.clone()), value]));
                 *count += 1;
                 Ok(Some(numbered))
             }
-            CursorSource::Combined(walks, work) => {
+            CursorSource::Combined(walks, work, exact) => {
                 if walks.is_empty() { return Ok(None); }
                 let mut row = Vec::new();
-                for inner in walks { let Some(value) = self.core_step(inner)? else { return Ok(None); }; row.push(value); }
-                Ok(Some(if let Some(work) = work { self.core_apply(work, row)? } else { Value::Tuple(Rc::new(row)) }))
+                for (at, inner) in walks.iter().enumerate() {
+                    match self.core_step(inner)? {
+                        Some(value) => row.push(value),
+                        // Where the walks must end together, one ending
+                        // after an earlier one gave a member is too
+                        // short, and one still giving members after the
+                        // first has ended is too long.
+                        None => {
+                            if *exact {
+                                if at > 0 { return Err(self.uneven_zip("zip.short", at)); }
+                                for (later, other) in walks.iter().enumerate().skip(1) {
+                                    if self.core_step(other)?.is_some() { return Err(self.uneven_zip("zip.long", later)); }
+                                }
+                            }
+                            return Ok(None);
+                        }
+                    }
+                }
+                let Some(work) = work else { return Ok(Some(Value::Tuple(Rc::new(row)))) };
+                match self.core_apply(work, row) {
+                    Ok(made) => Ok(Some(made)),
+                    Err(words) => if self.stop_raised() { Ok(None) } else { Err(words) },
+                }
             }
             CursorSource::Selected(inner, test) => {
                 while let Some(value) = self.core_step(inner)? {
-                    let verdict = if matches!(test, Value::Null) { value.clone() } else { self.core_apply(test, vec![value.clone()])? };
+                    let verdict = if matches!(test, Value::Null) { value.clone() } else {
+                        match self.core_apply(test, vec![value.clone()]) {
+                            Ok(said) => said,
+                            Err(words) => return if self.stop_raised() { Ok(None) } else { Err(words) },
+                        }
+                    };
                     if self.truth(&verdict) { return Ok(Some(value)); }
                 }
                 Ok(None)
@@ -8722,6 +8818,63 @@ impl Engine<'_> {
         let more = value.is_some();
         cell.borrow_mut().pending = value;
         Ok(more)
+    }
+
+    /// Whether the fault carried out of a call is the one that ends a
+    /// walk; if it is, it is taken, and the walk ends quietly.
+    fn stop_raised(&mut self) -> bool {
+        let ended = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o))) if self.lang.special_stop.iter().any(|name| o.class.named(name, false)));
+        if ended { self.carried = None; }
+        ended
+    }
+
+    /// Whether the fault carried out of reading a place says the places
+    /// are over: the index fault, or the one that ends a walk.
+    fn places_over(&mut self) -> bool {
+        let over = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o)))
+            if self.lang.fault_index.as_deref().map_or(false, |name| o.class.named(name, false)) || self.lang.special_stop.iter().any(|name| o.class.named(name, false)));
+        if over { self.carried = None; }
+        over
+    }
+
+    /// The complaint for zip sources of unequal length: the number of
+    /// the source at fault, then the close for one earlier source alone
+    /// or for the span of them.
+    fn uneven_zip(&self, label: &str, at: usize) -> String {
+        match self.lang.core_words.get(label).map(Vec::as_slice) {
+            Some([opening, one, many]) => format!("{}{}{}", opening, at + 1, if at == 1 { one.clone() } else { format!("{}{}", many, at) }),
+            _ => String::new(),
+        }
+    }
+
+    /// The size of the map a window looks upon.
+    fn window_size(window: &Value) -> usize {
+        match window { Value::View(view) => match view.0.contents() { Value::Map(pairs) => pairs.len(), _ => 0 }, _ => 0 }
+    }
+
+    /// What iter is handed before its cell is opened: a list's own cell,
+    /// or a window upon a map, each walked as it stands rather than
+    /// copied as it stood.
+    fn living_source(value: &Value) -> Option<CursorSource> {
+        match value {
+            Value::View(_) => Some(CursorSource::Viewed(value.clone(), 0, Self::window_size(value))),
+            Value::Bond(cell) | Value::Binding(cell) => match &*cell.borrow() {
+                Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
+                inner @ (Value::Collection(..) | Value::View(_)) => Self::living_source(inner),
+                _ => None,
+            },
+            Value::Collection(cell, _) => match &*cell.borrow() {
+                Value::Array(_) => Some(CursorSource::Living(cell.clone(), 0)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A thing with no walk method but a method for reading a place is
+    /// walked through its places, from nought until the reading fails.
+    fn indexed_walk(&self, value: &Value) -> Option<Value> {
+        (matches!(value, Value::Object(_)) && self.special_method(value, 11).is_some()).then(|| Self::core_cursor(CursorSource::Indexed(value.clone(), BigInt::from(0))))
     }
 
     fn core_members(&mut self, v: &Value) -> Res<Vec<Value>> {
@@ -8744,6 +8897,19 @@ impl Engine<'_> {
                 }
                 self.drop_top()
             }
+            // A class called is a thing made of it, and a thing with a
+            // method for being called answers through that method.
+            Value::Class(_) => {
+                let count = args.len() + 1;
+                self.data.push(work.clone());
+                self.data.extend(args);
+                if let Err(f) = self.perform(&Action::Make, count) {
+                    self.carried = Some(f);
+                    return Err(self.core_fault("core.unready", &work.core_kind()));
+                }
+                self.drop_top()
+            }
+            Value::Object(_) => self.special_call(work, 17, args)?.ok_or_else(|| self.core_fault("core.uncallable", &work.core_kind())),
             _ => Err(self.core_fault("core.uncallable", &work.core_kind())),
         }
     }
@@ -8785,6 +8951,11 @@ impl Engine<'_> {
         use num_traits::{Signed, Zero};
         // The place a value is kept in is what its identity is, so that
         // one builtin is handed the cell itself.
+        // A cursor over a list, or over a window upon a map, reads it as
+        // it stands, so what iter is handed is looked at before its
+        // cell is opened.
+        let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
+        let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.1.clone()), _ => None };
         if b != Builtin::Identity { for value in &mut args { *value = value.contents(); } }
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
@@ -8800,6 +8971,7 @@ impl Engine<'_> {
         let mut key = Value::Null;
         let mut reverse = false;
         let mut default = None;
+        let mut exact = false;
         let mut dict_kw = Vec::new();
         for (word, value) in named {
             let spells = |label: &str| self.lang.core_words.get(label).map_or(false, |words| Lang::spells(words, &word));
@@ -8810,6 +8982,7 @@ impl Engine<'_> {
                 reverse = self.truth(&value); continue;
             }
             if matches!(b, Builtin::Minimum | Builtin::Maximum) && spells("default") { default = Some(value); continue; }
+            if b == Builtin::Zip && spells("zip.strict") { exact = self.truth(&value); continue; }
             let place = match b {
                 Builtin::Enumerate if spells("start") => 1,
                 Builtin::Round if spells("round.number") => 0,
@@ -8837,7 +9010,17 @@ impl Engine<'_> {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(args.first().map_or(false, |v| self.truth(v))) }
             Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..))) }
-            Builtin::Repr => { arity(1, 1)?; Value::text(&args[0].core_repr(self.lang.shortest_reals)) }
+            Builtin::Repr => {
+                arity(1, 1)?;
+                // A cursor is written by its kind and its identity, and
+                // the writing does not advance it.
+                if matches!(args[0], Value::Cursor(_)) {
+                    let Value::Small(mark) = self.core_call(Builtin::Identity, name, vec![args[0].clone()], Vec::new())? else { return Err(self.core_fault("core.unready", name)) };
+                    return Ok(Value::text(&format!("<{} object at 0x{:x}>", args[0].core_kind(), mark)));
+                }
+                if let Some(portion) = window { return Ok(Value::text(&format!("dict_{}({})", portion, args[0].core_repr(self.lang.shortest_reals)))); }
+                Value::text(&args[0].core_repr(self.lang.shortest_reals))
+            }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &args[0].core_kind()))?) }
             Builtin::Identity => {
                 arity(1, 1)?;
@@ -8932,9 +9115,9 @@ impl Engine<'_> {
             }
             Builtin::Iter => {
                 arity(1, 2)?;
-                if args.len() == 2 { return Err(self.core_fault("core.unready", name)); }
+                if args.len() == 2 { return Ok(Self::core_cursor(CursorSource::Called(args[0].clone(), args[1].clone()))); }
                 if matches!(args[0], Value::Cursor(_)) { return Ok(args[0].clone()); }
-                self.core_iterator(&args[0])?
+                match living { Some(source) => Self::core_cursor(source), None => self.core_iterator(&args[0])? }
             }
             Builtin::Next => {
                 arity(1, 2)?;
@@ -8942,7 +9125,7 @@ impl Engine<'_> {
             }
             Builtin::Reversed => {
                 arity(1, 1)?;
-                if !matches!(args[0], Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_)) { return Err(self.core_fault("core.unready", name)); }
+                if !matches!(args[0], Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_)) { return Err(self.core_fault("core.unready", name)); }
                 // A counted row is walked backwards as a counted row,
                 // from its last place to its first, without ever being
                 // made into the row it counts.
@@ -8966,7 +9149,7 @@ impl Engine<'_> {
                 let offset = usize::from(b == Builtin::Map);
                 let mut walks = Vec::new();
                 for source in &args[offset..] { walks.push(self.core_iterator(source)?); }
-                Self::core_cursor(CursorSource::Combined(walks, if b == Builtin::Map { Some(args[0].clone()) } else { None }))
+                Self::core_cursor(CursorSource::Combined(walks, if b == Builtin::Map { Some(args[0].clone()) } else { None }, exact))
             }
             Builtin::Filter => {
                 arity(2, 2)?;

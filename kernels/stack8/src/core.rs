@@ -1,7 +1,7 @@
 // The small values used by the collection builtins. Quoting descends
 // through a collection, while the ordinary writer keeps its old form.
 
-use crate::value::Value;
+use crate::value::{CursorSource, Value};
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive};
 use std::hash::{Hash, Hasher};
@@ -22,7 +22,18 @@ impl Value {
             Value::Counted(_) => "range",
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
-            Value::Cursor(_) => "iterator",
+            // A cursor is known by what it walks, as CPython names it.
+            Value::Cursor(state) => return state.try_borrow().map_or("iterator", |held| match &held.source {
+                CursorSource::Living(..) => "list_iterator",
+                CursorSource::Counted(..) => "range_iterator",
+                CursorSource::Viewed(Value::View(window), ..) => match window.1.as_str() { "keys" => "dict_keyiterator", "values" => "dict_valueiterator", _ => "dict_itemiterator" },
+                CursorSource::Called(..) => "callable_iterator",
+                CursorSource::Numbered(..) => "enumerate",
+                CursorSource::Combined(_, Some(_), _) => "map",
+                CursorSource::Combined(_, None, _) => "zip",
+                CursorSource::Selected(..) => "filter",
+                CursorSource::Items(..) | CursorSource::Indexed(..) | CursorSource::Viewed(..) => "iterator",
+            }).to_string(),
             Value::Native(..) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Class(_) | Value::SortOf(_) => "type",

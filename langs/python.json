@@ -595,6 +595,9 @@
     "TypeError: cannot convert dictionary update sequence element #",
     " to a sequence"
   ],
+  "ext.builtin.core.dict.changed": [
+    "RuntimeError: dictionary changed size during iteration"
+  ],
   "ext.builtin.core.empty": [
     "ValueError: ",
     "() iterable argument is empty"
@@ -651,6 +654,10 @@
   "ext.builtin.core.unready": [
     "NotImplementedError: ",
     "() is not supported for these values"
+  ],
+  "ext.builtin.core.unsized": [
+    "TypeError: object of type '",
+    "' has no len()"
   ],
   "ext.builtin.core.vars": [
     "TypeError: vars() argument must have __dict__ attribute"
@@ -1572,6 +1579,19 @@
   "ext.builtin.zip": [
     "zip"
   ],
+  "ext.builtin.zip.long": [
+    "ValueError: zip() argument ",
+    " is longer than argument 1",
+    " is longer than arguments 1-"
+  ],
+  "ext.builtin.zip.short": [
+    "ValueError: zip() argument ",
+    " is shorter than argument 1",
+    " is shorter than arguments 1-"
+  ],
+  "ext.builtin.zip.strict": [
+    "strict"
+  ],
   "ext.lexical.escape.byte": [
     "x"
   ],
@@ -2214,7 +2234,8 @@
     "__int__",
     "__float__",
     "__abs__",
-    "__pos__"
+    "__pos__",
+    "__reversed__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"

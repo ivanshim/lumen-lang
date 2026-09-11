@@ -584,7 +584,12 @@ impl<'a> Machine<'a> {
                     if let Some(yielded) = self.blueprint_walk(&kind.clone())? { return self.walking(&Prim::Walked, name, &[yielded]); }
                 }
                 if let Some(walk) = self.begin_set_walk(&v[0]) { return Ok(walk); }
-                if self.table.flag("ext.stmt.yield.suspends") && !matches!(v[0], Value::Thing(_)) { return self.make_iterator(v[0].clone()); }
+                // An iterator is walked one member per pass, never gathered
+                // up front, so a loop that leaves early leaves the rest.
+                if self.table.flag("ext.stmt.yield.suspends") && !matches!(v[0], Value::Thing(_)) {
+                    if let Value::Iterator(_) = v[0] { return Ok(v[0].clone()); }
+                    return self.make_iterator(v[0].clone());
+                }
                 let mut walking = v[0].clone();
                 if self.table.has_any("ext.stmt.class.special") && matches!(walking, Value::Thing(_) | Value::Cursor(_)) {
                     let iterator = self.user_operation(Prim::Iterator, std::slice::from_ref(&walking))?.ok_or_else(|| self.bad_answer())?;
@@ -5189,7 +5194,7 @@ impl<'a> Machine<'a> {
                 Ok(answer)
             }
             Value::Thing(_) => {
-                let other = self.ask_special(subject, 15, &[])?.ok_or_else(|| self.bad_answer())?;
+                let other = match self.ask_special(subject, 15, &[])? { Some(walk) => walk, None => self.placed_walk(subject).ok_or_else(|| self.bad_answer())? };
                 let mut members = Vec::new();
                 while let Some(value) = self.advance_object(&other)? { members.push(value); }
                 Ok(members)
@@ -5406,12 +5411,24 @@ impl<'a> Machine<'a> {
             (Prim::Iterated, [one @ Value::Thing(_)]) => one.clone(),
             (Prim::Listed, [one]) => {
                 let result = Value::Vector(Rc::new(self.object_members(one)?));
-                if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_)) { result.keep(true) } else { result }
+                // Members an iterator hands out are kept quoted, as a window's are.
+                if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_)) { result.keep(true) } else { result }
             },
             (Prim::Iterator, [one @ Value::Cursor(_)]) => one.clone(),
             (Prim::Iterator, [one]) => match self.ask_special(one, 15, &[])? {
                 Some(iterator) => iterator,
-                None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
+                None => match self.placed_walk(one) {
+                    Some(places) => places,
+                    None => Value::Cursor(Rc::new(RefCell::new(self.gathered_members(one)?.into_iter().collect()))),
+                },
+            },
+            (Prim::Iterator, [_, _]) => return Ok(None),
+            // A thing with a method for walking backwards answers the
+            // reversed builtin with that walk.
+            (Prim::Backwards, [one @ Value::Thing(_)]) => match self.ask_special(one, 42, &[])? {
+                Some(walk @ Value::Thing(_)) => walk,
+                Some(walk) => self.iterated_value(&walk)?,
+                None => return Ok(None),
             },
             (Prim::NextItem, [one, otherwise]) => self.advance_object(one)?.unwrap_or_else(|| otherwise.clone()),
             (Prim::NextItem, [Value::Cursor(cursor)]) => {
@@ -5846,6 +5863,13 @@ impl<'a> Machine<'a> {
                         }
                         yielded
                     }
+                    walk @ Value::Iterator(_) => {
+                        let mut taken = Vec::new();
+                        while star.is_some() || taken.len() <= wanted {
+                            match self.next_value(walk)? { Some(item) => taken.push(item), None => break }
+                        }
+                        taken
+                    }
                     Value::Set(set) => set.borrow().values(),
                     Value::Tuple(items) | Value::Row(items) => items.to_vec(),
                     Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
@@ -5871,6 +5895,7 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(values))
             }
             Prim::Iterated => match self.begin_set_walk(&v[0]) {
+                None if matches!(v[0], Value::Iterator(_)) => v[0].clone(),
                 None => Value::Vector(Rc::new(self.gathered_members(&v[0])?)),
                 Some(walk) => walk,
             },
@@ -7209,6 +7234,13 @@ impl<'a> Machine<'a> {
                     }
                     (needle, Value::TextRow(words, _)) => words.iter().any(|s| needle.equals(&Value::text(s))),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
+                    // An iterator gives up members until the one sought
+                    // turns up, and stands after it thereafter.
+                    (needle, walk @ Value::Iterator(_)) => {
+                        let mut seen = false;
+                        while let Some(item) = self.next_value(walk)? { if contained_equal(needle, &item) { seen = true; break; } }
+                        seen
+                    }
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
                 Value::Flag(if op == Prim::Absent { !present } else { present })
@@ -7802,7 +7834,10 @@ impl<'a> Machine<'a> {
                     Value::TextRow(words, _) => Value::Small(words.len() as i64),
                     Value::Dict(entries) => Value::Small(entries.len() as i64),
                     Value::Progression(p) => Value::from_big(p.count()),
-                    _ => return Err(format!("{}() requires a string or array argument", name)),
+                    measureless => return Err(match self.table.strings("ext.builtin.core.unsized") {
+                        [before, after] => format!("{}{}{}", before, measureless.kind_word(), after),
+                        _ => format!("{}() requires a string or array argument", name),
+                    }),
                 }
             }
             Prim::CharAtIndex => {
@@ -9383,6 +9418,25 @@ impl Machine<'_> {
     fn next_value(&mut self, iterator: &Value) -> Result<Option<Value>, String> {
         if let Value::Generator(frame) = iterator { return self.resume(frame, Value::Nil).map_err(|fault| self.suspension_fault(fault)); }
         let Value::Iterator(cell) = iterator else { return Err(self.core_complaint("core.not_iterator", &iterator.kind_word())); };
+        // A summoned callable may reach back into this very iterator
+        // before it answers, so the iterator is not marked busy while it
+        // runs, and what it answers is weighed once it is back.
+        let summons = match &cell.borrow().kind { IteratorKind::Summoned { work, stop } => Some((work.clone(), stop.clone())), _ => None };
+        if let Some((work, stop)) = summons {
+            {
+                let mut held = cell.borrow_mut();
+                if held.done { return Ok(None); }
+                if let Some(value) = held.peek.take() { return Ok(Some(value)); }
+            }
+            let answer = match self.core_run(&work, Vec::new()) {
+                Ok(value) => value,
+                Err(complaint) => return if self.walk_halted() { cell.borrow_mut().done = true; Ok(None) } else { Err(complaint) },
+            };
+            let mut held = cell.borrow_mut();
+            if held.done { return Ok(None); }
+            if contained_equal(&stop, &answer) { held.done = true; return Ok(None); }
+            return Ok(Some(answer));
+        }
         let mut kind = {
             let mut held = cell.borrow_mut();
             if held.done { return Ok(None); }
@@ -9392,8 +9446,28 @@ impl Machine<'_> {
         };
         let result = (|| -> Result<Option<Value>, String> {
             match &mut kind {
-                IteratorKind::Busy => unreachable!(),
+                IteratorKind::Busy | IteratorKind::Summoned { .. } => unreachable!(),
                 IteratorKind::Stored(entries) => Ok(entries.pop_front()),
+                IteratorKind::Living(home, at) => {
+                    let item = match home.borrow().settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    if item.is_some() { *at += 1; }
+                    Ok(item)
+                }
+                IteratorKind::Watching { window, at, size } => {
+                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    if item.is_some() { *at += 1; }
+                    Ok(item)
+                }
+                IteratorKind::Placed(thing, at) => {
+                    let Some(reader) = self.appointed(thing, 11) else { return Ok(None) };
+                    match self.invoke(reader, self.outermost.clone(), vec![thing.clone(), Value::from_big(at.clone())]) {
+                        Ok(item) => { *at += 1; Ok(Some(item)) }
+                        Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
+                        Err(Escape::Error(complaint)) => Err(complaint),
+                        Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
+                    }
+                }
                 IteratorKind::Stepping(walk, at) => {
                     let item = walk.item(at);
                     if item.is_some() { *at += 1; }
@@ -9407,21 +9481,40 @@ impl Machine<'_> {
                         Ok(Some(Value::Tuple(Rc::new(pair))))
                     }
                 },
-                IteratorKind::Parallel { inputs, mapper } => {
+                IteratorKind::Parallel { inputs, mapper, exact } => {
                     if inputs.is_empty() { return Ok(None); }
                     let mut parts = Vec::with_capacity(inputs.len());
-                    for input in inputs {
-                        match self.next_value(input)? { None => return Ok(None), Some(part) => parts.push(part) }
+                    for (which, input) in inputs.iter().enumerate() {
+                        let Some(part) = self.next_value(input)? else {
+                            // Demanded to end together, a later input
+                            // ending first is short, and any input still
+                            // giving once the first has ended is long.
+                            if *exact {
+                                if which > 0 { return Err(self.unequal_zip("zip.short", which)); }
+                                for (later, other) in inputs.iter().enumerate().skip(1) {
+                                    if self.next_value(other)?.is_some() { return Err(self.unequal_zip("zip.long", later)); }
+                                }
+                            }
+                            return Ok(None);
+                        };
+                        parts.push(part);
                     }
                     match mapper {
                         None => Ok(Some(Value::Tuple(Rc::new(parts)))),
-                        Some(work) => self.core_run(work, parts).map(Some),
+                        Some(work) => match self.core_run(work, parts) {
+                            Ok(made) => Ok(Some(made)),
+                            Err(complaint) => if self.walk_halted() { Ok(None) } else { Err(complaint) },
+                        },
                     }
                 }
                 IteratorKind::Select(inner, test) => loop {
                     let Some(part) = self.next_value(inner)? else { break Ok(None); };
-                    let yes = if matches!(test, Value::Nil) { self.stands_true(&part) }
-                        else { let answer = self.core_run(test, vec![part.clone()])?; self.stands_true(&answer) };
+                    let yes = if matches!(test, Value::Nil) { self.stands_true(&part) } else {
+                        match self.core_run(test, vec![part.clone()]) {
+                            Ok(answer) => self.stands_true(&answer),
+                            Err(complaint) => break if self.walk_halted() { Ok(None) } else { Err(complaint) },
+                        }
+                    };
                     if yes { break Ok(Some(part)); }
                 },
             }
@@ -9430,6 +9523,56 @@ impl Machine<'_> {
         held.kind = kind;
         held.done = matches!(result, Ok(None));
         result
+    }
+
+    /// Whether what got away from a call is the fault that ends a walk;
+    /// if so it is taken back, and the walk simply ends.
+    fn walk_halted(&mut self) -> bool {
+        let halted = matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thrown))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| thrown.of.goes_by(name, false)));
+        if halted { self.got_away = None; }
+        halted
+    }
+
+    /// Whether a thrown thing says the places of a walk are over: the
+    /// index fault, or the fault that ends any walk.
+    fn ends_places(&self, thrown: &Thing) -> bool {
+        self.table.single("ext.system.fault.class.index").map_or(false, |name| thrown.of.goes_by(name, false))
+            || self.table.strings("ext.stmt.class.special.stop").iter().any(|name| thrown.of.goes_by(name, false))
+    }
+
+    /// zip's complaint of unequal sources: which one, then the close
+    /// naming the first alone or the span up to the one before.
+    fn unequal_zip(&self, key: &str, which: usize) -> String {
+        match self.table.strings(&format!("ext.builtin.{}", key)) {
+            [opening, alone, span] => format!("{}{}{}", opening, which + 1, if which == 1 { alone.clone() } else { format!("{}{}", span, which) }),
+            _ => String::new(),
+        }
+    }
+
+    /// How many entries the dictionary behind a window holds.
+    fn window_extent(window: &Value) -> usize {
+        match window { Value::Window(owner, _) => match owner.settled() { Value::Dict(entries) => entries.len(), _ => 0 }, _ => 0 }
+    }
+
+    /// The cell a list lives in, or a window upon a dictionary, taken as
+    /// iter finds them before they are settled into copies.
+    fn live_walk(value: &Value) -> Option<IteratorKind> {
+        match value {
+            Value::Window(..) => Some(IteratorKind::Watching { window: value.clone(), at: 0, size: Self::window_extent(value) }),
+            Value::Shared(cell) => match &*cell.borrow() {
+                Value::Vector(_) => Some(IteratorKind::Living(cell.clone(), 0)),
+                inner @ (Value::Mutable(..) | Value::Window(..)) => Self::live_walk(inner),
+                _ => None,
+            },
+            Value::Mutable(cell, _) => matches!(&*cell.borrow(), Value::Vector(_)).then(|| IteratorKind::Living(cell.clone(), 0)),
+            _ => None,
+        }
+    }
+
+    /// A thing with no walk of its own but a place-reading method is
+    /// walked through its places from nought.
+    fn placed_walk(&self, subject: &Value) -> Option<Value> {
+        (matches!(subject, Value::Thing(_)) && self.appointed(subject, 11).is_some()).then(|| Self::cursor_value(IteratorKind::Placed(subject.clone(), BigInt::from(0))))
     }
 
     fn iterator_has_more(&mut self, iterator: &Value) -> Result<bool, String> {
@@ -9460,6 +9603,13 @@ impl Machine<'_> {
                 Ok(answer) => Ok(answer),
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &program.ident)) }
             },
+            // A blueprint called makes a thing of it; a thing called
+            // answers through its own calling method.
+            Value::Blueprint(class) => match self.make_instance(class.clone(), values) {
+                Ok(made) => Ok(made),
+                Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &class.name)) }
+            },
+            Value::Thing(_) => self.ask_special(callable, 17, &values)?.ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word())),
             other => Err(self.core_complaint("core.uncallable", &other.kind_word())),
         }
     }
@@ -9498,6 +9648,10 @@ impl Machine<'_> {
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         // A value's identity is the cell it is kept in, so that one
         // primitive alone is handed the cell as it stands.
+        // A list or a dictionary's window is walked as it stands, so what
+        // iter is handed is looked at before it is settled into a copy.
+        let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
+        let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
         if op != Prim::IdentityOf { for item in &mut input { *item = item.settled(); } }
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
@@ -9516,6 +9670,7 @@ impl Machine<'_> {
         let mut ordering = None;
         let mut descending = false;
         let mut fallback = None;
+        let mut exact = false;
         let mut additions = Vec::new();
         for (label, value) in keywords {
             let is = |tail: &str| self.table.spells(&format!("ext.builtin.{}", tail), &label);
@@ -9527,6 +9682,7 @@ impl Machine<'_> {
                     descending = self.stands_true(&value); continue;
                 }
                 Least | Greatest if is("default") => { fallback = Some(value); continue; }
+                Zipped if is("zip.strict") => { exact = self.stands_true(&value); continue; }
                 _ => (),
             }
             let slot = match (op, ()) {
@@ -9561,7 +9717,21 @@ impl Machine<'_> {
         let cursor = |values: Vec<Value>| Self::cursor_value(IteratorKind::Stored(values.into_iter().collect()));
         match op {
             Belongs => { require(2, 2)?; Ok(Value::Flag(self.core_belongs(&input[0], &input[1])?)) }
-            Quoted => { require(1, 1)?; Ok(Value::text(&input[0].quoted(self.table.lone("system.real.render") == Some("shortest")))) }
+            Quoted => {
+                require(1, 1)?;
+                // An iterator is quoted by its kind and its identity, and
+                // the quoting does not advance it.
+                if matches!(input[0], Value::Iterator(_)) {
+                    let Value::Small(mark) = self.core_primitive(Prim::IdentityOf, name, vec![input[0].clone()], Vec::new())? else { return Err(self.core_complaint("core.unready", name)) };
+                    return Ok(Value::text(&format!("<{} object at 0x{:x}>", input[0].kind_word(), mark)));
+                }
+                let quoted = input[0].quoted(self.table.lone("system.real.render") == Some("shortest"));
+                // A window upon a dictionary is quoted under its own name.
+                Ok(Value::text(&match portion {
+                    Some(letter) => format!("dict_{}({})", match letter { 'k' => "keys", 'v' => "values", _ => "items" }, quoted),
+                    None => quoted,
+                }))
+            }
             Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
@@ -9660,8 +9830,8 @@ impl Machine<'_> {
             }
             Iterator => {
                 require(1, 2)?;
-                if input.len() == 2 { return Err(self.core_complaint("core.unready", name)); }
-                self.iterated_value(&input[0])
+                if input.len() == 2 { return Ok(Self::cursor_value(IteratorKind::Summoned { work: input[0].clone(), stop: input[1].clone() })); }
+                match live { Some(kind) => Ok(Self::cursor_value(kind)), None => self.iterated_value(&input[0]) }
             }
             NextItem => {
                 require(1, 2)?;
@@ -9669,7 +9839,7 @@ impl Machine<'_> {
             }
             Backwards => {
                 require(1, 1)?;
-                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_)) { return Err(self.core_complaint("core.unready", name)); }
+                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_)) { return Err(self.core_complaint("core.unready", name)); }
                 // A progression runs backwards as a progression, last
                 // place first, never gathered into the row it stands for.
                 if let Value::Progression(walk) = &input[0] {
@@ -9691,7 +9861,7 @@ impl Machine<'_> {
                 let mut sources = Vec::new();
                 for source in input.iter().skip(usize::from(op == Mapped)) { sources.push(self.iterated_value(source)?); }
                 let mapper = (op == Mapped).then(|| input[0].clone());
-                Ok(Self::cursor_value(IteratorKind::Parallel { inputs: sources, mapper }))
+                Ok(Self::cursor_value(IteratorKind::Parallel { inputs: sources, mapper, exact }))
             }
             Filtered => {
                 require(2, 2)?;

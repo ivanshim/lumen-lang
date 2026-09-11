@@ -1324,8 +1324,11 @@ only. The extension labels so far, all from PHP:
   calling, addition, subtraction, multiplication, division, whole division,
   remainder, power, negation, the seven reflected arithmetic operations,
   entering and leaving a with block for objects (other values keep the
-  earlier binding-only rule), and the class, attribute map and class
-  name members. An absent list leaves ordinary operations as they stood.
+  earlier binding-only rule), the class, attribute map and class
+  name members, the whole-number, real, magnitude and positive forms,
+  and lastly a walk backwards, which the reversed builtin asks of a
+  thing that has it. An absent list leaves ordinary operations as they
+  stood.
   `ext.stmt.class.special.amiss` gives the words for a method answering
   with a value of the wrong kind. An object with neither text method is
   shown as `<C object>`, where C is its class name.
@@ -1838,7 +1841,25 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.iter` makes a cursor over array members or letters of text,
   and keeps a cursor already given. `ext.builtin.next` takes one member,
   or its second argument at the end. Cursors share their place when held
-  under several names; they do not resume generator bodies.
+  under several names; they do not resume generator bodies. A cursor over
+  a list reads the list as it stands at each step, so a member appended
+  before the end is walked too; one over a map's keys, values or items
+  remembers the map's size and, should that size change before the walk
+  ends, stops with the words of `ext.builtin.core.dict.changed`. A thing
+  with no walk method but a method for reading a place is walked from
+  place nought upward until that method raises the fault named by
+  `ext.system.fault.class.index`. Given a callable and a sentinel,
+  `ext.builtin.iter` calls the one until it answers the other. A loop
+  over a cursor takes one member at a time, and so may leave the rest
+  unpulled; membership consumes a cursor up to the member found.
+  `ext.builtin.core.unsized` surrounds the kind of a value, a cursor
+  among them, whose length cannot be asked.
+- `ext.builtin.zip.strict` names the switch under which the zip builtin
+  demands sources of one length. `ext.builtin.zip.short` and `.long`
+  hold three pieces each: the opening before the number of the source
+  that ended first or went on longest, the close for a second source
+  measured against the first alone, and the close for a later source
+  measured against all before it, whose last number follows.
 - `ext.builtin.hasattr`, `.getattr`, `.setattr` and `.delattr` ask of,
   read, write and remove an instance's named fields. `ext.builtin.vars`
   is read but refuses to run until a live map of fields can be handed out.
@@ -3628,6 +3649,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.attribute.name` | - | - | `TypeError: attribute name must be string, not '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.core.default.many` | - | - | `TypeError: Cannot specify a default for min() or max() with multiple positional arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.core.dict.changed` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.pair` | - | - | `ValueError: dictionary update sequence element #` ` has length ` `; 2 is required` | - | - | - | - | - | - | - |
 | `ext.builtin.core.dict.sequence` | - | - | `TypeError: cannot convert dictionary update sequence element #` ` to a sequence` | - | - | - | - | - | - | - |
 | `ext.builtin.core.empty` | - | - | `ValueError: ` `() iterable argument is empty` | - | - | - | - | - | - | - |
@@ -3646,6 +3668,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.unindexable` | - | - | `TypeError: '` `' object is not subscriptable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.uniterable` | - | - | `TypeError: '` `' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.builtin.core.unready` | - | - | `NotImplementedError: ` `() is not supported for these values` | - | - | - | - | - | - | - |
+| `ext.builtin.core.unsized` | - | - | `TypeError: object of type '` `' has no len()` | - | - | - | - | - | - | - |
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: integer division or modulo by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
@@ -3980,6 +4003,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.wait` | - | - | - | - | `__wait` | - | - | - | - | - |
 | `ext.builtin.write.operator` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.builtin.zip` | - | - | `zip` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.long` | - | - | `ValueError: zip() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.short` | - | - | `ValueError: zip() argument ` ` is shorter than argument 1` ` is shorter than arguments 1-` | - | - | - | - | - | - | - |
+| `ext.builtin.zip.strict` | - | - | `strict` | - | - | - | - | - | - | - |
 | `ext.lexical.epilogue` | - | - | - | - | `?>` | - | - | - | - | - |
 | `ext.lexical.escape.byte` | - | - | `x` | - | `x` | - | - | - | - | - |
 | `ext.lexical.escape.byte.digits` | - | - | `2` | - | - | - | - | - | - | - |
@@ -4261,7 +4287,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |

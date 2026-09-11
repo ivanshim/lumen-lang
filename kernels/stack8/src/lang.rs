@@ -1112,7 +1112,8 @@ w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.l
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
- | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready ";
+ | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready
+w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -1335,10 +1336,26 @@ impl Lang {
             || self.fault_shift.as_deref() == Some(said)
             || self.to_int_infinity.as_deref() == Some(said) || self.to_int_nan.as_deref() == Some(said)
             || opens_with(&self.digits_amiss) || opens_with(&self.integer_text_detail)
+            || self.core_between("core.not_iterator", said) || self.core_between("core.uniterable", said) || self.core_between("core.unsized", said)
+            || self.core_words.get("core.dict.changed").and_then(|words| words.first()).map_or(false, |whole| whole == said)
+            || self.uneven_zip_named("zip.short", said) || self.uneven_zip_named("zip.long", said)
             || match self.order_unsupported.as_slice() {
                 [before, between, and, after] => !before.is_empty() && said.starts_with(before.as_str()) && said.contains(between.as_str()) && said.contains(and.as_str()) && said.ends_with(after.as_str()),
                 _ => false,
             }
+    }
+
+    /// Whether the words open and close with the two pieces of a core
+    /// word that stands either side of a kind.
+    fn core_between(&self, label: &str, said: &str) -> bool {
+        matches!(self.core_words.get(label).map(Vec::as_slice), Some([before, after]) if !before.is_empty() && said.starts_with(before.as_str()) && said.ends_with(after.as_str()))
+    }
+
+    /// Whether the words are zip's complaint of sources of unequal
+    /// length, which opens with its first piece and closes with either
+    /// of the other two, the last followed by a number.
+    fn uneven_zip_named(&self, label: &str, said: &str) -> bool {
+        matches!(self.core_words.get(label).map(Vec::as_slice), Some([opening, one, many]) if !opening.is_empty() && said.starts_with(opening.as_str()) && (said.ends_with(one.as_str()) || said.contains(many.as_str())))
     }
 
     /// Whether these words are a slice's own complaint, already told
@@ -1850,7 +1867,7 @@ impl Lang {
         prefix.push_str(name.get(1..).unwrap_or(""));
         prefix.push_str("Error");
 
-        let core_words = ["core.integer", "core.not_iterator", "core.power.integer", "core.dict.sequence", "core.unindexable", "core.immutable", "core.power.zero", "core.power.overflow", "core.arity.one", "core.arity.exact", "key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
+        let core_words = ["core.integer", "core.not_iterator", "core.power.integer", "core.dict.sequence", "core.unindexable", "core.immutable", "core.power.zero", "core.power.overflow", "core.arity.one", "core.arity.exact", "key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair", "core.unsized", "core.dict.changed", "zip.strict", "zip.short", "zip.long"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
         let mut lang = Lang {
             core_words,
             ident: name,

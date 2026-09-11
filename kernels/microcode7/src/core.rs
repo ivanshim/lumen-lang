@@ -1,7 +1,7 @@
 // Quoted worths are written from the inside outward. The usual writer
 // need not change how it has always shown an array or a map.
 
-use crate::data::Value;
+use crate::data::{IteratorKind, Value};
 use num_traits::{Signed, ToPrimitive};
 use num_bigint::BigInt;
 use std::hash::{Hasher, Hash};
@@ -15,7 +15,19 @@ impl Value {
             Self::Tuple(_) | Self::Row(_) => "tuple", Self::Set(_) => "set", Self::Dict(_) => "dict",
             Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
-            Self::Nil => "NoneType", Self::Progression(_) => "range", Self::Iterator(_) => "iterator",
+            Self::Nil => "NoneType", Self::Progression(_) => "range",
+            // An iterator takes the name CPython gives what it walks.
+            Self::Iterator(cell) => return cell.try_borrow().map_or("iterator", |state| match &state.kind {
+                IteratorKind::Living(..) => "list_iterator",
+                IteratorKind::Stepping(..) => "range_iterator",
+                IteratorKind::Watching { window: Value::Window(_, portion), .. } => match portion { 'k' => "dict_keyiterator", 'v' => "dict_valueiterator", _ => "dict_itemiterator" },
+                IteratorKind::Summoned { .. } => "callable_iterator",
+                IteratorKind::Count(..) => "enumerate",
+                IteratorKind::Parallel { mapper: Some(_), .. } => "map",
+                IteratorKind::Parallel { .. } => "zip",
+                IteratorKind::Select(..) => "filter",
+                _ => "iterator",
+            }).to_owned(),
             Self::Span(_) => "slice", Self::Ellipsis => "ellipsis",
             Self::Blueprint(_) | Self::KindOf(_) => "type", Self::Intrinsic(_) => "builtin_function_or_method",
             Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
