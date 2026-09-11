@@ -47,6 +47,27 @@
   "ext.builtin.host.info": [
     "__host_info"
   ],
+  "ext.builtin.method.numerator": [
+    "numerator"
+  ],
+  "ext.builtin.method.denominator": [
+    "denominator"
+  ],
+  "ext.builtin.method.real": [
+    "real"
+  ],
+  "ext.builtin.method.imag": [
+    "imag"
+  ],
+  "ext.builtin.method.__index__": [
+    "__index__"
+  ],
+  "ext.builtin.method.__truediv__": [
+    "int.__truediv__"
+  ],
+  "ext.builtin.method.fromhex": [
+    "float.fromhex"
+  ],
   "ext.builtin.method.conjugate": [
     "conjugate"
   ],
@@ -783,6 +804,9 @@
   "ext.builtin.method.as_integer_ratio": [
     "as_integer_ratio"
   ],
+  "ext.builtin.method.bit_count": [
+    "bit_count"
+  ],
   "ext.builtin.method.bit_length": [
     "bit_length"
   ],
@@ -815,6 +839,12 @@
   ],
   "ext.builtin.method.error.bytes": [
     "NotImplementedError: bytes are not available"
+  ],
+  "ext.builtin.method.error.hex": [
+    "ValueError: invalid hexadecimal floating-point string"
+  ],
+  "ext.builtin.method.error.hex_overflow": [
+    "OverflowError: hexadecimal value too large to represent as a float"
   ],
   "ext.builtin.method.error.fill": [
     "TypeError: The fill character must be exactly one character long"
@@ -1482,6 +1512,18 @@
     "zfill",
     "str.zfill"
   ],
+  "ext.builtin.to_int.digits": 4300,
+  "ext.builtin.to_int.digits.amiss": [
+    "ValueError: Exceeds the limit (",
+    " digits) for integer string conversion"
+  ],
+  "ext.builtin.to_int.infinity": [
+    "OverflowError: cannot convert float infinity to integer"
+  ],
+  "ext.builtin.to_int.nan": [
+    "ValueError: cannot convert float NaN to integer"
+  ],
+  "ext.builtin.round.whole.even": true,
   "ext.builtin.to_int.base": [
     "base"
   ],
@@ -2565,7 +2607,7 @@
     "unsupported operand type(s)"
   ],
   "ext.system.fault.shift": [
-    "negative shift count"
+    "ValueError: negative shift count"
   ],
   "ext.system.module.cache": [
     "sys",

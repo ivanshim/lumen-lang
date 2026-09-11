@@ -85,6 +85,13 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         if let Value::Collection(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
     match &held {
+        // A real read from its hexadecimal spelling, as float.fromhex reads it.
+        Value::Text(s) if op=="fromhex" => {
+            arity(0,0)?;
+            let number=hex_real(&s).ok_or_else(||fault("hex"))?;
+            if number.is_infinite() && !s.trim().to_ascii_lowercase().contains("inf") {return Err(fault("hex_overflow"));}
+            Ok(crate::complex::real(number))
+        }
         Value::Text(s) => {
             if op == "encode" { return Err(fault("bytes")); }
             if op == "format" { return format_fields(s, a, names, words, fault).map(|s| Value::text(&s)); }
@@ -233,8 +240,22 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             store(Value::Map(Rc::new(pairs)))
         }
         Value::Small(_) | Value::Huge(_) | Value::Real(_) => {
+            let real=matches!(held,Value::Real(_));
+            // True division asked of the whole number's class: the two
+            // whole numbers become the real their quotient rounds to.
+            if op=="__truediv__" && !real {
+                arity(1,1)?;
+                let (top,under)=(held.as_big()?,a[0].contents().as_big().map_err(|_|fault("arguments"))?);
+                if under.is_zero() {return Err(fault("arguments"));}
+                return Ok(crate::complex::real(crate::value::as_binary(&top,&under)));
+            }
             arity(0,0)?;
             match op {
+                "bit_count" if !real => Ok(Value::Small(held.as_big()?.magnitude().count_ones() as i64)),
+                "numerator" | "__index__" if !real => Ok(Value::of_big(held.as_big()?)),
+                "denominator" if !real => Ok(Value::Small(1)),
+                "real" | "conjugate" => Ok(held.clone()),
+                "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
                 "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
@@ -278,4 +299,32 @@ fn format_fields(template: &str, args: &[Value], names: &[(String,Value)], words
         out.push_str(&rendered);
     }
     Ok(out)
+}
+
+/// The real a hexadecimal spelling stands for: a sign, `0x`, hex figures
+/// with a point among them, and `p` before a power of two; or one of the
+/// words for the reals past the numbers. Nothing for anything else.
+fn hex_real(spelling: &str) -> Option<f64> {
+    let text = spelling.trim().to_ascii_lowercase();
+    let (negative, body) = match text.strip_prefix('-') { Some(rest) => (true, rest), None => (false, text.strip_prefix('+').unwrap_or(&text)) };
+    let magnitude = match body {
+        "inf" | "infinity" => f64::INFINITY,
+        "nan" => f64::NAN,
+        _ => {
+            let body = body.strip_prefix("0x").unwrap_or(body);
+            let (mantissa, power) = match body.split_once('p') { Some((m, e)) => (m, e.parse::<i64>().ok()?), None => (body, 0) };
+            let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+            if whole.is_empty() && fraction.is_empty() { return None; }
+            let mut value = 0f64;
+            for c in whole.chars() { value = value * 16.0 + c.to_digit(16)? as f64; }
+            let mut scale = 1.0 / 16.0;
+            for c in fraction.chars() { value += c.to_digit(16)? as f64 * scale; scale /= 16.0; }
+            let mut exponent = power;
+            let mut result = value;
+            while exponent > 0 { result *= 2.0; exponent -= 1; if result.is_infinite() { break; } }
+            while exponent < 0 { result /= 2.0; exponent += 1; if result == 0.0 { break; } }
+            result
+        }
+    };
+    Some(if negative { -magnitude } else { magnitude })
 }

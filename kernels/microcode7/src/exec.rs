@@ -2775,6 +2775,14 @@ impl<'a> Machine<'a> {
                 Prim::BindValueMethod => {
                     let receiver = self.value_of(&args[0], frame)?.keep(false);
                     let operation = self.value_of(&args[1], frame)?.bare();
+                    // The parts of a number are members read, not methods called.
+                    if ["numerator", "denominator", "real", "imag"].contains(&operation.as_str()) {
+                        match receiver.settled() {
+                            Value::Complex(pair) => return Ok(crate::complex::decimal_value(if operation == "real" { pair.0 } else { pair.1 })),
+                            Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_) => return self.value_member(&receiver, &operation, Vec::new(), Vec::new()),
+                            _ => {}
+                        }
+                    }
                     Ok(Value::Member(Rc::new(receiver), operation))
                 }
                 Prim::SortedValues => {
@@ -4015,6 +4023,11 @@ impl<'a> Machine<'a> {
             if !was_digit || (radix == 0 && !has_prefix && digits.starts_with('0') && digits.bytes().any(|b| b != b'0')) {
                 return Err(invalid_text());
             }
+            // Too many figures in a base that is slow to read are refused
+            // before the reading, with the limit named.
+            if let Some(limit) = self.table.count("ext.builtin.to_int.digits") {
+                if limit > 0 && !base.is_power_of_two() && digits.len() > limit { return Err(self.too_many_figures(limit)); }
+            }
             let mut number = BigInt::parse_bytes(digits.as_bytes(), base).ok_or_else(|| invalid_text())?;
             if negative { number = -number; }
             return Ok(Value::from_big(number));
@@ -4022,8 +4035,30 @@ impl<'a> Machine<'a> {
         if values.len() > 1 { return Err(complaint("text.required")); }
         match &values[0] {
             Value::Flag(truth) => Ok(Value::Small(if *truth { 1 } else { 0 })),
+            // A real past the numbers holds no whole number; the table may
+            // give the words for each of the two.
+            Value::Frac(ratio) if ratio.past_numbers() && self.table.has_any(if ratio.answers_none() { "ext.builtin.to_int.nan" } else { "ext.builtin.to_int.infinity" }) => {
+                Err(self.table.single(if ratio.answers_none() { "ext.builtin.to_int.nan" } else { "ext.builtin.to_int.infinity" }).unwrap_or_default().to_owned())
+            }
             other => math::whole_part(other).map(Value::from_big).ok_or_else(|| self.argument_fault("ext.syntax.call.amiss", None)),
         }
+    }
+
+    /// Whether a whole number may be written out at all: the table may
+    /// put a limit on how many figures it is allowed to have.
+    fn figures_allowed(&self, value: &Value) -> Result<(), String> {
+        let Some(limit) = self.table.count("ext.builtin.to_int.digits") else { return Ok(()) };
+        match value.settled() {
+            Value::Huge(whole) if limit > 0 && num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit => Err(self.too_many_figures(limit)),
+            _ => Ok(()),
+        }
+    }
+
+    /// The words refusing a whole number of more figures than the table
+    /// allows in text, the limit set in the middle of them.
+    fn too_many_figures(&self, limit: usize) -> String {
+        let (head, tail) = self.table.around("ext.builtin.to_int.digits.amiss").unwrap_or(("", ""));
+        format!("{head}{limit}{tail}")
     }
 
     fn argument_fault(&self, key: &str, name: Option<&str>) -> String {
@@ -5238,7 +5273,10 @@ impl<'a> Machine<'a> {
             (Prim::Invert, [one]) => Value::Flag(!self.object_truth(one)?),
             (Prim::Negate, [one]) if self.appointed(one, 25).is_some() => self.ask_special(one, 25, &[])?.unwrap(),
             (Prim::Quoted, [one]) => Value::text(&self.object_words(one, true)?),
-            (Prim::AsText, [one]) => Value::text(&self.object_words(one, false)?),
+            (Prim::AsText, [one]) => {
+                self.figures_allowed(one)?;
+                Value::text(&self.object_words(one, false)?)
+            }
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
             (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
@@ -5661,6 +5699,13 @@ impl<'a> Machine<'a> {
                 return Err(words.to_owned());
             }
             Prim::Dictionary => self.dictionary(v, Vec::new())?,
+            // A method spelled with its class in front is asked of its
+            // first argument, as it would be of a value of that class.
+            Prim::ValueMethod if name.contains('.') => {
+                let operation = name.rsplit('.').next().unwrap_or(name).to_owned();
+                if v.is_empty() { return Err(self.method_fault("arguments")); }
+                return self.value_member(&v[0], &operation, v[1..].to_vec(), Vec::new()).map_err(|fault| self.suspension_fault(fault));
+            }
             Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
             Prim::SetAssign(operation) => {
                 n(2)?;
@@ -7055,7 +7100,13 @@ impl<'a> Machine<'a> {
             Prim::Eq => Value::Flag(v[0].equals(&v[1])),
             Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
             Prim::Contains | Prim::Absent => {
-                let present = match (&v[0], &v[1]) {
+                // A complex number whose imaginary part is nought is asked
+                // for as the real number it equals.
+                let sought = match &v[0] {
+                    Value::Complex(pair) if pair.1 == 0.0 && !pair.0.is_nan() => crate::complex::decimal_value(pair.0),
+                    other => other.clone(),
+                };
+                let present = match (&sought, &v[1]) {
                     (needle, Value::Progression(sequence)) => {
                         match needle.as_big().ok().filter(|whole| contained_equal(needle, &Value::from_big(whole.clone()))) {
                             None => false,
@@ -7604,6 +7655,7 @@ impl<'a> Machine<'a> {
             }
             Prim::AsText => {
                 n(1)?;
+                self.figures_allowed(&v[0])?;
                 Value::text(&v[0].render(w))
             }
             Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
@@ -7625,6 +7677,13 @@ impl<'a> Machine<'a> {
                     if let Some(real) = special { return Ok(crate::data::worth_of_binary(real, math::DEFAULT_PLACES)); }
                 }
                 let failure = || self.argument_fault("ext.builtin.to_real.text.amiss", None);
+                // Figures may be grouped with a separator, which has to
+                // stand between two of them; anywhere else it is a fault.
+                let regrouped = match v.first() {
+                    Some(Value::Text(chars)) => Some(Value::text(&crate::data::ungrouped_figures(chars, &self.table.letters("ext.lexical.number.separator")).ok_or_else(failure)?)),
+                    _ => None,
+                };
+                let v: Vec<Value> = regrouped.into_iter().chain(v.iter().skip(1).cloned()).collect();
                 if let Some(Value::Text(text)) = v.first() {
                     let lower = text.trim().to_ascii_lowercase();
                     let letters = lower.trim_start_matches(['+', '-']);
@@ -9676,6 +9735,18 @@ impl Machine<'_> {
             Rounded => {
                 require(1, 2)?;
                 let places = match input.get(1) { None | Some(Value::Nil) => 0, Some(v) => whole(v)?.to_i64().ok_or_else(|| self.core_complaint("core.unready", name))? };
+                // A whole number rounded to places after the point is itself;
+                // to places before it, a half goes to the even neighbour where
+                // the table says so.
+                if self.table.flag("ext.builtin.round.whole.even") && matches!(input[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    let number = input[0].as_big()?;
+                    if places >= 0 { return Ok(Value::from_big(number)); }
+                    let unit = BigInt::from(10).pow(u32::try_from(-places).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?);
+                    let (mut quotient, remainder) = number.div_mod_floor(&unit);
+                    let twice = &remainder * 2;
+                    if twice > unit || (twice == unit && quotient.is_odd()) { quotient += 1; }
+                    return Ok(Value::from_big(quotient * unit));
+                }
                 let exponent = u32::try_from(places.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?;
                 let value = as_number(&input[0]);
                 let fraction = math::ratio_of(&value).filter(|r| !r.beneath.is_zero()).ok_or_else(|| self.core_complaint("core.unready", name))?;

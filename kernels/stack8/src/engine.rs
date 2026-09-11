@@ -2714,7 +2714,10 @@ impl<'a> Engine<'a> {
         if op == Builtin::InstanceOf { return Ok(None); }
         let answer = match op {
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
-            Builtin::ToText if args.len() == 1 => Value::text(&self.special_text(&args[0], false)?),
+            Builtin::ToText if args.len() == 1 => {
+                self.digits_shown(&args[0])?;
+                Value::text(&self.special_text(&args[0], false)?)
+            }
             Builtin::Bool if args.len() <= 1 => Value::Flag(match first { Some(v) => self.special_truth(v)?, None => false }),
             // A thing may say what whole number, real, or magnitude it
             // stands for, through the methods so named.
@@ -2916,7 +2919,13 @@ impl<'a> Engine<'a> {
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::BindValueMethod(operation) => {
                 let target = self.drop_top()?.held(false);
-                Value::ValueMethod(Rc::new((target, operation.to_string())))
+                // A number's parts are read as members of it, not called.
+                if matches!(operation.as_ref(), "numerator" | "denominator" | "real" | "imag") && matches!(target.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) | Value::Complex(_)) {
+                    match target.contents() {
+                        Value::Complex(z) => crate::complex::real(if operation.as_ref() == "real" { z.real } else { z.imag }),
+                        _ => self.value_method(&target, operation, Vec::new(), Vec::new())?,
+                    }
+                } else { Value::ValueMethod(Rc::new((target, operation.to_string()))) }
             }
             Action::Not => {
                 let held = self.drop_top()?;
@@ -4730,7 +4739,7 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Flag(answer));
             }
         }
-        if (matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_))) && !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) { return crate::complex::work(self.lang, op, a, b); }
+        if (matches!(a, Value::Complex(_)) || matches!(b, Value::Complex(_))) && !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame | Action::Contains | Action::Lacks) { return crate::complex::work(self.lang, op, a, b); }
         if !matches!(op, Action::And | Action::Or | Action::Eq | Action::Ne | Action::Same | Action::Unsame) {
             if let Value::Imaginary(_, words) = a { return Err(words.to_string()); }
             if let Value::Imaginary(_, words) = b { return Err(words.to_string()); }
@@ -4854,6 +4863,12 @@ impl<'a> Engine<'a> {
             Action::Eq => Value::Flag(a.equals(b)),
             Action::Ne => Value::Flag(!a.equals(b)),
             Action::Contains | Action::Lacks => {
+                // A complex number with nothing imaginary about it is its
+                // real part for the asking, as it is equal to that number.
+                let a = &match a {
+                    Value::Complex(z) if z.imag == 0.0 && !z.real.is_nan() => crate::complex::real(z.real),
+                    other => other.clone(),
+                };
                 let found = match b {
                     Value::Counted(range) => a.as_big().ok().filter(|n| Self::member_matches(a, &Value::of_big(n.clone()))).map_or(false, |n| {
                         let delta = &n - &range.start;
@@ -6351,6 +6366,14 @@ impl<'a> Engine<'a> {
         let Value::Text(text) = value else {
             if args.len() == 2 { return Err(self.lang.to_int_text_required[0].clone()); }
             if let Value::Flag(b) = value { return Ok(Value::Small(i64::from(*b))); }
+            // A real past the numbers has no whole number in it, and the
+            // definition may say so for each of the two.
+            if let Value::Real(real) = value {
+                if real.outside() {
+                    let said = if real.no_number() { &self.lang.to_int_nan } else { &self.lang.to_int_infinity };
+                    if let Some(said) = said { return Err(said.clone()); }
+                }
+            }
             return arith::whole_of(value).map(Value::of_big).ok_or_else(|| self.lang.call_amiss[0].clone());
         };
         let invalid = || {
@@ -6373,8 +6396,29 @@ impl<'a> Engine<'a> {
         if !valid || (base == 0 && !prefixed && cleaned.starts_with('0') && cleaned.chars().any(|c| c != '0')) {
             return Err(invalid());
         }
+        // More figures than the definition allows, in a base whose reading
+        // is slow, are refused before the reading starts.
+        if let (Some(limit), false) = (self.lang.integer_digits, radix.is_power_of_two()) {
+            if limit > 0 && cleaned.len() > limit { return Err(self.digits_refused(limit)); }
+        }
         let whole = BigInt::parse_bytes(cleaned.as_bytes(), radix).ok_or_else(invalid)?;
         Ok(Value::of_big(if minus { -whole } else { whole }))
+    }
+
+    /// A whole number is refused as text when it has more figures than
+    /// the definition allows to be written out.
+    fn digits_shown(&self, value: &Value) -> Res<()> {
+        if let (Some(limit), Value::Huge(whole)) = (self.lang.integer_digits, value.contents()) {
+            if limit > 0 && num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit { return Err(self.digits_refused(limit)); }
+        }
+        Ok(())
+    }
+
+    /// The words for a whole number of more figures than the definition
+    /// allows in text, with the count in the middle of them.
+    fn digits_refused(&self, limit: usize) -> String {
+        let words = &self.lang.digits_amiss;
+        format!("{}{}{}", words.first().map_or("", String::as_str), limit, words.get(1).map_or("", String::as_str))
     }
 
     /// Collections kept by a routine remain the same thing when read,
@@ -6716,7 +6760,16 @@ impl<'a> Engine<'a> {
         Ok(match builtin {
             Builtin::Complex => crate::complex::construct(self.lang, args)?,
             Builtin::MapFrom => self.map_from(args.drain(..).map(|v| (None, v)).collect())?,
-            Builtin::ValueMethod => return Err(self.lang.method_errors["attribute"].clone()),
+            // A method spelled with its class before it (float.fromhex,
+            // int.__truediv__) is called on its first argument, as the
+            // method would be on a value of that class.
+            Builtin::ValueMethod => {
+                let Some((_, operation)) = name.rsplit_once('.') else { return Err(self.lang.method_errors["attribute"].clone()) };
+                if args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                let receiver = args.remove(0);
+                let rest = std::mem::take(args);
+                return self.value_method(&receiver, operation, rest, Vec::new());
+            }
             Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
             Builtin::SetMake | Builtin::SetAdd | Builtin::SetRemove | Builtin::SetDiscard | Builtin::SetPop | Builtin::SetClear | Builtin::SetCopy | Builtin::SetUpdate | Builtin::SetUnion | Builtin::SetIntersection | Builtin::SetDifference | Builtin::SetSymmetric | Builtin::SetSubset | Builtin::SetSuperset | Builtin::SetDisjoint | Builtin::SetMeetUpdate | Builtin::SetLessUpdate | Builtin::SetXorUpdate | Builtin::SetSorted => self.set_builtin(builtin, args)?,
             Builtin::Format => {
@@ -7550,6 +7603,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
             Builtin::ToText => {
                 arity(1)?;
+                self.digits_shown(&args[0])?;
                 Value::text(&args[0].display(&sp))
             }
             Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),
@@ -7562,6 +7616,12 @@ impl<'a> Engine<'a> {
             Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_))) => {
                 arity(1)?;
                 let Value::Text(text) = &args[0] else { unreachable!() };
+                // A separator may stand between two figures and nowhere else.
+                let text = match self.lang.number_separator_between_digits(text) {
+                    Some(joined) => joined,
+                    None => return Err(self.lang.to_real_text_amiss[0].clone()),
+                };
+                let text = &text;
                 let plain = text.trim().to_ascii_lowercase();
                 let unsigned = plain.strip_prefix(['+', '-']).unwrap_or(&plain);
                 if Lang::spells(&self.lang.infinity_words, unsigned) || Lang::spells(&self.lang.nan_words, unsigned) {
@@ -8944,6 +9004,18 @@ impl Engine<'_> {
             Builtin::Round => {
                 arity(1, 2)?;
                 let digits = match args.get(1) { None | Some(Value::Null) => 0, Some(n) => integer(n)?.to_i64().ok_or_else(|| self.core_fault("core.unready", name))? };
+                // A whole number is its own rounding to any count of places
+                // at or after the point; rounded to places before it, a half
+                // goes to the even neighbour where the definition says so.
+                if matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.lang.round_whole_even {
+                    let whole = args[0].as_big()?;
+                    if digits >= 0 { return Ok(Value::of_big(whole)); }
+                    let unit = BigInt::from(10).pow(u32::try_from(-digits).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?);
+                    let (mut quotient, remainder) = whole.div_mod_floor(&unit);
+                    let doubled = &remainder * 2;
+                    if doubled > unit || (doubled == unit && quotient.is_odd()) { quotient += 1; }
+                    return Ok(Value::of_big(quotient * unit));
+                }
                 let places = u32::try_from(digits.max(0)).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?;
                 let x = number(&args[0]);
                 let (p, q) = arith::parts(&x).ok_or_else(|| self.core_fault("core.unready", name))?;

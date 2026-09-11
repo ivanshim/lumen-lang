@@ -121,6 +121,12 @@ pub struct Builder<'a> {
     /// How many lines stand ahead of the program's own text, and
     /// whether the language says where a complaint happened at all.
     before: u32,
+    /// Whether the reading has passed the library and reached the
+    /// program's own text, and the outermost names that text has
+    /// bound since: those alone stand ahead of a builtin word spelled
+    /// the same, since the library may spell a builtin as a routine.
+    past_library: bool,
+    named_in_program: Vec<String>,
     /// The file this text came out of, where it was read as the run
     /// went, so that every program built from it carries it.
     written_in: Option<Rc<str>>,
@@ -274,7 +280,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         layers.push(Layer { comprehension: false, borrowed: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: Vec::new(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -915,6 +921,9 @@ impl<'a> Builder<'a> {
                             scope.idents.len() - 1
                         }
                     };
+                    if i == 0 && self.past_library && !self.named_in_program.iter().any(|word| word == name) {
+                        self.named_in_program.push(name.to_string());
+                    }
                     return Address { ident: Rc::from(name), up: depth, at: index, fallback: None };
                 }
             }
@@ -1263,6 +1272,9 @@ impl<'a> Builder<'a> {
         // Only the program's own lines are carried: what stands ahead of
         // it is the library, and a complaint from within that names the
         // line of the program that was running, as PHP names it.
+        if self.look().row > self.before {
+            self.past_library = true;
+        }
         if self.tells_place && self.look().row > self.before {
             let row = self.look().row - self.before;
             let made = self.plain_or_kind()?;
@@ -6907,7 +6919,7 @@ impl<'a> Builder<'a> {
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the table says so.
-        if self.table.flag("ext.syntax.names.shadow_builtins") && self.layers.iter().any(|layer| layer.idents.iter().any(|word| word == name)) {
+        if self.table.flag("ext.syntax.names.shadow_builtins") && self.named_in_program.iter().any(|word| word == name) {
             let target = self.read(name);
             return Ok(invoke(target, args));
         }

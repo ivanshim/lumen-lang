@@ -339,6 +339,18 @@ only. The extension labels so far, all from PHP:
   are admitted. `ext.builtin.to_int.base.amiss`, `.text.amiss` and
   `.text.required` give plain complaints for a base outside its bounds,
   ill-written digits, and a base given with something other than text.
+- `ext.builtin.to_int.digits`: a count; text spelling a whole number in a
+  base that is not a power of two is refused when it has more figures
+  than this, as is writing such a number out as text, before the slow
+  conversion begins. `ext.builtin.to_int.digits.amiss` gives the words
+  before and after the count in that complaint. `ext.builtin.to_int.infinity`
+  and `.nan` give the complaints when a real past the numbers is asked
+  for as a whole number.
+- `ext.builtin.round.whole.even`: a switch; a whole number rounded to a
+  count of places after the point is itself, and rounded to places
+  before the point a half goes to the even neighbour, as CPython rounds
+  whole numbers. Reals keep the language floor's rounding, half away
+  from nought.
 - `ext.builtin.to_real.infinity` and `.nan`: lists of words the real
   reader takes without regard to case, with a sign before them if given.
   They stand for the number past all finite numbers and the value no
@@ -1746,6 +1758,19 @@ only. The extension labels so far, all from PHP:
   exact ratio. Real ratios and hexadecimal forms use binary doubles.
   The existing `ext.builtin.to_real.text` also admits nonfinite text
   values, so these methods can answer for infinities and NaNs.
+- `ext.builtin.method.bit_count`, `.numerator`, `.denominator`, `.real`,
+  `.imag`, `.__index__`, `.__truediv__` and `.fromhex`: how many bits of
+  a whole number's magnitude are set; a number's numerator, denominator,
+  real part and imaginary part, which are read as members rather than
+  called, as CPython has them (a whole number is its own numerator and
+  real part, over one, with nothing imaginary); the whole number itself
+  under the name the index protocol asks for; the true quotient of two
+  whole numbers, and a real read back from its hexadecimal spelling.
+  The last two are spelled with the class before them (`int.__truediv__`,
+  `float.fromhex`): a method word written so is a builtin word of its
+  own, called on its first argument. `ext.builtin.method.error.hex` and
+  `.hex_overflow` give the complaints for a spelling that is no
+  hexadecimal real and for one too large to hold.
 - `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
   `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
   lists holding the complaints for bad arguments, an absent method, an
@@ -3665,8 +3690,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__truediv__` | - | - | `int.__truediv__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
+| `ext.builtin.method.bit_count` | - | - | `bit_count` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_length` | - | - | `bit_length` | - | - | - | - | - | - | - |
 | `ext.builtin.method.capitalize` | - | - | `capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.method.center` | - | - | `center` | - | - | - | - | - | - | - |
@@ -3674,6 +3702,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.conjugate` | - | - | `conjugate` | - | - | - | - | - | - | - |
 | `ext.builtin.method.copy` | - | - | `copy` | - | - | - | - | - | - | - |
 | `ext.builtin.method.count` | - | - | `count` | - | - | - | - | - | - | - |
+| `ext.builtin.method.denominator` | - | - | `denominator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.encode` | - | - | `encode` | - | - | - | - | - | - | - |
 | `ext.builtin.method.endswith` | - | - | `endswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.arguments` | - | - | `TypeError: invalid method arguments` | - | - | - | - | - | - | - |
@@ -3681,6 +3710,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.error.bytes` | - | - | `NotImplementedError: bytes are not available` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.format` | - | - | `ValueError: invalid format string` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.hex` | - | - | `ValueError: invalid hexadecimal floating-point string` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.hex_overflow` | - | - | `OverflowError: hexadecimal value too large to represent as a float` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.index` | - | - | `IndexError: pop index out of range` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.key` | - | - | `KeyError: ` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.list_index` | - | - | `ValueError: value is not in list` | - | - | - | - | - | - | - |
@@ -3696,8 +3727,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.extend` | - | - | `extend` | - | - | - | - | - | - | - |
 | `ext.builtin.method.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.method.format` | - | - | `format` | - | - | - | - | - | - | - |
+| `ext.builtin.method.fromhex` | - | - | `float.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.method.get` | - | - | `get` | - | - | - | - | - | - | - |
 | `ext.builtin.method.hex` | - | - | `hex` | - | - | - | - | - | - | - |
+| `ext.builtin.method.imag` | - | - | `imag` | - | - | - | - | - | - | - |
 | `ext.builtin.method.index` | - | - | `index` | - | - | - | - | - | - | - |
 | `ext.builtin.method.indices` | - | - | `indices` | - | - | - | - | - | - | - |
 | `ext.builtin.method.insert` | - | - | `insert` | - | - | - | - | - | - | - |
@@ -3714,7 +3747,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.ljust` | - | - | `ljust` | - | - | - | - | - | - | - |
 | `ext.builtin.method.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.method.lstrip` | - | - | `lstrip` | - | - | - | - | - | - | - |
+| `ext.builtin.method.numerator` | - | - | `numerator` | - | - | - | - | - | - | - |
 | `ext.builtin.method.pop` | - | - | `pop` | - | - | - | - | - | - | - |
+| `ext.builtin.method.real` | - | - | `real` | - | - | - | - | - | - | - |
 | `ext.builtin.method.remove` | - | - | `remove` | - | - | - | - | - | - | - |
 | `ext.builtin.method.replace` | - | - | `replace` | - | - | - | - | - | - | - |
 | `ext.builtin.method.reverse` | - | - | `reverse` | - | - | - | - | - | - | - |
@@ -3785,6 +3820,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.round` | - | - | `round` | - | - | - | - | - | - | - |
 | `ext.builtin.round.ndigits` | - | - | `ndigits` | - | - | - | - | - | - | - |
 | `ext.builtin.round.number` | - | - | `number` | - | - | - | - | - | - | - |
+| `ext.builtin.round.whole.even` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.routines` | - | - | - | - | `__routines_bound` | - | - | - | - | - |
 | `ext.builtin.run.begin` | - | - | - | - | `__run_begin` | - | - | - | - | - |
 | `ext.builtin.run.end` | - | - | - | - | `__run_end` | - | - | - | - | - |
@@ -3911,6 +3947,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.time_limit` | - | - | - | - | `set_time_limit` | - | - | - | - | - |
 | `ext.builtin.to_int.base` | - | - | `base` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.base.amiss` | - | - | `ValueError: int() base must be >= 2 and <= 36, or 0` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits` | - | - | `4300` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.digits.amiss` | - | - | `ValueError: Exceeds the limit (` ` digits) for integer string conversion` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.infinity` | - | - | `OverflowError: cannot convert float infinity to integer` | - | - | - | - | - | - | - |
+| `ext.builtin.to_int.nan` | - | - | `ValueError: cannot convert float NaN to integer` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.amiss` | - | - | `ValueError: invalid literal for int()` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.detail` | - | - | `ValueError: invalid literal for int() with base ` `: ` | - | - | - | - | - | - | - |
 | `ext.builtin.to_int.text.required` | - | - | `TypeError: int() can't convert non-string with explicit base` | - | - | - | - | - | - | - |
@@ -4382,7 +4422,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.modulo` | - | - | `ZeroDivisionError: integer modulo by zero` | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.name` | - | - | `name '` `' is not defined` | - | - | - | - | - | - | - |
 | `ext.system.fault.operands` | - | - | `unsupported operand type(s)` | - | `Unsupported operand types` | - | - | - | - | - |
-| `ext.system.fault.shift` | - | - | `negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
+| `ext.system.fault.shift` | - | - | `ValueError: negative shift count` | - | `Bit shift by negative number` | - | - | - | - | - |
 | `ext.system.globals` | - | - | - | - | `$GLOBALS` | - | - | - | - | - |
 | `ext.system.integer.bits` | - | - | - | - | `64` | - | - | - | - | - |
 | `ext.system.kind.brief` | - | - | - | - | `int` `-` `float` `string` `bool` `array` `null` | - | - | - | - | - |

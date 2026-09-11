@@ -39,6 +39,10 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt,
 pub struct Registry {
     index: HashMap<String, usize>,
     pub idents: Vec<String>,
+    /// The global names the program's own lines have bound, as against
+    /// those the library standing ahead of it bound: only the former
+    /// stand in front of a builtin word spelled the same.
+    pub program_bound: std::collections::HashSet<String>,
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,
@@ -158,6 +162,9 @@ pub struct Compiler<'a> {
     carrying: Vec<usize>,
     /// How many lines stand before the program's own text.
     before: u32,
+    /// Whether the reading has come to the program's own lines, past
+    /// the library that stands ahead of them.
+    in_program: bool,
     /// Where each key of the index chain just read begins, so that a
     /// write to a place within a place can take the keys apart and work
     /// each of them out exactly once.
@@ -306,7 +313,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
@@ -646,8 +653,12 @@ impl<'a> Compiler<'a> {
             if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return cell; }
         }
         let global = self.registry.slot(name);
+        let in_program = self.in_program;
         let unit = self.pieces.last_mut().expect("a unit");
         if unit.outermost && unit.scopes.is_empty() {
+            if in_program {
+                self.registry.program_bound.insert(name.to_string());
+            }
             return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
@@ -1172,6 +1183,9 @@ impl<'a> Compiler<'a> {
         // Only the program's own lines are marked: what stands before it
         // is the library, and a complaint from inside that names the
         // line of the program that was running, as PHP names it.
+        if self.look().row as u32 > self.before {
+            self.in_program = true;
+        }
         if (lang.tells_place || lang.marks_lines) && self.look().row as u32 > self.before {
             let row = self.look().row as u32 - self.before;
             if self.piece().line != row {
@@ -1621,6 +1635,9 @@ impl<'a> Compiler<'a> {
 
     /// A store into the global of the name, from anywhere.
     fn write_global(&mut self, name: &str) {
+        if self.in_program {
+            self.registry.program_bound.insert(name.to_string());
+        }
         let slot = Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
         self.put(Instr::Write(slot));
     }
@@ -6063,7 +6080,7 @@ impl<'a> Compiler<'a> {
                             // A name the program has bound is called as
                             // that name, in front of any builtin word
                             // spelled the same, where the language says so.
-                            let bound = lang.shadow_builtins && self.registry.index.contains_key(tok.lexeme.as_str());
+                            let bound = lang.shadow_builtins && self.registry.program_bound.contains(tok.lexeme.as_str());
                             let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
                             if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
@@ -7554,7 +7571,7 @@ impl<'a> Compiler<'a> {
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
         // A name the program has bound is called as that name, in front
         // of any builtin word spelled the same, where the language says so.
-        let bound = self.lang.shadow_builtins && self.registry.index.contains_key(name);
+        let bound = self.lang.shadow_builtins && self.registry.program_bound.contains(name);
         match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
             Some(Builtin::Text(op)) if op != crate::strings::TextOp::Repr && !name.contains('.') => {
                 self.read_callee(name);

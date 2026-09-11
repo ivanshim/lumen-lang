@@ -458,6 +458,8 @@ fn span_complaint_named(table: &Table, words: &str) -> bool {
 /// truth method answering with no flag, two values in no order.
 fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     if table.single("ext.builtin.bool.base") == Some(words) { return true; }
+    if ["ext.system.fault.shift", "ext.builtin.to_int.infinity", "ext.builtin.to_int.nan"].iter().any(|label| table.single(label) == Some(words)) { return true; }
+    if ["ext.builtin.to_int.digits.amiss", "ext.builtin.to_int.text.detail"].iter().any(|label| table.strings(label).first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))) { return true; }
     if table.single("ext.builtin.bool.result").map_or(false, |opening| !opening.is_empty() && words.starts_with(opening)) { return true; }
     match table.strings("ext.op.order.unsupported") {
         [before, between, and, after] => !before.is_empty() && words.starts_with(before.as_str()) && words.contains(between.as_str()) && words.contains(and.as_str()) && words.ends_with(after.as_str()),

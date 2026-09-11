@@ -78,8 +78,20 @@ impl Request<'_> {
         }
     }
     fn on_number(&self,value:Value)->ResultValue{
-        self.takes(0,0)?;
         let real=matches!(value,Value::Frac(_));
+        // The true quotient of two whole numbers, asked of the class.
+        if self.operation=="__truediv__" && !real {
+            self.takes(1,1)?;
+            let (above,beneath)=(value.as_big()?,self.given[0].settled().as_big().map_err(|_|self.fail("arguments"))?);
+            if beneath.is_zero(){return Err(self.fail("arguments"));}
+            return Ok(crate::data::worth_of_binary(crate::data::nearest_binary(&above,&beneath),crate::math::DEFAULT_PLACES).keeping_point(true));
+        }
+        self.takes(0,0)?;
+        if self.operation=="bit_count" && !real{return Ok(Value::Small(value.as_big()?.magnitude().count_ones() as i64));}
+        if (self.operation=="numerator"||self.operation=="__index__") && !real{return Ok(Value::from_big(value.as_big()?));}
+        if self.operation=="denominator" && !real{return Ok(Value::Small(1));}
+        if self.operation=="real"||self.operation=="conjugate"{return Ok(value);}
+        if self.operation=="imag"{return Ok(if real{crate::data::worth_of_binary(0.0,crate::math::DEFAULT_PLACES).keeping_point(true)}else{Value::Small(0)});}
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
         if self.operation=="as_integer_ratio"{
@@ -103,6 +115,13 @@ impl Request<'_> {
     }
     fn on_text(&self,s:&str)->ResultValue{
         let op=self.operation;
+        // A real read back from the hexadecimal spelling float.hex gives.
+        if op=="fromhex"{
+            self.takes(0,0)?;
+            let number=read_hex_real(s).ok_or_else(||self.fail("hex"))?;
+            if number.is_infinite() && !s.to_ascii_lowercase().contains("inf"){return Err(self.fail("hex_overflow"));}
+            return Ok(crate::data::worth_of_binary(number,crate::math::DEFAULT_PLACES).keeping_point(true));
+        }
         if op=="encode"{return Err(self.fail("bytes"));}
         if op=="format"{return self.fill_fields(s).map(|t|Value::text(&t));}
         if ["upper","lower","title","capitalize"].contains(&op){
@@ -330,4 +349,27 @@ fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)-
 fn same_item(left:&Value,right:&Value)->bool{
     if let (Value::Frac(a),Value::Frac(b))=(left,right){if Rc::ptr_eq(a,b){return true;}}
     left.equals(right)
+}
+
+/// A real from its hexadecimal spelling: an optional sign, `0x`, figures
+/// with a point somewhere among them, `p` and a power of two; or a word
+/// for the reals past the numbers. Nothing for a spelling that is none
+/// of these.
+fn read_hex_real(spelling:&str)->Option<f64>{
+    let lowered=spelling.trim().to_ascii_lowercase();
+    let (sign,rest)=if let Some(r)=lowered.strip_prefix('-'){(-1.0,r)}else{(1.0,lowered.strip_prefix('+').unwrap_or(&lowered))};
+    if rest=="inf"||rest=="infinity"{return Some(sign*f64::INFINITY);}
+    if rest=="nan"{return Some(f64::NAN);}
+    let rest=rest.strip_prefix("0x").unwrap_or(rest);
+    let (figures,power)=match rest.split_once('p'){Some((f,p))=>(f,p.parse::<i64>().ok()?),None=>(rest,0)};
+    let (before,after)=figures.split_once('.').unwrap_or((figures,""));
+    if before.is_empty()&&after.is_empty(){return None;}
+    let mut worth=0f64;
+    for c in before.chars(){worth=worth*16.0+f64::from(c.to_digit(16)?);}
+    let mut place=1.0/16.0;
+    for c in after.chars(){worth+=f64::from(c.to_digit(16)?)*place;place/=16.0;}
+    let mut remaining=power;
+    while remaining>0&&worth.is_finite(){worth*=2.0;remaining-=1;}
+    while remaining<0&&worth!=0.0{worth/=2.0;remaining+=1;}
+    Some(sign*worth)
 }

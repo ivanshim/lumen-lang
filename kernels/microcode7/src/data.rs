@@ -1090,6 +1090,25 @@ fn halved(x: f64, times: i64) -> f64 {
     worth
 }
 
+/// The figures of a number written in groups, run together again. A
+/// grouping mark has two figures either side of it; found anywhere else,
+/// the text is no number and nothing comes back.
+pub fn ungrouped_figures(chars: &str, marks: &[char]) -> Option<String> {
+    let mut out = String::with_capacity(chars.len());
+    let mut walk = chars.chars().peekable();
+    let mut last: Option<char> = None;
+    while let Some(c) = walk.next() {
+        if marks.contains(&c) {
+            let next_is_figure = walk.peek().map_or(false, char::is_ascii_digit);
+            if !(last.map_or(false, |l| l.is_ascii_digit()) && next_is_figure) { return None; }
+        } else {
+            out.push(c);
+        }
+        last = Some(c);
+    }
+    Some(out)
+}
+
 /// A binary real of the width as a worth: kept as a ratio where it is a
 /// number of the width, and as what stands past the numbers where it is
 /// not. Every real-valued reckoning comes back this way.
