@@ -81,6 +81,12 @@
     "SyntaxError: invalid syntax"
   ],
   "ext.op.order.text": true,
+  "ext.op.order.unsupported": [
+    "TypeError: '",
+    "' not supported between instances of '",
+    "' and '",
+    "'"
+  ],
   "ext.stmt.class.annotations": [
     "__annotations__"
   ],
@@ -447,6 +453,12 @@
   ],
   "ext.builtin.bool": [
     "bool"
+  ],
+  "ext.builtin.bool.base": [
+    "TypeError: type 'bool' is not an acceptable base type"
+  ],
+  "ext.builtin.bool.result": [
+    "TypeError: __bool__ should return bool, returned "
   ],
   "ext.builtin.bytearray": [
     "bytearray"
@@ -1681,7 +1693,11 @@
     "NotImplementedError: this string value is not supported"
   ],
   "ext.literal.ellipsis": [
-    "..."
+    "...",
+    "Ellipsis"
+  ],
+  "ext.literal.unimplemented": [
+    "NotImplemented"
   ],
   "ext.literal.ellipsis.unready": [
     "NotImplementedError: ellipsis values are not supported"

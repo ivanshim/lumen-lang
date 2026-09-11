@@ -581,6 +581,24 @@ impl Value {
     /// the same amount are equal and yet not the same. Values that hold
     /// others are the same when they hold the same keys in the same
     /// order, each holding what is itself the same.
+    /// Whether two values occupy one place: one cell or allocation, or
+    /// one worth for a value held by worth alone; no for kinds without a
+    /// place of their own.
+    pub fn one_place(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Shared(x), _) | (Value::Mutable(x, _), _) => x.borrow().one_place(other),
+            (_, Value::Shared(y)) | (_, Value::Mutable(y, _)) => self.one_place(&y.borrow()),
+            (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
+            (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
+            (Value::Vector(x), Value::Vector(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
+            (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
+            (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
+            (Value::Small(x), Value::Small(y)) => x == y,
+            (Value::Nil, Value::Nil) => true,
+            _ => false,
+        }
+    }
+
     pub fn selfsame(&self, other: &Value) -> bool {
         if let Value::Shared(cell) = self {
             let held = cell.borrow().clone();

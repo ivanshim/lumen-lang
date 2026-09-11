@@ -5498,9 +5498,14 @@ impl<'a> Builder<'a> {
             };
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))));
         }
-        if table.spells("ext.literal.ellipsis", &t.lexeme) {
+        if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.lexeme) {
             self.advance();
             return self.subscript(constant(Value::Ellipsis));
+        }
+        // The value with which a method declines an operation, by name.
+        if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.lexeme) {
+            self.advance();
+            return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))));
         }
         if table.spells("ext.op.lambda", &t.lexeme) {
             self.advance();

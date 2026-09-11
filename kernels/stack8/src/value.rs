@@ -610,6 +610,27 @@ impl Value {
     /// the same amount are equal but not the same. An array is the same
     /// as another when it holds the same keys in the same order, each
     /// with a value that is itself the same.
+    /// Whether two values are one and the same place: the same cell,
+    /// the same allocation, or the same worth where a value is held by
+    /// worth alone. Nothing for kinds that have no place of their own.
+    pub fn same_place(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Bond(x), _) => x.borrow().same_place(other),
+            (_, Value::Bond(y)) => self.same_place(&y.borrow()),
+            (Value::Collection(x, _), _) => x.borrow().same_place(other),
+            (_, Value::Collection(y, _)) => self.same_place(&y.borrow()),
+            (Value::Real(x), Value::Real(y)) => Rc::ptr_eq(x, y),
+            (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
+            (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
+            (Value::Array(x), Value::Array(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
+            (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
+            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Small(x), Value::Small(y)) => x == y,
+            (Value::Null, Value::Null) => true,
+            _ => false,
+        }
+    }
+
     pub fn identical(&self, other: &Value) -> bool {
         if let Value::Bond(shared) = self {
             let held = shared.borrow().clone();

@@ -2641,6 +2641,9 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
+                        Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
+                            return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into());
+                        }
                         _ => return Err(if self.has_class_order(){self.detail("unready").to_owned()}else{format!("Class {} cannot be built on that", plan.name)}.into()),
                     },
                 };
@@ -4974,7 +4977,9 @@ impl<'a> Machine<'a> {
             let own = blueprint.shared.borrow().iter().find(|(key, _)| key == word).map(|(_, v)| v.clone());
             if own.is_some() { return own; }
             if let Some((_, body)) = blueprint.methods.iter().find(|(key, _)| key == word) { return Some(Value::Routine(body.clone())); }
-            if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
+            // Equality given, in the methods or the namespace, without a
+            // hash: the things cannot be hashed.
+            if index == 8 && names.get(2).map_or(false, |equal| blueprint.methods.iter().any(|(key, _)| key == equal) || blueprint.shared.borrow().iter().any(|(key, _)| key == equal)) { return Some(Value::Nil); }
             blueprint = blueprint.under.as_ref()?;
         }
     }
@@ -5079,7 +5084,10 @@ impl<'a> Machine<'a> {
         if matches!(subject, Value::Refusal(_)) { return Err(self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_string()); }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
-            Some(_) => return Err(self.bad_answer()),
+            Some(other) => return Err(match self.table.single("ext.builtin.bool.result") {
+                Some(opening) if !opening.is_empty() => format!("{}{}", opening, other.kind_word()),
+                _ => self.bad_answer(),
+            }),
             None => (),
         }
         if let Some(length) = self.ask_special(subject, 10, &[])? {
@@ -5236,6 +5244,11 @@ impl<'a> Machine<'a> {
                 if !matches!(length, Value::Small(_) | Value::Huge(_)) || length.as_big()? < BigInt::from(0) { return Err(self.bad_answer()); }
                 length
             }
+            (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
+                // Equality without a hash method, or the hash method set to
+                // nothing: such a thing cannot be a key.
+                return Err(self.core_complaint("core.unhashable", &one.kind_word()));
+            }
             (Prim::Hashed, [one]) => match self.ask_special(one, 8, &[])? {
                 Some(number @ (Value::Small(_) | Value::Huge(_))) => number,
                 Some(_) => return Err(self.bad_answer()),
@@ -5311,20 +5324,28 @@ impl<'a> Machine<'a> {
     fn equal_contents(&self, one: &Value, other: &Value) -> bool {
         match one { Value::Shared(cell) => return self.equal_contents(&cell.borrow(), other), _ => {} }
         match other { Value::Shared(cell) => return self.equal_contents(one, &cell.borrow()), _ => {} }
+        // Within a container a value is equal to itself before anything
+        // is asked of it, and a flag stands for its number.
+        let held_alike = |x: &Value, y: &Value| x.one_place(y) || self.equal_contents(x, y);
+        match (one, other) {
+            (Value::Flag(truth), rhs) => return self.equal_contents(&Value::Small(i64::from(*truth)), rhs),
+            (lhs, Value::Flag(truth)) => return self.equal_contents(lhs, &Value::Small(i64::from(*truth))),
+            _ => (),
+        }
         if let (Value::Dict(entries), Value::Dict(against)) = (one, other) {
             if entries.len() != against.len() { return false; }
             for (key, value) in entries.iter() {
-                let found = against.iter().find(|entry| self.equal_contents(key, &entry.0));
+                let found = against.iter().find(|entry| held_alike(key, &entry.0));
                 match found {
-                    Some(entry) if self.equal_contents(value, &entry.1) => (),
+                    Some(entry) if held_alike(value, &entry.1) => (),
                     _ => return false,
                 }
             }
             return true;
         }
-        if let (Value::Vector(values), Value::Vector(against)) = (one, other) {
+        if let (Value::Vector(values), Value::Vector(against)) | (Value::Tuple(values), Value::Tuple(against)) = (one, other) {
             return values.len() == against.len() && (0..values.len())
-                .all(|i| self.equal_contents(&values[i], &against[i]));
+                .all(|i| held_alike(&values[i], &against[i]));
         }
         one.equals(other)
     }
@@ -5425,10 +5446,28 @@ impl<'a> Machine<'a> {
             let rank = left.chars().cmp(right.chars());
             return Ok(Value::Flag(match op { Prim::Lt => rank.is_lt(), Prim::Le => rank.is_le(), Prim::Gt => rank.is_gt(), _ => rank.is_ge() }));
         }
+        // Kinds that stand in no order to one another are refused with
+        // both named, where the table gives the four pieces of words;
+        // numbers order among themselves, and texts among themselves.
+        if let ([left, right], [before, between, and, after]) = (v, self.table.strings("ext.op.order.unsupported")) {
+            if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                let (left, right) = (left.settled(), right.settled());
+                let counts = |x: &Value| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_));
+                let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
+                // Two of one kind may still order themselves, as sets and
+                // rows do; two of different kinds, or of a kind without any
+                // order, cannot.
+                let orderless = left.kind_word() != right.kind_word() || matches!(left, Value::Nil | Value::Dict(_));
+                if orderless && !(counts(&left) && counts(&right)) && !texts && !matches!((&left, &right), (Value::Thing(_), _) | (_, Value::Thing(_))) && math::below(&left, &right).is_none() {
+                    let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
+                    return Err(format!("{before}{sign}{between}{}{and}{}{after}", left.kind_word(), right.kind_word()));
+                }
+            }
+        }
         if self.table.flag("ext.syntax.call.bind_names") {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf) {
                 self.prim_values(op, name, v)?
             } else {
                 let unwrapped: Vec<Value> = v.iter().map(collection_read).collect();
@@ -7023,6 +7062,19 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame | Prim::Unlike if self.table.has_any("ext.op.identical.negated") => {
                 let identical = match (&v[0], &v[1]) {
+                    // Every value is itself: a small number by its worth,
+                    // whatever lives behind a pointer by that pointer.
+                    (Value::Small(n), Value::Small(m)) => n == m,
+                    (Value::Huge(a), Value::Huge(b)) => Rc::ptr_eq(a, b),
+                    (Value::Frac(a), Value::Frac(b)) => Rc::ptr_eq(a, b),
+                    (Value::Text(a), Value::Text(b)) => Rc::ptr_eq(a, b),
+                    (Value::Tuple(a), Value::Tuple(b)) => Rc::ptr_eq(a, b),
+                    (Value::Span(a), Value::Span(b)) => Rc::ptr_eq(a, b),
+                    (Value::Progression(a), Value::Progression(b)) => Rc::ptr_eq(a, b),
+                    (Value::Iterator(a), Value::Iterator(b)) => Rc::ptr_eq(a, b),
+                    (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
+                    (Value::Refusal(_), Value::Refusal(_)) => true,
+                    (Value::Intrinsic(a), Value::Intrinsic(b)) => a == b,
                     (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
                     (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => Rc::ptr_eq(x, y),
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
@@ -7035,7 +7087,6 @@ impl<'a> Machine<'a> {
                     (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
                     (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(a), Value::Flag(b)) => a == b,
-                    (Value::Small(n), Value::Small(m)) if *n >= -5 && *n <= 256 => n == m,
                     _ if !v[0].selfsame(&v[1]) => false,
                     _ => return Err(self.table.single("ext.op.identical.unsupported").unwrap_or_default().to_string()),
                 };
@@ -9271,7 +9322,9 @@ impl Machine<'_> {
     }
 
     fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        for item in &mut input { *item = item.settled(); }
+        // A value's identity is the cell it is kept in, so that one
+        // primitive alone is handed the cell as it stands.
+        if op != Prim::IdentityOf { for item in &mut input { *item = item.settled(); } }
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
             if op == Prim::Belongs && matches!(input.get(1), Some(Value::OctetKind { .. })) { return self.octet_routine(16, &input); }
@@ -9343,7 +9396,18 @@ impl Machine<'_> {
             }
             IdentityOf => {
                 require(1, 1)?;
-                let address: u64 = match &input[0] {
+                // A collection a name keeps in a shared cell is known by the
+                // cell, which stays put however the collection changes.
+                let held = match &input[0] {
+                    Value::Shared(cell) => match &*cell.borrow() {
+                        Value::Vector(_) | Value::Dict(_) | Value::Set(_) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                        Value::Mutable(inner, _) => return Ok(Value::Small(Rc::as_ptr(inner) as usize as i64)),
+                        inner => inner.clone(),
+                    },
+                    Value::Mutable(cell, _) => return Ok(Value::Small(Rc::as_ptr(cell) as usize as i64)),
+                    other => other.settled(),
+                };
+                let address: u64 = match &held {
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
@@ -9370,13 +9434,23 @@ impl Machine<'_> {
                 require(0, 1)?;
                 let entries = match input.first() { Some(v) => self.core_collect(v)?, None => Vec::new() };
                 if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
-                let mut distinct: Vec<Value> = Vec::new();
+                // A thing among the entries goes in as the set literal puts
+                // it in, under its own hash and its own equality; any other
+                // entry with no hash is refused.
+                let mut store = crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""));
                 for entry in entries {
-                    if entry.hash_number().is_none() { return Err(self.core_complaint("core.unhashable", &entry.kind_word())); }
-                    if distinct.iter().all(|old| !as_number(old).equals(&as_number(&entry))) { distinct.push(entry); }
+                    if matches!(entry, Value::Thing(_)) {
+                        let key = self.hash_key(&entry)?;
+                        let previous = store.values();
+                        let mut duplicate = false;
+                        for old in previous { if self.keys_agree(&old, &key)? { duplicate = true; break; } }
+                        if !duplicate { let address = format!("instance:{}", store.entries.len()); store.put(address, key); }
+                    } else {
+                        if entry.hash_number().is_none() { return Err(self.core_complaint("core.unhashable", &entry.kind_word())); }
+                        store.put(self.hash_for_set(&entry)?, entry);
+                    }
                 }
-                let values = Value::Vector(Rc::new(distinct));
-                self.gather_set(Some(&values)).map(|members| Value::Set(Rc::new(RefCell::new(members))))
+                return Ok(Value::Set(Rc::new(RefCell::new(store))));
             }
             Dictionary => {
                 require(0, 1)?;
@@ -9396,9 +9470,17 @@ impl Machine<'_> {
                 }
                 incoming.extend(additions);
                 let mut entries: Vec<(Value, Value)> = Vec::new();
-                for pair in incoming {
-                    if pair.0.hash_number().is_none() && !matches!(pair.0, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &pair.0.kind_word())); }
-                    if let Some(index) = entries.iter().position(|(key,_)| as_number(key).equals(&as_number(&pair.0))) { entries[index].1 = pair.1; } else { entries.push(pair); }
+                for (key, item) in incoming {
+                    // A thing as a key carries its own hash, as it does in
+                    // a dictionary literal.
+                    let key = if matches!(key, Value::Thing(_)) { self.hash_key(&key)? } else { key };
+                    if !matches!(key, Value::Keyed(..)) && key.hash_number().is_none() && !matches!(key, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &key.kind_word())); }
+                    let mut place = None;
+                    for (index, (old, _)) in entries.iter().enumerate() {
+                        let same = if matches!(old, Value::Keyed(..)) || matches!(key, Value::Keyed(..)) { self.keys_agree(old, &key)? } else { as_number(old).equals(&as_number(&key)) };
+                        if same { place = Some(index); break; }
+                    }
+                    match place { Some(index) => entries[index].1 = item, None => entries.push((key, item)) }
                 }
                 Ok(Value::Dict(Rc::new(entries)))
             }

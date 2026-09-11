@@ -1602,6 +1602,13 @@ only. The extension labels so far, all from PHP:
 - `ext.op.order.text`: a switch; two texts compared with `<`, `<=`, `>`
   or `>=` are ordered letter by letter, by code point, as CPython orders
   them, rather than by whatever number they might spell.
+- `ext.op.order.unsupported`: four pieces of words refusing an order
+  between two values of kinds that have none, written around the sign
+  and the two kinds: the words before the sign, those between the sign
+  and the first kind, those between the kinds, and those after. Numbers
+  order among themselves and texts among themselves; two of one kind
+  are left to order themselves, as sets do; a thing is left to its own
+  methods; nothing and a dictionary stand in no order at all.
 - `ext.op.compare.chained`: a switch; comparisons beside one another
   ask each adjacent pair in turn. A middle value is worked out once
   and kept; after a false comparison no further operand runs. Equality,
@@ -1775,6 +1782,10 @@ only. The extension labels so far, all from PHP:
   there are none. `ext.builtin.bool` asks truth of a value, and answers
   false when given none. `ext.builtin.callable` asks whether the value is
   a builtin, routine or class the run may call.
+  `ext.builtin.bool.result` opens the complaint when a class's own truth
+  method answers with anything but a flag, the kind of the answer
+  following; `ext.builtin.bool.base` refuses a class built on the flag
+  class, as CPython refuses one.
 - `ext.builtin.abs`, `.round`, `.divmod` and `.pow`: absolute worth,
   rounding, quotient with remainder, and exponentiation. Rounding keeps
   the shared library behavior: halfway values go away from zero, unlike
@@ -2893,8 +2904,13 @@ only. The extension labels so far, all from PHP:
   gives back what it wrote (`:=`). Its right side is a whole expression,
   and brackets let the write stand inside any larger expression.
 - `ext.literal.ellipsis`: a literal value (`...`), distinct from text
-  and nothing, written out as `Ellipsis`. Alone after the block mark it
-  may stand for an empty body on the same line.
+  and nothing, written out as `Ellipsis`; the words listed are the
+  spellings that stand for it, so `Ellipsis` itself may be one. Alone
+  after the block mark it may stand for an empty body on the same line.
+- `ext.literal.unimplemented`: the word spelling the value a method
+  answers with to decline an operation, which the kernel then asks of
+  the other side, as `NotImplemented` is used in Python. Written by name
+  it is that value, and prints as its word.
 - `ext.op.rem.formats_text`: a switch; remainder with text on the left
   fills its format marks from the right. An array supplies arguments in
   order; any other value supplies one. Without `ext.builtin.format`, the
@@ -3522,6 +3538,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
+| `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
+| `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
@@ -3972,8 +3990,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.value.unready` | - | - | `NotImplementedError: this string value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.template` | - | - | - | - | `true` | - | - | - | - | - |
-| `ext.literal.ellipsis` | - | - | `...` | - | - | - | - | - | - | - |
+| `ext.literal.ellipsis` | - | - | `...` `Ellipsis` | - | - | - | - | - | - | - |
 | `ext.literal.ellipsis.unready` | - | - | `NotImplementedError: ellipsis values are not supported` | - | - | - | - | - | - | - |
+| `ext.literal.unimplemented` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
@@ -4060,6 +4079,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.name_by_value` | - | - | - | - | `$` | - | - | - | - | - |
 | `ext.op.not_identical` | - | - | - | - | `!==` | - | - | - | - | - |
 | `ext.op.order.text` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.order.unsupported` | - | - | `TypeError: '` `' not supported between instances of '` `' and '` `'` | - | - | - | - | - | - | - |
 | `ext.op.otherwise` | - | - | - | - | `??` | - | - | - | - | - |
 | `ext.op.pipe.attribute` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.plus` | - | - | `+` | - | `+` | - | - | - | - | - |

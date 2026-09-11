@@ -5845,9 +5845,15 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
+            return self.indexing(from);
+        }
+        // The value a method declines an operation with, written by name.
+        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.lexeme) {
+            self.take();
+            self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
         if Lang::spells(&lang.lambda_words, &tok.lexeme) {

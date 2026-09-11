@@ -125,6 +125,15 @@ pub struct Lang {
     pub line_comments: Vec<String>,
     pub ellipsis_words: Vec<String>,
     pub ellipsis_unready: Option<String>,
+    /// The word for the value a method declines an operation with.
+    pub unimplemented_words: Vec<String>,
+    /// Words refusing a class built on the flag class, and words opening
+    /// the complaint when a truth method answers with no flag.
+    pub bool_base: Option<String>,
+    pub bool_result: Option<String>,
+    /// The four pieces of words around the sign and the two kinds that
+    /// stand in no order.
+    pub order_unsupported: Vec<String>,
     pub lambda_words: Vec<String>,
     pub lambda_unready: Option<String>,
     pub expression_assign: Vec<String>,
@@ -1056,7 +1065,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.literal.unimplemented | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1273,6 +1282,18 @@ impl Lang {
     /// complaints told under the classes the definition gave them.
     pub fn slice_values(&self) -> bool {
         self.slice_parts.get("ext.builtin.slice").map_or(false, |word| !word.is_empty())
+    }
+
+    /// Whether these words are a complaint of the value protocol, already
+    /// told under its class: a class that may not be built on, a truth
+    /// method's wrong answer, two values in no order.
+    pub fn protocol_named(&self, said: &str) -> bool {
+        self.bool_base.as_deref() == Some(said)
+            || self.bool_result.as_deref().map_or(false, |opening| !opening.is_empty() && said.starts_with(opening))
+            || match self.order_unsupported.as_slice() {
+                [before, between, and, after] => !before.is_empty() && said.starts_with(before.as_str()) && said.contains(between.as_str()) && said.contains(and.as_str()) && said.ends_with(after.as_str()),
+                _ => false,
+            }
     }
 
     /// Whether these words are a slice's own complaint, already told
@@ -2120,6 +2141,10 @@ impl Lang {
             },
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
+            unimplemented_words: r.strings("ext.literal.unimplemented")?,
+            bool_base: r.head("ext.builtin.bool.base")?,
+            bool_result: r.head("ext.builtin.bool.result")?,
+            order_unsupported: r.strings("ext.op.order.unsupported")?,
             lambda_words: r.strings("ext.op.lambda")?,
             lambda_unready: r.head("ext.op.lambda.unready")?,
             expression_assign: r.strings("ext.op.assign.expression")?,

@@ -72,7 +72,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
             if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
         }
         if text::bears_kind(&table, &e) { return e; }
-        if crate::complex::already_named(&table, &e) || span_complaint_named(&table, &e) { return e; }
+        if crate::complex::already_named(&table, &e) || span_complaint_named(&table, &e) || protocol_complaint_named(&table, &e) { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
@@ -451,4 +451,16 @@ fn span_complaint_named(table: &Table, words: &str) -> bool {
     let whole = ["ext.op.index.slice.zero", "ext.op.index.slice.bounds", "ext.op.index.slice.assign", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"];
     if whole.iter().any(|label| table.single(label).map_or(false, |said| !said.is_empty() && said == words)) { return true; }
     table.strings("ext.op.index.slice.length").first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))
+}
+
+/// Whether the words are a complaint of the value protocol, which the
+/// table tells under its own class: a class that may not be built on, a
+/// truth method answering with no flag, two values in no order.
+fn protocol_complaint_named(table: &Table, words: &str) -> bool {
+    if table.single("ext.builtin.bool.base") == Some(words) { return true; }
+    if table.single("ext.builtin.bool.result").map_or(false, |opening| !opening.is_empty() && words.starts_with(opening)) { return true; }
+    match table.strings("ext.op.order.unsupported") {
+        [before, between, and, after] => !before.is_empty() && words.starts_with(before.as_str()) && words.contains(between.as_str()) && words.contains(and.as_str()) && words.ends_with(after.as_str()),
+        _ => false,
+    }
 }
