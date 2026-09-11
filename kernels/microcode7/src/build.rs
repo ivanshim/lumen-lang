@@ -6905,6 +6905,12 @@ impl<'a> Builder<'a> {
     }
 
     fn named_call(&mut self, name: &str, args: Vec<Form>) -> Res<Form> {
+        // A name the program has bound is called as that name, in front
+        // of any builtin word spelled the same, where the table says so.
+        if self.table.flag("ext.syntax.names.shadow_builtins") && self.layers.iter().any(|layer| layer.idents.iter().any(|word| word == name)) {
+            let target = self.read(name);
+            return Ok(invoke(target, args));
+        }
         match self.table.prims.get(name).copied().filter(|op| !matches!(op, Prim::SetCall(1..=17))) {
             Some(Prim::Textual(work)) if work != crate::text::Work::REPR && !name.contains('.') => {
                 let declared = self.read(name);

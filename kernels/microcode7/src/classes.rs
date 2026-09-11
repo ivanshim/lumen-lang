@@ -207,7 +207,7 @@ impl<'a> Machine<'a> {
         // A namespace may hold a routine, under the table's word for it,
         // that answers for names the namespace has not.
         if let (false, Value::Thing(t), Some(word)) = (self.asking_presence, &value, self.table.single("ext.system.module.getattr")) {
-            let answerer = t.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| held.settled());
+            let answerer = t.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
             if let Some(routine @ (Value::Routine(_) | Value::Bound(..))) = answerer {
                 return self.apply_class_member(routine, vec![Value::text(key)]);
             }

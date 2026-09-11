@@ -2443,6 +2443,7 @@
   "ext.syntax.map.spread.unmapped": [
     "TypeError: value is not a mapping"
   ],
+  "ext.syntax.names.shadow_builtins": true,
   "ext.syntax.set": true,
   "ext.system.args.list": [
     "__program_argv"

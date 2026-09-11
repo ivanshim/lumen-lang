@@ -8530,6 +8530,7 @@ impl Engine<'_> {
 
     fn core_iterator(&mut self, source: &Value) -> Res<Value> {
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
+        if let Value::Counted(row) = source { return Ok(Self::core_cursor(CursorSource::Counted(row.clone(), BigInt::from(0)))); }
         Ok(Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0)))
     }
 
@@ -8547,6 +8548,11 @@ impl Engine<'_> {
         let answer = (|| match &mut source {
             CursorSource::Items(values, place) => {
                 let found = values.get(*place).cloned();
+                if found.is_some() { *place += 1; }
+                Ok(found)
+            }
+            CursorSource::Counted(row, place) => {
+                let found = row.at(place.clone());
                 if found.is_some() { *place += 1; }
                 Ok(found)
             }
@@ -8801,6 +8807,15 @@ impl Engine<'_> {
             Builtin::Reversed => {
                 arity(1, 1)?;
                 if !matches!(args[0], Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_)) { return Err(self.core_fault("core.unready", name)); }
+                // A counted row is walked backwards as a counted row,
+                // from its last place to its first, without ever being
+                // made into the row it counts.
+                if let Value::Counted(row) = &args[0] {
+                    let length = row.length();
+                    let last = &row.start + (&length - 1) * &row.step;
+                    let backwards = crate::value::Counted { start: last, stop: &row.start - &row.step, step: -&row.step, name: row.name.clone() };
+                    return self.core_iterator(&Value::Counted(Rc::new(backwards)));
+                }
                 let mut items = self.core_members(&args[0])?; items.reverse();
                 Self::core_cursor(CursorSource::Items(items, 0))
             }

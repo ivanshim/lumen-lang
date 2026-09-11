@@ -6027,10 +6027,25 @@ impl<'a> Machine<'a> {
             Prim::ReadMember => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
                 let word = v[1].bare();
-                self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()).ok_or_else(|| {
-                    let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
-                    format!("{opening}{word}{ending}")
-                })?
+                match self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()) {
+                    Some(found) => found,
+                    None => {
+                        // A namespace may answer for a name it has not,
+                        // through the routine the table names for it.
+                        let space = match &v[0] { Value::Shared(cell) => cell.borrow().clone(), other => other.clone() };
+                        let answerer = match (&space, self.table.single("ext.system.module.getattr")) {
+                            (Value::Thing(t), Some(name)) => t.holds.borrow().iter().find(|(n, _)| n == name).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() }),
+                            _ => None,
+                        };
+                        match answerer {
+                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.suspension_fault(fault))?,
+                            _ => {
+                                let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
+                                return Err(format!("{opening}{word}{ending}"));
+                            }
+                        }
+                    }
+                }
             }
             Prim::WriteMember => {
                 n(3)?;
@@ -6092,6 +6107,16 @@ impl<'a> Machine<'a> {
                             // between the names, not in the value.
                             Some(Value::Shared(cell)) => cell.borrow().clone(),
                             Some(x) => x,
+                            // A namespace may answer for a name it has not,
+                            // through the routine the table names for it.
+                            None if self.table.single("ext.system.module.getattr").map_or(false, |word| thing.holds.borrow().iter().any(|(n, _)| n == word)) => {
+                                let word = self.table.single("ext.system.module.getattr").unwrap_or_default();
+                                let answerer = thing.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
+                                match answerer {
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.suspension_fault(fault))?,
+                                    _ => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
+                                }
+                            }
                             // A language with a word for a warning says
                             // a property is not there, and reads nothing.
                             None if self.complaint_words.iter().any(|(k, _)| *k == "warning") => {
@@ -9208,6 +9233,7 @@ impl Machine<'_> {
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
         match source {
             Value::Iterator(_) => Ok(source.clone()),
+            Value::Progression(walk) => Ok(Self::cursor_value(IteratorKind::Stepping(walk.clone(), BigInt::from(0)))),
             _ => {
                 let entries = self.core_collect(source)?;
                 Ok(Self::cursor_value(IteratorKind::Stored(entries.into_iter().collect())))
@@ -9229,6 +9255,11 @@ impl Machine<'_> {
             match &mut kind {
                 IteratorKind::Busy => unreachable!(),
                 IteratorKind::Stored(entries) => Ok(entries.pop_front()),
+                IteratorKind::Stepping(walk, at) => {
+                    let item = walk.item(at);
+                    if item.is_some() { *at += 1; }
+                    Ok(item)
+                }
                 IteratorKind::Count(inner, number) => match self.next_value(inner)? {
                     None => Ok(None),
                     Some(member) => {
@@ -9498,6 +9529,13 @@ impl Machine<'_> {
             Backwards => {
                 require(1, 1)?;
                 if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_)) { return Err(self.core_complaint("core.unready", name)); }
+                // A progression runs backwards as a progression, last
+                // place first, never gathered into the row it stands for.
+                if let Value::Progression(walk) = &input[0] {
+                    let last = &walk.first + (walk.count() - 1) * &walk.stride;
+                    let backwards = crate::data::Progression { first: last, limit: &walk.first - &walk.stride, stride: -&walk.stride, word: walk.word.clone() };
+                    return self.core_primitive(Prim::Iterator, name, vec![Value::Progression(Rc::new(backwards))], Vec::new());
+                }
                 let walked = self.core_collect(&input[0])?;
                 Ok(cursor(walked.into_iter().rev().collect()))
             }

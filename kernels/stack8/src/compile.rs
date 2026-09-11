@@ -6060,7 +6060,11 @@ impl<'a> Compiler<'a> {
                     match lang.calling.clone() {
                         Some(call) if self.at_symbol(&call.open) => {
                             self.take();
-                            let native = lang.builtins.get(&tok.lexeme).copied();
+                            // A name the program has bound is called as
+                            // that name, in front of any builtin word
+                            // spelled the same, where the language says so.
+                            let bound = lang.shadow_builtins && self.registry.index.contains_key(tok.lexeme.as_str());
+                            let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
                             if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
                                 let target = match self.look().shape {
@@ -7548,7 +7552,10 @@ impl<'a> Compiler<'a> {
     /// A call by name, the arguments already on the stack: a builtin of
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
-        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method()) {
+        // A name the program has bound is called as that name, in front
+        // of any builtin word spelled the same, where the language says so.
+        let bound = self.lang.shadow_builtins && self.registry.index.contains_key(name);
+        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
             Some(Builtin::Text(op)) if op != crate::strings::TextOp::Repr && !name.contains('.') => {
                 self.read_callee(name);
                 self.act(Action::Invoke(Rc::from(name)), argc + 1);

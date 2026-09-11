@@ -2907,6 +2907,11 @@ only. The extension labels so far, all from PHP:
   and nothing, written out as `Ellipsis`; the words listed are the
   spellings that stand for it, so `Ellipsis` itself may be one. Alone
   after the block mark it may stand for an empty body on the same line.
+- `ext.syntax.names.shadow_builtins`: a switch; a name the program has
+  bound — by assignment, a definition or an import — stands in front of
+  a builtin word spelled the same when it is called, as in Python, where
+  `from os.path import join` must not be answered by the builtin `join`.
+  Without it a builtin word is a builtin wherever it is written.
 - `ext.literal.unimplemented`: the word spelling the value a method
   answers with to decline an operation, which the kernel then asks of
   the other side, as `NotImplemented` is used in Python. Written by name
@@ -4320,6 +4325,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: value is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
+| `ext.syntax.names.shadow_builtins` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.set` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.system.args.count` | - | - | - | - | `$argc` | - | - | - | - | - |
 | `ext.system.args.list` | - | - | `__program_argv` | - | `$argv` | - | - | - | - | - |

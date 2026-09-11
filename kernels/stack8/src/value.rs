@@ -157,6 +157,8 @@ pub struct CursorState {
 #[derive(Debug, Clone)]
 pub enum CursorSource {
     Items(Vec<Value>, usize),
+    /// A counted row walked place by place, never made whole.
+    Counted(Rc<Counted>, BigInt),
     Numbered(Value, BigInt),
     Combined(Vec<Value>, Option<Value>),
     Selected(Value, Value),

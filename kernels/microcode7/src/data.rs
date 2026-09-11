@@ -134,6 +134,8 @@ pub struct IteratorState {
 #[derive(Clone)]
 pub enum IteratorKind {
     Stored(std::collections::VecDeque<Value>),
+    /// A progression stepped through one place at a time.
+    Stepping(Rc<Progression>, BigInt),
     Count(Value, BigInt),
     Parallel { inputs: Vec<Value>, mapper: Option<Value> },
     Select(Value, Value),
