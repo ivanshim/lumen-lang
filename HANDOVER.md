@@ -148,6 +148,72 @@ dyadic operation is raised on rather than reported as an invalid
 answer; `id` is stable across a list's growth (both kernels hand that
 one builtin the cell a collection lives in).
 
+### 1b. The Python run-time work since the merge
+
+The merge is behind us and the work since is a different thing: making
+the fifty Python reference test files in `tests/python/` actually run
+their own tests and pass them. What follows is what has been learnt, so
+that none of it is learnt twice.
+
+**How to count a passing test, and how not to.** `ran - failures -
+errors` is not a count of passing methods. `subTest` lets one method
+report many failures, so `test_format` prints `Ran 18 tests` with
+`failures=5, errors=15`, and the subtraction gives a negative number.
+The honest measure is `unittest`'s progress line, one character per
+method -- `.` passed, `F` failed, `E` errored, `s` skipped. Check that
+its length equals the `Ran N` it reports, then count the dots. Two
+figures were circulated from the bad formula before this was caught;
+neither should be repeated.
+
+**The library is the near bank, the kernels the far one.** Most files
+stop before their first test on a module the library has not got, and
+the blockers are chained -- lifting one reveals the next. Since the
+merge the library has gained `doctest` (a real one, which finds the
+`>>>` examples in docstrings and in a module's `__test__` table, runs
+them, and honours the `+ELLIPSIS`, `+NORMALIZE_WHITESPACE`, `+SKIP` and
+`+IGNORE_EXCEPTION_DETAIL` directives), `collections.abc`, `types`,
+`numbers`, `errno`, `signal`, `shutil`, `dis`, `_string`,
+`annotationlib`, `threading`, `ast`, `marshal`, `unittest.mock`,
+`_decimal`, `test.typinganndata` and `test.test_math`, along with
+`codecs.BOM_UTF8` and `sys.executable`.
+
+`unittest`'s loader also stopped running an abstract base class's tests
+a second time through each subclass that inherits from it. That is a
+correction, not a loss, though it makes a file's collected count fall:
+`test_tuple` went from 60 collected to 38, with the same 18 passing.
+
+**Defects the running found, beyond the six in §1a.** Each was
+reproduced against CPython on this machine before it was believed.
+
+- An exception raised inside a context manager's `__enter__` was thrown
+  away by stack8 and replaced with the words for a special method that
+  gave back nothing usable, so an arm written round the `with` block
+  never caught it. Fixed: the raised value is carried out as it is, the
+  way every other place that asks a special method already does.
+- `print(d)` and `str(d)` of a map give the interpreter's own rendering,
+  `[k => 1]`, where Python wants `{'k': 1}`. `repr`, `%s` and an
+  f-string are all already right, so only the plain-text path is wrong.
+- A failed unpacking assignment is a raw fault that `try`/`except`
+  cannot catch, and its message lacks CPython's detail. This is the
+  largest single lever found: thirteen of `test_unpack`'s fifteen
+  failures.
+- A class's `__doc__` cannot be read at all; a function's, a method's
+  and a module's all can.
+- Found and written down but not yet chased: unpacking a thing that has
+  only `__getitem__`; `compile(src, name, 'single')` accepted but not
+  honoured; a generator's `type()`, its repr and `gi_running`; a stray
+  top-level `break` inside `try`/`finally` ending the program silently
+  where CPython refuses the file; `exec` globals not finding a name put
+  there by a subscript store, and `iter(genexp) is genexp` false, both
+  on microcode7 only.
+- Kernel-side blockers on whole files: `test_math` and `test_float` stop
+  with `this slice operation is not supported`; `test_long` outruns a
+  debug build's patience.
+
+**A text key stored into a row turns it into a map** (`b["k"] = 1`),
+silently. That was noticed and not yet fixed; it is written here so it
+is not lost.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
