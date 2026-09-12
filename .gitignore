@@ -6,3 +6,13 @@ Cargo.lock
 *.pdb
 test.log
 __pycache__/
+
+# What the reference runner leaves beside a PHP test. php-src's own
+# run-tests.php writes each test's program next to the .phpt it came
+# from, and scripts/reference_tests.py does the same, so a run leaves
+# .php, .skip.php and .clean.php files behind. None belongs in the
+# repository: the tests themselves are the 422 .phpt files and their
+# .inc helpers, and a stray one is worse than untidy, since the runner
+# will not overwrite a file that already exists and would quietly run
+# it in place of the test's own program.
+tests/php/**/*.php
