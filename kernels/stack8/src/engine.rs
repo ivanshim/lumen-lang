@@ -5329,7 +5329,13 @@ impl<'a> Engine<'a> {
                 let held = object.contents();
                 if let Value::Object(o) = &held {
                     if self.special_value(&held, 34).is_none() { return Err(self.unmanaged(&o.class.name).into()); }
-                    self.special_call(&held, 33, Vec::new())?.ok_or_else(|| self.unmanaged(&o.class.name))?
+                    // What the opening method raised is raised on, so that
+                    // it reaches the arms standing round the whole block,
+                    // and not the words that stand in for a method giving
+                    // back nothing of its own.
+                    let told = self.special_call(&held, 33, Vec::new());
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    told?.ok_or_else(|| self.unmanaged(&o.class.name))?
                 } else if self.lang.with_invalid.len() == 2 {
                     // A value that is no object has no such methods at all,
                     // and a language with words for that says so by kind.
