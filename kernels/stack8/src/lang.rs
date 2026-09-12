@@ -40,6 +40,7 @@ pub enum Complaint {
 }
 
 pub struct Lang {
+    pub complex_words: HashMap<String, Vec<String>>,
     pub method_keywords: HashMap<String, String>,
     pub value_methods: HashMap<String, String>,
     pub method_errors: HashMap<String, String>,
@@ -102,6 +103,14 @@ pub struct Lang {
     pub with_unready: Vec<String>,
     pub yield_from: Vec<String>,
     pub member_pipes: bool,
+    pub sequence_values: bool,
+    pub sequence_concat: Vec<String>,
+    pub sequence_repeat: Vec<String>,
+    pub sequence_index: Vec<String>,
+    pub sequence_delete: Vec<String>,
+    pub sequence_subscript: Vec<String>,
+    pub sequence_missing: Vec<String>,
+    pub sequence_assign: Vec<String>,
     pub tuple_unready: Vec<String>,
     pub byte_words: HashMap<String, Vec<String>>,
     pub bytes_unready: Vec<String>,
@@ -124,6 +133,36 @@ pub struct Lang {
     pub line_comments: Vec<String>,
     pub ellipsis_words: Vec<String>,
     pub ellipsis_unready: Option<String>,
+    /// The word for the value a method declines an operation with.
+    pub unimplemented_words: Vec<String>,
+    /// Whether a name the program binds stands in front of a builtin
+    /// word spelled the same, when the name is called.
+    pub shadow_builtins: bool,
+    /// How many figures a whole number may be read from or written to
+    /// text with, and the two pieces of words around the count when
+    /// there are more; the words for a real past the numbers asked for
+    /// as a whole number; whether a whole number rounded to a negative
+    /// count of places rounds a half to the even neighbour.
+    pub integer_digits: Option<usize>,
+    pub digits_amiss: Vec<String>,
+    pub to_int_infinity: Option<String>,
+    pub to_int_nan: Option<String>,
+    pub round_whole_even: bool,
+    /// Words refusing a class built on the flag class, and words opening
+    /// the complaint when a truth method answers with no flag.
+    pub bool_base: Option<String>,
+    /// The builtin kinds a class may stand on, the complaint when two
+    /// of them are asked for in one class, and the method a mapping
+    /// thing answers an absent key with.
+    pub builtin_bases: Vec<String>,
+    pub layout_amiss: Option<String>,
+    pub missing_key: Option<String>,
+    pub bool_result: Option<String>,
+    /// The four pieces of words around the sign and the two kinds that
+    /// stand in no order.
+    pub order_unsupported: Vec<String>,
+    /// The words for a row written into while it is being put in order.
+    pub sort_modified: Vec<String>,
     pub lambda_words: Vec<String>,
     pub lambda_unready: Option<String>,
     pub expression_assign: Vec<String>,
@@ -234,6 +273,7 @@ pub struct Lang {
     pub bits_integer: Vec<String>,
     pub bits_beyond: Vec<String>,
     pub real_bits: Option<usize>,
+    pub shortest_reals: bool,
     pub real_digits: Option<usize>,
     /// The names the run keeps its counts of figures under: how many a
     /// real written plainly carries, and how many one shown with its
@@ -333,6 +373,21 @@ pub struct Lang {
     pub print_end: Vec<String>,
     pub print_file: Vec<String>,
     pub print_flush: Vec<String>,
+    /// Where the printer sends its text when the definition routes it:
+    /// a module, the member of it holding the stream, and the writer
+    /// on that stream. Empty, the printer writes straight out.
+    pub print_route: Vec<String>,
+    /// Where the input builtin turns for its line: a module and the
+    /// routine in it that reads.
+    pub input_route: Vec<String>,
+    /// The complaint for a stream builtin handed the wrong arguments,
+    /// and the one for a stream that would not answer.
+    pub stream_amiss: Vec<String>,
+    pub stream_failed: Vec<String>,
+    /// Whether the clock, handed a flag, answers in seconds and their
+    /// parts: from the run's own start when the flag holds, else from
+    /// the epoch.
+    pub clock_parts: bool,
     pub print_file_error: Vec<String>,
     pub print_file_output: Vec<String>,
     pub print_file_unready: Vec<String>,
@@ -351,6 +406,12 @@ pub struct Lang {
     pub range_zero: Vec<String>,
     pub range_integer: Vec<String>,
     pub range_index: Vec<String>,
+    /// What a counted row calls its first place, its stopping place and
+    /// its stride, read as members of the row itself.
+    pub range_members: Vec<String>,
+    /// The words for a worth that stands nowhere in a counted row,
+    /// given before and after the worth that was looked for.
+    pub range_missing: Vec<String>,
     pub holes: Vec<String>,
     pub args_binding: Option<String>,
     /// The same arguments as a list, the file the run was started with
@@ -426,15 +487,53 @@ pub struct Lang {
     pub exceptions: Vec<String>,
     pub exception_args: Option<String>,
     pub exception_cause: Option<String>,
+    /// The member holding the exception that was being handled when
+    /// this one was raised, and the flag that hides it; nothing where the
+    /// language has no names for them.
+    pub exception_context: Option<String>,
+    pub exception_suppress: Option<String>,
+    /// The name of the kind of a trace, where the language has one.
+    pub exception_traceback: Option<String>,
+    /// The fuller account of an exception: the method that adds a note
+    /// and the list the notes stand in, the member holding a traceback
+    /// and the method that would set one, the members naming an absent
+    /// name and the object it was sought on, and the two members of an
+    /// operating-system fault with the words around its number.
+    pub note_method: Option<String>,
+    pub notes_member: Option<String>,
+    pub note_invalid: Option<String>,
+    pub traceback_member: Option<String>,
+    pub traceback_setter: Option<String>,
+    pub absent_name_member: Option<String>,
+    pub absent_object_member: Option<String>,
+    pub os_members: Vec<String>,
+    pub os_message: Vec<String>,
+    /// An exception group: its message and its members, the three
+    /// methods that part it, the words around its count when shown,
+    /// and the complaint for members it may not take.
+    pub group_message: Option<String>,
+    pub group_members: Option<String>,
+    pub group_split: Option<String>,
+    pub group_subgroup: Option<String>,
+    pub group_derive: Option<String>,
+    pub group_summary: Vec<String>,
+    pub group_invalid: Option<String>,
     pub class_name: Option<String>,
     pub exception_unready: Option<String>,
     pub fault_index: Option<String>,
     pub fault_key: Option<String>,
+    /// Whether each statement of the program is marked with its line as
+    /// the run goes, so that a call may be told where it was made from.
+    pub marks_lines: bool,
     pub fault_name: Option<String>,
     pub fault_attribute: Option<String>,
     pub fault_stop: Option<String>,
     pub division_words: Option<String>,
     pub index_words: Option<String>,
+    /// The words for a place beyond a row where the place is written
+    /// into or taken out of, which a language may word apart from a
+    /// place merely read.
+    pub index_written_words: Option<String>,
     pub name_words: Vec<String>,
     pub attribute_words: Vec<String>,
     pub kind_words: Option<String>,
@@ -543,6 +642,16 @@ pub struct Lang {
     pub special_unready: Vec<String>,
     pub class_special: Vec<String>,
     pub special_amiss: Vec<String>,
+    /// Two pieces around the kind an index method wrongly answered with.
+    pub index_answer_amiss: Vec<String>,
+    /// Four pieces around the sign and the two kinds of a dyad neither
+    /// operand's methods would take.
+    pub operands_amiss: Vec<String>,
+    /// Two pieces around the class name of a thing given a format
+    /// specification it has no method for.
+    pub format_spec_amiss: Vec<String>,
+    /// The header keyword naming a metaclass, which no class form runs.
+    pub metaclass_word: Vec<String>,
     pub class_unready: Vec<String>,
     pub yield_suspends: bool,
     pub yield_exhausted: Vec<String>,
@@ -571,6 +680,24 @@ pub struct Lang {
     pub member_absent: Vec<String>,
     pub module_cache: Vec<String>,
     pub module_names: Vec<String>,
+    /// The name a module keeps its opening documentation under
+    /// (ext.system.module.doc), and the one it keeps the dictionary of
+    /// builtin words under (ext.system.module.builtins).
+    pub module_doc: Vec<String>,
+    pub module_builtins: Vec<String>,
+    /// The three ways text may be read ahead of time: as statements, as
+    /// one expression, and as one statement shown as it runs
+    /// (ext.builtin.compile.modes); the names compile gives its
+    /// arguments (ext.builtin.compile.parameters); the class of the code
+    /// value it hands back (ext.builtin.compile.kind).
+    pub compile_modes: Vec<String>,
+    pub compile_parameters: Vec<String>,
+    pub compile_kind: Option<String>,
+    /// The complaint for text that cannot be read
+    /// (ext.builtin.source.syntax), and for a reading that cannot yet be
+    /// honoured (ext.builtin.source.unready).
+    pub source_syntax: Option<String>,
+    pub source_unready: Option<String>,
     pub decorator_words: Vec<String>,
     pub decorator_amiss: Option<String>,
     pub const_words: Vec<String>,
@@ -778,6 +905,13 @@ pub struct Lang {
     pub tuple_separator: Option<String>,
     pub or_maps: bool,
     pub unordered_maps: bool,
+    /// A map's keys stand for their worth: a flag is the number it
+    /// counts as, and a whole number and the real it equals are one key.
+    pub value_keys: bool,
+    /// The words before and after the kind of a value that cannot key a
+    /// map, and the words for a map that changed size under a walk.
+    pub map_unhashable: Vec<String>,
+    pub map_resized: Option<String>,
     pub print_separator: Option<String>,
     pub print_ending: Option<String>,
     pub print_option_type: Option<String>,
@@ -814,6 +948,22 @@ pub struct Lang {
     /// and the one that takes a write of such a property. Each is given
     /// the name that was asked for, the writer the value as well.
     pub reader: Option<String>,
+    /// The word for a routine a module answers absent names through.
+    pub module_getattr: Option<String>,
+    /// The word under which a class carries the names of its annotated
+    /// members, in the order written.
+    pub class_annotations: Vec<String>,
+    /// The words for a class's own method that answers a call of the
+    /// class itself, and for one that hands over what walking the class
+    /// yields.
+    pub class_called: Option<String>,
+    /// Whether two texts are ordered letter by letter, by code point.
+    pub text_ordered: bool,
+    /// The words of the slice value: its three bounds' names, the complaints
+    /// for the wrong count of bounds, a negative length and a bound written
+    /// amiss, and the method a bound is asked for its whole number by.
+    pub slice_parts: HashMap<String, String>,
+    pub class_walked: Option<String>,
     pub writer: Option<String>,
     /// The method a class answers a call it does not have with, given
     /// the name called and the arguments as an array.
@@ -909,6 +1059,20 @@ pub struct Lang {
     pub try_else: bool,
     pub throw_from: Vec<String>,
     pub throw_empty: Option<String>,
+    /// Words for a thrown value that is no exception, where exceptions
+    /// are furnished.
+    pub throw_invalid: Option<String>,
+    /// Words for a try mixing plain and grouped clauses, and for a
+    /// generator whose body raises the exhaustion class.
+    pub catch_amiss: Option<String>,
+    pub yield_escaped: Option<String>,
+    /// Words before and after the kind of a value that cannot manage a
+    /// context.
+    pub with_invalid: Vec<String>,
+    /// The most calls that may be under way at once, and the words said
+    /// by the one that would pass it.
+    pub recursion_limit: Option<usize>,
+    pub recursion_exceeded: Option<String>,
     pub try_words: Vec<String>,
     pub catch_words: Vec<String>,
     pub finally_words: Vec<String>,
@@ -966,7 +1130,7 @@ w builtin.char_at | w builtin.ord | w builtin.chr | w builtin.typeof
 w builtin.error | w builtin.extern | w builtin.range | w builtin.real
 w builtin.num | w builtin.den | w builtin.push | w builtin.get
 w builtin.put | w builtin.precision | w builtin.to_string | w builtin.to_int
-w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision
+w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision | s system.real.render
 w system.entry | w system.kind.integer | w system.kind.rational | w system.kind.real
 w system.kind.string | w system.kind.boolean | w system.kind.array | w system.kind.null
 b system.flag.counts
@@ -974,9 +1138,9 @@ b system.flag.counts
 
 /// The extension labels a definition may add beyond the core; a
 /// missing one reads as empty (or off).
-const EXT_LABELS: &str = "w ext.stmt.class.detail.call | w ext.stmt.class.detail.root | w ext.stmt.class.detail.mro | w ext.stmt.class.detail.order | w ext.stmt.class.detail.name | w ext.stmt.class.detail.qualified | w ext.stmt.class.detail.bases | w ext.stmt.class.detail.namespace | w ext.stmt.class.detail.kind | w ext.stmt.class.detail.allocate | w ext.stmt.class.detail.subclass | w ext.stmt.class.detail.slots | w ext.stmt.class.detail.set | w ext.stmt.class.detail.remove | w ext.stmt.class.detail.get | w ext.stmt.class.detail.getitem | w ext.stmt.class.detail.doc | w ext.stmt.class.detail.module | w ext.stmt.class.detail.defaults | w ext.stmt.class.detail.code | w ext.stmt.class.detail.argcount | w ext.stmt.class.detail.varnames | w ext.stmt.class.detail.receiver | w ext.stmt.class.detail.function | w ext.stmt.class.detail.locals | w ext.stmt.class.detail.main | w ext.stmt.class.detail.mro.amiss | w ext.stmt.class.detail.attribute.amiss | w ext.stmt.class.detail.unready | w ext.builtin.issubclass | w ext.builtin.callable | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.hasattr | w ext.builtin.vars | w ext.builtin.dir | w ext.builtin.staticmethod | w ext.builtin.classmethod | w ext.builtin.property | w ext.builtin.text.fault.protocol | b ext.op.index.text.negative | w ext.builtin.text.fault.index | w ext.builtin.text.splitlines | w ext.builtin.text.partition | w ext.builtin.text.rpartition | w ext.builtin.text.expandtabs | w ext.builtin.text.swapcase | w ext.builtin.text.casefold | w ext.builtin.text.capitalize | w ext.builtin.text.title | w ext.builtin.text.istitle | w ext.builtin.text.isidentifier | w ext.builtin.text.isprintable | w ext.builtin.text.isdecimal | w ext.builtin.text.isnumeric | w ext.builtin.text.isascii | w ext.builtin.text.removeprefix | w ext.builtin.text.removesuffix | w ext.builtin.text.format_map | w ext.builtin.text.maketrans | w ext.builtin.text.translate | w ext.builtin.text.encode | w ext.builtin.text.join | w ext.builtin.text.split | w ext.builtin.text.rsplit | w ext.builtin.text.strip | w ext.builtin.text.lstrip | w ext.builtin.text.rstrip | w ext.builtin.text.center | w ext.builtin.text.ljust | w ext.builtin.text.rjust | w ext.builtin.text.zfill | w ext.builtin.text.count | w ext.builtin.text.find | w ext.builtin.text.rfind | w ext.builtin.text.index | w ext.builtin.text.rindex | w ext.builtin.text.startswith | w ext.builtin.text.endswith | w ext.builtin.text.replace | w ext.builtin.text.upper | w ext.builtin.text.lower | w ext.builtin.text.length | w ext.builtin.text.repr | w ext.builtin.text.keyword.keepends | w ext.builtin.text.keyword.tabsize | w ext.builtin.text.keyword.maxsplit | w ext.builtin.text.keyword.sep | w ext.builtin.text.keyword.encoding | w ext.builtin.text.keyword.errors | w ext.builtin.text.fault.arguments | w ext.builtin.text.fault.receiver | w ext.builtin.text.fault.string | w ext.builtin.text.fault.integer | w ext.builtin.text.fault.separator | w ext.builtin.text.fault.fill | w ext.builtin.text.fault.missing | w ext.builtin.text.fault.encode | w ext.builtin.text.fault.mapping | w ext.builtin.text.fault.translation | w ext.builtin.text.fault.codepoint | w ext.builtin.text.fault.surrogate | w ext.builtin.text.fault.maketrans.length | w ext.builtin.text.fault.maketrans.key | w ext.builtin.text.fault.maketrans.type | w ext.builtin.text.fault.format | w ext.builtin.text.fault.format.positional | w ext.builtin.text.fault.format.brace | w ext.builtin.text.fault.join | w ext.builtin.text.fault.walk | w ext.builtin.text.fault.room | w ext.builtin.text.fault.key | w ext.builtin.text.complaint | b ext.builtin.text.repeat | w ext.builtin.bytes.signed | w ext.system.bytes.strict | w ext.builtin.bytes | w ext.builtin.bytearray | w ext.builtin.bytes.encode | w ext.builtin.bytes.decode | w ext.builtin.bytes.hex | w ext.builtin.bytes.fromhex | w ext.builtin.bytes.upper | w ext.builtin.bytes.lower | w ext.builtin.bytes.split | w ext.builtin.bytes.join | w ext.builtin.bytes.startswith | w ext.builtin.bytes.replace | w ext.builtin.bytes.strip | w ext.builtin.bytes.find | w ext.builtin.bytes.from_int | w ext.builtin.bytes.to_int | w ext.system.bytes.repr | w ext.system.bytes.type | w ext.system.bytes.encodings | w ext.system.bytes.order | w ext.system.bytes.unready | w ext.system.bytes.arguments | w ext.system.bytes.range | w ext.system.bytes.negative | w ext.system.bytes.index | w ext.system.bytes.immutable | w ext.system.bytes.unhashable | w ext.system.bytes.separator | w ext.system.bytes.hex | w ext.system.bytes.overflow | w ext.system.bytes.unsigned | w ext.system.bytes.bad_order | w ext.system.bytes.decode | w ext.system.bytes.encode | w ext.lexical.string.bytes.ascii | w ext.lexical.string.bytes.mixed | w ext.text.format.zero.integer | w ext.text.format.zero.string | w ext.op.rem.format.nan | w ext.op.rem.format.infinity | b ext.lexical.number.point.open | w ext.builtin.format | w ext.text.format | w ext.text.format.invalid | w ext.text.format.unknown | w ext.text.format.kinds | w ext.text.format.unready | w ext.text.format.precision.integer | w ext.text.format.precision.missing | w ext.text.format.sign.string | w ext.text.format.alternate.string | w ext.text.format.align.string | w ext.text.format.sign.character | w ext.text.format.alternate.character | w ext.text.format.character | w ext.text.format.spec.type | w ext.text.format.numbered.auto | w ext.text.format.numbered.manual | w ext.text.format.index | w ext.text.format.key | w ext.text.format.brace.open | w ext.text.format.brace.close | w ext.text.format.conversion | w ext.text.format.recursion | w ext.op.rem.format.few | w ext.op.rem.format.many | w ext.op.rem.format.mapping | w ext.op.rem.format.number | w ext.op.rem.format.integer | w ext.op.rem.format.real | w ext.op.rem.format.character | w ext.op.rem.format.star | w ext.op.rem.format.incomplete | w ext.op.rem.format.code | w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point | w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready | w ext.stmt.type_params.close | w ext.stmt.type_params.open | w ext.stmt.for.target.unready | w ext.op.identity.unready | w ext.op.identity.negated | w ext.op.identity | w ext.op.in.unready | w ext.op.in.negated | w ext.op.in | w ext.stmt.del.unrun | w ext.stmt.async.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.with.unready | w ext.op.lambda.unready | b ext.op.member.pipes | w ext.op.tuple.unready | w ext.lexical.number.imaginary.unready | w ext.lexical.number.imaginary | w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | b ext.lexical.escape.continued | b ext.stmt.loop.else | w ext.stmt.with.unrun | w ext.stmt.async.unrun | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters | b ext.op.pipe.attribute | b ext.stmt.yield.suspends | w ext.stmt.yield.exhausted | w ext.stmt.yield.send | w ext.stmt.yield.close | w ext.stmt.yield.throw | w ext.stmt.yield.unstarted | w ext.stmt.yield.busy | w ext.stmt.yield.unsupported | w ext.stmt.yield.throw.unavailable | w ext.builtin.next | w ext.builtin.iter | w ext.builtin.tuple | w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported | w ext.lexical.string.raw_prefix | w ext.lexical.string.text_prefix | b ext.syntax.string.adjacent | w ext.op.identity.unsupported | b ext.op.comparison.chain | b ext.stmt.for.range.stop | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare | b ext.lexical.string.triple | w ext.stmt.class.special.unready | w ext.stmt.class.special.declined | w ext.stmt.class.special.stop | w ext.stmt.class.special | w ext.stmt.class.special.amiss | w ext.builtin.repr | w ext.builtin.hash | w ext.builtin.bool | w ext.builtin.sorted | w ext.builtin.isinstance | b ext.op.arithmetic.binary | b ext.op.arithmetic.flags | w ext.builtin.to_real.infinity | w ext.builtin.to_real.nan | b ext.lexical.number.point_open | b ext.op.pow.real_exponent | w ext.op.pow.overflow | w ext.op.pow.nonreal | w ext.op.pow.zero | w ext.op.div.zero | w ext.op.quot.zero | w ext.op.quot.real_zero | w ext.op.rem.real_zero | w ext.builtin.to_int.text.detail | b ext.op.bit.unbounded | w ext.op.bit.integer | w ext.op.bit.beyond
+const EXT_LABELS: &str = "w ext.stmt.class.detail.call | w ext.stmt.class.detail.root | w ext.stmt.class.detail.mro | w ext.stmt.class.detail.order | w ext.stmt.class.detail.name | w ext.stmt.class.detail.qualified | w ext.stmt.class.detail.bases | w ext.stmt.class.detail.namespace | w ext.stmt.class.detail.kind | w ext.stmt.class.detail.allocate | w ext.stmt.class.detail.subclass | w ext.stmt.class.detail.slots | w ext.stmt.class.detail.set | w ext.stmt.class.detail.remove | w ext.stmt.class.detail.get | w ext.stmt.class.detail.getitem | w ext.stmt.class.detail.doc | w ext.stmt.class.detail.module | w ext.stmt.class.detail.defaults | w ext.stmt.class.detail.code | w ext.stmt.class.detail.argcount | w ext.stmt.class.detail.varnames | w ext.stmt.class.detail.receiver | w ext.stmt.class.detail.function | w ext.stmt.class.detail.locals | w ext.stmt.class.detail.main | w ext.stmt.class.detail.mro.amiss | w ext.stmt.class.detail.attribute.amiss | w ext.stmt.class.detail.unready | w ext.stmt.class.detail.descriptor.get | w ext.stmt.class.detail.descriptor.set | w ext.stmt.class.detail.descriptor.delete | w ext.stmt.class.detail.descriptor.name | w ext.stmt.class.detail.descriptor.foreign | w ext.stmt.class.detail.property.fget | w ext.stmt.class.detail.property.fset | w ext.stmt.class.detail.property.fdel | w ext.stmt.class.detail.property.getter | w ext.stmt.class.detail.property.deleter | w ext.stmt.class.detail.property.doc | w ext.stmt.class.detail.property.readonly | w ext.stmt.class.detail.property.unreadable | w ext.stmt.class.detail.property.unwritable | w ext.stmt.class.detail.property.undeletable | w ext.builtin.issubclass | w ext.builtin.callable | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.hasattr | w ext.builtin.vars | w ext.builtin.dir | w ext.builtin.staticmethod | w ext.builtin.classmethod | w ext.builtin.property | w ext.builtin.text.fault.protocol | b ext.op.index.text.negative | w ext.builtin.text.fault.index | w ext.builtin.text.splitlines | w ext.builtin.text.partition | w ext.builtin.text.rpartition | w ext.builtin.text.expandtabs | w ext.builtin.text.swapcase | w ext.builtin.text.casefold | w ext.builtin.text.capitalize | w ext.builtin.text.title | w ext.builtin.text.istitle | w ext.builtin.text.isidentifier | w ext.builtin.text.isprintable | w ext.builtin.text.isdecimal | w ext.builtin.text.isnumeric | w ext.builtin.text.isascii | w ext.builtin.text.removeprefix | w ext.builtin.text.removesuffix | w ext.builtin.text.format_map | w ext.builtin.text.maketrans | w ext.builtin.text.translate | w ext.builtin.text.encode | w ext.builtin.text.join | w ext.builtin.text.split | w ext.builtin.text.rsplit | w ext.builtin.text.strip | w ext.builtin.text.lstrip | w ext.builtin.text.rstrip | w ext.builtin.text.center | w ext.builtin.text.ljust | w ext.builtin.text.rjust | w ext.builtin.text.zfill | w ext.builtin.text.count | w ext.builtin.text.find | w ext.builtin.text.rfind | w ext.builtin.text.index | w ext.builtin.text.rindex | w ext.builtin.text.startswith | w ext.builtin.text.endswith | w ext.builtin.text.replace | w ext.builtin.text.upper | w ext.builtin.text.lower | w ext.builtin.text.length | w ext.builtin.text.repr | w ext.builtin.text.keyword.keepends | w ext.builtin.text.keyword.tabsize | w ext.builtin.text.keyword.maxsplit | w ext.builtin.text.keyword.sep | w ext.builtin.text.keyword.encoding | w ext.builtin.text.keyword.errors | w ext.builtin.text.fault.arguments | w ext.builtin.text.fault.receiver | w ext.builtin.text.fault.string | w ext.builtin.text.fault.integer | w ext.builtin.text.fault.separator | w ext.builtin.text.fault.fill | w ext.builtin.text.fault.missing | w ext.builtin.text.fault.encode | w ext.builtin.text.fault.mapping | w ext.builtin.text.fault.translation | w ext.builtin.text.fault.codepoint | w ext.builtin.text.fault.surrogate | w ext.builtin.text.fault.maketrans.length | w ext.builtin.text.fault.maketrans.key | w ext.builtin.text.fault.maketrans.type | w ext.builtin.text.fault.format | w ext.builtin.text.fault.format.positional | w ext.builtin.text.fault.format.brace | w ext.builtin.text.fault.join | w ext.builtin.text.fault.walk | w ext.builtin.text.fault.room | w ext.builtin.text.fault.key | w ext.builtin.text.complaint | b ext.builtin.text.repeat | w ext.builtin.bytes.signed | w ext.system.bytes.strict | w ext.builtin.bytes | w ext.builtin.bytearray | w ext.builtin.bytes.encode | w ext.builtin.bytes.decode | w ext.builtin.bytes.hex | w ext.builtin.bytes.fromhex | w ext.builtin.bytes.upper | w ext.builtin.bytes.lower | w ext.builtin.bytes.split | w ext.builtin.bytes.join | w ext.builtin.bytes.startswith | w ext.builtin.bytes.replace | w ext.builtin.bytes.strip | w ext.builtin.bytes.find | w ext.builtin.bytes.from_int | w ext.builtin.bytes.to_int | w ext.system.bytes.repr | w ext.system.bytes.type | w ext.system.bytes.encodings | w ext.system.bytes.order | w ext.system.bytes.unready | w ext.system.bytes.arguments | w ext.system.bytes.range | w ext.system.bytes.negative | w ext.system.bytes.index | w ext.system.bytes.immutable | w ext.system.bytes.unhashable | w ext.system.bytes.separator | w ext.system.bytes.hex | w ext.system.bytes.overflow | w ext.system.bytes.unsigned | w ext.system.bytes.bad_order | w ext.system.bytes.decode | w ext.system.bytes.encode | w ext.lexical.string.bytes.ascii | w ext.lexical.string.bytes.mixed | w ext.text.format.zero.integer | w ext.text.format.zero.string | w ext.op.rem.format.nan | w ext.op.rem.format.infinity | b ext.lexical.number.point.open | w ext.builtin.format | w ext.text.format | w ext.text.format.invalid | w ext.text.format.unknown | w ext.text.format.kinds | w ext.text.format.unready | w ext.text.format.precision.integer | w ext.text.format.precision.missing | w ext.text.format.sign.string | w ext.text.format.alternate.string | w ext.text.format.align.string | w ext.text.format.sign.character | w ext.text.format.alternate.character | w ext.text.format.character | w ext.text.format.spec.type | w ext.text.format.numbered.auto | w ext.text.format.numbered.manual | w ext.text.format.index | w ext.text.format.key | w ext.text.format.brace.open | w ext.text.format.brace.close | w ext.text.format.conversion | w ext.text.format.recursion | w ext.op.rem.format.few | w ext.op.rem.format.many | w ext.op.rem.format.mapping | w ext.op.rem.format.number | w ext.op.rem.format.integer | w ext.op.rem.format.real | w ext.op.rem.format.character | w ext.op.rem.format.star | w ext.op.rem.format.incomplete | w ext.op.rem.format.code | w ext.lexical.line_continuation | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.op.bit.whole | b ext.builtin.print.real_point | w ext.lexical.string.long | w ext.op.lambda | w ext.op.tuple | w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | w ext.stmt.class.unready | w ext.stmt.class.builtin | w ext.stmt.class.layout | w ext.stmt.class.missing | w ext.stmt.del | w ext.stmt.nonlocal | w ext.stmt.nonlocal.unrun | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.yield | w ext.stmt.yield.from | w ext.stmt.yield.unrun | w ext.system.scope.unready | w ext.stmt.type_params.close | w ext.stmt.type_params.open | w ext.stmt.for.target.unready | w ext.op.identity.unready | w ext.op.identity.negated | w ext.op.identity | w ext.op.in.unready | w ext.op.in.negated | w ext.op.in | w ext.stmt.del.unrun | w ext.stmt.async.unready | w ext.op.await | w ext.stmt.async | w ext.stmt.with.unready | w ext.op.lambda.unready | b ext.op.member.pipes | w ext.op.tuple.unready | w ext.lexical.number.imaginary.unready | w ext.lexical.number.imaginary | w ext.lexical.string.amiss | w ext.lexical.line_continuation.amiss | w ext.lexical.string.prefix.raw | w ext.lexical.string.prefix.plain | w ext.lexical.string.prefix.bytes | w ext.lexical.string.prefix.format | b ext.lexical.string.adjacent | w ext.lexical.string.unready | b ext.lexical.escape.continued | b ext.stmt.loop.else | w ext.stmt.with.unrun | w ext.stmt.async.unrun | w ext.stmt.match | w ext.stmt.match.case | w ext.stmt.type_alias | b ext.stmt.type_parameters | b ext.op.pipe.attribute | b ext.stmt.yield.suspends | w ext.stmt.yield.exhausted | w ext.stmt.yield.send | w ext.stmt.yield.close | w ext.stmt.yield.throw | w ext.stmt.yield.unstarted | w ext.stmt.yield.busy | w ext.stmt.yield.unsupported | w ext.stmt.yield.throw.unavailable | w ext.builtin.next | w ext.builtin.iter | w ext.builtin.tuple | w ext.stmt.class.suite | w ext.stmt.class.suite.unsupported | w ext.lexical.string.raw_prefix | w ext.lexical.string.text_prefix | b ext.syntax.string.adjacent | w ext.op.identity.unsupported | b ext.op.comparison.chain | b ext.stmt.for.range.stop | w ext.stmt.with.group.open | w ext.stmt.with.group.close | w ext.stmt.with.unsupported | w ext.stmt.nonlocal.unsupported | w ext.stmt.delete | w ext.stmt.delete.unsupported | w ext.syntax.tuple.separator | w ext.syntax.tuple.unsupported | w ext.syntax.value.spread | w ext.syntax.value.spread.unsupported | w ext.op.index.spread.unsupported | w ext.op.conditional | b ext.stmt.function.short.bare | b ext.lexical.string.triple | w ext.stmt.class.special.unready | w ext.stmt.class.special.declined | w ext.stmt.class.special.stop | w ext.stmt.class.special | w ext.stmt.class.special.amiss | w ext.builtin.repr | w ext.builtin.hash | w ext.builtin.bool | w ext.builtin.sorted | w ext.builtin.isinstance | b ext.op.arithmetic.binary | b ext.op.arithmetic.flags | w ext.builtin.to_real.infinity | w ext.builtin.to_real.nan | b ext.lexical.number.point_open | b ext.op.pow.real_exponent | w ext.op.pow.overflow | w ext.op.pow.nonreal | w ext.op.pow.zero | w ext.op.div.zero | w ext.op.quot.zero | w ext.op.quot.real_zero | w ext.op.rem.real_zero | w ext.builtin.to_int.text.detail | b ext.op.bit.unbounded | w ext.op.bit.integer | w ext.op.bit.beyond | w ext.stmt.class.index.amiss | w ext.stmt.class.binary.amiss | w ext.stmt.class.format.amiss | w ext.stmt.class.metaclass
 w ext.op.index.slice.ellipsis | w ext.op.index.slice | w ext.op.index.slice.zero | w ext.op.index.slice.bounds | w ext.op.index.slice.unsupported | w ext.op.index.slice.assign | w ext.op.index.slice.length | w ext.op.index.slice.detached
-w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step | w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.stmt.assign.names.chained | b ext.syntax.call.chained | w ext.op.lambda | w ext.op.lambda.unready | w ext.op.assign.expression | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.op.contains | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss | w ext.builtin.method.sort.key | w ext.builtin.method.sort.reverse | w ext.builtin.method.split.sep | w ext.builtin.method.split.maxsplit | w ext.builtin.method.upper | w ext.builtin.method.lower | w ext.builtin.method.strip | w ext.builtin.method.lstrip | w ext.builtin.method.rstrip | w ext.builtin.method.split | w ext.builtin.method.rsplit | w ext.builtin.method.join | w ext.builtin.method.replace | w ext.builtin.method.startswith | w ext.builtin.method.endswith | w ext.builtin.method.find | w ext.builtin.method.rfind | w ext.builtin.method.index | w ext.builtin.method.count | w ext.builtin.method.isdigit | w ext.builtin.method.isalpha | w ext.builtin.method.isalnum | w ext.builtin.method.isspace | w ext.builtin.method.islower | w ext.builtin.method.isupper | w ext.builtin.method.title | w ext.builtin.method.capitalize | w ext.builtin.method.center | w ext.builtin.method.ljust | w ext.builtin.method.rjust | w ext.builtin.method.zfill | w ext.builtin.method.format | w ext.builtin.method.encode | w ext.builtin.method.append | w ext.builtin.method.extend | w ext.builtin.method.insert | w ext.builtin.method.pop | w ext.builtin.method.remove | w ext.builtin.method.sort | w ext.builtin.method.reverse | w ext.builtin.method.copy | w ext.builtin.method.clear | w ext.builtin.method.get | w ext.builtin.method.keys | w ext.builtin.method.values | w ext.builtin.method.items | w ext.builtin.method.setdefault | w ext.builtin.method.update | w ext.builtin.method.bit_length | w ext.builtin.method.is_integer | w ext.builtin.method.hex | w ext.builtin.method.as_integer_ratio | w ext.builtin.method.error.unready | w ext.builtin.method.error.bytes | w ext.builtin.method.error.arguments | w ext.builtin.method.error.separator | w ext.builtin.method.error.substring | w ext.builtin.method.error.pop | w ext.builtin.method.error.index | w ext.builtin.method.error.remove | w ext.builtin.method.error.list_index | w ext.builtin.method.error.format | w ext.builtin.method.error.spec | w ext.builtin.method.error.unicode | w ext.builtin.method.error.attribute | w ext.builtin.method.error.key | w ext.builtin.method.error.missing | w ext.builtin.method.error.mixed | w ext.builtin.method.error.fill | w ext.builtin.sorted | w ext.builtin.isinstance | w ext.builtin.tuple | w ext.builtin.set | w ext.builtin.dict | w ext.builtin.reversed | w ext.builtin.enumerate | w ext.builtin.zip | w ext.builtin.filter | w ext.builtin.all | w ext.builtin.min | w ext.builtin.max | w ext.builtin.abs | w ext.builtin.round | w ext.builtin.divmod | w ext.builtin.pow | w ext.builtin.hex | w ext.builtin.oct | w ext.builtin.bin | w ext.builtin.repr | w ext.builtin.bool | w ext.builtin.callable | w ext.builtin.id | w ext.builtin.hash | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.hasattr | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.vars | w ext.builtin.key | w ext.builtin.reverse | w ext.builtin.start | w ext.builtin.default | w ext.builtin.round.ndigits | w ext.builtin.round.number | w ext.builtin.pow.base | w ext.builtin.pow.exp | w ext.builtin.pow.mod | w ext.builtin.core.uniterable | w ext.builtin.core.uncallable | w ext.builtin.core.unhashable | w ext.builtin.core.unready | w ext.builtin.core.exhausted | w ext.builtin.core.isinstance.amiss | w ext.builtin.core.empty | w ext.builtin.core.arity | w ext.builtin.core.attribute | w ext.builtin.core.attribute.name | w ext.builtin.core.vars | w ext.builtin.core.zero | w ext.builtin.core.mod.zero | w ext.builtin.core.inverse | w ext.builtin.core.default.many | w ext.builtin.core.dict.pair | w ext.builtin.core.unindexable | w ext.builtin.core.immutable | w ext.builtin.core.power.zero | w ext.builtin.core.power.overflow | w ext.builtin.core.arity.one | w ext.builtin.core.arity.exact | w ext.builtin.core.integer | w ext.builtin.core.not_iterator | w ext.builtin.core.power.integer | w ext.builtin.core.dict.sequence | w ext.builtin.set.add | w ext.builtin.set.remove | w ext.builtin.set.discard | w ext.builtin.set.pop | w ext.builtin.set.clear | w ext.builtin.set.copy | w ext.builtin.set.update | w ext.builtin.set.union | w ext.builtin.set.intersection | w ext.builtin.set.difference | w ext.builtin.set.symmetric_difference | w ext.builtin.set.issubset | w ext.builtin.set.issuperset | w ext.builtin.set.isdisjoint | w ext.builtin.set.intersection_update | w ext.builtin.set.difference_update | w ext.builtin.set.symmetric_difference_update | w ext.builtin.set.sorted | w ext.builtin.set.method.unavailable | w ext.builtin.set.changed | w ext.builtin.set.unhashable | w ext.builtin.set.missing | w ext.builtin.set.empty | w ext.builtin.set.operands | w ext.builtin.set.arguments | w ext.builtin.set.unsupported | w ext.builtin.set.unsortable
+w ext.op.comprehension.async | w ext.op.comprehension.async.unavailable | w ext.op.comprehension.target.unavailable | w ext.builtin.sum.non_number | w ext.builtin.range.non_integer | w ext.builtin.range.zero_step | w ext.op.comprehension.for | w ext.op.comprehension.in | w ext.op.comprehension.if | b ext.syntax.set | w ext.syntax.array.spread | w ext.syntax.map.spread | w ext.syntax.collection.unwalkable | w ext.syntax.map.spread.unmapped | w ext.op.comprehension.unpack.amiss | b ext.builtin.range.value | w ext.builtin.sum | w ext.builtin.list | w ext.builtin.any | w ext.lexical.epilogue | w ext.system.args.list | w ext.system.args.count | w ext.lexical.prologue.echo | b ext.lexical.prologue.folded | w ext.builtin.echo | b ext.syntax.call.bare | w ext.op.increment | b ext.lexical.number.point.bare | b ext.lexical.number.separator.after_prefix | b ext.stmt.assign.names.chained | b ext.syntax.call.chained | w ext.op.lambda | w ext.op.lambda.unready | w ext.op.assign.expression | w ext.literal.ellipsis | w ext.literal.ellipsis.unready | w ext.stmt.with | w ext.stmt.with.as | w ext.stmt.with.unready | w ext.op.tuple | w ext.op.tuple.unready | w ext.stmt.class.unready | b ext.op.bit.whole | w ext.op.matrix | w ext.op.matrix.unready | w ext.lexical.line_continuation | w ext.op.contains | b ext.op.bit.or.maps | b ext.op.eq.maps.unordered | w ext.builtin.print.separator | w ext.builtin.print.end | w ext.builtin.print.option.type | w ext.builtin.map | w ext.builtin.map.arguments.amiss | w ext.builtin.map.pair.amiss | w ext.builtin.method.sort.key | w ext.builtin.method.sort.reverse | w ext.builtin.method.sort.modified | w ext.builtin.method.split.sep | w ext.builtin.method.split.maxsplit | w ext.builtin.method.upper | w ext.builtin.method.lower | w ext.builtin.method.strip | w ext.builtin.method.lstrip | w ext.builtin.method.rstrip | w ext.builtin.method.split | w ext.builtin.method.rsplit | w ext.builtin.method.join | w ext.builtin.method.replace | w ext.builtin.method.startswith | w ext.builtin.method.endswith | w ext.builtin.method.find | w ext.builtin.method.rfind | w ext.builtin.method.index | w ext.builtin.method.count | w ext.builtin.method.isdigit | w ext.builtin.method.isalpha | w ext.builtin.method.isalnum | w ext.builtin.method.isspace | w ext.builtin.method.islower | w ext.builtin.method.isupper | w ext.builtin.method.title | w ext.builtin.method.capitalize | w ext.builtin.method.center | w ext.builtin.method.ljust | w ext.builtin.method.rjust | w ext.builtin.method.zfill | w ext.builtin.method.format | w ext.builtin.method.encode | w ext.builtin.method.append | w ext.builtin.method.extend | w ext.builtin.method.insert | w ext.builtin.method.pop | w ext.builtin.method.remove | w ext.builtin.method.sort | w ext.builtin.method.reverse | w ext.builtin.method.copy | w ext.builtin.method.clear | w ext.builtin.method.get | w ext.builtin.method.keys | w ext.builtin.method.values | w ext.builtin.method.items | w ext.builtin.method.setdefault | w ext.builtin.method.update | w ext.builtin.method.bit_length | w ext.builtin.method.is_integer | w ext.builtin.method.hex | w ext.builtin.method.as_integer_ratio | w ext.builtin.method.error.unready | w ext.builtin.method.error.bytes | w ext.builtin.method.error.arguments | w ext.builtin.method.error.separator | w ext.builtin.method.error.substring | w ext.builtin.method.error.pop | w ext.builtin.method.error.index | w ext.builtin.method.error.remove | w ext.builtin.method.error.list_index | w ext.builtin.method.error.format | w ext.builtin.method.error.spec | w ext.builtin.method.error.unicode | w ext.builtin.method.error.attribute | w ext.builtin.method.error.key | w ext.builtin.method.error.missing | w ext.builtin.method.error.mixed | w ext.builtin.method.error.fill | w ext.builtin.method.error.hex | w ext.builtin.method.error.hex_overflow | w ext.builtin.sorted | w ext.builtin.isinstance | w ext.builtin.tuple | w ext.builtin.set | w ext.builtin.dict | w ext.builtin.reversed | w ext.builtin.enumerate | w ext.builtin.zip | w ext.builtin.filter | w ext.builtin.all | w ext.builtin.min | w ext.builtin.max | w ext.builtin.abs | w ext.builtin.round | w ext.builtin.divmod | w ext.builtin.pow | w ext.builtin.hex | w ext.builtin.oct | w ext.builtin.bin | w ext.builtin.repr | w ext.builtin.bool | w ext.builtin.callable | w ext.builtin.id | w ext.builtin.hash | w ext.builtin.iter | w ext.builtin.next | w ext.builtin.hasattr | w ext.builtin.getattr | w ext.builtin.setattr | w ext.builtin.delattr | w ext.builtin.vars | w ext.builtin.key | w ext.builtin.reverse | w ext.builtin.start | w ext.builtin.default | w ext.builtin.round.ndigits | w ext.builtin.round.number | w ext.builtin.pow.base | w ext.builtin.pow.exp | w ext.builtin.pow.mod | w ext.builtin.core.uniterable | w ext.builtin.core.uncallable | w ext.builtin.core.unhashable | w ext.builtin.core.unready | w ext.builtin.core.exhausted | w ext.builtin.core.isinstance.amiss | w ext.builtin.core.empty | w ext.builtin.core.arity | w ext.builtin.core.attribute | w ext.builtin.core.attribute.name | w ext.builtin.core.vars | w ext.builtin.core.zero | w ext.builtin.core.mod.zero | w ext.builtin.core.inverse | w ext.builtin.core.default.many | w ext.builtin.core.dict.pair | w ext.builtin.core.unindexable | w ext.builtin.core.immutable | w ext.builtin.core.power.zero | w ext.builtin.core.power.overflow | w ext.builtin.core.arity.one | w ext.builtin.core.arity.exact | w ext.builtin.core.integer | w ext.builtin.core.not_iterator | w ext.builtin.core.power.integer | w ext.builtin.core.dict.sequence | w ext.builtin.set.add | w ext.builtin.set.remove | w ext.builtin.set.discard | w ext.builtin.set.pop | w ext.builtin.set.clear | w ext.builtin.set.copy | w ext.builtin.set.update | w ext.builtin.set.union | w ext.builtin.set.intersection | w ext.builtin.set.difference | w ext.builtin.set.symmetric_difference | w ext.builtin.set.issubset | w ext.builtin.set.issuperset | w ext.builtin.set.isdisjoint | w ext.builtin.set.intersection_update | w ext.builtin.set.difference_update | w ext.builtin.set.symmetric_difference_update | w ext.builtin.set.sorted | w ext.builtin.set.method.unavailable | w ext.builtin.set.changed | w ext.builtin.set.unhashable | w ext.builtin.set.missing | w ext.builtin.set.empty | w ext.builtin.set.operands | w ext.builtin.set.arguments | w ext.builtin.set.unsupported | w ext.builtin.set.unsortable
 w ext.op.decrement | w ext.lexical.interpolating_quotes | w ext.lexical.heredoc | b ext.lexical.escape.octal | b ext.system.text.bytes | w ext.lexical.prologue.brief | w ext.lexical.prologue.brief.setting | w ext.stmt.for.c | b ext.op.assign.compound
  | w ext.stmt.del.unrun | w ext.stmt.binding.unrun | b ext.stmt.loop.else | w ext.stmt.async | w ext.op.await | w ext.stmt.static | w ext.stmt.global | w ext.stmt.decorator | w ext.stmt.decorator.amiss | w ext.stmt.const | w ext.builtin.define | w ext.builtin.define.class_constant
 b ext.stmt.import.value | w ext.stmt.import.missing | w ext.stmt.import.member.missing | w ext.stmt.import.relative.unready
@@ -986,6 +1150,7 @@ w ext.builtin.member.set
 w ext.builtin.instance
 w ext.builtin.module.load
 w ext.builtin.copy
+w ext.syntax.map.resized | w ext.syntax.map.unhashable | b ext.syntax.map.value_keys | w ext.builtin.method.popitem | w ext.builtin.method.fromkeys | w ext.builtin.method.error.popitem
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
 w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
@@ -1020,11 +1185,11 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
-w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief | w ext.system.fault.index.assign
+w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
-w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short
+w ext.builtin.print.redirect | w ext.builtin.input | w ext.builtin.input.reader | w ext.builtin.stream.write | w ext.builtin.stream.read | w ext.builtin.stream.amiss | w ext.builtin.stream.failed | w ext.builtin.output.hold | w ext.builtin.output.held | w ext.builtin.output.drop | w ext.builtin.output.depth | w ext.builtin.output.begun | w ext.builtin.at_end | w ext.builtin.complaint.handler | w ext.builtin.complaint.say | w ext.op.hush | w ext.builtin.isset | w ext.builtin.empty | w ext.stmt.do | b ext.op.index.makes | w ext.builtin.calls | w ext.system.kind.object | w ext.builtin.uncaught | w ext.builtin.classes | w ext.builtin.routines | w ext.builtin.spelled | w ext.builtin.class.beneath | w ext.builtin.math | w ext.builtin.class.methods | w ext.builtin.class.properties | b ext.builtin.write.operator | w ext.system.kind.loose | w ext.builtin.clock | b ext.builtin.clock.parts | w ext.stmt.class.trait | w ext.stmt.class.uses | w ext.stmt.class.uses.alias | b ext.syntax.call.bind_names | w ext.stmt.function.carries.pairs | w ext.stmt.function.keyword_only | w ext.stmt.function.positional_only | w ext.syntax.call.spread | w ext.syntax.call.spread.pairs | w ext.syntax.call.amiss | w ext.syntax.call.amiss.missing | w ext.syntax.call.amiss.unknown | w ext.syntax.call.amiss.duplicate | w ext.syntax.call.amiss.builtin | w ext.builtin.print.sep | w ext.builtin.print.end | w ext.builtin.print.file | w ext.builtin.print.flush | w ext.builtin.print.file.error | w ext.builtin.print.file.output | w ext.builtin.print.file.unready | w ext.builtin.print.sep.amiss | w ext.builtin.print.end.amiss | w ext.builtin.to_int.base | w ext.builtin.to_int.base.amiss | w ext.builtin.to_int.text.amiss | w ext.builtin.to_int.text.required | b ext.builtin.to_real.text | w ext.builtin.to_real.text.amiss | w ext.builtin.to_string.object | w ext.builtin.to_string.encoding | w ext.builtin.to_string.errors | w ext.builtin.to_string.unready | b ext.builtin.range.value | w ext.builtin.range.zero | w ext.builtin.range.integer | w ext.builtin.range.index | w ext.syntax.call.spread.amiss | w ext.syntax.call.spread.pairs.amiss | w ext.stmt.function.defaults.amiss | w ext.stmt.function.parameters.amiss | w ext.stmt.function.carries | w ext.stmt.function.short | w ext.builtin.exceptions.context | w ext.builtin.exceptions.suppress | w ext.builtin.exceptions.traceback | w ext.stmt.throw.invalid | w ext.stmt.with.invalid | n ext.system.recursion.limit | w ext.system.recursion.exceeded | w ext.builtin.exceptions.note | w ext.builtin.exceptions.notes | w ext.builtin.exceptions.note.invalid | w ext.builtin.exceptions.traceback.member | w ext.builtin.exceptions.traceback.with | w ext.builtin.exceptions.name | w ext.builtin.exceptions.object | w ext.builtin.exceptions.os | w ext.builtin.exceptions.os.message | w ext.builtin.exceptions.group.message | w ext.builtin.exceptions.group.members | w ext.builtin.exceptions.group.split | w ext.builtin.exceptions.group.subgroup | w ext.builtin.exceptions.group.derive | w ext.builtin.exceptions.group.summary | w ext.builtin.exceptions.group.invalid | w ext.system.fault.held | w ext.stmt.catch.amiss | w ext.stmt.yield.escaped | w ext.builtin.range.members | w ext.builtin.range.missing
 w ext.system.untrue.text | b ext.system.untrue.empty_array | w ext.builtin.exit
 w ext.system.fault.operands | w ext.op.increment.text | w ext.op.decrement.text
 w ext.system.fault.class.arithmetic | w ext.system.fault.class.division | w ext.system.fault.class.kind | w ext.system.fault.class.value | w ext.system.fault.class.walk | w ext.op.walk.giver.unwalkable
@@ -1048,7 +1213,9 @@ w ext.lexical.number.binary_prefix | w ext.lexical.number.octal_prefix | b ext.l
 n ext.system.integer.bits | n ext.system.real.bits | n ext.system.real.digits
 w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
-";
+ | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready
+w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -1232,6 +1399,119 @@ fn name_like(s: &str, unicode: bool, prefix: Option<char>) -> bool {
 }
 
 impl Lang {
+    /// Text of a number with the digit separators taken out, or nothing
+    /// where one of them stands anywhere but between two figures. Text
+    /// with no separator in it comes back as it was.
+    pub fn number_separator_between_digits(&self, text: &str) -> Option<String> {
+        if self.digit_separators.is_empty() || !text.contains(|c| self.digit_separators.contains(&c)) {
+            return Some(text.to_string());
+        }
+        let letters: Vec<char> = text.chars().collect();
+        let mut joined = String::new();
+        for (at, &letter) in letters.iter().enumerate() {
+            if !self.digit_separators.contains(&letter) {
+                joined.push(letter);
+                continue;
+            }
+            let before = at.checked_sub(1).and_then(|i| letters.get(i)).map_or(false, char::is_ascii_digit);
+            let after = letters.get(at + 1).map_or(false, char::is_ascii_digit);
+            if !(before && after) { return None; }
+        }
+        Some(joined)
+    }
+
+    /// Whether the definition has slice values of its own: a builtin
+    /// that makes one, and so keys of several places and a slice's
+    /// complaints told under the classes the definition gave them.
+    pub fn slice_values(&self) -> bool {
+        self.slice_parts.get("ext.builtin.slice").map_or(false, |word| !word.is_empty())
+    }
+
+    /// Whether these words are a complaint of the value protocol, already
+    /// told under its class: a class that may not be built on, a truth
+    /// method's wrong answer, two values in no order, the least or the
+    /// greatest of nothing at all.
+    pub fn protocol_named(&self, said: &str) -> bool {
+        let opens_with = |words: &[String]| words.first().map_or(false, |opening| !opening.is_empty() && said.starts_with(opening.as_str()));
+        self.bool_base.as_deref() == Some(said)
+            || self.layout_amiss.as_deref() == Some(said)
+            || self.catch_amiss.as_deref() == Some(said)
+            || self.bool_result.as_deref().map_or(false, |opening| !opening.is_empty() && said.starts_with(opening))
+            || self.fault_shift.as_deref() == Some(said)
+            || self.to_int_infinity.as_deref() == Some(said) || self.to_int_nan.as_deref() == Some(said)
+            || opens_with(&self.digits_amiss) || opens_with(&self.integer_text_detail)
+            || self.core_between("core.not_iterator", said) || self.core_between("core.uniterable", said) || self.core_between("core.unsized", said)
+            || self.core_between("core.empty", said)
+            || self.core_words.get("core.dict.changed").and_then(|words| words.first()).map_or(false, |whole| whole == said)
+            || self.uneven_zip_named("zip.short", said) || self.uneven_zip_named("zip.long", said)
+            || self.between_pieces(&self.index_answer_amiss, said) || self.between_pieces(&self.format_spec_amiss, said)
+            || match self.order_unsupported.as_slice() {
+                [before, between, and, after] => !before.is_empty() && said.starts_with(before.as_str()) && said.contains(between.as_str()) && said.contains(and.as_str()) && said.ends_with(after.as_str()),
+                _ => false,
+            }
+            || match self.operands_amiss.as_slice() {
+                [before, between, and, after] => !before.is_empty() && said.starts_with(before.as_str()) && said.contains(between.as_str()) && said.contains(and.as_str()) && said.ends_with(after.as_str()),
+                _ => false,
+            }
+    }
+
+    /// Whether the words open and close with the two pieces of a
+    /// protocol complaint that stands either side of a name.
+    fn between_pieces(&self, pieces: &[String], said: &str) -> bool {
+        matches!(pieces, [before, after] if !before.is_empty() && said.starts_with(before.as_str()) && said.ends_with(after.as_str()))
+    }
+
+    /// Whether the protocol list reaches the in-place operations, so
+    /// that a compound write may ask the place it lands on first.
+    pub fn in_place_methods(&self) -> bool { self.class_special.len() > 59 }
+
+    /// Whether the words open and close with the two pieces of a core
+    /// word that stands either side of a kind.
+    fn core_between(&self, label: &str, said: &str) -> bool {
+        matches!(self.core_words.get(label).map(Vec::as_slice), Some([before, after]) if !before.is_empty() && said.starts_with(before.as_str()) && said.ends_with(after.as_str()))
+    }
+
+    /// Whether the words are zip's complaint of sources of unequal
+    /// length, which opens with its first piece and closes with either
+    /// of the other two, the last followed by a number.
+    fn uneven_zip_named(&self, label: &str, said: &str) -> bool {
+        matches!(self.core_words.get(label).map(Vec::as_slice), Some([opening, one, many]) if !opening.is_empty() && said.starts_with(opening.as_str()) && (said.ends_with(one.as_str()) || said.contains(many.as_str())))
+    }
+
+    /// Whether these words are a slice's own complaint, already told
+    /// under its class where the definition has slice values.
+    pub fn slice_named(&self, said: &str) -> bool {
+        if !self.slice_values() { return false; }
+        [&self.slice_zero, &self.slice_bounds, &self.slice_assign].iter().any(|words| words.as_deref() == Some(said))
+            || ["ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"].iter()
+                .any(|label| self.slice_parts.get(*label).map_or(false, |words| !words.is_empty() && words == said))
+            || self.slice_length.first().map_or(false, |opening| !opening.is_empty() && said.starts_with(opening.as_str()))
+    }
+
+    /// Whether these are words the definition gave for a fault of the
+    /// sequence workings. Such a fault is told in the language's own
+    /// voice, with no name of the kernel's put before it.
+    pub fn sequence_named(&self, said: &str) -> bool {
+        if !self.sequence_values { return false; }
+        // A fault of these workings is known by the words on both sides
+        // of what is written between them; the opening alone would
+        // claim every complaint of that name.
+        let paired = |words: &[String], opens: usize, closes: usize| match (words.get(opens), words.get(closes)) {
+            (Some(head), Some(tail)) if !head.is_empty() && !tail.is_empty() =>
+                said.starts_with(head.as_str()) && said[head.len()..].contains(tail.as_str()),
+            _ => false,
+        };
+        let opening = |words: &[String], at: usize| words.get(at).map_or(false, |head| !head.is_empty() && said.starts_with(head.as_str()));
+        let whole = |words: &[String], at: usize| words.get(at).map_or(false, |word| !word.is_empty() && said == word.as_str());
+        paired(&self.sequence_concat, 0, 1)
+            || paired(&self.sequence_repeat, 0, 1) || whole(&self.sequence_repeat, 2)
+            || paired(&self.sequence_index, 0, 1)
+            || paired(&self.sequence_delete, 0, 1)
+            || paired(&self.sequence_subscript, 0, 1) || opening(&self.sequence_subscript, 2)
+            || paired(&self.sequence_missing, 0, 1) || whole(&self.sequence_missing, 2)
+            || paired(&self.sequence_assign, 0, 1)
+    }
+
     pub fn parse(text: &str) -> Result<Lang, String> {
         let map = top_object(text)?;
         let shapes = number_shapes();
@@ -1467,6 +1747,9 @@ impl Lang {
 
         let mut natives = HashMap::new();
         for (tag, native) in [
+            ("ext.builtin.complex", Builtin::Complex),
+            ("ext.builtin.method.conjugate", Builtin::ValueMethod),
+            ("ext.builtin.method.bit_count", Builtin::ValueMethod), ("ext.builtin.method.numerator", Builtin::ValueMethod), ("ext.builtin.method.denominator", Builtin::ValueMethod), ("ext.builtin.method.real", Builtin::ValueMethod), ("ext.builtin.method.imag", Builtin::ValueMethod), ("ext.builtin.method.__index__", Builtin::ValueMethod), ("ext.builtin.method.__truediv__", Builtin::ValueMethod), ("ext.builtin.method.fromhex", Builtin::ValueMethod), ("ext.builtin.method.indices", Builtin::ValueMethod), ("ext.builtin.method.slice_hash", Builtin::ValueMethod), ("ext.builtin.method.popitem", Builtin::ValueMethod), ("ext.builtin.method.fromkeys", Builtin::ValueMethod),
             ("ext.builtin.isinstance", Builtin::InstanceOf),
             ("ext.builtin.tuple", Builtin::Tuple),
             ("ext.builtin.set", Builtin::Set),
@@ -1499,6 +1782,11 @@ impl Lang {
             ("ext.builtin.setattr", Builtin::SetAttr),
             ("ext.builtin.delattr", Builtin::DelAttr),
             ("ext.builtin.vars", Builtin::Vars),
+            ("ext.builtin.globals", Builtin::OuterNames),
+            ("ext.builtin.locals", Builtin::NearNames),
+            ("ext.builtin.exec", Builtin::RunText),
+            ("ext.builtin.compile", Builtin::ReadyText),
+            ("ext.builtin.import", Builtin::Summon),
             ("ext.builtin.sum", Builtin::Sum),
             ("ext.builtin.list", Builtin::List),
             ("ext.builtin.any", Builtin::Any),
@@ -1640,6 +1928,7 @@ impl Lang {
             ("ext.builtin.print_r", Builtin::Layout), ("ext.builtin.unset", Builtin::Erase), ("ext.builtin.array.front", Builtin::Lead),
             ("ext.builtin.isset", Builtin::Held), ("ext.builtin.empty", Builtin::Hollow),
             ("ext.builtin.exit", Builtin::Leave),
+            ("ext.builtin.input", Builtin::Ask), ("ext.builtin.slice", Builtin::MakeSlice), ("ext.builtin.stream.write", Builtin::StreamPut), ("ext.builtin.stream.read", Builtin::StreamTake),
             ("ext.builtin.args.all", Builtin::Given), ("ext.builtin.args.count", Builtin::GivenCount),
             ("ext.builtin.args.at", Builtin::GivenAt), ("ext.builtin.time_limit", Builtin::TimeLimit),
             ("ext.builtin.eval", Builtin::Eval), ("ext.builtin.include", Builtin::Include), ("ext.builtin.include.once", Builtin::IncludeOnce),
@@ -1663,13 +1952,15 @@ impl Lang {
             ("ext.builtin.room.used", Builtin::RoomUsed), ("ext.builtin.room.most", Builtin::RoomMost),
             ("ext.builtin.room.most.forget", Builtin::RoomForget), ("ext.builtin.room.limit", Builtin::RoomLimit),
             ("ext.builtin.file.read", Builtin::FileRead), ("ext.builtin.file.write", Builtin::FileWrite),
-            ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.remove", Builtin::FileGone),
+            ("ext.builtin.file.exists", Builtin::FileThere), ("ext.builtin.file.kind", Builtin::FileKind), ("ext.system.fault.current", Builtin::FaultInHand), ("ext.system.fault.held", Builtin::FaultItself), ("ext.builtin.host.info", Builtin::HostFacts), ("ext.builtin.file.remove", Builtin::FileGone),
             ("ext.builtin.shell", Builtin::ShellSaid),
             ("ext.builtin.net.ask", Builtin::NetAsk), ("ext.builtin.wait", Builtin::Waited),
             ("ext.builtin.run.begin", Builtin::RunBegin), ("ext.builtin.run.end", Builtin::RunEnd),
         ] {
-            if native == Builtin::ValueMethod { continue; }
             for lex in r.strings(tag)? {
+                // A method spelled with its class before it (float.fromhex)
+                // is a builtin word of its own; a bare method word is not.
+                if native == Builtin::ValueMethod && !lex.contains('.') { continue; }
                 let begins = lex.chars().next().map_or(false, |c| c == '_' || c.is_alphabetic());
                 if !begins || lex.chars().any(|c| c.is_whitespace() || quotes.contains(&c)) {
                     return Err(format!("builtin name '{lex}' must begin like an identifier and hold no spaces or quotes"));
@@ -1725,7 +2016,7 @@ impl Lang {
         prefix.push_str(name.get(1..).unwrap_or(""));
         prefix.push_str("Error");
 
-        let core_words = ["core.integer", "core.not_iterator", "core.power.integer", "core.dict.sequence", "core.unindexable", "core.immutable", "core.power.zero", "core.power.overflow", "core.arity.one", "core.arity.exact", "key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
+        let core_words = ["core.integer", "core.not_iterator", "core.power.integer", "core.dict.sequence", "core.unindexable", "core.immutable", "core.power.zero", "core.power.overflow", "core.arity.one", "core.arity.exact", "key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair", "core.unsized", "core.dict.changed", "zip.strict", "zip.short", "zip.long"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
         let mut lang = Lang {
             core_words,
             ident: name,
@@ -1740,6 +2031,14 @@ impl Lang {
             with_unready: r.strings("ext.stmt.with.unready")?,
             yield_from: r.strings("ext.stmt.yield.from")?,
             member_pipes: r.flag("ext.op.member.pipes")?,
+            sequence_values: r.flag("ext.op.sequence.values")?,
+            sequence_concat: r.strings("ext.op.sequence.concat")?,
+            sequence_repeat: r.strings("ext.op.sequence.repeat")?,
+            sequence_index: r.strings("ext.op.sequence.index")?,
+            sequence_delete: r.strings("ext.op.sequence.delete")?,
+            sequence_subscript: r.strings("ext.op.sequence.subscript")?,
+            sequence_missing: r.strings("ext.op.sequence.missing")?,
+            sequence_assign: r.strings("ext.op.sequence.assign")?,
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             byte_words: ["ext.builtin.bytes.signed", "ext.system.bytes.strict", "ext.builtin.bytes", "ext.builtin.bytearray", "ext.builtin.bytes.encode", "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower", "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace", "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.from_int", "ext.builtin.bytes.to_int", "ext.builtin.isinstance", "ext.builtin.hash", "ext.system.bytes.repr", "ext.system.bytes.type", "ext.system.bytes.encodings", "ext.system.bytes.order", "ext.system.bytes.unready", "ext.system.bytes.arguments", "ext.system.bytes.range", "ext.system.bytes.negative", "ext.system.bytes.index", "ext.system.bytes.immutable", "ext.system.bytes.unhashable", "ext.system.bytes.separator", "ext.system.bytes.hex", "ext.system.bytes.overflow", "ext.system.bytes.unsigned", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed"].iter().map(|key| Ok((key.to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
@@ -1840,6 +2139,7 @@ impl Lang {
             byte_letter: r.letter("ext.lexical.escape.byte")?,
             number_amiss: r.head("ext.lexical.number.amiss")?,
             imaginary_letters: r.letters("ext.lexical.number.imaginary")?,
+            complex_words: ["ext.builtin.complex", "ext.builtin.complex.real", "ext.builtin.complex.imag", "ext.builtin.method.conjugate", "ext.builtin.complex.invalid", "ext.builtin.complex.integer", "ext.builtin.complex.order", "ext.builtin.complex.floor", "ext.builtin.complex.zero", "ext.builtin.complex.power.zero", "ext.builtin.complex.unready"].into_iter().map(|label| Ok((label.to_string(), r.strings(label)?))).collect::<Result<_, String>>()?,
             imaginary_unready: r.head("ext.lexical.number.imaginary.unready")?,
             number_point_edge: r.flag("ext.lexical.number.point_edge")?,
             number_strict: r.flag("ext.lexical.number.separator.strict")?,
@@ -1879,6 +2179,10 @@ impl Lang {
             bits_integer: r.strings("ext.op.bit.integer")?,
             bits_beyond: r.strings("ext.op.bit.beyond")?,
             real_bits: r.count("ext.system.real.bits")?,
+            shortest_reals: match r.string("system.real.render")?.as_str() {
+                "shortest" => true, "library" => false,
+                _ => return Err("system.real.render must be 'library' or 'shortest'".into()),
+            },
             real_digits: r.count("ext.system.real.digits")?,
             figures_binding: r.head("ext.system.real.figures")?,
             figures_shown_binding: r.head("ext.system.real.figures.shown")?,
@@ -1928,8 +2232,8 @@ impl Lang {
             dyadic: binary,
             monadic: unary,
             method_keywords: [("ext.builtin.method.sort.key", "key"), ("ext.builtin.method.sort.reverse", "reverse"), ("ext.builtin.method.split.sep", "sep"), ("ext.builtin.method.split.maxsplit", "maxsplit")].into_iter().map(|(label, purpose)| Ok((purpose, r.strings(label)?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(purpose, words)| words.into_iter().map(move |word| (word, purpose.to_string()))).collect(),
-            value_methods: ["upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
-            method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "attribute", "key", "missing", "mixed", "fill"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
+            value_methods: ["indices", "slice_hash", "bit_count", "numerator", "denominator", "real", "imag", "__index__", "__truediv__", "fromhex", "conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "popitem", "fromkeys", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
+            method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "attribute", "key", "missing", "mixed", "fill", "hex", "hex_overflow", "popitem"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             pipe_words: pipes,
             range_marks: ranges,
             precedence: syntax_tiers,
@@ -2014,15 +2318,36 @@ impl Lang {
             exceptions: r.strings("ext.builtin.exceptions")?,
             exception_args: r.head("ext.builtin.exceptions.args")?,
             exception_cause: r.head("ext.builtin.exceptions.cause")?,
+            exception_context: r.head("ext.builtin.exceptions.context")?,
+            exception_suppress: r.head("ext.builtin.exceptions.suppress")?,
+            exception_traceback: r.head("ext.builtin.exceptions.traceback")?,
+            note_method: r.head("ext.builtin.exceptions.note")?,
+            notes_member: r.head("ext.builtin.exceptions.notes")?,
+            note_invalid: r.head("ext.builtin.exceptions.note.invalid")?,
+            traceback_member: r.head("ext.builtin.exceptions.traceback.member")?,
+            traceback_setter: r.head("ext.builtin.exceptions.traceback.with")?,
+            absent_name_member: r.head("ext.builtin.exceptions.name")?,
+            absent_object_member: r.head("ext.builtin.exceptions.object")?,
+            os_members: r.strings("ext.builtin.exceptions.os")?,
+            os_message: r.strings("ext.builtin.exceptions.os.message")?,
+            group_message: r.head("ext.builtin.exceptions.group.message")?,
+            group_members: r.head("ext.builtin.exceptions.group.members")?,
+            group_split: r.head("ext.builtin.exceptions.group.split")?,
+            group_subgroup: r.head("ext.builtin.exceptions.group.subgroup")?,
+            group_derive: r.head("ext.builtin.exceptions.group.derive")?,
+            group_summary: r.strings("ext.builtin.exceptions.group.summary")?,
+            group_invalid: r.head("ext.builtin.exceptions.group.invalid")?,
             class_name: r.head("ext.builtin.class.name")?,
             exception_unready: r.head("ext.builtin.exceptions.unready")?,
             division_words: r.head("ext.system.fault.division")?,
             index_words: r.head("ext.system.fault.index")?,
+            index_written_words: r.head("ext.system.fault.index.assign")?,
             name_words: r.strings("ext.system.fault.name")?,
             attribute_words: r.strings("ext.system.fault.attribute")?,
             kind_words: r.head("ext.system.fault.kind")?,
             fault_index: r.head("ext.system.fault.class.index")?,
             fault_key: r.head("ext.system.fault.class.key")?,
+            marks_lines: r.flag("ext.system.source.marked")?,
             fault_name: r.head("ext.system.fault.class.name")?,
             fault_attribute: r.head("ext.system.fault.class.attribute")?,
             fault_stop: r.head("ext.system.fault.class.stop")?,
@@ -2058,6 +2383,20 @@ impl Lang {
             },
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
+            unimplemented_words: r.strings("ext.literal.unimplemented")?,
+            shadow_builtins: r.flag("ext.syntax.names.shadow_builtins")?,
+            integer_digits: r.count("ext.builtin.to_int.digits")?,
+            digits_amiss: r.strings("ext.builtin.to_int.digits.amiss")?,
+            to_int_infinity: r.head("ext.builtin.to_int.infinity")?,
+            to_int_nan: r.head("ext.builtin.to_int.nan")?,
+            round_whole_even: r.flag("ext.builtin.round.whole.even")?,
+            bool_base: r.head("ext.builtin.bool.base")?,
+            builtin_bases: r.strings("ext.stmt.class.builtin")?,
+            layout_amiss: r.head("ext.stmt.class.layout")?,
+            missing_key: r.head("ext.stmt.class.missing")?,
+            bool_result: r.head("ext.builtin.bool.result")?,
+            order_unsupported: r.strings("ext.op.order.unsupported")?,
+            sort_modified: r.strings("ext.builtin.method.sort.modified")?,
             lambda_words: r.strings("ext.op.lambda")?,
             lambda_unready: r.head("ext.op.lambda.unready")?,
             expression_assign: r.strings("ext.op.assign.expression")?,
@@ -2091,6 +2430,10 @@ impl Lang {
             special_unready: r.strings("ext.stmt.class.special.unready")?,
             class_special: r.strings("ext.stmt.class.special")?,
             special_amiss: r.strings("ext.stmt.class.special.amiss")?,
+            index_answer_amiss: r.strings("ext.stmt.class.index.amiss")?,
+            operands_amiss: r.strings("ext.stmt.class.binary.amiss")?,
+            format_spec_amiss: r.strings("ext.stmt.class.format.amiss")?,
+            metaclass_word: r.strings("ext.stmt.class.metaclass")?,
             class_unready: r.strings("ext.stmt.class.unready")?,
             yield_suspends: r.flag("ext.stmt.yield.suspends")?,
             yield_exhausted: r.strings("ext.stmt.yield.exhausted")?,
@@ -2119,7 +2462,14 @@ impl Lang {
             member_absent: r.strings("ext.builtin.member.absent")?,
             module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
-            class_details: ["call", "locals", "root", "mro", "order", "name", "qualified", "bases", "namespace", "kind", "allocate", "subclass", "slots", "set", "remove", "get", "getitem", "doc", "module", "defaults", "code", "argcount", "varnames", "receiver", "function", "main", "mro.amiss", "attribute.amiss", "unready"].into_iter().map(|part| Ok((part.to_string(), r.strings(&format!("ext.stmt.class.detail.{}", part))?))).collect::<Result<_, String>>()?,
+            module_doc: r.strings("ext.system.module.doc")?,
+            module_builtins: r.strings("ext.system.module.builtins")?,
+            compile_modes: r.strings("ext.builtin.compile.modes")?,
+            compile_parameters: r.strings("ext.builtin.compile.parameters")?,
+            compile_kind: r.head("ext.builtin.compile.kind")?,
+            source_syntax: r.head("ext.builtin.source.syntax")?,
+            source_unready: r.head("ext.builtin.source.unready")?,
+            class_details: ["call", "locals", "root", "mro", "order", "name", "qualified", "bases", "namespace", "kind", "allocate", "subclass", "slots", "set", "remove", "get", "getitem", "doc", "module", "defaults", "code", "argcount", "varnames", "receiver", "function", "main", "mro.amiss", "attribute.amiss", "unready", "descriptor.get", "descriptor.set", "descriptor.delete", "descriptor.name", "descriptor.foreign", "property.fget", "property.fset", "property.fdel", "property.getter", "property.deleter", "property.doc", "property.readonly", "property.unreadable", "property.unwritable", "property.undeletable"].into_iter().map(|part| Ok((part.to_string(), r.strings(&format!("ext.stmt.class.detail.{}", part))?))).collect::<Result<_, String>>()?,
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,
@@ -2243,6 +2593,9 @@ impl Lang {
             tuple_separator: r.head("ext.op.tuple")?,
             or_maps: r.flag("ext.op.bit.or.maps")?,
             unordered_maps: r.flag("ext.op.eq.maps.unordered")?,
+            value_keys: r.flag("ext.syntax.map.value_keys")?,
+            map_unhashable: r.strings("ext.syntax.map.unhashable")?,
+            map_resized: r.head("ext.syntax.map.resized")?,
             print_separator: r.head("ext.builtin.print.separator")?,
             print_ending: r.head("ext.builtin.print.end")?,
             print_option_type: r.head("ext.builtin.print.option.type")?,
@@ -2269,6 +2622,12 @@ impl Lang {
             constructor: r.head("ext.stmt.class.constructor")?,
             destructor: r.head("ext.stmt.class.destructor")?,
             reader: r.head("ext.stmt.class.reader")?,
+            module_getattr: r.head("ext.system.module.getattr")?,
+            class_annotations: r.strings("ext.stmt.class.annotations")?,
+            class_called: r.head("ext.stmt.class.called")?,
+            text_ordered: r.flag("ext.op.order.text")?,
+            slice_parts: ["ext.builtin.slice", "ext.builtin.slice.start", "ext.builtin.slice.stop", "ext.builtin.slice.step", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.integer", "ext.op.index.slice.amiss"].into_iter().map(|k| Ok((k.to_string(), r.head(k)?.unwrap_or_default()))).collect::<Result<_, String>>()?,
+            class_walked: r.head("ext.stmt.class.walked")?,
             writer: r.head("ext.stmt.class.writer")?,
             caller: r.head("ext.stmt.class.caller")?,
             walker_class: r.head("ext.op.walk.class")?,
@@ -2313,6 +2672,11 @@ impl Lang {
             print_end: r.strings("ext.builtin.print.end")?,
             print_file: r.strings("ext.builtin.print.file")?,
             print_flush: r.strings("ext.builtin.print.flush")?,
+            print_route: r.strings("ext.builtin.print.redirect")?,
+            input_route: r.strings("ext.builtin.input.reader")?,
+            stream_amiss: r.strings("ext.builtin.stream.amiss")?,
+            stream_failed: r.strings("ext.builtin.stream.failed")?,
+            clock_parts: r.flag("ext.builtin.clock.parts")?,
             print_file_error: r.strings("ext.builtin.print.file.error")?,
             print_file_output: r.strings("ext.builtin.print.file.output")?,
             print_file_unready: r.strings("ext.builtin.print.file.unready")?,
@@ -2332,6 +2696,8 @@ impl Lang {
             range_zero: r.strings("ext.builtin.range.zero")?,
             range_integer: r.strings("ext.builtin.range.integer")?,
             range_index: r.strings("ext.builtin.range.index")?,
+            range_members: r.strings("ext.builtin.range.members")?,
+            range_missing: r.strings("ext.builtin.range.missing")?,
             spread_amiss: r.strings("ext.syntax.call.spread.amiss")?,
             spread_pairs_amiss: r.strings("ext.syntax.call.spread.pairs.amiss")?,
             parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
@@ -2358,6 +2724,12 @@ impl Lang {
             try_else: r.flag("ext.stmt.try.else")?,
             throw_from: r.strings("ext.stmt.throw.from")?,
             throw_empty: r.head("ext.stmt.throw.empty")?,
+            throw_invalid: r.head("ext.stmt.throw.invalid")?,
+            catch_amiss: r.head("ext.stmt.catch.amiss")?,
+            yield_escaped: r.head("ext.stmt.yield.escaped")?,
+            with_invalid: r.strings("ext.stmt.with.invalid")?,
+            recursion_limit: r.count("ext.system.recursion.limit")?,
+            recursion_exceeded: r.head("ext.system.recursion.exceeded")?,
             try_words: r.strings("ext.stmt.try")?,
             catch_words: r.strings("ext.stmt.catch")?,
             finally_words: r.strings("ext.stmt.finally")?,

@@ -11,5 +11,10 @@
         y 2 * 1 + 2 // 'r' =
     else
         y 2 * 1 - 2 // 'r' =
-    r scale / return
+    r scale // 'q' =
+    q scale * r == if
+        q return
+    else
+        r scale / return
+    null return
 » 'round' =

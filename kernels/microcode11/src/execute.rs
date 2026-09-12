@@ -336,6 +336,12 @@ impl<'a> Machine<'a> {
             Op::Not => Value::Truth(!self.eval(&args[0], frame)?.is_true()),
             Op::Neg => {
                 let v = self.eval(&args[0], frame)?;
+                if let Value::Fraction(r) = &v {
+                    if r.digits.is_some() && crate::decimal::active() {
+                        let (num, den) = crate::decimal::ratio(-crate::decimal::binary(&r.num, &r.den));
+                        return Ok(Value::Fraction(Rc::new(crate::value::Ratio { num, den, digits: r.digits })));
+                    }
+                }
                 match numeric::compute(Arith::Sub, &Value::Small(0), &v) {
                     Some(r) => r?,
                     None => return Err("Cannot negate non-numeric value".to_string().into()),

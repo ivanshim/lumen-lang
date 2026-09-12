@@ -1,14 +1,26 @@
 // The small values used by the collection builtins. Quoting descends
 // through a collection, while the ordinary writer keeps its old form.
 
-use crate::value::Value;
+use crate::value::{CursorSource, Value};
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive};
 use std::hash::{Hash, Hasher};
 
 impl Value {
+    /// What a value of the given sort is called, as CPython names it,
+    /// which is what the kind value standing for the sort answers to
+    /// its name.
+    pub fn sort_called(sort: crate::value::Sort) -> &'static str {
+        use crate::value::Sort;
+        match sort {
+            Sort::Integer => "int", Sort::Rational | Sort::Real => "float", Sort::Text => "str",
+            Sort::Boolean => "bool", Sort::Array => "list", Sort::Set => "set", Sort::Null => "NoneType",
+        }
+    }
+
     pub fn core_kind(&self) -> String {
         match self {
+            Value::Complex(_) => "complex",
             Value::Small(_) | Value::Huge(_) => "int",
             Value::Real(_) | Value::Frac(_) => "float",
             Value::Text(_) => "str",
@@ -19,7 +31,20 @@ impl Value {
             Value::Set(_) => "set",
             Value::Map(_) => "dict",
             Value::Counted(_) => "range",
-            Value::Cursor(_) => "iterator",
+            Value::Slice(_) => "slice",
+            Value::Ellipsis => "ellipsis",
+            // A cursor is known by what it walks, as CPython names it.
+            Value::Cursor(state) => return state.try_borrow().map_or("iterator", |held| match &held.source {
+                CursorSource::Living(..) => "list_iterator",
+                CursorSource::Counted(..) => "range_iterator",
+                CursorSource::Viewed(Value::View(window), ..) => match window.1.as_str() { "keys" => "dict_keyiterator", "values" => "dict_valueiterator", _ => "dict_itemiterator" },
+                CursorSource::Called(..) => "callable_iterator",
+                CursorSource::Numbered(..) => "enumerate",
+                CursorSource::Combined(_, Some(_), _) => "map",
+                CursorSource::Combined(_, None, _) => "zip",
+                CursorSource::Selected(..) => "filter",
+                CursorSource::Items(..) | CursorSource::Indexed(..) | CursorSource::Viewed(..) => "iterator",
+            }).to_string(),
             Value::Native(..) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Class(_) | Value::SortOf(_) => "type",
@@ -29,7 +54,7 @@ impl Value {
         }.to_string()
     }
 
-    pub fn core_repr(&self) -> String {
+    pub fn core_repr(&self, shortest: bool) -> String {
         match self {
             Value::Text(s) => {
                 let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
@@ -49,16 +74,17 @@ impl Value {
                 out.push(quote);
                 out
             }
-            Value::Array(a) => format!("[{}]", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", ")),
-            Value::Tuple(a) => format!("({}{})", a.iter().map(Value::core_repr).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" }),
-            Value::Set(a) => a.borrow().show(Value::core_repr),
-            Value::Map(a) => format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(), v.core_repr())).collect::<Vec<_>>().join(", ")),
+            Value::Array(a) => format!("[{}]", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(a) => format!("({}{})", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" }),
+            Value::Set(a) => a.borrow().show(|v| v.core_repr(shortest)),
+            Value::Map(a) => format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(shortest), v.core_repr(shortest))).collect::<Vec<_>>().join(", ")),
             Value::Null => "None".into(),
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
-            Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(),
+            Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(shortest),
             Value::Real(r) => {
                 if r.below && r.p == BigInt::from(0) { return "-0.0".into(); }
                 let number = crate::value::as_binary(&r.p, &r.q);
+                if shortest { return crate::value::real_roundtrip(number); }
                 if number.is_nan() { "nan".into() } else if number == f64::INFINITY { "inf".into() }
                 else if number == f64::NEG_INFINITY { "-inf".into() } else { format!("{:?}", number) }
             }
@@ -69,6 +95,12 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
+            Value::Complex(z) => {
+                if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
+                let a = crate::complex::real(z.real).core_hash()?;
+                let b = crate::complex::real(z.imag).core_hash()?;
+                Some(finish(a.wrapping_add(b.wrapping_mul(1_000_003))))
+            }
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) => {
                 let number = self.as_big().ok()?;
                 let modulus = BigInt::from((1u64 << 61) - 1);
@@ -83,6 +115,17 @@ impl Value {
                 Some(finish(h.finish() as i64))
             }
             Value::Null => Some(0x9e3779b9),
+            Value::Ellipsis => Some(0x9e3779ba),
+            // The three bounds, folded as a tuple's items are, without a
+            // length mixed in at the end.
+            Value::Slice(parts) => {
+                let mut h = 2870177450012600261u64;
+                for bound in parts.iter() {
+                    h = h.wrapping_add((bound.core_hash()? as u64).wrapping_mul(14029467366897019727));
+                    h = h.rotate_left(31).wrapping_mul(11400714785074694791);
+                }
+                Some(if h == u64::MAX { 1546275796 } else { h as i64 })
+            }
             Value::Real(r) => {
                 if r.q == BigInt::from(0) { return if r.p == BigInt::from(0) { Some((std::rc::Rc::as_ptr(r) as usize >> 4) as i64) } else { Some(if r.p.is_negative() { -314159 } else { 314159 }) }; }
                 let modulus = BigInt::from((1u64 << 61)-1);

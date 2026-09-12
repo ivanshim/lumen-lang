@@ -1,1 +1,1 @@
-PythonError: this slice operation is not supported
+TypeError: list indices must be integers or slices, not tuple

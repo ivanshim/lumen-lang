@@ -1,0 +1,4 @@
+exceptions must derive from BaseException
+BaseException
+1
+generator raised StopIteration

@@ -21,6 +21,7 @@ pub mod layout;
 pub mod value;
 pub mod code;
 mod core;
+mod complex;
 
 use lang::Lang;
 use value::Value;
@@ -131,8 +132,8 @@ fn go(lang: &Lang, source: &str, program_args: &[String], request: &[(String, St
              || key == "ext.lexical.string.bytes.ascii" || key == "ext.lexical.string.bytes.mixed")
             && words.first().map_or(false, |word| !word.is_empty() && e.starts_with(word))) { return e; }
         let words = &lang.call_builtin_amiss;
-        if strings::already_named(lang, &e) || crate::formatting::names_fault(lang, &e) || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
-        else if words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
+        if strings::already_named(lang, &e) || crate::formatting::names_fault(lang, &e) || lang.slice_named(&e) || lang.sequence_named(&e) || lang.protocol_named(&e) || (lang.import_missing.len() == 2 && e.starts_with(&lang.import_missing[0]) && e.ends_with(&lang.import_missing[1])) { e }
+        else if crate::complex::says(lang, &e) || words.len() == 2 && e.starts_with(&words[0]) && e.ends_with(&words[1]) { e }
         else { format!("{}: {}", lang.banner, e) }
     })
 }
@@ -220,6 +221,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in &lang.module_names {
         registry.slot(name);
     }
+    for name in &lang.module_doc {
+        registry.slot(name);
+    }
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally)),
@@ -231,6 +235,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     for name in &lang.module_names {
         machine.define(name, Value::text("__main__"));
+    }
+    // A module with no opening documentation keeps nothing under the
+    // name, rather than no name at all.
+    for name in &lang.module_doc {
+        machine.define(name, Value::Null);
     }
     if let Some(name) = &lang.args_binding {
         machine.define(name, Value::text(&program_args.join(" ")));
@@ -345,6 +354,18 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             machine.let_things_go();
             machine.let_go_all();
             return done.map_err(|f| f.told(&machine.names()));
+        }
+        // An exit nobody took ends the run with the status it asked
+        // for, once what was named to run at the end has run.
+        if let Some(status) = machine.exit_asked(&fault) {
+            if let Err(after) = machine.run_when_done() {
+                machine.ended_uncaught(&after);
+            }
+            machine.let_things_go();
+            machine.let_go_all();
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            std::process::exit(status);
         }
         // A program may put a routine in the way of a value nobody
         // took; the run says nothing of its own where one took it up.

@@ -8,6 +8,7 @@
 // This crate never imports the other kernels.
 
 pub mod arith;
+mod real;
 pub mod blocks;
 pub mod lexer;
 pub mod reduce;
@@ -47,6 +48,7 @@ pub fn run(language: &str, source: &str, program_args: &[String]) -> Result<(), 
 
 pub fn run_definition(definition: &str, source: &str, program_args: &[String]) -> Result<(), String> {
     let spec = Spec::read(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    real::choose(spec.word("system.real.render") == Some("shortest"));
     let prefix = spec.error_prefix();
     go(&spec, source, program_args).map_err(|e| format!("{}: {}", prefix, e))
 }

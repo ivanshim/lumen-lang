@@ -22,6 +22,11 @@ pub fn exact(v: &Value) -> Option<Exact> {
 }
 
 pub fn build(num: BigInt, den: BigInt, digits: Option<usize>) -> Value {
+    if crate::real::chosen() && digits.is_some() {
+        let worth = crate::real::read(&num, &den);
+        let (num, den) = crate::real::keep(worth);
+        return Value::Exact(Rc::new(Exact { num, den, digits }));
+    }
     if num.is_zero() {
         return match digits {
             Some(d) => Value::Exact(Rc::new(Exact { num, den: BigInt::one(), digits: Some(d) })),
@@ -75,6 +80,23 @@ pub fn apply(op: Sum, a: &Value, b: &Value) -> Option<Result<Value, String>> {
 
 fn slow(op: Sum, a: &Exact, b: &Exact) -> Result<Value, String> {
     let digits = a.digits.or(b.digits);
+    if crate::real::chosen() && digits.is_some() {
+        let left = crate::real::read(&a.num, &a.den);
+        let right = crate::real::read(&b.num, &b.den);
+        let quotient = matches!(op, Sum::Div | Sum::DivReal | Sum::Quot | Sum::Rem);
+        if quotient && right == 0.0 { return Err(String::from("Division by zero")); }
+        let answer = match op {
+            Sum::Add => left + right,
+            Sum::Sub => left - right,
+            Sum::Mul => left * right,
+            Sum::Div | Sum::DivReal => left / right,
+            Sum::Quot => (left / right).trunc(),
+            Sum::Rem => left % right,
+            Sum::Pow => left.powf(right.trunc()),
+        };
+        let (num, den) = crate::real::keep(answer);
+        return Ok(Value::Exact(Rc::new(Exact { num, den, digits: Some(digits.unwrap_or(DIGITS)) })));
+    }
     let ints = a.den.is_one() && b.den.is_one() && digits.is_none();
     match op {
         Sum::Add if ints => Ok(Value::big(&a.num + &b.num)),
@@ -115,5 +137,14 @@ pub fn less(a: &Value, b: &Value) -> Option<bool> {
         return Some(x < y);
     }
     let (a, b) = (exact(a)?, exact(b)?);
-    Some((&a.num * &b.den).cmp(&(&b.num * &a.den)) == Ordering::Less)
+    let outside = (a.den.is_zero(), b.den.is_zero());
+    let answer = match outside {
+        (true, _) if a.num.is_zero() => false,
+        (_, true) if b.num.is_zero() => false,
+        (true, true) => a.num < b.num,
+        (true, false) => a.num.is_negative(),
+        (false, true) => b.num.is_positive(),
+        (false, false) => (&a.num * b.den.abs()).cmp(&(&b.num * a.den.abs())) == Ordering::Less,
+    };
+    Some(answer)
 }

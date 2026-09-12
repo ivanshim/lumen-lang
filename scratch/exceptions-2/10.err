@@ -1,0 +1,1 @@
+SyntaxError: cannot have both 'except' and 'except*' on the same 'try'

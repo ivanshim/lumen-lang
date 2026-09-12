@@ -1,10 +1,11 @@
 // The Lumen library file langs/lib_lumen/round.lm, ported by scripts/port_examples.py; edit the Lumen original, not this file.
 
-function round(x: real; decimals: integer): real;
+function round(x: real; decimals: integer): integer;
 var scale: integer;
 var i: integer;
 var y: real;
 var r: integer;
+var q: integer;
 begin
     scale := 1;
     i := 0;
@@ -18,5 +19,10 @@ begin
     end else begin
         r := (y * 2 - 1) div 2;
     end;
-    round := r / scale;
+    q := r div scale;
+    if q * scale = r then begin
+        exit(q);
+    end else begin
+        exit(r / scale);
+    end;
 end;

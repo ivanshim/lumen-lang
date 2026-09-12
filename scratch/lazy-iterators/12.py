@@ -1,0 +1,12 @@
+x = [1]
+it = iter(x)
+print(next(it), next(it, "end"))
+x.append(2)
+print(list(it))
+items = list(iter([1]))
+it = iter(items)
+items.append(2)
+print(list(it), items[1])
+print(*iter([4, 5]))
+a, b = iter([6, 7])
+print(a, b)

@@ -13,4 +13,9 @@ fn round(x, decimals)
     else
         r = (y * 2 - 1) // 2
 
-    r / scale
+    # A whole number rounded stays whole, the scaling having left it so.
+    q = r // scale
+    if q * scale == r
+        q
+    else
+        r / scale

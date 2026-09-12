@@ -7,6 +7,7 @@ pub mod definition;
 pub mod registry;
 pub mod prelude;
 pub mod values;
+mod real_decimal;
 mod numeric;
 pub mod expressions;
 pub mod statements;

@@ -40,6 +40,22 @@ impl ExprNode for ComparisonExpr {
 /// from two floor operations, equality and less-than: a > b is b < a,
 /// a <= b is not b < a, a >= b is not a < b.
 pub fn apply(op: Cmp, l: &Value, r: &Value) -> LumenResult<Value> {
+    let outside = |v: &Value| as_real(v.as_ref()).is_ok_and(|real| real.denominator == BigInt::from(0));
+    if def().shortest_reals && (outside(l) || outside(r)) {
+        // All finite numbers stand between the two infinities; their
+        // size need not be brought to a binary width to settle this.
+        let read = |v: &Value| -> Option<f64> {
+            if let Ok(real) = as_real(v.as_ref()) {
+                return Some(if outside(v) { crate::language::real_decimal::nearest(&real.numerator, &real.denominator) } else { 0.0 });
+            }
+            fraction(v)?;
+            Some(0.0)
+        };
+        if let (Some(x), Some(y)) = (read(l), read(r)) {
+            let answer = match op { Cmp::Eq => x == y, Cmp::Ne => x != y, Cmp::Lt => x < y, Cmp::Gt => x > y, Cmp::Le => x <= y, Cmp::Ge => x >= y };
+            return Ok(Box::new(LumenBool::new(answer)));
+        }
+    }
     let result = match op {
         Cmp::Eq => equal(l, r),
         Cmp::Ne => !equal(l, r),

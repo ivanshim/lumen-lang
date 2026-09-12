@@ -39,6 +39,18 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt,
 pub struct Registry {
     index: HashMap<String, usize>,
     pub idents: Vec<String>,
+    /// Whether the next reading is of one expression alone, as text
+    /// handed over to be weighed is: nothing may follow it. The mark is
+    /// spent by that reading.
+    pub value_only: bool,
+    /// The names the outermost statements declared global, for text
+    /// read into two dictionaries: a name so declared is written to the
+    /// outer one.
+    pub declared_outer: Vec<String>,
+    /// The global names the program's own lines have bound, as against
+    /// those the library standing ahead of it bound: only the former
+    /// stand in front of a builtin word spelled the same.
+    pub program_bound: std::collections::HashSet<String>,
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,
@@ -158,6 +170,9 @@ pub struct Compiler<'a> {
     carrying: Vec<usize>,
     /// How many lines stand before the program's own text.
     before: u32,
+    /// Whether the reading has come to the program's own lines, past
+    /// the library that stands ahead of them.
+    in_program: bool,
     /// Where each key of the index chain just read begins, so that a
     /// write to a place within a place can take the keys apart and work
     /// each of them out exactly once.
@@ -257,11 +272,12 @@ pub fn compile_within(
     read_in: bool,
 ) -> Res<Rc<Routine>> {
     let mut plans = HashMap::new();
+    let wants_value = std::mem::take(&mut table.value_only);
     if lang.closes_over {
         let mut survey = Registry::default();
-        compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true)?;
+        compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value)?;
     }
-    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false)
+    compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value)
 }
 
 fn compile_pass(
@@ -275,6 +291,7 @@ fn compile_pass(
     read_in: bool,
     plans: &mut HashMap<usize, BindingPlan>,
     discovering: bool,
+    wants_value: bool,
 ) -> Res<Rc<Routine>> {
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
@@ -306,8 +323,21 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
-    if lang.rpn {
+    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    if wants_value {
+        // One expression and nothing after it, left where the reading
+        // finds it; the text may open and close with line ends.
+        a.skip_seps();
+        if let Err(said) = a.scope_value() {
+            a.registry.stopped_at = a.look().row;
+            return Err(said);
+        }
+        a.skip_seps();
+        if !a.exhausted() {
+            a.registry.stopped_at = a.look().row;
+            return Err(format!("Unexpected '{}'", a.look().lexeme));
+        }
+    } else if lang.rpn {
         if let Err(said) = a.rpn_body(&[], Span::Block) {
             a.registry.stopped_at = a.look().row;
             return Err(said);
@@ -321,9 +351,11 @@ fn compile_pass(
         // a call above its function finds it (ext.stmt.function.hoisted).
         let mut lifted: Vec<Instr> = Vec::new();
         a.skip_seps();
+        let mut opening = true;
         while !a.exhausted() {
             let defines = lang.hoisted && a.on_keyword(&lang.function_words);
             let from = a.mark();
+            let own_line = a.look().row as u32 > before;
             // Where the reading stops, the line it had reached is kept,
             // so that a language with a word for such a stopping may
             // name the line as it names any other.
@@ -331,6 +363,23 @@ fn compile_pass(
                 a.registry.stopped_at = a.look().row;
                 return Err(said);
             }
+            // Text alone as the first statement of a program is the
+            // program's own documentation, kept under the name the
+            // language gives it (ext.system.module.doc).
+            if opening && own_line && alone && !lang.module_doc.is_empty() {
+                let said: Vec<&Instr> = a.piece().instrs[from..].iter().filter(|i| !matches!(i, Instr::Emptied(_) | Instr::Line(_) | Instr::Nothing)).collect();
+                let words = match said.as_slice() {
+                    [Instr::Const(Value::Text(words)), Instr::Write(cell)] if cell.ident.as_ref() == RESULT_CELL => Some(words.to_string()),
+                    _ => None,
+                };
+                if let Some(words) = words {
+                    for name in &lang.module_doc {
+                        a.constant(Value::text(&words));
+                        a.write(name);
+                    }
+                }
+            }
+            if own_line { opening = false; }
             if defines {
                 lifted.extend(a.piece().instrs.drain(from..));
             }
@@ -646,8 +695,12 @@ impl<'a> Compiler<'a> {
             if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return cell; }
         }
         let global = self.registry.slot(name);
+        let in_program = self.in_program;
         let unit = self.pieces.last_mut().expect("a unit");
         if unit.outermost && unit.scopes.is_empty() {
+            if in_program {
+                self.registry.program_bound.insert(name.to_string());
+            }
             return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
@@ -756,7 +809,10 @@ impl<'a> Compiler<'a> {
     /// find the same cell.
     fn read_to_rewrite(&mut self, name: &str) {
         let mut slot = self.cell_to_write(name);
-        slot.moving = true;
+        // Where a language holds its sequences, what is written into is
+        // left where it stands while the write is made: a write that is
+        // refused must leave the name holding what it held before.
+        slot.moving = !self.lang.sequence_values;
         self.put(Instr::Read(slot));
     }
 
@@ -1172,7 +1228,10 @@ impl<'a> Compiler<'a> {
         // Only the program's own lines are marked: what stands before it
         // is the library, and a complaint from inside that names the
         // line of the program that was running, as PHP names it.
-        if lang.tells_place && self.look().row as u32 > self.before {
+        if self.look().row as u32 > self.before {
+            self.in_program = true;
+        }
+        if (lang.tells_place || lang.marks_lines) && self.look().row as u32 > self.before {
             let row = self.look().row as u32 - self.before;
             if self.piece().line != row {
                 self.piece().line = row;
@@ -1301,7 +1360,9 @@ impl<'a> Compiler<'a> {
                     self.take();
                     self.expr(0)?;
                 } else {
-                    self.constant(Value::text(""));
+                    // No message at all is a blank, so that the run can
+                    // tell it from a message that is empty text.
+                    self.constant(Value::Blank);
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
@@ -1527,6 +1588,11 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as a binding target")?;
         self.read(&name);
         self.called_on_value()?;
+        // What a call gave back is no place a binding can reach: the
+        // whole target is still read, and the run refuses it.
+        if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) {
+            self.awkward_place = true;
+        }
         let mut keyed = Vec::new();
         loop {
             if self.on_any(&self.lang.pipe_words) {
@@ -1541,15 +1607,22 @@ impl<'a> Compiler<'a> {
                 if !self.lang.class_special.is_empty() && !self.lang.slice_marks.is_empty() {
                     let comma = self.lang.calling.as_ref().and_then(|c| c.between.clone());
                     self.slice_part(&pair.close, comma.as_deref())?;
+                    let mut parts = 1;
                     let mut several = false;
                     while comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
                         self.take();
                         several = true;
                         if self.at_symbol(&pair.close) { break; }
                         self.slice_part(&pair.close, comma.as_deref())?;
+                        parts += 1;
                     }
                     self.want_sign(&pair.close, "after the index")?;
-                    if several {
+                    // Several places in one bracket are one key made of
+                    // them all, where the language has slice values;
+                    // a trailing comma makes a key of one.
+                    if several && self.lang.slice_values() {
+                        self.act(Action::MakeTuple, parts);
+                    } else if several {
                         self.awkward_place = true;
                         self.piece().instrs.truncate(at);
                         self.constant(Value::Small(0));
@@ -1614,6 +1687,9 @@ impl<'a> Compiler<'a> {
 
     /// A store into the global of the name, from anywhere.
     fn write_global(&mut self, name: &str) {
+        if self.in_program {
+            self.registry.program_bound.insert(name.to_string());
+        }
         let slot = Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
         self.put(Instr::Write(slot));
     }
@@ -1802,6 +1878,7 @@ impl<'a> Compiler<'a> {
             // is then reading a name written to.
             let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
             if !self.lang.bind_names { self.put(Instr::Ready(cell)); }
+            if self.pieces.len() == 1 { self.registry.declared_outer.push(name.clone()); }
             self.piece().globals.push((name.clone(), name));
             match &sep {
                 Some(s) if self.at_symbol(s) => {
@@ -3162,6 +3239,14 @@ impl<'a> Compiler<'a> {
             clauses.push(Taking { kinds, held, body: arm, grouped, bare });
             self.skip_seps();
         }
+        // Grouped clauses go together or not at all, and each names
+        // what it takes, where the language has words for the mixing.
+        if let Some(amiss) = &lang.catch_amiss {
+            let grouped = clauses.iter().filter(|arm| arm.grouped).count();
+            if grouped > 0 && (grouped != clauses.len() || clauses.iter().any(|arm| arm.grouped && arm.bare)) {
+                return Err(amiss.clone());
+            }
+        }
         let otherwise = if lang.try_else && self.on_keyword(&lang.else_words) {
             self.take();
             Some(self.attempt_body()?)
@@ -3349,7 +3434,11 @@ impl<'a> Compiler<'a> {
         while self.on_any(&lang.decorator_words) {
             self.take();
             let word = self.look().lexeme.clone();
-            let kind = if self.look_ahead(1).shape == Shape::LineEnd {
+            // Where the definition spells the descriptor protocol, every
+            // decorator is an expression applied to the member, the
+            // wrapping builtins among them; else the three are known.
+            let kind = if lang.class_details.get("descriptor.get").map_or(false, |v| !v.is_empty()) { 0 }
+            else if self.look_ahead(1).shape == Shape::LineEnd {
                 if Lang::spells(&lang.class_static, &word) { 1 }
                 else if Lang::spells(&lang.class_method, &word) { 2 }
                 else if Lang::spells(&lang.class_property, &word) { 3 }
@@ -3405,6 +3494,9 @@ impl<'a> Compiler<'a> {
         if self.on_any(&self.lang.type_params_open) { self.class_type_parameters()?; }
         let mut base = None;
         let mut further = Vec::new();
+        // The keywords a header carries, each kept for the parent's
+        // subclass hook under a name no program can spell.
+        let mut carried_words: Vec<(String, String)> = Vec::new();
         let mut unready = !self.piece().outermost;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
@@ -3415,10 +3507,21 @@ impl<'a> Compiler<'a> {
                 let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
                 if spread { self.take(); unready = true; }
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
-                if keyword { self.take(); self.take(); unready = true; }
+                let mut handed = None;
+                if keyword {
+                    let word = self.take().lexeme;
+                    self.take();
+                    // A metaclass is named by a keyword no class form
+                    // runs, so the form stays unready with it.
+                    if lang.class_details.get("subclass").map_or(true, |v| v.is_empty()) || Lang::spells(&lang.metaclass_word, &word) { unready = true; } else { handed = Some(word); }
+                }
                 let from = self.mark();
                 self.expr(0)?;
-                if !keyword && !spread && (count == 0 || lang.class_details.get("root").map_or(false,|v|!v.is_empty())) {
+                if let Some(word) = handed {
+                    let held = self.gensym("keyword");
+                    self.write(&held);
+                    carried_words.push((format!("\0keyword:{word}"), held));
+                } else if !keyword && !spread && (count == 0 || lang.class_details.get("root").map_or(false,|v|!v.is_empty())) {
                     let held = self.gensym("base");
                     self.write(&held);
                     if count == 0 { base = Some(held); } else { further.push(held); }
@@ -3443,7 +3546,8 @@ impl<'a> Compiler<'a> {
         }
         self.class_names.push((self.pieces.len(), HashMap::new()));
         let mut methods = Vec::new();
-        let mut shared: Vec<(String, String)> = Vec::new();
+        let mut shared: Vec<(String, String)> = carried_words;
+        let mut annotated: Vec<(Value, Value)> = Vec::new();
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
         }
@@ -3496,16 +3600,25 @@ impl<'a> Compiler<'a> {
             } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
                 let named = self.take().lexeme;
                 self.take();
-                self.expr(0)?;
+                // The value may run on past commas, as a bare tuple does
+                // at the top of a program; the joined value is the member.
+                match lang.tuple_marks.is_empty() {
+                    true => self.expr(0)?,
+                    false => self.scope_value()?,
+                }
                 let held = self.gensym("attribute");
                 self.write(&held);
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
-            } else if self.look().shape == Shape::Instr && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
+            } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+                && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
+                // A keyword before the mark (`try:`) heads a statement
+                // and is no member being annotated.
                 let named = self.take().lexeme;
                 self.take();
                 self.annotation_expression(&lang.assign_words)?;
+                annotated.push((Value::text(&named), Value::Null));
                 if self.on_assign() {
                     self.take();
                     self.scope_value()?;
@@ -3533,6 +3646,14 @@ impl<'a> Compiler<'a> {
             self.piece().instrs.truncate(body_at);
             self.class_cannot_run();
             self.discard();
+        }
+        // The names annotated in the body, as the class carries them;
+        // a class that annotated nothing carries nothing.
+        if let (Some(word), false) = (lang.class_annotations.first(), annotated.is_empty()) {
+            let slot = self.gensym("annotations");
+            self.constant(Value::Map(Rc::new(annotated)));
+            self.write(&slot);
+            shared.push((word.clone(), slot));
         }
         let mut count = shared.len();
         if let Some(under) = &base { self.read(under); count += 1; }
@@ -4403,7 +4524,7 @@ impl<'a> Compiler<'a> {
         for at in begin..end {
             let t = &self.tokens[at];
             if closes.is_empty() {
-                if Lang::spells(&self.lang.lambda_words, &t.lexeme) { return (found, at); }
+                if t.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &t.lexeme) { return (found, at); }
                 if matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish)
                     || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) {
                     return (found, at);
@@ -4861,6 +4982,9 @@ impl<'a> Compiler<'a> {
         let op = if !self.lang.byte_prefixes.is_empty() && matches!(op, Action::Add | Action::Mul) {
             Action::ByteAssign(matches!(op, Action::Mul))
         } else { op };
+        // Where the protocol reaches the in-place methods, the place
+        // written to is asked for its own answer before the working.
+        let op = if self.lang.in_place_methods() { Action::InPlace(Box::new(op)) } else { op };
         self.act(op, 2);
         if self.lang.print_real_point && self.stepping.is_none() {
             self.act(Action::KeepPoint, 1);
@@ -4900,8 +5024,11 @@ impl<'a> Compiler<'a> {
         // What the chain stands on, where it is anything but the one
         // instr that reads a name: then the whole chain is rebuilt and
         // written back into whatever it stood on.
+        // A dictionary of names handed out by a builtin is a footing
+        // too, written into where it lives and never written back.
+        let names_handed = matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::OuterNames | Builtin::NearNames | Builtin::Vars, _), 0)));
         let footing: Option<Vec<Instr>> = match key_at.first() {
-            Some(at) if *at > from + 1 => Some(target[..at - from].to_vec()),
+            Some(at) if *at > from + 1 || names_handed => Some(target[..at - from].to_vec()),
             _ => None,
         };
         let appending = matches!(target.last(), Some(Instr::Act(Action::AtEnd, 1)));
@@ -4910,7 +5037,10 @@ impl<'a> Compiler<'a> {
         if compound.is_some() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
             self.act(Action::SliceUnavailable, 0);
         }
-        if compound.is_none() && keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) {
+        // A language with slice values works the value out before any
+        // key, as it does for a slice.
+        let keyed_place = matches!(target.last(), Some(Instr::Act(Action::At, 2)) | Some(Instr::Act(Action::AtEnd, 1)));
+        if compound.is_none() && (keys.iter().any(|key| matches!(key.last(), Some(Instr::Act(Action::Slice, 3)))) || (keyed_place && !keys.is_empty() && self.lang.slice_values())) {
             let value = self.gensym("slice_value");
             self.value_written(None)?;
             self.write(&value);
@@ -5023,9 +5153,10 @@ impl<'a> Compiler<'a> {
                     self.read(&held[i]);
                     self.read(&made);
                     self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
                     self.write(&made);
                 }
+                if names_handed { return Ok(()); }
                 // What it stood on is written back into, read again as
                 // the store it is.
                 let footing_at = self.mark();
@@ -5098,7 +5229,7 @@ impl<'a> Compiler<'a> {
                     self.read(&held[i]);
                     self.read(&made);
                     self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
                     self.write(&made);
                 }
                 self.read(&made);
@@ -5825,12 +5956,20 @@ impl<'a> Compiler<'a> {
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
-        if Lang::spells(&lang.lambda_words, &tok.lexeme) {
+        // The value a method declines an operation with, written by name.
+        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.lexeme) {
+            self.take();
+            self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
+            return self.indexing(from);
+        }
+        // Only the bare word opens a lambda; the same letters between
+        // quotes are a string, as when handed to print.
+        if tok.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &tok.lexeme) {
             self.take();
             self.lambda_value()?;
             return Ok(());
@@ -5951,6 +6090,19 @@ impl<'a> Compiler<'a> {
                 };
                 self.act(Action::Make, argc + 1);
             }
+            // Outside any class the parent word the program has bound,
+            // unless it opens a call, is a name like another: it may be
+            // read, listed or passed. Unbound, it stands for the parent
+            // call itself, as the arm below gives it.
+            Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.lexeme)
+                && self.within.is_none()
+                && (self.registry.program_bound.contains(tok.lexeme.as_str())
+                    || self.look_ahead(1).shape == Shape::Sign
+                        && (Lang::spells(&lang.assign_words, &self.look_ahead(1).lexeme) || lang.compound.contains_key(&self.look_ahead(1).lexeme)))
+                && lang.calling.as_ref().map_or(true, |call| !self.look_ahead(1).is_lexeme(Shape::Sign, &call.open)) => {
+                self.take();
+                self.read(&tok.lexeme);
+            }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words,&tok.lexeme)
                 && lang.class_details.get("root").map_or(false,|v|!v.is_empty())
                 && lang.calling.as_ref().map_or(false,|call|self.look_ahead(1).lexeme!=call.open) => {
@@ -6034,7 +6186,11 @@ impl<'a> Compiler<'a> {
                     match lang.calling.clone() {
                         Some(call) if self.at_symbol(&call.open) => {
                             self.take();
-                            let native = lang.builtins.get(&tok.lexeme).copied();
+                            // A name the program has bound is called as
+                            // that name, in front of any builtin word
+                            // spelled the same, where the language says so.
+                            let bound = lang.shadow_builtins && self.registry.program_bound.contains(tok.lexeme.as_str());
+                            let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
                             if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
                                 let target = match self.look().shape {
@@ -6873,7 +7029,9 @@ impl<'a> Compiler<'a> {
         }
         let marks = self.lang.slice_marks.clone();
         let ellipsis = self.lang.slice_ellipsis.clone();
-        if ellipsis.iter().any(|word| self.at_symbol(word)) {
+        // The mark of an elided place is read as any value where the
+        // language has a value for it, and refused where it has none.
+        if self.lang.ellipsis_words.is_empty() && ellipsis.iter().any(|word| self.at_symbol(word)) {
             self.take();
             self.act(Action::SliceUnavailable, 0);
             return Ok(());
@@ -6900,6 +7058,12 @@ impl<'a> Compiler<'a> {
             }
         } else {
             self.constant(Value::Null);
+        }
+        // A slice has three parts and no more; a language that names
+        // the complaint for a fourth stops the reading with it.
+        if marks.iter().any(|m| self.at_symbol(m)) {
+            let amiss = self.lang.slice_parts.get("ext.op.index.slice.amiss").cloned().unwrap_or_default();
+            if !amiss.is_empty() { return Err(amiss); }
         }
         self.act(Action::Slice, 3);
         Ok(())
@@ -7105,7 +7269,7 @@ impl<'a> Compiler<'a> {
                     self.slice_part(&index.close, separator.as_deref())?;
                     many += 1;
                 }
-                self.act(Action::SliceUnavailable, many);
+                self.act(if self.lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, many);
             }
             self.want_sign(&index.close, "after array index")?;
             keyed.push(began);
@@ -7514,7 +7678,10 @@ impl<'a> Compiler<'a> {
     /// A call by name, the arguments already on the stack: a builtin of
     /// the definition, or the program bound to the name.
     fn call(&mut self, name: &str, argc: usize) -> Res<()> {
-        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method()) {
+        // A name the program has bound is called as that name, in front
+        // of any builtin word spelled the same, where the language says so.
+        let bound = self.lang.shadow_builtins && self.registry.program_bound.contains(name);
+        match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
             Some(Builtin::Text(op)) if op != crate::strings::TextOp::Repr && !name.contains('.') => {
                 self.read_callee(name);
                 self.act(Action::Invoke(Rc::from(name)), argc + 1);
@@ -8171,7 +8338,7 @@ fn within_width(v: Value, lang: &Lang) -> Value {
     // A real written in a program is brought to the width the language
     // holds its reals in, as a real worked out while it runs is, so
     // that the two are the same number and not merely alike.
-    crate::value::to_binary_width(v, lang.real_bits, places)
+    crate::value::to_binary_width(v, lang.real_bits, places, lang.shortest_reals)
 }
 
 /// What a language says of a run of digits it cannot read, where it
@@ -8212,7 +8379,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     if let Some(last) = text.chars().last().filter(|c| lang.imaginary_letters.contains(c)) {
         let coefficient = text[..text.len() - last.len_utf8()].parse::<f64>().map_err(|_| unreadable_number(text, lang))?;
         let words = lang.imaginary_unready.as_deref().unwrap_or("Imaginary arithmetic is not ready");
-        return Ok(Value::Imaginary(coefficient, Rc::from(words)));
+        return Ok(if lang.builtins.values().any(|b| *b == Builtin::Complex) { crate::complex::made(lang, 0.0, coefficient) } else { Value::Imaginary(coefficient, Rc::from(words)) });
     }
     for (prefix, base) in &lang.base_prefixes {
         if let Some(digits) = text.strip_prefix(prefix.as_str()) {

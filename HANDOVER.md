@@ -1,98 +1,153 @@
 # Handover — read this and begin
 
-You are picking up `lumen-lang` after the session of 2026-09-10. This
-document is the whole briefing. It says where the work stands, what is
-waiting on branches, how it is verified, and what went wrong so that it is
-not done twice.
+You are picking up `lumen-lang` after the sessions of 2026-09-10,
+2026-09-11 and 2026-09-12. This document is the whole briefing. It says where the work
+stands, what is waiting on branches, how it is verified, and what went
+wrong so that it is not done twice.
 
-**Branch:** `main` **Head:** `10eb5ef` (merge of batch #486)
+**Branch:** `claude/codebase-familiarization-t6vjhi`, cut from `main` at
+`7cd5b63` (the merge of batch #486). Everything below the cut is the
+integration of the waiting branches, one verification per branch.
 
 ---
 
 ## 1. Where things stand
 
-The Python reader is nearly done and the run-time work has begun.
+Every pull request that was waiting is now folded into the integration
+branch. The Python reader is done bar three unfinished branches, and the
+run-time work has gone a long way: the full `unittest` runs the test
+files now, and reports what fails in them.
 
 - **PHP** is unchanged: `pass 399, differs 0, error 0, skipped 23` on both
-  full kernels, and every change below was refused unless that row held.
-- **Python, the reader (stage 1).** Of the 50 CPython files in
-  `tests/python/`, 46 read end to end on stack8 and 48 on microcode7 at
-  `main`. The four that still stop in the reader — `test_decorators.py`,
-  `test_set.py`, `test_with.py`, `test_str.py` — are handled by branches not
-  yet in `main` (`reader-tail`, `builtin-subclassing`, below).
-- **Python, running (stage 2).** The reference row at `main` is
-  `pass 0, differs 9, error 41` on both kernels: nine files now run to the
-  end and print something; the rest stop at run time. Their first stops
-  are concentrated: `TestCase` and the rest of `unittest` (the `modules`
-  branch landed a minimal one; `unittest-2` on a branch has the full
-  surface), `sys.maxsize`/`float_info`/`MAX_Py_ssize_t`/`sentinel`/
-  `CommonTest` from CPython's own test package (`test-support-modules`),
-  `complex`, `Fraction`, `globals`/`exec`.
-- **Stage 3** (what "pass" means for a `unittest` module, and whether the
-  harness should learn to run one) is still the owner's decision and has
-  not been taken.
+  full kernels at every verified point, and every change below was
+  refused unless that row held.
+- **The examples** agree 3006 of 3006 on all six kernels at every
+  verified point, on a quiet machine (see §4).
+- **Python, running (stage 2).** The reference row is
+  `pass 0, differs 2, error 48` on both kernels at `674bf76`, against
+  `differs 9, error 41` at `main`. That is not a step back: the nine
+  files that "ran to the end without asserting anything" under the
+  minimal `unittest` now run their tests under the full one and stop
+  with `Uncaught test run failed` because some assertions fail, which
+  the reference runner counts as an error. Their first stops are now in
+  the tests themselves rather than in missing modules.
+- **Stage 3** (what "pass" means for a `unittest` module: whether the
+  harness should run one and count its own results) is still the owner's
+  decision and has not been taken. It decides how the Python row is read
+  from here on.
 
-Landed in `main` during the session, each verified with the sequence in
-§3 before merging: decorators, annotations, imports, parameters, slices,
-exceptions, strings, blocks, tuples, class, expressions, lexical,
-comprehensions, match, numbers, defaults, syntax-modern, builtin-kwargs,
-builtins-core, decorators-class, annotated-members, closures,
-generators-run, str-methods, str-methods-2, sets, dunder-methods,
-numeric-semantics, exceptions-classes, format-spec, modules, bytes,
-class-advanced, and the file-driven pieces for scope, syntax, strings,
-exceptions, builtin, int, grammar, iter, generators, dict, list, str,
-misc, float, decorators, class. Pull requests #408–#486.
+Brought into the integration branch in this order, each with the
+sequence in §3 (and with what its scratch programs then proved missing
+ported onto `main`'s kernels afterwards, in each kernel's own words):
+
+| order | branch | PR | commit | notes |
+|---|---|---|---|---|
+| 1 | `py-test-support-modules` | #463 | `fe0f728` | |
+| 2 | `py-stdlib-3` | #482 | `6b357cc` | absorbs `stdlib-2` (#464) and `modules-3` (#468) |
+| 3 | `py-stdout-redirect` | #469 | `d5cbfe8` | print through `sys.stdout` |
+| 4 | `py-warnings-module` | #478 | `315f0f5` | absorbs `unittest-2` (#472) |
+| 5 | `py-complex-type` | #476 | `c46ceb8` | union merge |
+| 6 | `py-float-repr-all-kernels` | #479 | `12664fd` | union merge; core label `system.real.render` |
+| — | ports for 1–6 | | `674bf76` | verified: PHP row held, 3006/3006, 0 disagreements |
+| 7 | `py-slice-object` | #481 | `4156398` + `6b26474` | |
+| 8 | `py-hash-eq-identity` | #477 | `aec3e1f` + `39e29d6` + `7f2132f` | |
+| 9 | `py-int-methods` | #483 | `3c15848` + `d053343` | |
+| 10 | `py-builtin-subclassing` | #474 | `b1bef8a` + `3f2a95a` | the library's own `round` had been shadowing the builtin; see §4 |
+| 11 | `py-descriptors` | #480 | `8893805` | |
+| 12 | `py-lazy-iterators` | #462 | `4c78b7e` | |
+| 13 | `py-dict-semantics` | #459 | `4dbb652` | ported onto `main`'s kernels rather than merged |
+| 14 | `py-control-flow-edges` | #460 | `ddd8101` | |
+| 15 | `py-reader-tail` | #461 | `0bf373e` | + `1e8919a`, the bare parent word; see §4 |
+| 16 | `py-builtins-2` | #466 | `04fd417` | |
+| 17 | `py-exceptions-2` | #471 | `28af333` | re-ported on top of `control-flow-edges`, which had done the same work |
+| 18 | `py-dunder-2` | #470 | `6c0239e` + `1e8919a` | |
+| 19 | `py-range-object` | #457 | `c02ed0b` + `92bbacf` | `main`'s variants kept, range's cases routed through them |
+| 20 | `py-sorting-semantics` | #485 | `4739616` | its own last run was red; green here |
+| 21 | `py-sequence-ops` | #455 | `41347b0` | |
+| 22 | `py-perf` | #473 | `a14aa3f` | head of the line |
+
+All twenty-five pull requests are therefore in the line, in twenty-two
+merges: `stdlib-2`, `modules-3` and `unittest-2` are absorbed by the
+branches that were cut after them. Of the twenty-five branches
+twenty-four are ancestors of `a14aa3f`, so merging the line closes their
+pull requests by itself. **`py-descriptors` (#480) is not an ancestor**:
+its commit `05de7ef` has a single parent, having lost the merge parent
+it was made with, though all of its work is in the line. That one pull
+request must be closed by hand.
+
+Ports worth knowing about, since they changed kernel behaviour beyond
+the branch that asked for them: `getattr` on a module reads through the
+module's cell instead of handing the cell out; a thing's member is
+written over rather than through (the write-through, meant for a
+module's bindings, had tied a list to itself); the microcode kernel had
+lost the `complex` builtin's table entry in the union merge; a class
+that annotates nothing carries no `__annotations__`; `ldexp` reaches the
+denormals; a real that a math working gave prints in the shortest
+rendering on both kernels; what a method of a thing raises inside a
+dyadic operation is raised on rather than reported as an invalid
+answer; `id` is stable across a list's growth (both kernels hand that
+one builtin the cell a collection lives in).
 
 ## 2. What is waiting on branches
 
-Twenty-five pull requests are open, every one green on its own branch
-(build, 3006 examples, scratch programs, PHP unchanged) and every one in
-conflict with `main`, because each was cut from an older `main` and they
-touch the same rosters and, worse, the same kernel dispatch. They are
-listed oldest first with the base they were cut from. `79eefce` is the
-head of the `modules` branch, now in `main`; branches cut from it apply
-more cleanly than the rest.
+Nothing with a pull request. Twenty-five were open when this began and
+all twenty-five are folded into the integration branch (§1). Every one
+was green on its own branch (build, 3006 examples, scratch programs, PHP
+unchanged) and every one in conflict with `main`, because each was cut
+from an older `main` and they touch the same rosters and, worse, the same
+kernel dispatch. The bases they were cut from, oldest first, in case a
+piece has to be read again in its own setting: `e0e816d`
+(`sequence-ops`), `94155bd` (`range-object`, `dict-semantics`,
+`control-flow-edges`, `lazy-iterators`), `79eefce` (`test-support-modules`,
+`stdlib-2`, `modules-3`, `stdout-redirect`, `unittest-2`,
+`warnings-module`, `stdlib-3`), `8d6ad85` (`reader-tail`, `builtins-2`),
+`2026e6b` (`dunder-2`), `d7871f3` (`exceptions-2`, `perf`), `25f6848`
+(`builtin-subclassing`, `complex-type`, `hash-eq-identity`,
+`float-repr-all-kernels`, `descriptors`, `slice-object`, `int-methods`),
+`f0503a4` (`sorting-semantics`). Branches cut from `79eefce` applied more
+cleanly than the rest.
 
-| PR | branch | base | carries |
-|---|---|---|---|
-| #455 | `py-sequence-ops` | e0e816d | `+`, `*`, lexicographic comparison on sequences, tuple immutability errors. Deferred twice: it treats sets as immutable vectors where `main`'s sets are mutable hash storage. |
-| #457 | `py-range-object` | 94155bd | `range` as a lazy value. Conflicts with `builtins-core` on `main`: both implement `min`/`max`/`repr`/`reversed`/`tuple`/`set` as different enum variants in both kernels (`Greatest/Least/Represent/Backward` vs `Maximum/Minimum/Repr/Reversed`, `Highest/Lowest/…` vs `Prim::Greatest/Least/…`). Resolve by keeping `main`'s variants and routing range's cases through them. |
-| #459 | `py-dict-semantics` | 94155bd | insertion order, views, `\|`, `fromkeys`, `popitem`, mutation-during-iteration. |
-| #460 | `py-control-flow-edges` | 94155bd | `finally`/`return`/`break` interplay, `__exit__` arguments, exception chaining, recursion limit. |
-| #461 | `py-reader-tail` | 8d6ad85 | the last reader stops (fstring, print, grammar, set, listcomps, funcattrs, opcodes, with, decorators). |
-| #462 | `py-lazy-iterators` | 94155bd | iterator protocol; lazy `map`/`filter`/`zip`/`enumerate`. |
-| #463 | `py-test-support-modules` | 79eefce | `test.support`, `test.seq_tests`, `test.list_tests`, `sys` extras, `fractions`. |
-| #464 | `py-stdlib-2` | 79eefce | `io.StringIO`, `contextlib`, `abc`, `enum`, `dataclasses`, `typing`, a small `re`, `textwrap`, `string`, `time`. |
-| #466 | `py-builtins-2` | 8d6ad85 | `globals`, `locals`, `exec`, `eval`, `compile`, `dir`, `__name__`. |
-| #468 | `py-modules-3` | 79eefce | `json`, `os` (minimal), `traceback`, `platform`, `locale`, `unicodedata`, guarded C-module stubs. |
-| #469 | `py-stdout-redirect` | 79eefce | `print` follows `sys.stdout`; `captured_stdout`. |
-| #470 | `py-dunder-2` | 2026e6b | `__index__`, unary and in-place operators, `@`, `__format__`, `__missing__`. |
-| #471 | `py-exceptions-2` | d7871f3 | `ExceptionGroup`/`except*`, notes, `sys.exc_info`, `SystemExit`. |
-| #472 | `py-unittest-2` | 79eefce | the full `assert*` surface, runner output as CPython's, loader, skips, `subTest`, cleanups. |
-| #473 | `py-perf` | d7871f3 | speed trials under `scratch/perf/`; the kernels were already fast. |
-| #474 | `py-builtin-subclassing` | 25f6848 | `class X(str)`, `(int)`, `(list)`, `(dict)`, `(tuple)`, `(float)`, `(set)`. |
-| #476 | `py-complex-type` | 25f6848 | `complex` as a value. |
-| #477 | `py-hash-eq-identity` | 25f6848 | `is`, `id`, `hash`, `==` and the singletons, as CPython. |
-| #478 | `py-warnings-module` | 79eefce | `warnings`: warn, filters, `catch_warnings`, warnings as errors. |
-| #479 | `py-float-repr-all-kernels` | 25f6848 | CPython's shortest round-trip rendering of reals behind a **core** label `system.real.render`, implemented in all six kernels; the examples agree 3006/3006. |
-| #480 | `py-descriptors` | 25f6848 | the `__get__`/`__set__` protocol behind properties and bound methods. |
-| #481 | `py-slice-object` | 25f6848 | slice values, `Ellipsis` and tuple keys to `__getitem__`. |
-| #482 | `py-stdlib-3` | 79eefce | `bisect`, `heapq`, `statistics`, `string`, `pprint`, `itertools`/`math`/`functools`/`operator` completeness. |
-| #483 | `py-int-methods` | 25f6848 | `bit_length`, `to_bytes`/`from_bytes`, `int()` in every base with CPython's errors, `float.hex`. |
-| #485 | `py-sorting-semantics` | f0503a4 | stability, `key`, mixed-type errors, `min`/`max`. Its last run was **red**; treat as unfinished. |
-
-Three more branches hold unfinished work with no pull request and a red
-last run: `py-copy-pickle`, `py-bytes-2`, `py-unicode-text` (the last was
-merged into `main` as #484 before it was verified and taken back again in
-`a521d8f`).
+Three branches still hold unfinished work with no pull request and a red
+last run, and are the next work: `py-copy-pickle`, `py-bytes-2`,
+`py-file-scope`. Port each from the merged head, one at a time, by the
+way described below. (`py-unicode-text` was merged into `main` as #484
+before it was verified and taken back again in `a521d8f`; its work is
+not in the line.)
 
 ### Bringing a branch in
 
-Merge one branch at a time into a clone of `main`, resolve by hand, verify
-with the full sequence, then merge. Batching five per verification worked
-(PRs #456, #458, #465, #467, #475, #486 each carried five) while the
-conflicts were rosters; the branches that remain conflict in kernel code,
-so expect one branch per verification. Rosters resolve as unions —
+Merge one branch at a time into a worktree cut from the integration
+branch's head, resolve, verify with the full sequence, then fast-forward
+the integration branch. Two ways of resolving have served:
+
+- **Take `main`'s kernels whole** (`scratchpad/resolve.sh` in the session's
+  scratch directory; the idea is what matters): merge the branch, then
+  check out the integration head's `kernels/`, `langs/python.json` and
+  `langs/README.md` over the merge, keep the branch's module sources,
+  scratch programs and fixtures, regenerate the manifest. The branch's
+  kernel layer is an older account of what `main` has since done, under
+  other names; what its scratch programs then fail on is exactly what
+  has to be ported by hand, in each kernel's own words, with each new
+  label registered in the five places. This was the way for every
+  branch cut from `79eefce` and for `slice-object`, `hash-eq-identity`
+  and `int-methods`.
+- **Union of the conflict hunks** (`union.py`): ours then theirs in each
+  hunk, rosters merged label by label, `BUILTIN_LABELS` count raised,
+  the definition JSON merged three ways from the git stages, then hand
+  fixes for duplicated match arms. This was the way for `complex-type`
+  and `float-repr-all-kernels`, whose kernel work `main` did not have at
+  all. It is quick and it is treacherous: the `complex` builtin's entry
+  in `kernels/microcode7/src/table.rs` vanished this way and was only
+  found when its scratch programs were run on the merged tree.
+
+Whichever way, the branch's scratch programs are the specification; run
+them on both full kernels before anything else, and then the whole
+scratch suite, since a port that satisfies one piece has more than once
+broken another (`slice_value` ordering broke `del`, the member
+write-through broke lists held in objects, the `Ellipsis` word was read
+out of a quoted string).
+
+Rosters resolve as unions —
 `langs/python.json` keys (never one twice; a repeated key parses and the
 last wins, silently), the long list lines in `kernels/stack8/src/lang.rs`
 and `kernels/microcode7/src/table.rs` (`BUILTIN_LABELS` carries its length
@@ -102,9 +157,21 @@ both sides and writing the one function that does what both meant, in
 each kernel's own words: `scripts/kernel_independence.py` refuses twelve
 identical significant lines between any two kernels.
 
-Suggested order: the branches cut from `79eefce` (they mostly add module
-sources under `langs/lib_python/modules/`), then `25f6848`, then
-`94155bd`, then #457, #455 and #485 last.
+Order taken and suggested: the branches cut from `79eefce` first (done),
+then `25f6848` (`complex-type`, `float-repr`, `slice-object`,
+`hash-eq-identity` done; `int-methods` merged and awaiting its port;
+`builtin-subclassing`, `descriptors` next), then `94155bd`
+(`dict-semantics`, `control-flow-edges`, `lazy-iterators`), then
+`reader-tail`, `builtins-2`, `exceptions-2`, `perf`, `dunder-2`, and
+#457, #455 and #485 last.
+
+A fixture the branch changed is a signal, not an instruction: where
+CPython agrees with the new expectation it is taken (a refusal turned
+into a run, the shortest rendering of reals, CPython's own wording for a
+truth method's wrong answer); where the old expectation encodes a
+documented divergence (`//` truncating, `round` half away from zero) it
+stays. `python3` is on the machine: run the fixture's program through it
+before deciding.
 
 ## 3. The verification sequence
 
@@ -124,8 +191,42 @@ grep -c "Kernel disagreements" tests/REPORT.md   # must be 0
 git diff tests/REPORT.md | grep -E "^-.*\| pass \| pass \|"   # must print nothing
 ```
 
-GitHub Actions runs the same three ways on every push (`build-and-test`,
-`reference`, `scratch` in `.github/workflows/ci.yml`); the `reference`
+**Prefer GitHub Actions to running this sequence by hand.** It runs the
+same three ways on every push — `build-and-test`, `reference`, `scratch`
+in `.github/workflows/ci.yml` — on runners that are not reclaimed, which
+this session's container is (§5), and it builds the release binary
+itself. Between them the three jobs are the whole sequence:
+`build-and-test` does independence, the `-D warnings` build, the
+ported-examples check and all 3006 examples on all six kernels;
+`reference` does the PHP row, the kernel-disagreement check and the
+regression check; `scratch` runs every scratch program on both full
+kernels. So push the line and read the run rather than spending an hour
+of a container that has fifty minutes left. To read one: list the runs
+for the branch, list the run's jobs to find the failing step, then ask
+for the failing job's log — the reply carries a pre-signed URL, and
+`curl`-ing that to a file and grepping it locally costs nothing, where
+reading the log through the tool costs thousands of lines. In the
+scratch log each program is announced by
+`=== scratch/<piece>/<n>.py (<kernel>) ===` and a failure shows as a
+`diff -u` hunk or an `Expected a successful exit.` line, so the piece at
+fault is the nearest such announcement above it; the last line is
+`Scratch failures: N`. Keep the local debug build for diagnosis, which
+is what it is good for. **A run takes about seventy minutes, and there are
+only so many runners, so read the run you want rather than starting
+more.** Runs go in parallel up to a concurrency limit and then queue
+behind one another. Observed directly: three runs created between 12:21
+and 12:47 were all in progress at once, while two created at 13:07 and
+13:10 sat queued behind them, waiting for a runner. So an extra push
+costs twice over — an hour of machine time repeating what the previous
+run was already going to say, and, once the limit is reached, a place in
+the queue ahead of the run that matters. There is no permission here to
+cancel a superseded run either: the API answers
+`403 Resource not accessible by integration`. So gather a round of
+fixes, verify them together against the debug build, and push the round
+once. What none of that argues for is leaving a commit unpushed:
+nothing in this container survives it (§5), and a commit that exists
+only here is one reclaim from gone. Commit, push, then wait out the
+run you care about rather than pushing again to feel busy. The `reference`
 job writes the `| all |` and Python rows and the reasons table into the
 run summary. `scratch/` holds each piece's programs with the exact output
 (`.out`) or first stderr line (`.err`) both full kernels must give; the
@@ -138,9 +239,8 @@ run summary. `scratch/` holds each piece's programs with the exact output
   past every `ext.*` label. Five pieces in a row tried to print reals or
   strings-in-containers as CPython does behind an `ext.*` label and broke
   the examples on the two full kernels only. The way through is a **core**
-  label all six kernels honour — #479 does exactly that for reals.
-  Container rendering (`[1, hello]`, not `[1, 'hello']`) still follows the
-  examples.
+  label all six kernels honour — #479 does exactly that for reals. For
+  containers, see the next note.
 - **Floor division and rounding stay as the language floor says**:
   `//` truncates and `round` rounds half away from zero for every language,
   the examples depend on it, and CPython's flooring/half-to-even is
@@ -156,7 +256,148 @@ run summary. `scratch/` holds each piece's programs with the exact output
 - **Every roster line is a single long line**; merges take one side whole
   and the other side's labels vanish with no conflict raised.
 
-## 5. Working with the codespaces
+- **The examples are load-sensitive.** `test.sh` times each run; with a
+  release build or a debug scratch run going beside it, 22 of the 3006
+  came back as "differs" or timed out, and every one passed alone. Run
+  step 7 of the sequence on a quiet machine, and rerun it alone before
+  believing a failure there.
+- **The verification log keeps the tail of each step.** `tail -40` of the
+  scratch step showed four of 43 failures; the other 39 were only found
+  by running the scratch suite again into a full log. Keep whole logs.
+- **A debug build is not a verification.** It builds in minutes where
+  the release build of `stack8` takes an hour of one core (the functions
+  are huge), so it is the right tool for porting; but its scratch run
+  takes hours, it overflows the stack on `unicodedata` (`modules-3/3`
+  and `/6`) and on a few deep programs, and a run left going while the
+  binary is rebuilt under it reports nonsense. Copy the binary aside
+  before a long run.
+- **Container rendering is half done, and the half that exists is a flag
+  on the value, not a label.** A row written as a literal prints its
+  members unquoted (`[1, hello]`) and a map prints `[k => v]`, as the
+  examples require; but a container that a *Python operation* builds
+  prints as CPython would. That is carried by the second field of
+  `Value::Collection(cell, quoted)` in `stack8` (`value.rs`, read where
+  `display` meets a `Collection`) and by the matching flag in
+  `microcode7`, set by `.held(true)` in the eight places that build such
+  a container — `sorted`, `str.split`, `list.copy`, `dict.copy`, the
+  ordering with a key, and `list()` of a view, text, cursor or
+  generator, which pass the flag on from what they were given. So
+  `print(sorted(w))` quotes and `print(w)` does not, even for the same
+  members, and that is deliberate rather than a fault: it buys CPython's
+  rendering everywhere the examples cannot see it. Two consequences.
+  First, do not "fix" the inconsistency by marking a literal-built row
+  quoted: `sort` in place is a core operation all ten languages use, and
+  marking its list would break the examples, which is how five earlier
+  attempts died. Second, a fixture that expects quotes around the
+  members of a list that was *not* built by such an operation is wrong,
+  and `sorting-semantics/5` was exactly that. Closing the gap properly
+  still wants a **core** label all six kernels honour, as
+  `system.real.render` is for reals (#479) — the rendering written into
+  stream35, microcode11, microcode4 and stack5 as well, each in its own
+  words, and every example that shows a container moved. That is a
+  change to the language floor and wants its own branch, not a Python
+  piece.
+- **A map is a row of pairs searched from the front**, in both full
+  kernels, so a large map is quadratic: `scratch/perf/3` takes over two
+  hours on microcode7 in a debug build and seconds on a release one.
+  That is dictionary work, not `perf`'s, and it is the one place where
+  the kernels are not fast. Hashed storage for maps is the fix, and it
+  has to be written twice, in each kernel's own words.
+- **The library's own bindings must not shadow a builtin word.** The
+  Lumen library defines `round(x, decimals)`, and while every global
+  name stood in front of a builtin spelled the same, `round(number=5,
+  ndigits=2)` complained about a missing `decimals`. Both kernels now
+  let only the *program's own* outermost bindings shadow a builtin
+  (`program_bound` in `kernels/stack8/src/compile.rs`, `named_in_program`
+  in `kernels/microcode7/src/build.rs`). The bare parent word is the
+  same problem seen from the other end: `super` outside a class is a
+  plain name only when the program has bound it or is about to
+  (`1e8919a`).
+- **The recursion limit wants more stack than a run is given.** A
+  thousand calls deep overflowed the native stack in a debug build
+  (`modules-3/3`, `/6`, `stdlib-2/3`, `/6`, exit 134). The whole run is
+  now made on a thread with a gigabyte of stack in `src/main.rs`; do not
+  take that out.
+
+- **An in-place operator on an instance of a builtin subclass is not
+  finished, and the two kernels fail at different points.** Measured at
+  `db1a167`: `stack8` refuses `L(list) += [2]` with
+  `TypeError: can only concatenate L (not "list") to L` where CPython
+  extends and `microcode7` gets it right; `microcode7` refuses
+  `D(dict) |= {...}` with `PythonError: unsupported operand type(s)`,
+  whose bare `PythonError:` prefix is itself a sign the words are not a
+  recognised Python complaint. Each is a defect in one kernel and each
+  is therefore a disagreement between them, which the reference run
+  counts and refuses. Build on the groundwork `builtin-subclassing`
+  (#474) already laid — `kind_class`/`worth_of`/`thing_of_kind` and
+  adapter tag 14 in `stack8`, `native_kind`/`underlying`/
+  `thing_over_native` and `Wrapped` tag 14 in `microcode7` — rather than
+  inventing a second mechanism, and note that `scratch/` covered none of
+  it, which is why it survived twenty-two merges.
+- **A subagent's report of what it could not fix is a claim to check,
+  not a finding.** One reported both kernels refusing two cases as
+  pre-existing; measuring both binaries showed its own fix had repaired
+  one of them, and that the other was a disagreement between the kernels
+  rather than a shared gap. Re-measure before writing anything down.
+
+- **`getattr`, `is`, `id` and `hash` all reach values through cells** in
+  both kernels — `Value::Bond`/`Binding`/`Collection` in `stack8`,
+  `Value::Shared`/`Mutable` in `microcode7` — and each builtin decides
+  for itself whether it wants the cell or the contents. A builtin given
+  the cell by mistake ties the program in knots (a list written into its
+  own cell overflowed the stack on printing); one given the contents by
+  mistake cannot tell two names for one list apart.
+
+## 5. Working with the codespaces and the session machine
+
+The last two sessions ran in a Claude Code remote container with Rust,
+`php` and `python3`, worktrees under the session's scratch directory
+(`merge-1` … `merge-9`, one per branch, each with its own `target/`), and
+the integration checkout at `/home/user/lumen-lang`. That container does
+not outlive the session; only what is pushed survives.
+
+**The container dies under a release build, not on a timer.** Four
+restarts in one session each killed a run in progress, twice at the
+release build, which looked like a fifty-to-sixty-minute reclaim. It is
+not: once the release builds were stopped the same container ran for
+over two and a half hours without interruption. The restarts correlate
+with `stack8`'s release build rather than with the clock — that build is
+one compile unit of about an hour over 36,000 lines and is by far the
+heaviest thing the container does. Treat the lesson as "do not run a
+release build here", not "everything must finish in fifty minutes"; and
+note `cargo` cannot resume inside a single compile unit anyway, so a
+plain `cargo build --release` never finishes even when nothing kills
+it. Two things make it
+survivable, and both are environment only, changing no committed file:
+
+```
+export CARGO_PROFILE_RELEASE_INCREMENTAL=true
+export CARGO_PROFILE_RELEASE_OPT_LEVEL=2
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+```
+
+With those the build comes in pieces and each restart resumes where the
+last left off. Run it detached (`nohup … &`) into a log, and read the
+log rather than waiting on it. Then run the four checks of §3 one at a
+time, each into its own whole log: independence, the scratch suite, the
+3006 examples, the reference run. Any one of them fits inside a window;
+all of them together do not.
+
+**The writable disk is a fixed allowance, and a worktree per branch
+will exhaust it.** Each worktree's own `target/` is about 1.5 GB once
+its debug build is warm, so a dozen of them fill the session's share.
+When it fills, `cargo` dies with
+`failed to write query cache ... No space left on device` and a tool's
+own output cannot be written either — which is how one agent's build
+was killed without the agent noticing, leaving it waiting on a run that
+would never report. `df` is misleading here: the allowance can be spent
+while the device looks half empty. Deletes still succeed when writes
+fail, so the way out is to remove the `target/` directories of
+worktrees whose work is already folded in (`rm -rf <worktree>/target`);
+they are pure build output and cost nothing to lose. Better still,
+delete a worktree's `target/` as soon as its branch is folded in, and
+prefer building a collected fix in the main checkout, whose target is
+already warm, to building it again in the worktree it came from.
 
 Two 4-core codespaces exist on the repository (`lumen-a`, `lumen-b`), with
 Rust installed under `$HOME/.cargo` and `php` present. Everything is driven

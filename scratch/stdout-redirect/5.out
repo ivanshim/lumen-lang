@@ -1,0 +1,12 @@
+alpha
+prompt: beta
+last
+eof
+''
+''
+'a'
+'\n'
+['b\n', 'c']
+'first\n'
+'second\n'
+['x\n', 'y\n']

@@ -9,8 +9,30 @@ use crate::value::{Value, Wording};
 
 type Answer = Result<Value, String>;
 
-fn alike(a: &Value, b: &Value) -> bool {
+fn alike(a: &Value, b: &Value, words: &Wording) -> bool {
+    if words.value_keys { return keyed_alike(a, b); }
     match (a,b) { (Value::Real(x),Value::Real(y)) if Rc::ptr_eq(x,y) => true, _ => a.equals(b) }
+}
+
+/// Whether two keys name one place in a map whose keys are their worth:
+/// a flag is the number it counts as, a whole number and the real it
+/// equals are one, and tuples are one when their items are, in order.
+fn keyed_alike(a: &Value, b: &Value) -> bool {
+    let (a, b) = (a.contents(), b.contents());
+    match (&a, &b) {
+        (Value::Flag(f), other) | (other, Value::Flag(f)) => keyed_alike(&Value::Small(i64::from(*f)), other),
+        (Value::Tuple(x), Value::Tuple(y)) => x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| keyed_alike(p, q)),
+        (Value::Real(x), Value::Real(y)) if Rc::ptr_eq(x, y) => true,
+        _ => a.equals(&b),
+    }
+}
+
+/// Write a key over the value it holds, or at the end of the pairs.
+fn put_pair(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value, words: &Wording) {
+    match pairs.iter_mut().find(|(k, _)| alike(k, &key, words)) {
+        Some(slot) => slot.1 = value,
+        None => pairs.push((key, value)),
+    }
 }
 
 fn shown(value: &Value, words: &Wording) -> String {
@@ -26,7 +48,7 @@ fn shown(value: &Value, words: &Wording) -> String {
     value.representation(words)
 }
 
-fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
+pub fn reaches(value: &Value, cell: &Rc<std::cell::RefCell<Value>>, depth: usize) -> bool {
     if depth > 100 { return true; }
     match value {
         Value::Collection(held, _) => Rc::ptr_eq(held,cell) || reaches(&held.borrow(),cell,depth+1),
@@ -84,7 +106,25 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
     let store = |v: Value| -> Answer {
         if let Value::Collection(cell, _) = receiver { if reaches(&v,cell,0) {return Err(fault("unready"));} *cell.borrow_mut() = v; Ok(Value::Null) } else { Err(fault("unready")) }
     };
+    // A map keyed by the members of whatever it was asked of, each key
+    // holding the one value given, or nothing where none was.
+    if op == "fromkeys" {
+        arity(0,1)?;
+        let filling = a.first().cloned().unwrap_or(Value::Null);
+        let mut pairs: Vec<(Value, Value)> = Vec::new();
+        for key in members(&held, fault)? {
+            if !pairs.iter().any(|(k, _)| alike(k, &key, words)) { pairs.push((key, filling.clone())); }
+        }
+        return Ok(Value::Map(Rc::new(pairs)).held(false));
+    }
     match &held {
+        // A real read from its hexadecimal spelling, as float.fromhex reads it.
+        Value::Text(s) if op=="fromhex" => {
+            arity(0,0)?;
+            let number=hex_real(&s).ok_or_else(||fault("hex"))?;
+            if number.is_infinite() && !s.trim().to_ascii_lowercase().contains("inf") {return Err(fault("hex_overflow"));}
+            Ok(crate::complex::real(number))
+        }
         Value::Text(s) => {
             if op == "encode" { return Err(fault("bytes")); }
             if op == "format" { return format_fields(s, a, names, words, fault).map(|s| Value::text(&s)); }
@@ -133,7 +173,18 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     }
                     return Ok(Value::array(parts.iter().map(|x| Value::text(x)).collect()).held(true));
                 }
-                "join" => { arity(1,1)?; members(&a[0],fault)?.iter().map(|x| text(x,fault)).collect::<Result<Vec<_>,_>>()?.join(s) }
+                // Gathered straight into the one answer: a row of
+                // pieces made to be thrown away again costs more than
+                // the joining does.
+                "join" => {
+                    arity(1,1)?;
+                    let mut gathered = String::new();
+                    for (at, item) in members(&a[0],fault)?.iter().enumerate() {
+                        if at != 0 { gathered.push_str(s); }
+                        gathered.push_str(&text(item,fault)?);
+                    }
+                    gathered
+                }
                 "replace" => { arity(2,3)?; let n = a.get(2).map(|v| integer(v,fault)).transpose()?.unwrap_or(-1); s.replacen(&text(&a[0],fault)?, &text(&a[1],fault)?, if n < 0 { usize::MAX } else { n as usize }) }
                 "find" | "rfind" | "index" | "count" | "startswith" | "endswith" => {
                     arity(1,3)?;
@@ -195,7 +246,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(1,if op=="index" {3} else {1})?;
                     let lo=a.get(1).map(|v|integer(v,fault)).transpose()?.map_or(0,|n|bound(n,row.len()));
                     let hi=a.get(2).map(|v|integer(v,fault)).transpose()?.map_or(row.len(),|n|bound(n,row.len()));
-                    let hits:Vec<usize>=(lo..hi).filter(|i|alike(&row[*i],&a[0])).collect();
+                    let hits:Vec<usize>=(lo..hi).filter(|i|alike(&row[*i],&a[0],words)).collect();
                     if op=="count" {return Ok(Value::Small(hits.len() as i64));}
                     let at=*hits.first().ok_or_else(||fault(if op=="remove" {"remove"} else {"list_index"}))?;
                     if op=="index" {return Ok(Value::Small(at as i64));} row.remove(at);
@@ -213,28 +264,61 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "get" | "setdefault" | "pop" => {
                     arity(1,2)?;
                     if matches!(a[0].contents(), Value::Array(_) | Value::Map(_)) {return Err(fault("arguments"));}
-                    let at=pairs.iter().position(|(k,_)| alike(k,&a[0]));
+                    let at=pairs.iter().position(|(k,_)| alike(k,&a[0],words));
                     if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
                     let value=a.get(1).cloned().unwrap_or(Value::Null);
                     if op=="pop" && a.len()==1 {return Err(fault("key")+&a[0].representation(words));}
                     if op=="setdefault" {pairs.push((a[0].clone(),value.clone()));store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
                 }
                 "keys" | "values" | "items" => {arity(0,0)?;return Ok(Value::View(Rc::new((receiver.clone(),op.to_string()))));}
+                // The last pair written is taken out and handed back.
+                "popitem" => {
+                    arity(0,0)?;
+                    let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
+                    store(Value::Map(Rc::new(pairs)))?;
+                    return Ok(Value::Tuple(Rc::new(vec![key,value])));
+                }
                 "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}
+                // Pairs are written as they are read, so those before an
+                // ill-shaped one stand written when it stops the call.
                 "update" => {
-                    arity(0,1)?;let mut entries=Vec::new();
-                    if let Some(v)=a.first() {entries=match v.contents() {Value::Map(p)=>p.as_ref().clone(),v=>{let mut out=Vec::new();for item in members(&v,fault)? {let pair=members(&item,fault)?;if pair.len()!=2{return Err(fault("arguments"));}out.push((pair[0].clone(),pair[1].clone()));}out}};}
-                    entries.extend(names.iter().map(|(k,v)|(Value::text(k),v.clone())));
-                    for (k,v) in entries {if let Some(at)=pairs.iter().position(|(key,_)|key.equals(&k)){pairs[at].1=v;}else{pairs.push((k,v));}}
+                    arity(0,1)?;let mut amiss=None;
+                    if let Some(v)=a.first() {
+                        match v.contents() {
+                            Value::Map(p)=>{for (k,v) in p.iter() {put_pair(&mut pairs,k.clone(),v.clone(),words);}}
+                            other=>{for item in members(&other,fault)? {
+                                let pair=members(&item,fault)?;
+                                if pair.len()!=2 {amiss=Some(fault("arguments"));break;}
+                                put_pair(&mut pairs,pair[0].clone(),pair[1].clone(),words);
+                            }}
+                        }
+                    }
+                    if amiss.is_none() {for (k,v) in names {put_pair(&mut pairs,Value::text(k),v.clone(),words);}}
+                    store(Value::Map(Rc::new(pairs)))?;
+                    return match amiss {Some(told)=>Err(told),None=>Ok(Value::Null)};
                 }
                 _ => return Err(fault("attribute")),
             }
             store(Value::Map(Rc::new(pairs)))
         }
         Value::Small(_) | Value::Huge(_) | Value::Real(_) => {
+            let real=matches!(held,Value::Real(_));
+            // True division asked of the whole number's class: the two
+            // whole numbers become the real their quotient rounds to.
+            if op=="__truediv__" && !real {
+                arity(1,1)?;
+                let (top,under)=(held.as_big()?,a[0].contents().as_big().map_err(|_|fault("arguments"))?);
+                if under.is_zero() {return Err(fault("arguments"));}
+                return Ok(crate::complex::real(crate::value::as_binary(&top,&under)));
+            }
             arity(0,0)?;
             match op {
+                "bit_count" if !real => Ok(Value::Small(held.as_big()?.magnitude().count_ones() as i64)),
+                "numerator" | "__index__" if !real => Ok(Value::of_big(held.as_big()?)),
+                "denominator" if !real => Ok(Value::Small(1)),
+                "real" | "conjugate" => Ok(held.clone()),
+                "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
                 "as_integer_ratio" => {let (p,q)=match &held {Value::Real(r) if !r.outside()=>crate::value::from_binary(crate::value::as_binary(&r.p,&r.q)).ok_or_else(||fault("unready"))?,Value::Real(_)=>return Err(fault("unready")),_=>(held.as_big()?,BigInt::from(1))};let divisor=p.gcd(&q);Ok(Value::Tuple(Rc::new(vec![Value::of_big(p/&divisor),Value::of_big(q/divisor)])))},
@@ -278,4 +362,32 @@ fn format_fields(template: &str, args: &[Value], names: &[(String,Value)], words
         out.push_str(&rendered);
     }
     Ok(out)
+}
+
+/// The real a hexadecimal spelling stands for: a sign, `0x`, hex figures
+/// with a point among them, and `p` before a power of two; or one of the
+/// words for the reals past the numbers. Nothing for anything else.
+fn hex_real(spelling: &str) -> Option<f64> {
+    let text = spelling.trim().to_ascii_lowercase();
+    let (negative, body) = match text.strip_prefix('-') { Some(rest) => (true, rest), None => (false, text.strip_prefix('+').unwrap_or(&text)) };
+    let magnitude = match body {
+        "inf" | "infinity" => f64::INFINITY,
+        "nan" => f64::NAN,
+        _ => {
+            let body = body.strip_prefix("0x").unwrap_or(body);
+            let (mantissa, power) = match body.split_once('p') { Some((m, e)) => (m, e.parse::<i64>().ok()?), None => (body, 0) };
+            let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+            if whole.is_empty() && fraction.is_empty() { return None; }
+            let mut value = 0f64;
+            for c in whole.chars() { value = value * 16.0 + c.to_digit(16)? as f64; }
+            let mut scale = 1.0 / 16.0;
+            for c in fraction.chars() { value += c.to_digit(16)? as f64 * scale; scale /= 16.0; }
+            let mut exponent = power;
+            let mut result = value;
+            while exponent > 0 { result *= 2.0; exponent -= 1; if result.is_infinite() { break; } }
+            while exponent < 0 { result /= 2.0; exponent += 1; if result == 0.0 { break; } }
+            result
+        }
+    };
+    Some(if negative { -magnitude } else { magnitude })
 }

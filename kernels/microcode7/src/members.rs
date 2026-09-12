@@ -69,6 +69,17 @@ impl Request<'_> {
                 if self.given.len()<=at{self.given.resize(at+1,Value::Nil);}self.given[at]=value.clone();
             }
         }
+        // A new map with a key for each member of the receiver, every one
+        // holding the single value given, or nothing.
+        if self.operation=="fromkeys"{
+            self.takes(0,1)?;
+            let filling=self.given.first().cloned().unwrap_or(Value::Nil);
+            let mut entries:Vec<(Value,Value)>=Vec::new();
+            for key in gather(self.target,self.complaint)?{
+                if entries.iter().all(|e|!same_item(&e.0,&key,self.names.keys_by_worth)){entries.push((key,filling.clone()));}
+            }
+            return Ok(Value::Dict(Rc::new(entries)).keep(false));
+        }
         match self.target.settled(){
             Value::Text(chars)=>self.on_text(&chars),
             Value::Vector(items)=>self.on_list(items.to_vec()),
@@ -78,8 +89,20 @@ impl Request<'_> {
         }
     }
     fn on_number(&self,value:Value)->ResultValue{
-        self.takes(0,0)?;
         let real=matches!(value,Value::Frac(_));
+        // The true quotient of two whole numbers, asked of the class.
+        if self.operation=="__truediv__" && !real {
+            self.takes(1,1)?;
+            let (above,beneath)=(value.as_big()?,self.given[0].settled().as_big().map_err(|_|self.fail("arguments"))?);
+            if beneath.is_zero(){return Err(self.fail("arguments"));}
+            return Ok(crate::data::worth_of_binary(crate::data::nearest_binary(&above,&beneath),crate::math::DEFAULT_PLACES).keeping_point(true));
+        }
+        self.takes(0,0)?;
+        if self.operation=="bit_count" && !real{return Ok(Value::Small(value.as_big()?.magnitude().count_ones() as i64));}
+        if (self.operation=="numerator"||self.operation=="__index__") && !real{return Ok(Value::from_big(value.as_big()?));}
+        if self.operation=="denominator" && !real{return Ok(Value::Small(1));}
+        if self.operation=="real"||self.operation=="conjugate"{return Ok(value);}
+        if self.operation=="imag"{return Ok(if real{crate::data::worth_of_binary(0.0,crate::math::DEFAULT_PLACES).keeping_point(true)}else{Value::Small(0)});}
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
         if self.operation=="as_integer_ratio"{
@@ -103,6 +126,13 @@ impl Request<'_> {
     }
     fn on_text(&self,s:&str)->ResultValue{
         let op=self.operation;
+        // A real read back from the hexadecimal spelling float.hex gives.
+        if op=="fromhex"{
+            self.takes(0,0)?;
+            let number=read_hex_real(s).ok_or_else(||self.fail("hex"))?;
+            if number.is_infinite() && !s.to_ascii_lowercase().contains("inf"){return Err(self.fail("hex_overflow"));}
+            return Ok(crate::data::worth_of_binary(number,crate::math::DEFAULT_PLACES).keeping_point(true));
+        }
         if op=="encode"{return Err(self.fail("bytes"));}
         if op=="format"{return self.fill_fields(s).map(|t|Value::text(&t));}
         if ["upper","lower","title","capitalize"].contains(&op){
@@ -124,7 +154,15 @@ impl Request<'_> {
         }
         if op=="split"||op=="rsplit"{return self.split_text(s);}
         if op=="join"{
-            self.takes(1,1)?;let mut strings=Vec::new();for item in gather(&self.given[0],self.complaint)?{strings.push(letters(&item,self.complaint)?);}return Ok(Value::text(&strings.join(s)));
+            // Written into the one answer as the members come, rather
+            // than into a row of pieces that is then thrown away.
+            self.takes(1,1)?;
+            let mut whole=String::new();
+            for (at,item) in gather(&self.given[0],self.complaint)?.iter().enumerate(){
+                if at!=0{whole.push_str(s);}
+                whole.push_str(&letters(item,self.complaint)?);
+            }
+            return Ok(Value::text(&whole));
         }
         if op=="replace"{
             self.takes(2,3)?;let limit=self.number(2,-1)?;let old=self.string(0)?;let new=self.string(1)?;
@@ -217,7 +255,7 @@ impl Request<'_> {
                 self.takes(1,if self.operation=="index"{3}else{1})?;
                 let start=place(self.number(1,0)?,values.len());let stop=place(self.number(2,values.len() as i64)?,values.len());
                 let mut first=None;let mut count=0;
-                for (at,value) in values.iter().enumerate().take(stop).skip(start){if same_item(value,&self.given[0]){count+=1;if first.is_none(){first=Some(at);}}}
+                for (at,value) in values.iter().enumerate().take(stop).skip(start){if same_item(value,&self.given[0],self.names.keys_by_worth){count+=1;if first.is_none(){first=Some(at);}}}
                 if self.operation=="count"{return Ok(Value::Small(count));}
                 let at=first.ok_or_else(||self.fail(if self.operation=="remove"{"remove"}else{"list_index"}))?;
                 if self.operation=="index"{return Ok(Value::Small(at as i64));}values.remove(at);
@@ -226,8 +264,22 @@ impl Request<'_> {
         }
         self.replace(Value::Vector(Rc::new(values)))
     }
+    // A pair written over the value its key already holds, or added last.
+    fn enter(&self,entries:&mut Vec<(Value,Value)>,key:Value,value:Value){
+        match entries.iter_mut().find(|e|same_item(&e.0,&key,self.names.keys_by_worth)){
+            Some(entry)=>entry.1=value,
+            None=>entries.push((key,value)),
+        }
+    }
     fn on_map(&self,mut entries:Vec<(Value,Value)>)->ResultValue{
         match self.operation{
+            // The pair written last comes out, key and value together.
+            "popitem"=>{
+                self.takes(0,0)?;
+                let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
+                self.replace(Value::Dict(Rc::new(entries)))?;
+                return Ok(Value::Tuple(Rc::new(vec![key,value])));
+            }
             "keys"|"values"|"items"=>{
                 self.takes(0,0)?;
                 let portion=if self.operation=="keys"{'k'}else if self.operation=="values"{'v'}else{'i'};
@@ -238,22 +290,32 @@ impl Request<'_> {
             "get"|"setdefault"|"pop"=>{
                 self.takes(1,2)?;let key=&self.given[0];
                 if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
-                if let Some(index)=entries.iter().position(|e|same_item(&e.0,key)){
+                if let Some(index)=entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth)){
                     let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
                 }
                 if self.operation=="pop"&&self.given.len()==1{return Err(self.fail("key")+&key.repr(&self.names));}
                 let answer=self.given.get(1).cloned().unwrap_or(Value::Nil);
                 if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
             }
+            // Each pair goes in as it is met, so that the pairs read before
+            // an ill-shaped one are kept when the call stops on it.
             "update"=>{
-                self.takes(0,1)?;let mut incoming=Vec::new();
+                self.takes(0,1)?;let mut stopped=None;
                 if let Some(source)=self.given.first(){
-                    match source.settled(){Value::Dict(d)=>incoming=d.to_vec(),other=>{
-                        for item in gather(&other,self.complaint)?{let values=gather(&item,self.complaint)?;if values.len()!=2{return Err(self.fail("arguments"));}incoming.push((values[0].clone(),values[1].clone()));}
-                    }}
+                    match source.settled(){
+                        Value::Dict(d)=>{for (key,value) in d.iter(){self.enter(&mut entries,key.clone(),value.clone());}}
+                        other=>{
+                            for item in gather(&other,self.complaint)?{
+                                let values=gather(&item,self.complaint)?;
+                                if values.len()!=2{stopped=Some(self.fail("arguments"));break;}
+                                self.enter(&mut entries,values[0].clone(),values[1].clone());
+                            }
+                        }
+                    }
                 }
-                for (key,value) in self.named{incoming.push((Value::text(key),value.clone()));}
-                for (key,value) in incoming{match entries.iter_mut().find(|entry|entry.0.equals(&key)){Some(entry)=>entry.1=value,None=>entries.push((key,value))}}
+                if stopped.is_none(){for (key,value) in self.named{self.enter(&mut entries,Value::text(key),value.clone());}}
+                self.replace(Value::Dict(Rc::new(entries)))?;
+                return match stopped{Some(words)=>Err(words),None=>Ok(Value::Nil)};
             }
             _=>return Err(self.fail("attribute")),
         }
@@ -312,22 +374,60 @@ impl Request<'_> {
     }
 }
 
-fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)->bool {
+pub fn circular(value:&Value, receiver:&Rc<std::cell::RefCell<Value>>, level:usize)->bool {
     if level>=101{return true;}
     if let Value::Mutable(place,_) = value {
         return Rc::ptr_eq(place,receiver)||circular(&place.borrow(),receiver,level+1);
     }
-    let parts=match value {
-        Value::Vector(items)|Value::Row(items)=>items.to_vec(),
-        Value::Window(owner,_)=>vec![owner.as_ref().clone()],
-        Value::Dict(entries)=>entries.iter().flat_map(|(key,value)|[key.clone(),value.clone()]).collect(),
-        _=>return false,
-    };
-    for part in parts {if circular(&part,receiver,level+1){return true;}}
-    false
+    // Looked through where the parts lie. Gathering them into a row of
+    // their own first was a copy of the whole at every step down.
+    match value {
+        Value::Vector(items)|Value::Row(items)=>items.iter().any(|part|circular(part,receiver,level+1)),
+        Value::Window(owner,_)=>circular(owner,receiver,level+1),
+        Value::Dict(entries)=>entries.iter().any(|(key,worth)|circular(key,receiver,level+1)||circular(worth,receiver,level+1)),
+        _=>false,
+    }
 }
 
-fn same_item(left:&Value,right:&Value)->bool{
+fn same_item(left:&Value,right:&Value,by_worth:bool)->bool{
+    if by_worth {return worth_alike(left,right);}
     if let (Value::Frac(a),Value::Frac(b))=(left,right){if Rc::ptr_eq(a,b){return true;}}
     left.equals(right)
+}
+
+// Two keys of a map compared by worth: a flag counts for its number, a
+// whole number is one key with the real it equals, and tuples are one
+// key when each item of the one is so with its fellow in the other.
+fn worth_alike(left:&Value,right:&Value)->bool{
+    let (left,right)=(left.settled(),right.settled());
+    if let Value::Flag(f)=left {return worth_alike(&Value::Small(f as i64),&right);}
+    if let Value::Flag(f)=right {return worth_alike(&left,&Value::Small(f as i64));}
+    if let (Value::Frac(a),Value::Frac(b))=(&left,&right){if Rc::ptr_eq(a,b){return true;}}
+    if let (Value::Tuple(a)|Value::Row(a),Value::Tuple(b)|Value::Row(b))=(&left,&right){
+        return a.len()==b.len()&&a.iter().zip(b.iter()).all(|(x,y)|worth_alike(x,y));
+    }
+    left.equals(&right)
+}
+
+/// A real from its hexadecimal spelling: an optional sign, `0x`, figures
+/// with a point somewhere among them, `p` and a power of two; or a word
+/// for the reals past the numbers. Nothing for a spelling that is none
+/// of these.
+fn read_hex_real(spelling:&str)->Option<f64>{
+    let lowered=spelling.trim().to_ascii_lowercase();
+    let (sign,rest)=if let Some(r)=lowered.strip_prefix('-'){(-1.0,r)}else{(1.0,lowered.strip_prefix('+').unwrap_or(&lowered))};
+    if rest=="inf"||rest=="infinity"{return Some(sign*f64::INFINITY);}
+    if rest=="nan"{return Some(f64::NAN);}
+    let rest=rest.strip_prefix("0x").unwrap_or(rest);
+    let (figures,power)=match rest.split_once('p'){Some((f,p))=>(f,p.parse::<i64>().ok()?),None=>(rest,0)};
+    let (before,after)=figures.split_once('.').unwrap_or((figures,""));
+    if before.is_empty()&&after.is_empty(){return None;}
+    let mut worth=0f64;
+    for c in before.chars(){worth=worth*16.0+f64::from(c.to_digit(16)?);}
+    let mut place=1.0/16.0;
+    for c in after.chars(){worth+=f64::from(c.to_digit(16)?)*place;place/=16.0;}
+    let mut remaining=power;
+    while remaining>0&&worth.is_finite(){worth*=2.0;remaining-=1;}
+    while remaining<0&&worth!=0.0{worth/=2.0;remaining+=1;}
+    Some(sign*worth)
 }

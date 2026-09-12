@@ -37,6 +37,13 @@ impl ExprNode for UnaryMinusExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
         // Derived: -x is 0 - x, so a real keeps its precision and a rational stays exact
         let val = self.expr.eval(env)?;
+        if def().shortest_reals {
+            if let Ok(real) = as_real(val.as_ref()) {
+                let opposite = -crate::language::real_decimal::nearest(&real.numerator, &real.denominator);
+                let (numerator, denominator) = crate::language::real_decimal::exact(opposite);
+                return Ok(Box::new(LumenReal { numerator, denominator, precision: real.precision }));
+            }
+        }
         apply(Arith::Sub, Box::new(LumenNumber::new(BigInt::from(0))), val)
     }
 }
@@ -110,6 +117,25 @@ pub fn apply(op: Arith, l: Value, r: Value) -> LumenResult<Value> {
     // A real operand makes the result real, as does division in a
     // language whose `/` yields a real (op.div.result).
     let mut result_is_real = left_is_real || right_is_real || (op == Arith::Div && def().div_real);
+    if def().shortest_reals && (left_is_real || right_is_real) {
+        let (a, b) = exact_parts(l.as_ref(), "Left operand must be a number")?;
+        let (c, d) = exact_parts(r.as_ref(), "Right operand must be a number")?;
+        let first = crate::language::real_decimal::nearest(&a, &b);
+        let second = crate::language::real_decimal::nearest(&c, &d);
+        if second == 0.0 && matches!(op, Arith::Div | Arith::Quot | Arith::Rem) { return Err("Division by zero".into()); }
+        let answer = match op {
+            Arith::Add => first + second,
+            Arith::Sub => first - second,
+            Arith::Mul => first * second,
+            Arith::Div => first / second,
+            Arith::Quot => (first / second).trunc(),
+            Arith::Rem => first % second,
+            Arith::Pow => first.powf(second.trunc()),
+            Arith::Concat => unreachable!(),
+        };
+        let (numerator, denominator) = crate::language::real_decimal::exact(answer);
+        return Ok(Box::new(LumenReal { numerator, denominator, precision: left_real_prec.or(right_real_prec).unwrap_or(15) }));
+    }
     // Two whole numbers dividing evenly give a whole one, where the
     // language says its division does that rather than always a real.
     if result_is_real && op == Arith::Div && def().div_whole_when_even && !left_is_real && !right_is_real {

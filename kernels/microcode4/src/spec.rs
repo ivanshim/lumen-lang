@@ -75,7 +75,7 @@ builtin.emit:L builtin.print:L builtin.write:L builtin.print.placeholder:L \
 builtin.len:L builtin.char_at:L builtin.ord:L builtin.chr:L builtin.typeof:L builtin.error:L \
 builtin.extern:L builtin.range:L builtin.real:L builtin.num:L builtin.den:L builtin.push:L \
 builtin.get:L builtin.put:L builtin.precision:L builtin.to_string:L builtin.to_int:L builtin.to_real:L \
-system.args:L system.memoization:L system.real_default_precision:L system.entry:L \
+system.args:L system.memoization:L system.real_default_precision:L system.real.render:W system.entry:L \
 system.kind.integer:L system.kind.rational:L system.kind.real:L system.kind.string:L \
 system.kind.boolean:L system.kind.array:L system.kind.null:L";
 
@@ -311,6 +311,10 @@ impl Spec {
         }
         if self.on("op.index.strings") && !self.any("op.index.open") {
             return Err("op.index.strings needs op.index.open".to_string());
+        }
+        match self.word("system.real.render") {
+            Some("library" | "shortest") => (),
+            _ => return Err("Unknown way of rendering a real".to_string()),
         }
         if !matches!(self.word("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
             return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());

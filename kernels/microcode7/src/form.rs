@@ -36,10 +36,22 @@ pub enum Callee {
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prim {
+    /// A line asked of the reader the table routes input through.
+    Inquire,
+    /// A span made of one to three bounds.
+    SpanOf,
+    /// Text poured straight onto the ordinary or the error channel.
+    PourOut,
+    /// Text drawn straight from the input channel, by count or by line.
+    DrawIn,
     Octets(u8),
     OctetAssign(bool),
+    /// A compound write's working, numbered by the in-place method the
+    /// place it lands on is asked before the plain working runs.
+    Landing(u8),
     Textual(crate::text::Work),
     ClassWork(u8),
+    ComplexMade,
     /// A compound write may ask a real to retain its point.
     Pointed,
     Adorn(char),
@@ -147,6 +159,18 @@ pub enum Prim {
     /// already has and run where it stands, and what it answers with is
     /// what it gives back.
     Weigh,
+    /// The dictionary of the outermost names, handed out as it stands
+    /// and kept beside them from then on (ext.builtin.globals).
+    WorldBook,
+    /// The names about the call: a copy inside a routine, the outermost
+    /// dictionary outside one (ext.builtin.locals).
+    HereBook,
+    /// Text read and run as statements (ext.builtin.exec).
+    Perform,
+    /// Text checked and kept as a code value (ext.builtin.compile).
+    Prepare,
+    /// A namespace fetched by name (ext.builtin.import).
+    Summon,
     Bring,
     /// The same as the one above, but only where that file has not been
     /// read before in this run (ext.builtin.include.once); one read
@@ -159,6 +183,15 @@ pub enum Prim {
     Spill,
     There,
     Gone,
+    /// The fault in hand, as the name of its kind and its words.
+    FaultHeld,
+    /// The value the innermost clause holds as raised, whole, or nil
+    /// where none is held (ext.system.fault.held).
+    FaultWhole,
+    /// What a path names: a file, a directory, or neither.
+    PathSort,
+    /// The host's facts as a row: directory, system, machine, surroundings.
+    HostRow,
     /// Everything the host's own shell wrote out, having been handed a
     /// command to run (ext.builtin.shell). Starting a second program
     /// beside this one is something only a language spelling this may
@@ -288,6 +321,13 @@ pub enum Prim {
     Append,
     Fetch,
     Replace,
+    /// Writing a place of a container back into what held it, once
+    /// something within that place has changed. It writes as `Replace`
+    /// does, save that where the very thing being written already
+    /// stands in that place nothing is written at all: a container
+    /// holding its places for good is then left as it is, since nothing
+    /// about it was to change.
+    Restore,
     Span,
     /// A map from the values given: a couple is a key and its value,
     /// anything else takes the next whole number as its key.

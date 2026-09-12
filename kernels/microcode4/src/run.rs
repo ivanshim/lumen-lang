@@ -415,6 +415,12 @@ impl<'a> Runner<'a> {
         Ok(match op {
             Op::Array => Value::List(Rc::new(v.to_vec())),
             Op::Not => Value::Bool(!v[0].truth()),
+            Op::Neg if crate::real::chosen() && matches!(&v[0], Value::Exact(e) if e.digits.is_some()) => {
+                let Value::Exact(e) = &v[0] else { unreachable!() };
+                let opposite = -crate::real::read(&e.num, &e.den);
+                let (num, den) = crate::real::keep(opposite);
+                Value::Exact(Rc::new(crate::value::Exact { num, den, digits: e.digits }))
+            }
             Op::Neg => match arith::apply(Sum::Sub, &Value::Int(0), &v[0]) {
                 Some(r) => r?,
                 None => return Err("Cannot negate non-numeric value".to_string()),

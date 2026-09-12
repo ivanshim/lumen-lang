@@ -71,9 +71,14 @@ def getitem(a, b):
     return a[b]
 
 def index(a):
-    if type(a) != type(1) and type(a) != type(True):
-        raise 'TypeError: value cannot be interpreted as an integer'
-    return int(a)
+    if type(a) == type(1) or type(a) == type(True):
+        return int(a)
+    if hasattr(a, '__index__'):
+        answer = a.__index__()
+        if type(answer) == type(1) or type(answer) == type(True):
+            return int(answer)
+        raise 'TypeError: __index__ returned non-int (type ' + type(answer).__name__ + ')'
+    raise 'TypeError: value cannot be interpreted as an integer'
 
 class _ItemGetter:
     def __init__(self, names):
@@ -196,3 +201,193 @@ def length_hint(value, default=0):
 
 def setitem(sequence, key, value):
     raise 'NotImplementedError: setitem needs shared mutable sequence storage'
+
+class _MethodCaller:
+    def __init__(self, name, args, kwargs):
+        self.name = name
+        self.args = args
+        self.kwargs = kwargs
+
+    def call(self, obj):
+        return getattr(obj, self.name)(*self.args, **self.kwargs)
+
+def methodcaller(name, *args, **kwargs):
+    if type(name) != type(''):
+        raise 'TypeError: method name must be a string'
+    return _MethodCaller(name, args, kwargs).call
+
+def delitem(a, b):
+    raise 'NotImplementedError: delitem needs shared mutable sequence storage'
+
+def is_none(a):
+    return a is None
+
+def is_not_none(a):
+    return a is not None
+
+inv = invert
+
+__add__ = add
+
+__sub__ = sub
+
+__mul__ = mul
+
+__truediv__ = truediv
+
+__floordiv__ = floordiv
+
+__mod__ = mod
+
+__pow__ = pow
+
+__neg__ = neg
+
+__pos__ = pos
+
+__abs__ = abs
+
+__eq__ = eq
+
+__ne__ = ne
+
+__lt__ = lt
+
+__le__ = le
+
+__gt__ = gt
+
+__ge__ = ge
+
+__contains__ = contains
+
+__getitem__ = getitem
+
+__index__ = index
+
+__and__ = and_
+
+__or__ = or_
+
+__xor__ = xor
+
+__invert__ = invert
+
+__lshift__ = lshift
+
+__rshift__ = rshift
+
+__concat__ = concat
+
+__matmul__ = matmul
+
+__setitem__ = setitem
+
+__delitem__ = delitem
+
+__not__ = not_
+
+def iadd(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return add(a, b)
+
+__iadd__ = iadd
+
+def isub(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return sub(a, b)
+
+__isub__ = isub
+
+def imul(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return mul(a, b)
+
+__imul__ = imul
+
+def itruediv(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return truediv(a, b)
+
+__itruediv__ = itruediv
+
+def ifloordiv(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return floordiv(a, b)
+
+__ifloordiv__ = ifloordiv
+
+def imod(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return mod(a, b)
+
+__imod__ = imod
+
+def ipow(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return pow(a, b)
+
+__ipow__ = ipow
+
+def iand(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return and_(a, b)
+
+__iand__ = iand
+
+def ior(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return or_(a, b)
+
+__ior__ = ior
+
+def ixor(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return xor(a, b)
+
+__ixor__ = ixor
+
+def ilshift(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return lshift(a, b)
+
+__ilshift__ = ilshift
+
+def irshift(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return rshift(a, b)
+
+__irshift__ = irshift
+
+def iconcat(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return concat(a, b)
+
+__iconcat__ = iconcat
+
+def imatmul(a, b):
+    if type(a) == type([]) or isinstance(a, dict):
+        raise 'NotImplementedError: in-place container operators need shared mutable storage'
+    return matmul(a, b)
+
+__imatmul__ = imatmul
+
+__inv__ = invert
+
+def call(obj, *args, **kwargs):
+    return obj(*args, **kwargs)
+
+__call__ = call

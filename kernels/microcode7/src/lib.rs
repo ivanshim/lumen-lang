@@ -23,6 +23,7 @@ pub mod table;
 pub mod form;
 pub mod data;
 mod core;
+mod complex;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -71,6 +72,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
             if table.single(key).map_or(false, |head| !head.is_empty() && e.starts_with(head)) { return e; }
         }
         if text::bears_kind(&table, &e) { return e; }
+        if crate::complex::already_named(&table, &e) || span_complaint_named(&table, &e) || sequence_complaint_named(&table, &e) || protocol_complaint_named(&table, &e) { return e; }
         match table.strings("ext.syntax.call.amiss.builtin") {
             [head, tail] if e.starts_with(head) && e.ends_with(tail) => e,
             _ => format!("{}: {}", prefix, e),
@@ -226,6 +228,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
     seeded.extend(table.strings("ext.system.module.name").iter().cloned());
+    seeded.extend(table.strings("ext.system.module.doc").iter().cloned());
     let before: u32 = request
         .iter()
         .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
@@ -260,6 +263,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     machine.knows_cells = (reduced.shared_args.clone(), reduced.arg_names.clone(), reduced.gives_back.clone());
     table.strings("ext.system.module.name").iter().for_each(|binding| {
         machine.define(binding, Value::text("__main__"));
+    });
+    // The documentation of a program that opens with none is nothing,
+    // under its name all the same.
+    table.strings("ext.system.module.doc").iter().for_each(|binding| {
+        machine.define(binding, Value::Nil);
     });
     if let Some(n) = table.single("system.args") {
         machine.define(n, Value::text(&program_args.join(" ")));
@@ -440,4 +448,77 @@ fn written_at(entries: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     };
     written_at(&mut deeper, &steps[1..], value);
     entries[at].1 = Value::Dict(std::rc::Rc::new(deeper));
+}
+
+/// Whether the words are a span's own complaint, which the table tells
+/// under the class it belongs to wherever the table has span values.
+fn span_complaint_named(table: &Table, words: &str) -> bool {
+    if !table.has_any("ext.builtin.slice") { return false; }
+    let whole = ["ext.op.index.slice.zero", "ext.op.index.slice.bounds", "ext.op.index.slice.assign", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.slice.amiss"];
+    if whole.iter().any(|label| table.single(label).map_or(false, |said| !said.is_empty() && said == words)) { return true; }
+    table.strings("ext.op.index.slice.length").first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))
+}
+
+/// Whether the words are a complaint of the sequence workings, which
+/// the table words itself. Such a complaint is told in the language's
+/// own voice, with no name of the kernel's put before it. Both sides of
+/// each wording are looked for: the opening alone would claim every
+/// complaint that begins with the same class.
+fn sequence_complaint_named(table: &Table, words: &str) -> bool {
+    if !table.flag("ext.op.sequence.values") { return false; }
+    let pieces = |label: &str| table.strings(&format!("ext.op.sequence.{label}"));
+    let paired = |label: &str, opens: usize, closes: usize| {
+        let said = pieces(label);
+        match (said.get(opens), said.get(closes)) {
+            (Some(head), Some(tail)) if !head.is_empty() && !tail.is_empty() =>
+                words.starts_with(head.as_str()) && words[head.len()..].contains(tail.as_str()),
+            _ => false,
+        }
+    };
+    let opening = |label: &str, at: usize| pieces(label).get(at).map_or(false, |head| !head.is_empty() && words.starts_with(head.as_str()));
+    let whole = |label: &str, at: usize| pieces(label).get(at).map_or(false, |said| !said.is_empty() && words == said.as_str());
+    paired("concat", 0, 1)
+        || paired("repeat", 0, 1) || whole("repeat", 2)
+        || paired("index", 0, 1)
+        || paired("delete", 0, 1)
+        || paired("subscript", 0, 1) || opening("subscript", 2)
+        || paired("missing", 0, 1) || whole("missing", 2)
+        || paired("assign", 0, 1)
+        || paired("assign", 0, 1)
+}
+
+/// Whether the words are a complaint of the value protocol, which the
+/// table tells under its own class: a class that may not be built on, a
+/// truth method answering with no flag, two values in no order.
+fn protocol_complaint_named(table: &Table, words: &str) -> bool {
+    if table.single("ext.stmt.class.layout") == Some(words) { return true; }
+    if table.single("ext.stmt.catch.amiss") == Some(words) { return true; }
+    if table.single("ext.builtin.bool.base") == Some(words) { return true; }
+    if ["ext.system.fault.shift", "ext.builtin.to_int.infinity", "ext.builtin.to_int.nan"].iter().any(|label| table.single(label) == Some(words)) { return true; }
+    if ["ext.builtin.to_int.digits.amiss", "ext.builtin.to_int.text.detail"].iter().any(|label| table.strings(label).first().map_or(false, |opening| !opening.is_empty() && words.starts_with(opening.as_str()))) { return true; }
+    if table.single("ext.builtin.bool.result").map_or(false, |opening| !opening.is_empty() && words.starts_with(opening)) { return true; }
+    // A value that is no walk or no iterator, a row asked for the least
+    // or the greatest of nothing at all, a dictionary that grew under a
+    // walk, and zip's unequal sources: each told under its class.
+    for label in ["ext.builtin.core.not_iterator", "ext.builtin.core.uniterable", "ext.builtin.core.unsized", "ext.builtin.core.empty"] {
+        if let [before, after] = table.strings(label) { if !before.is_empty() && words.starts_with(before.as_str()) && words.ends_with(after.as_str()) { return true; } }
+    }
+    if table.single("ext.builtin.core.dict.changed") == Some(words) { return true; }
+    // An index method's wrong answer, and a format specification no
+    // method takes: each opens and closes with its own pieces.
+    for label in ["ext.stmt.class.index.amiss", "ext.stmt.class.format.amiss"] {
+        if let [opening, closing] = table.strings(label) { if !opening.is_empty() && words.starts_with(opening.as_str()) && words.ends_with(closing.as_str()) { return true; } }
+    }
+    // A dyad neither operand's methods would take names its sign and
+    // both kinds between four pieces.
+    if let [opening, sign_end, joining, closing] = table.strings("ext.stmt.class.binary.amiss") {
+        if !opening.is_empty() && words.starts_with(opening.as_str()) && words.contains(sign_end.as_str()) && words.contains(joining.as_str()) && words.ends_with(closing.as_str()) { return true; }
+    }
+    for label in ["ext.builtin.zip.short", "ext.builtin.zip.long"] {
+        if let [opening, alone, span] = table.strings(label) { if !opening.is_empty() && words.starts_with(opening.as_str()) && (words.ends_with(alone.as_str()) || words.contains(span.as_str())) { return true; } }
+    }
+    match table.strings("ext.op.order.unsupported") {
+        [before, between, and, after] => !before.is_empty() && words.starts_with(before.as_str()) && words.contains(between.as_str()) && words.contains(and.as_str()) && words.ends_with(after.as_str()),
+        _ => false,
+    }
 }

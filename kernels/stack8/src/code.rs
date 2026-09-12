@@ -181,8 +181,12 @@ pub enum Action {
     Step(bool),
     Sub,
     Mul,
-    /// A matrix product, awaiting the language's method protocol.
+    /// A matrix product, answered by the methods a language's protocol
+    /// names for it.
     Matrix,
+    /// A compound write's working, which first asks the place it lands
+    /// on for its own in-place answer where the protocol names one.
+    InPlace(Box<Action>),
     Div,
     DivReal,
     IntDiv,
@@ -433,6 +437,16 @@ pub enum Action {
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    /// Ask the reader the definition routes to for a line of input.
+    Ask,
+    /// Make a slice value of one to three bounds.
+    MakeSlice,
+    /// Put text straight out on the ordinary or the error stream.
+    StreamPut,
+    /// Take text straight from the input stream, so many characters or
+    /// up to the end of a line.
+    StreamTake,
+    Complex,
     MapFrom,
     Next,
     Iter,
@@ -513,6 +527,23 @@ pub enum Builtin {
     /// (ext.builtin.include). It is assembled against the same globals
     /// and run where it stands, and what it gives back is its answer.
     Eval,
+    /// The dictionary the outermost names live in, handed out live
+    /// (ext.builtin.globals): what is written into it a name sees, and
+    /// what is written to a name it shows.
+    OuterNames,
+    /// The names standing where the call is made (ext.builtin.locals):
+    /// inside a routine a copy of its own, outside the same dictionary
+    /// as the outermost names.
+    NearNames,
+    /// Text read and run as statements, in dictionaries handed over or
+    /// where the call stands (ext.builtin.exec).
+    RunText,
+    /// Text read ahead of time and kept as a code value for a later
+    /// reading to run (ext.builtin.compile).
+    ReadyText,
+    /// A module fetched by its name, as the import statement would
+    /// fetch it (ext.builtin.import).
+    Summon,
     Include,
     /// The same, but only where that file has not been read before in
     /// this run (ext.builtin.include.once); a file read already answers
@@ -526,6 +557,15 @@ pub enum Builtin {
     FileWrite,
     FileThere,
     FileGone,
+    /// The fault being handled, as its kind's name and its words.
+    FaultInHand,
+    /// The raised value the innermost clause is holding, itself and
+    /// whole, or nothing where no clause holds one (ext.system.fault.held).
+    FaultItself,
+    /// Whether a path names a file, a directory, or nothing.
+    FileKind,
+    /// The host's own facts: working directory, system, machine, environment.
+    HostFacts,
     /// A command handed to the host's own shell, answering with all
     /// that the shell wrote where a run writes (ext.builtin.shell).
     /// Only a language that spells this may start another program at
@@ -633,6 +673,13 @@ pub enum Builtin {
     Append,
     Fetch,
     Replace,
+    /// Writing a place of a container back into what held it, after
+    /// something within that place has changed. It writes as `Replace`
+    /// does, save that where the very thing being written already
+    /// stands in that place nothing is written at all: a container
+    /// that holds its places for good is then left as it is rather
+    /// than refused, since nothing about it was to change.
+    Restore,
     Span,
 }
 

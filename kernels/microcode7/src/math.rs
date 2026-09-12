@@ -233,6 +233,14 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
         // number instead of stopping the run, which is the whole of why
         // a language asks for it here.
         "fdiv" => one / two,
+        "fmod" => one % two,
+        "ldexp" => scaled_by_twos(one, two as i64),
+        "nextafter" => step_toward(one, two),
+        "ulp" => match one {
+            x if x.is_nan() => x,
+            x if x.is_infinite() => f64::INFINITY,
+            x => { let size = x.abs(); if size == f64::MAX { size - f64::from_bits(size.to_bits() - 1) } else { f64::from_bits(size.to_bits() + 1) - size } }
+        },
         "sqrt" => one.sqrt(),
         "exp" => one.exp(),
         "expm1" => one.exp_m1(),
@@ -257,9 +265,34 @@ pub fn worked(named: &str, one: f64, two: f64) -> Option<f64> {
 }
 
 /// How many worths a working is handed after its name.
+/// The real one step from `from` in the direction of `toward`.
+fn step_toward(from: f64, toward: f64) -> f64 {
+    if from.is_nan() || toward.is_nan() { return f64::NAN; }
+    if from == toward { return toward; }
+    if from == 0.0 { return f64::from_bits(1).copysign(toward); }
+    let bits = from.to_bits();
+    let outward = (toward > from) == (from > 0.0);
+    f64::from_bits(if outward { bits + 1 } else { bits - 1 })
+}
+
+/// A real scaled by a power of two a piece at a time: the piece is small
+/// enough to be a real itself, so the scaling reaches the least reals and
+/// the greatest instead of meeting a power already nought or endless.
+fn scaled_by_twos(mut real: f64, mut power: i64) -> f64 {
+    const PIECE: i64 = 900;
+    if real == 0.0 || !real.is_finite() { return real; }
+    while power.abs() > PIECE {
+        let step = if power > 0 { PIECE } else { -PIECE };
+        real *= 2f64.powi(step as i32);
+        power -= step;
+        if real == 0.0 || !real.is_finite() { return real; }
+    }
+    real * 2f64.powi(power as i32)
+}
+
 pub fn worked_takes(named: &str) -> usize {
     match named {
-        "atan2" | "hypot" | "pow" | "fdiv" => 2,
+        "atan2" | "hypot" | "pow" | "fdiv" | "fmod" | "ldexp" | "nextafter" => 2,
         _ => 1,
     }
 }

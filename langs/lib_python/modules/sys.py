@@ -79,25 +79,77 @@ def setrecursionlimit(limit):
     raise 'NotImplementedError: setting the recursion limit is not supported'
 
 class _Output:
-    def write(self, text):
-        print(text, end='')
-        return len(text)
+    def write(self, *args, **keywords):
+        if keywords:
+            raise TypeError("write() takes no keyword arguments")
+        return __stream_write(*args, False)
 
     def flush(self):
         pass
 
 class _Error:
-    def write(self, text):
-        print(text, end='', file=sys.stderr)
-        return len(text)
+    def write(self, *args, **keywords):
+        if keywords:
+            raise TypeError("write() takes no keyword arguments")
+        return __stream_write(*args, True)
 
     def flush(self):
         pass
 
+class _Input:
+    def read(self, size=-1):
+        return __stream_read(size, False)
+
+    def readline(self, size=-1):
+        return __stream_read(size, True)
+
 stdout = _Output()
 stderr = _Error()
+stdin = _Input()
+__stdout__ = stdout
+__stderr__ = stderr
+__stdin__ = stdin
 
-# Stub: the direct host spelling still raises a complaint. Numeric
-# process exit status and catchable SystemExit await exception support.
-def exit(status=0):
-    sys.exit(status)
+def _input(prompt=''):
+    print(prompt, end='', flush=True)
+    line = stdin.readline()
+    if line == '':
+        raise EOFError('EOF when reading a line')
+    if line[-1:] == '\n':
+        return line[:-1]
+    return line
+
+def exit(status=None):
+    raise SystemExit(status)
+
+# The exception a clause is holding, whole, or None outside every
+# clause; and the older three-part account of the same.
+def exception():
+    return __fault_in_hand()
+
+def exc_info():
+    held = __fault_in_hand()
+    if held is None:
+        return (None, None, None)
+    return (type(held), held, None)
+
+float_repr_style = 'short'
+byteorder = 'little'
+maxunicode = 1114111
+
+def intern(string):
+    if not isinstance(string, str):
+        raise 'TypeError: intern() argument must be str'
+    return string
+
+def getsizeof(value, default=None):
+    # A rough count of the value's payload and its enclosing record.
+    if isinstance(value, str):
+        return 49 + len(value) * 4
+    if isinstance(value, list):
+        return 56 + len(value) * 8
+    if isinstance(value, int):
+        return 28
+    if isinstance(value, float):
+        return 24
+    return 16

@@ -107,7 +107,22 @@ pub struct Progression {
 }
 
 impl Progression {
+    /// Where the three bounds each sit inside a machine word, the size
+    /// of the walk and every member of it can be reckoned in the wider
+    /// word, sparing the great numbers. A stride of nought is refused
+    /// here and left to the older road, which answers as it always did.
+    fn plain_bounds(&self) -> Option<(i128, i128, i128)> {
+        let stride = i128::from(self.stride.to_i64()?);
+        if stride == 0 { return None; }
+        let first = i128::from(self.first.to_i64()?);
+        let limit = i128::from(self.limit.to_i64()?);
+        let span = if stride < 0 { first - limit } else { limit - first };
+        let size = if span > 0 { (span - 1) / stride.abs() + 1 } else { 0 };
+        Some((first, stride, size))
+    }
+
     pub fn count(&self) -> BigInt {
+        if let Some((_, _, size)) = self.plain_bounds() { return BigInt::from(size); }
         let forward = self.stride > BigInt::zero();
         if (forward && self.first >= self.limit) || (!forward && self.first <= self.limit) {
             return BigInt::zero();
@@ -116,6 +131,16 @@ impl Progression {
     }
 
     pub fn item(&self, position: &BigInt) -> Option<Value> {
+        // A loop over a progression asks this at every turn, so the
+        // plain answer is given without a great number being made.
+        if let Some((first, stride, size)) = self.plain_bounds() {
+            if let Some(asked) = position.to_i64() {
+                let mut offset = i128::from(asked);
+                if offset < 0 { offset += size; }
+                if offset < 0 || offset >= size { return None; }
+                return Some(Value::Small((first + stride * offset) as i64));
+            }
+        }
         let count = self.count();
         let offset = if position < &BigInt::zero() { position + &count } else { position.clone() };
         if offset < BigInt::zero() || offset >= count { return None; }
@@ -134,8 +159,22 @@ pub struct IteratorState {
 #[derive(Clone)]
 pub enum IteratorKind {
     Stored(std::collections::VecDeque<Value>),
+    /// A progression stepped through one place at a time.
+    Stepping(Rc<Progression>, BigInt),
+    /// A list read through its cell at every step, so that members put
+    /// in before the end are walked as well.
+    Living(Rc<RefCell<Value>>, usize),
+    /// A window upon a dictionary, and the size the dictionary had at
+    /// the start: a different size later stops the walk.
+    Watching { window: Value, at: usize, size: usize },
+    /// A thing read place by place from nought, until the reading fails.
+    Placed(Value, BigInt),
+    /// A callable summoned for each member until it answers the sentinel.
+    Summoned { work: Value, stop: Value },
     Count(Value, BigInt),
-    Parallel { inputs: Vec<Value>, mapper: Option<Value> },
+    /// Inputs walked abreast, mapped where a mapper is given, and made
+    /// to end together where exactness is demanded.
+    Parallel { inputs: Vec<Value>, mapper: Option<Value>, exact: bool },
     Select(Value, Value),
     Busy,
 }
@@ -165,6 +204,7 @@ pub enum Value {
     Frac(Rc<Ratio>),
     /// The coefficient of an imaginary literal, with its unready words.
     Imaginary { coefficient: f64, unready: Rc<str> },
+    Complex(Rc<(f64, f64, Rc<str>)>),
     Text(Rc<str>),
     TextRow(Rc<Vec<String>>, bool),
     TextCall { subject: Rc<str>, work: crate::text::Work, name: Rc<str> },
@@ -274,6 +314,7 @@ pub struct Names<'a> {
     /// nothing, a real is shown to the precision it carries.
     pub real_figures: Option<usize>,
     pub bit_reals: bool,
+    pub brief_reals: bool,
     /// The words for a member a class shares only with those built on
     /// it, and for one it keeps to itself, as they are written beside
     /// the name where a thing is shown.
@@ -283,6 +324,9 @@ pub struct Names<'a> {
     /// is one byte and the width of a piece of text is how many
     /// characters it has rather than what the letters would take.
     pub kept_as_bytes: bool,
+    /// Whether a map's keys are compared by worth: a flag as the number
+    /// it counts for, a whole number as one key with its real.
+    pub keys_by_worth: bool,
 }
 
 impl Value {
@@ -324,6 +368,7 @@ impl Value {
     }
 
     pub fn repr(&self, names: &Names) -> String {
+        if let Value::Mutable(cell, _) | Value::Shared(cell) = self { return within_cell(cell, |inner| inner.repr(names)); }
         let settled = self.settled();
         match &settled {
             Value::Text(_) => settled.in_field(*names, "", "r").unwrap_or_else(|| settled.bare()),
@@ -415,6 +460,9 @@ impl Value {
     pub fn raised_words(&self, words: Names) -> Option<String> {
         let row = self.arguments_held()?;
         let Value::Thing(thing) = self else { return None };
+        // A gatherer, or a system fault with its number, was given the
+        // words to show itself with when it was made.
+        if let Some((_, Value::Text(told))) = thing.holds.borrow().iter().find(|(key, _)| key == "\0told-as") { return Some(told.to_string()); }
         Some(if row.is_empty() { String::new() }
             else if row.len() > 1 { Self::argument_text(&row, words) }
             else if thing.of.every_field().iter().any(|(key, _)| key == "\0key-fault") { row[0].representation(words) }
@@ -440,7 +488,7 @@ impl Value {
             Value::Flag(_) => Kind::Truth,
             Value::TextRow(..) | Value::Vector(_) | Value::Dict(_) | Value::Row(_) => Kind::Vector,
             Value::Mutable(place, _) => return place.borrow().kind(),
-            Value::Member(..) => return None,
+            Value::Member(..) | Value::Complex(_) => return None,
             Value::Window(..) => Kind::Vector,
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
@@ -452,6 +500,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Complex(pair) => pair.0 != 0.0 || pair.1 != 0.0,
             Value::Imaginary { coefficient, .. } => *coefficient != 0.0,
             Value::Mutable(cell, _) => cell.borrow().is_true(),
             Value::Row(items) => !items.is_empty(),
@@ -476,6 +525,7 @@ impl Value {
 
     pub fn as_big(&self) -> Result<BigInt, String> {
         Ok(match self {
+            Value::Complex(pair) => return Err(pair.2.to_string()),
             Value::Imaginary { unready, .. } => return Err(unready.to_string()),
             Value::Small(n) => BigInt::from(*n),
             Value::Huge(n) => (**n).clone(),
@@ -501,10 +551,18 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        // Most askings are of two small numbers, two great ones, or two
+        // pieces of text, and all three can be settled here and now.
+        // Left to the ratios below, a pair of small numbers would have
+        // two great numbers made of it and then be cross-multiplied.
+        if let (Value::Small(here), Value::Small(there)) = (self, other) { return here == there; }
+        if let (Value::Huge(here), Value::Huge(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
+        if let (Value::Text(here), Value::Text(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         match (self, other) {
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
+            (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
                 return words.len() == values.len() && words.iter().zip(values.iter()).all(|(word, value)| match value { Value::Text(s) => word.as_str() == s.as_ref(), _ => false });
             }
@@ -525,6 +583,11 @@ impl Value {
             return a.above * b.beneath == b.above * a.beneath;
         }
         match (self, other) {
+            (Value::Complex(left), Value::Complex(right)) => left.0 == right.0 && left.1 == right.1,
+            (Value::Complex(pair), rhs) | (rhs, Value::Complex(pair)) => {
+                let scalar = match rhs { Value::Flag(true) => Value::Small(1), Value::Flag(false) => Value::Small(0), _ => rhs.clone() };
+                pair.1 == 0.0 && crate::complex::decimal_value(pair.0).equals(&scalar)
+            },
             (Value::Imaginary { coefficient: x, .. }, Value::Imaginary { coefficient: y, .. }) => x == y,
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
@@ -536,6 +599,10 @@ impl Value {
             (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
             (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
             (Value::Channel(left), Value::Channel(right)) => left == right,
+            // A method read off a value twice is one method, so long as
+            // the word is the same word and the value the same value —
+            // not another one merely equal to it.
+            (Value::Member(one, first), Value::Member(two, second)) => first == second && one.one_and_same(two),
             (Value::Progression(left), Value::Progression(right)) => {
                 if left.count() != right.count() { return false; }
                 match left.count().to_u8() {
@@ -571,6 +638,24 @@ impl Value {
     /// the same amount are equal and yet not the same. Values that hold
     /// others are the same when they hold the same keys in the same
     /// order, each holding what is itself the same.
+    /// Whether two values occupy one place: one cell or allocation, or
+    /// one worth for a value held by worth alone; no for kinds without a
+    /// place of their own.
+    pub fn one_place(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Shared(x), _) | (Value::Mutable(x, _), _) => x.borrow().one_place(other),
+            (_, Value::Shared(y)) | (_, Value::Mutable(y, _)) => self.one_place(&y.borrow()),
+            (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
+            (Value::Huge(x), Value::Huge(y)) => Rc::ptr_eq(x, y),
+            (Value::Vector(x), Value::Vector(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
+            (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
+            (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
+            (Value::Small(x), Value::Small(y)) => x == y,
+            (Value::Nil, Value::Nil) => true,
+            _ => false,
+        }
+    }
+
     pub fn selfsame(&self, other: &Value) -> bool {
         if let Value::Shared(cell) = self {
             let held = cell.borrow().clone();
@@ -603,13 +688,13 @@ impl Value {
     pub fn render(&self, w: Names) -> String {
         if let Some(words) = self.raised_words(w) { return words; }
         match self {
-            Value::Mutable(cell, true) => cell.borrow().repr(&w),
-            Value::Mutable(cell, false) => cell.borrow().render(w),
+            Value::Mutable(cell, true) => within_cell(cell, |inner| inner.repr(&w)),
+            Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
-            Value::Shared(cell) => cell.borrow().render(w),
+            Value::Shared(cell) => within_cell(cell, |inner| inner.render(w)),
             Value::Set(items) => items.borrow().written(|item| item.set_member_spelling(w)),
 
             Value::Flag(true) if w.flag_counted => "1".to_string(),
@@ -628,10 +713,14 @@ impl Value {
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
             // A worth past the numbers is written by its name at any
             // width, there being no figures in it to write.
-            Value::Frac(e) if e.float_style => {
+            // A real a working gave is written as any real is where the
+            // table asks the shortest spelling, and in the library's own
+            // spelling elsewhere.
+            Value::Frac(e) if e.float_style && !w.brief_reals => {
                 let number = if e.under && e.above.is_zero() { -0.0 } else { nearest_binary(&e.above, &e.beneath) };
                 format!("{number:?}").to_lowercase()
             }
+            Value::Frac(e) if w.brief_reals && e.places.is_some() => decimal_roundtrip(if e.under && e.above.is_zero() && !e.past_numbers() { -0.0 } else { nearest_binary(&e.above, &e.beneath) }),
             Value::Frac(e) if e.past_numbers() => e.written().to_string(),
             // A nought under nought is written so, at any width.
             Value::Frac(e) if e.under && num_traits::Zero::is_zero(&e.above) => "-0".to_string(),
@@ -653,7 +742,7 @@ impl Value {
         }
         let mut result = self.render(names);
         if let Self::Frac(ratio) = self {
-            if ratio.places.is_some() {
+            if ratio.places.is_some() && !names.brief_reals {
                 let mut worth = nearest_binary(&ratio.above, &ratio.beneath);
                 if ratio.under && worth == 0.0 { worth = -0.0; }
                 let raw = format!("{:?}", worth).to_lowercase();
@@ -749,8 +838,9 @@ impl Value {
 
     pub fn bare(&self) -> String {
         match self {
+            Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
-            Value::Mutable(place, _) => place.borrow().bare(),
+            Value::Mutable(place, _) => within_cell(place, Value::bare),
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
@@ -800,7 +890,7 @@ impl Value {
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
             Value::Thing(t) => format!("<object {}>", t.of.name),
-            Value::Span(bounds) => format!("slice({})", bounds.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Span(bounds) => format!("slice({})", bounds.iter().map(|bound| bound.quoted(false)).collect::<Vec<_>>().join(", ")),
             Value::KindOf(s) => s.tag().to_string(),
         }
     }
@@ -1055,6 +1145,25 @@ fn halved(x: f64, times: i64) -> f64 {
     worth
 }
 
+/// The figures of a number written in groups, run together again. A
+/// grouping mark has two figures either side of it; found anywhere else,
+/// the text is no number and nothing comes back.
+pub fn ungrouped_figures(chars: &str, marks: &[char]) -> Option<String> {
+    let mut out = String::with_capacity(chars.len());
+    let mut walk = chars.chars().peekable();
+    let mut last: Option<char> = None;
+    while let Some(c) = walk.next() {
+        if marks.contains(&c) {
+            let next_is_figure = walk.peek().map_or(false, char::is_ascii_digit);
+            if !(last.map_or(false, |l| l.is_ascii_digit()) && next_is_figure) { return None; }
+        } else {
+            out.push(c);
+        }
+        last = Some(c);
+    }
+    Some(out)
+}
+
 /// A binary real of the width as a worth: kept as a ratio where it is a
 /// number of the width, and as what stands past the numbers where it is
 /// not. Every real-valued reckoning comes back this way.
@@ -1110,7 +1219,17 @@ pub fn binary_worth(x: f64) -> Option<(BigInt, BigInt)> {
 /// A real brought to the nearest of a width of bits, held exactly.
 /// Where the language holds no width, or the number stands past every
 /// one of that width, it is left as it is.
-pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
+pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize, brief: bool) -> Value {
+    if brief {
+        return match &v {
+            Value::Frac(r) if r.places.is_some() => {
+                let mut worth = rounded_binary(&r.above, &r.beneath);
+                if r.under && worth == 0.0 { worth = -0.0; }
+                worth_of_binary(worth, figures).keeping_point(r.pointed)
+            }
+            _ => v,
+        };
+    }
     if bits.is_none() {
         return v;
     }
@@ -1124,11 +1243,31 @@ pub fn at_binary_width(v: Value, bits: Option<usize>, figures: usize) -> Value {
 }
 
 thread_local! {
+    /// The cells being written out at this moment, the outermost first.
+    /// A collection that reaches itself is met here on the way round,
+    /// and an ellipsis is written for it in its own stead.
+    static UNDERWAY: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     /// Where a language names them, the cells a run keeps its counts of
     /// figures in: how many a real written plainly carries, and how many
     /// one shown with its kind carries. A language that names neither
     /// leaves both standing empty.
     static COUNTS: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Write out a cell's contents by the writer given, or an ellipsis where
+/// the same cell is already being written further out.
+fn within_cell(cell: &Rc<RefCell<Value>>, writer: impl FnOnce(&Value) -> String) -> String {
+    let address = Rc::as_ptr(cell) as usize;
+    let met_before = UNDERWAY.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let seen = stack.contains(&address);
+        if !seen { stack.push(address); }
+        seen
+    });
+    if met_before { return String::from("[...]"); }
+    let text = writer(&cell.borrow());
+    UNDERWAY.with(|stack| { stack.borrow_mut().pop(); });
+    text
 }
 
 /// Give the kernel the cells the run keeps its counts of figures in.
@@ -1217,7 +1356,7 @@ pub fn figured(x: f64, figures: Option<usize>) -> String {
 
 /// The figures before an imaginary mark, with a signed two-place
 /// exponent beyond the plain range.
-fn brief_decimal(number: f64) -> String {
+pub(crate) fn brief_decimal(number: f64) -> String {
     if number.is_nan() { return "nan".into(); }
     if number.is_infinite() { return if number.is_sign_negative() { "-inf" } else { "inf" }.into(); }
     let written = format!("{number:e}");
@@ -1285,4 +1424,65 @@ fn octets_shown(content: &[u8], lead: &str, changing: bool) -> String {
     pieces.push((mark as char).to_string());
     if changing { pieces.push(")".to_owned()); }
     pieces.concat()
+}
+/// A decimal keeps only the figures needed to name its binary worth.
+pub(crate) fn decimal_roundtrip(worth: f64) -> String {
+    match (worth.is_nan(), worth.is_infinite(), worth.is_sign_negative()) {
+        (true, _, _) => return String::from("nan"),
+        (_, true, true) => return String::from("-inf"),
+        (_, true, false) => return String::from("inf"),
+        _ => (),
+    }
+    let chosen = (1..=17).map(|count| format!("{:.*e}", count - 1, worth))
+        .find(|candidate| candidate.parse::<f64>().map(f64::to_bits).ok() == Some(worth.to_bits()))
+        .expect("seventeen figures name every binary real");
+    let cut = chosen.find('e').unwrap();
+    let order = chosen[cut + 1..].parse::<i32>().unwrap();
+    let mut coefficient = chosen[..cut].to_owned();
+    if coefficient.contains('.') {
+        while coefficient.ends_with('0') { coefficient.pop(); }
+        if coefficient.ends_with('.') { coefficient.pop(); }
+    }
+    if order < -4 || order >= 16 { return format!("{coefficient}e{order:+03}"); }
+    let sign = if coefficient.starts_with('-') { "-" } else { "" };
+    let mut figures = coefficient.trim_start_matches('-').replace('.', "");
+    let split = order + 1;
+    if split <= 0 {
+        figures = format!("0.{}{figures}", "0".repeat((-split) as usize));
+    } else if (split as usize) < figures.len() {
+        figures.insert(split as usize, '.');
+    } else {
+        figures.push_str(&"0".repeat(split as usize - figures.len()));
+        figures.push_str(".0");
+    }
+    format!("{sign}{figures}")
+}
+
+/// Keep fifty-three bits, or the fewer bits left near nought, and let
+/// the exact remainder choose the last one. No rounded quotient is used.
+fn rounded_binary(above: &BigInt, beneath: &BigInt) -> f64 {
+    if above.is_zero() || beneath.is_zero() { return nearest_binary(above, beneath); }
+    let signed = (above.is_negative() != beneath.is_negative()) as u64 * (1u64 << 63);
+    let positive = above.abs();
+    let divisor = beneath.abs();
+    let guessed = positive.bits() as i64 - divisor.bits() as i64;
+    match guessed {
+        ..=-1076 => return f64::from_bits(signed),
+        1025.. => return f64::from_bits(signed + (2047u64 << 52)),
+        _ => (),
+    }
+    let reaches = if guessed >= 0 { positive >= (&divisor << guessed as usize) }
+        else { (&positive << guessed.unsigned_abs() as usize) >= divisor };
+    let mut power = guessed - if reaches { 0 } else { 1 };
+    let shift = 52 - power.max(-1022);
+    let scaled_top = if shift > 0 { &positive << shift as usize } else { positive };
+    let scaled_bottom = if shift < 0 { &divisor << shift.unsigned_abs() as usize } else { divisor };
+    let (mut quotient, residue) = scaled_top.div_rem(&scaled_bottom);
+    let twice = residue << 1usize;
+    if twice > scaled_bottom || twice == scaled_bottom && quotient.is_odd() { quotient += 1; }
+    let mut significand = quotient.to_u64().unwrap();
+    if significand == 0x20000000000000 { power += 1; significand /= 2; }
+    let field = if significand < 0x10000000000000 { 0 } else { power.max(-1022) + 1023 };
+    if field >= 2047 { return f64::from_bits(signed + (2047u64 << 52)); }
+    f64::from_bits(signed + ((field as u64) << 52) + (significand & 0xfffffffffffff))
 }

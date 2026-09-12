@@ -1,1 +1,1 @@
-PythonError: This deletion cannot be run
+IndexError: list assignment index out of range

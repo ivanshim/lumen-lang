@@ -1,0 +1,7 @@
+0
+catching classes that do not inherit from BaseException is not allowed
+interrupt
+assertion message assertion message
+lost
+missing True
+recursion
