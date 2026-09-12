@@ -3011,6 +3011,12 @@ only. The extension labels so far, all from PHP:
   `ext.system.fault.name` and `.attribute` each hold two pieces, before
   and after the absent name. Native exceptions nobody takes are told on
   one line, with the class, a colon and the message.
+- `ext.system.fault.index.assign`: the words for a place beyond a row
+  where that place is written into or taken out of, which a language
+  may word apart from a place merely read. A row counts such a place
+  from its end as readily as from its start, and holds none at all
+  beyond itself. A definition spelling none tells of a writing and a
+  deletion in the words for a reading.
 - `ext.system.fault.class`: the class a fault of the kernel's own is
   raised as, where a language names one. A statement written to take a
   raised value then takes a fault as it takes anything else, and one
@@ -4778,6 +4784,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.fault.division` | - | - | `division by zero` | - | - | - | - | - | - | - |
 | `ext.system.fault.held` | - | - | `__fault_in_hand` | - | - | - | - | - | - | - |
 | `ext.system.fault.index` | - | - | `list index out of range` | - | - | - | - | - | - | - |
+| `ext.system.fault.index.assign` | - | - | `list assignment index out of range` | - | - | - | - | - | - | - |
 | `ext.system.fault.kind` | - | - | `unsupported operand types` | - | - | - | - | - | - | - |
 | `ext.system.fault.modulo` | - | - | `ZeroDivisionError: integer modulo by zero` | - | `Modulo by zero` | - | - | - | - | - |
 | `ext.system.fault.name` | - | - | `name '` `' is not defined` | - | - | - | - | - | - | - |

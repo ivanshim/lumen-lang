@@ -530,6 +530,10 @@ pub struct Lang {
     pub fault_stop: Option<String>,
     pub division_words: Option<String>,
     pub index_words: Option<String>,
+    /// The words for a place beyond a row where the place is written
+    /// into or taken out of, which a language may word apart from a
+    /// place merely read.
+    pub index_written_words: Option<String>,
     pub name_words: Vec<String>,
     pub attribute_words: Vec<String>,
     pub kind_words: Option<String>,
@@ -1181,7 +1185,7 @@ w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.co
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief | w ext.system.fault.index.assign
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -2337,6 +2341,7 @@ impl Lang {
             exception_unready: r.head("ext.builtin.exceptions.unready")?,
             division_words: r.head("ext.system.fault.division")?,
             index_words: r.head("ext.system.fault.index")?,
+            index_written_words: r.head("ext.system.fault.index.assign")?,
             name_words: r.strings("ext.system.fault.name")?,
             attribute_words: r.strings("ext.system.fault.attribute")?,
             kind_words: r.head("ext.system.fault.kind")?,

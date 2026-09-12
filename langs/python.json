@@ -2922,6 +2922,9 @@
   "ext.system.fault.index": [
     "list index out of range"
   ],
+  "ext.system.fault.index.assign": [
+    "list assignment index out of range"
+  ],
   "ext.system.fault.kind": [
     "unsupported operand types"
   ],

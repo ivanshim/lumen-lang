@@ -4026,7 +4026,7 @@ impl<'a> Engine<'a> {
                         let Some(raw) = (match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(b) => Some(i64::from(*b)), _ => None })
                             else { return Err(self.sequence_subscript_fault(held, &at).into()) };
                         let i = if raw < 0 { items.len() as i64 + raw } else { raw };
-                        if i < 0 || i as usize >= items.len() { return Err(self.sequence_index_fault(held).into()); }
+                        if i < 0 || i as usize >= items.len() { return Err(self.sequence_written_fault(held).into()); }
                         let mut left = items.as_ref().clone();
                         left.remove(i as usize);
                         Value::array(left)
@@ -5856,6 +5856,17 @@ impl<'a> Engine<'a> {
         let piece = |i: usize| words.get(i).map_or("", String::as_str);
         let kind = match of { Value::Text(_) => "string".to_string(), other => other.core_kind() };
         format!("{}{}{}", piece(0), kind, piece(1))
+    }
+
+    /// The words for a place a sequence does not hold where that place
+    /// is written into or taken out of. A language may word such a
+    /// place apart from one merely read; wording none, the words for a
+    /// reading stand for all three.
+    fn sequence_written_fault(&self, of: &Value) -> String {
+        match (&self.lang.index_written_words, &self.lang.fault_index) {
+            (Some(said), Some(class)) => format!("{}: {}", class, said),
+            _ => self.sequence_index_fault(of),
+        }
     }
 
     /// The words refusing a deletion from a sequence that cannot be
@@ -9405,6 +9416,30 @@ impl<'a> Engine<'a> {
                 }
                 if matches!(target.contents(), Value::Map(_)) {
                     if let Some(told) = self.unkeyable(&at) { return Err(told); }
+                }
+                // A row of a language of sequences counts its places
+                // from the end as well as from the start, and a place
+                // it does not hold is no place to write into: that is
+                // told of in the words for a place written into.
+                if self.lang.sequence_values {
+                    if let Value::Array(items) = &target {
+                        let counted = match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(t) => Some(i64::from(*t)), _ => None };
+                        if let Some(counted) = counted {
+                            let place = if counted < 0 { counted + items.len() as i64 } else { counted };
+                            if place < 0 || place as usize >= items.len() { return Err(self.sequence_written_fault(&target)); }
+                            let mut items = items.clone();
+                            // A place holding a cell that names share
+                            // is written through, not written over.
+                            if !self.lang.bind_names {
+                                if let Value::Bond(shared) = &items[place as usize] {
+                                    *shared.borrow_mut() = v;
+                                    return Ok(Value::Array(items));
+                                }
+                            }
+                            Rc::make_mut(&mut items)[place as usize] = v;
+                            return Ok(Value::Array(items));
+                        }
+                    }
                 }
                 match target {
                     // A list written at a place it already holds stays a list.

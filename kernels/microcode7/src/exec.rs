@@ -3032,7 +3032,7 @@ impl<'a> Machine<'a> {
                         let Some(offset) = (match &at { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None })
                             else { return Err(self.key_refused(held, &at).into()) };
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
-                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_beyond(held).into()); }
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(held).into()); }
                         let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
@@ -3784,6 +3784,25 @@ impl<'a> Machine<'a> {
                         let standing = { let cells = f.cells.borrow(); cells[i].settled() };
                         if matches!(standing, Value::Tuple(_) | Value::Text(_)) {
                             return Err(self.writing_refused(&standing).into());
+                        }
+                    }
+                    // A row of such a language reckons a place from the
+                    // end as readily as from the start, so the place
+                    // counted back is the place written into; beyond the
+                    // row it holds no place at all, and the words for a
+                    // place written into say so.
+                    if self.works_sequences() {
+                        let whole = |named: &Value| match named {
+                            Value::Flag(b) => Some(i64::from(*b)),
+                            Value::Small(n) => Some(*n),
+                            Value::Huge(n) => n.to_i64(),
+                            _ => None,
+                        };
+                        let standing = { let cells = f.cells.borrow(); cells[i].settled() };
+                        if let (Value::Vector(items), Some(offset)) = (&standing, key.as_ref().and_then(whole)) {
+                            let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                            if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&standing).into()); }
+                            key = Some(Value::Small(position));
                         }
                     }
                     if let Some(Value::Span(bounds)) = &key {
@@ -7718,6 +7737,20 @@ impl<'a> Machine<'a> {
                 if matches!(standing, Value::Tuple(_) | Value::Set(_)) {
                     return Err(self.core_complaint("core.immutable", &standing.kind_word()));
                 }
+                // A row of such a language reckons a place from the end
+                // as readily as from the start, and holds no place at
+                // all beyond itself: writing there is told of in the
+                // words for a place written into.
+                if let (true, Value::Vector(items)) = (self.works_sequences(), &v[0]) {
+                    let offset = match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None };
+                    if let Some(offset) = offset {
+                        let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&v[0])); }
+                        let mut all = items.as_ref().clone();
+                        all[position as usize] = v[2].clone();
+                        return Ok(Value::Vector(Rc::new(all)));
+                    }
+                }
                 match &v[0] {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
@@ -8325,7 +8358,7 @@ impl<'a> Machine<'a> {
                         let Some(offset) = (match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None })
                             else { return Err(self.key_refused(held, &v[1]).into()) };
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
-                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_beyond(held).into()); }
+                        if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(held).into()); }
                         let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, x)| x.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
@@ -9463,6 +9496,18 @@ impl<'a> Machine<'a> {
     fn place_beyond(&self, of: &Value) -> String {
         let kind = match of { Value::Text(_) => "string".to_owned(), other => other.kind_word() };
         format!("{}{}{}", self.sequence_piece("index", 0), kind, self.sequence_piece("index", 1))
+    }
+
+    /// The words for a place a sequence does not hold when that place
+    /// is written into or taken out of. A table may word such a place
+    /// apart from one only read; wording none, the words for a reading
+    /// serve for every way of reaching it.
+    fn place_written_beyond(&self, of: &Value) -> String {
+        let said = self.table.single("ext.system.fault.index.assign");
+        match (said, self.table.single("ext.system.fault.class.index")) {
+            (Some(words), Some(named)) => format!("{named}: {words}"),
+            _ => self.place_beyond(of),
+        }
     }
 
     /// Whether two values are one and the same holding place, so that
