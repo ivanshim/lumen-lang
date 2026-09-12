@@ -461,6 +461,12 @@ class TestLoader:
             module_name = _class_name(module)
         suite = TestSuite()
         for name in _ordered(list(names)):
+            # The namespace carries the host's own workings beside the
+            # program's names, and those are not spelled as a program
+            # can spell them. Only a name the program could have
+            # written is looked at.
+            if not _spellable(name):
+                continue
             cls = names[name]
             if isinstance(cls, TestCase) or not getattr(cls, '_test_case', False):
                 continue
@@ -756,6 +762,18 @@ class TextTestRunner:
         self._write('----------------------------------------------------------------------' + '\n')
         self._write('Traceback (most recent call last):\n')
         self._write(prefix + entry[1] + '\n\n')
+
+
+# Whether a name is one a program could have written, as against one
+# the host keeps for its own workings.
+def _spellable(name):
+    first = name[:1]
+    if not (first == '_' or first.isalpha()):
+        return False
+    for letter in list(name):
+        if not (letter == '_' or letter.isalnum()):
+            return False
+    return True
 
 
 # The name of a class, or of the class of a thing.

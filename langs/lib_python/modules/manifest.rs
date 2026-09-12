@@ -1,5 +1,6 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str)] = &[
+    ("_decimal", include_str!("_decimal.py")),
     ("_pylong", include_str!("_pylong.py")),
     ("_string", include_str!("_string.py")),
     ("_testcapi", include_str!("_testcapi.py")),
@@ -29,6 +30,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("itertools", include_str!("itertools.py")),
     ("json", include_str!("json.py")),
     ("locale", include_str!("locale.py")),
+    ("marshal", include_str!("marshal.py")),
     ("math", include_str!("math.py")),
     ("numbers", include_str!("numbers.py")),
     ("operator", include_str!("operator.py")),
@@ -70,6 +72,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("types", include_str!("types.py")),
     ("typing", include_str!("typing.py")),
     ("unicodedata", include_str!("unicodedata.py")),
+    ("unittest.mock", include_str!("unittest/mock.py")),
     ("unittest", include_str!("unittest.py")),
     ("warnings", include_str!("warnings.py")),
     ("weakref", include_str!("weakref.py")),
