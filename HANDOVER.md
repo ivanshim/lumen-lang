@@ -211,20 +211,22 @@ scratch log each program is announced by
 `diff -u` hunk or an `Expected a successful exit.` line, so the piece at
 fault is the nearest such announcement above it; the last line is
 `Scratch failures: N`. Keep the local debug build for diagnosis, which
-is what it is good for. **A run takes about seventy minutes, so read the
-one you want rather than starting more.** Runs do go in parallel — six
-pushes in half an hour gave six runs all making progress at once, on
-their own runners — so an extra push does not hold up the run that
-matters; it simply spends an hour of machine time saying what the last
-one was already going to say. There is no permission here to cancel a
-superseded run either: the API answers
+is what it is good for. **A run takes about seventy minutes, and there are
+only so many runners, so read the run you want rather than starting
+more.** Runs go in parallel up to a concurrency limit and then queue
+behind one another. Observed directly: three runs created between 12:21
+and 12:47 were all in progress at once, while two created at 13:07 and
+13:10 sat queued behind them, waiting for a runner. So an extra push
+costs twice over — an hour of machine time repeating what the previous
+run was already going to say, and, once the limit is reached, a place in
+the queue ahead of the run that matters. There is no permission here to
+cancel a superseded run either: the API answers
 `403 Resource not accessible by integration`. So gather a round of
-fixes, verify them together against the debug build, and push the
-round. What none of that argues for is leaving a commit unpushed:
+fixes, verify them together against the debug build, and push the round
+once. What none of that argues for is leaving a commit unpushed:
 nothing in this container survives it (§5), and a commit that exists
 only here is one reclaim from gone. Commit, push, then wait out the
-seventy minutes on the run you care about instead of pushing again to
-feel busy. The `reference`
+run you care about rather than pushing again to feel busy. The `reference`
 job writes the `| all |` and Python rows and the reasons table into the
 run summary. `scratch/` holds each piece's programs with the exact output
 (`.out`) or first stderr line (`.err`) both full kernels must give; the
