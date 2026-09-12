@@ -7013,8 +7013,13 @@ impl<'a> Machine<'a> {
                 });
             }
         }
+        // The workings a number of two parts answers for. The bit
+        // workings are not among them: a complex number has no bits to
+        // work on, in Python as here, so `~2j` is refused in the same
+        // words as `~2.0` rather than being carried to the complex
+        // reckoning, which would have had to own it could not.
         if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
-            | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsOver | Prim::BitsUp | Prim::BitsDown) {
+            | Prim::Positive | Prim::NumberAlone | Prim::Negate | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
             if v.iter().any(|value| matches!(value, Value::Complex(_))) { return crate::complex::reckon(self.table, op, v); }
             for value in v {
                 if let Value::Imaginary { unready, .. } = value { return Err(unready.to_string()); }
