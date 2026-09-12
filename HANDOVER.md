@@ -211,14 +211,19 @@ scratch log each program is announced by
 `diff -u` hunk or an `Expected a successful exit.` line, so the piece at
 fault is the nearest such announcement above it; the last line is
 `Scratch failures: N`. Keep the local debug build for diagnosis, which
-is what it is good for. **Push once per round of fixes, not once per
-fix.** Each push starts a run of about seventy minutes, and the runs
-queue behind one another: six pushes in half an hour left six runs in
-flight at once, none of them finished, and the one that mattered was
-last. There is also no permission here to cancel a superseded run — the
-API answers `403 Resource not accessible by integration` — so a run
-started in haste cannot be taken back. Gather the fixes, verify them
-together against the debug build, then push. The `reference`
+is what it is good for. **Finish a round of fixes before pushing it, but
+do not sit on a commit.** Each push starts a run of about seventy
+minutes and the runs queue behind one another: six pushes in half an
+hour left six runs in flight at once, none finished, and the one that
+mattered was last. There is also no permission here to cancel a
+superseded run — the API answers
+`403 Resource not accessible by integration` — so a run started in
+haste cannot be taken back. That argues for gathering a round of fixes
+and verifying them together against the debug build before pushing;
+it does not argue for leaving commits unpushed, because nothing in this
+container survives it (§5), and a commit that exists only here is one
+reclaim from gone. So: verify the round, then push it, and accept that
+the queue is the price of a verifier that finishes. The `reference`
 job writes the `| all |` and Python rows and the reasons table into the
 run summary. `scratch/` holds each piece's programs with the exact output
 (`.out`) or first stderr line (`.err`) both full kernels must give; the
