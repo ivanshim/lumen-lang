@@ -18,6 +18,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("dataclasses", include_str!("dataclasses.py")),
     ("decimal", include_str!("decimal.py")),
     ("dis", include_str!("dis.py")),
+    ("doctest", include_str!("doctest.py")),
     ("enum", include_str!("enum.py")),
     ("errno", include_str!("errno.py")),
     ("fractions", include_str!("fractions.py")),
