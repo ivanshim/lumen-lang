@@ -191,8 +191,27 @@ grep -c "Kernel disagreements" tests/REPORT.md   # must be 0
 git diff tests/REPORT.md | grep -E "^-.*\| pass \| pass \|"   # must print nothing
 ```
 
-GitHub Actions runs the same three ways on every push (`build-and-test`,
-`reference`, `scratch` in `.github/workflows/ci.yml`); the `reference`
+**Prefer GitHub Actions to running this sequence by hand.** It runs the
+same three ways on every push — `build-and-test`, `reference`, `scratch`
+in `.github/workflows/ci.yml` — on runners that are not reclaimed, which
+this session's container is (§5), and it builds the release binary
+itself. Between them the three jobs are the whole sequence:
+`build-and-test` does independence, the `-D warnings` build, the
+ported-examples check and all 3006 examples on all six kernels;
+`reference` does the PHP row, the kernel-disagreement check and the
+regression check; `scratch` runs every scratch program on both full
+kernels. So push the line and read the run rather than spending an hour
+of a container that has fifty minutes left. To read one: list the runs
+for the branch, list the run's jobs to find the failing step, then ask
+for the failing job's log — the reply carries a pre-signed URL, and
+`curl`-ing that to a file and grepping it locally costs nothing, where
+reading the log through the tool costs thousands of lines. In the
+scratch log each program is announced by
+`=== scratch/<piece>/<n>.py (<kernel>) ===` and a failure shows as a
+`diff -u` hunk or an `Expected a successful exit.` line, so the piece at
+fault is the nearest such announcement above it; the last line is
+`Scratch failures: N`. Keep the local debug build for diagnosis, which
+is what it is good for. The `reference`
 job writes the `| all |` and Python rows and the reasons table into the
 run summary. `scratch/` holds each piece's programs with the exact output
 (`.out`) or first stderr line (`.err`) both full kernels must give; the
@@ -237,18 +256,32 @@ run summary. `scratch/` holds each piece's programs with the exact output
   and `/6`) and on a few deep programs, and a run left going while the
   binary is rebuilt under it reports nonsense. Copy the binary aside
   before a long run.
-- **Container rendering cannot be closed behind an `ext.*` label, and
-  probably not at all as things are.** A plain row prints its members
-  unquoted (`[1, hello]`) and a map prints `[k => v]` where CPython
-  prints `{k: 'v'}`. Six attempts have now tried this behind an `ext.*`
-  label and broken the examples on the two full kernels only, because
-  `test.sh` compares all six kernels against stream35 and the four
-  reference kernels read past every `ext.*` label. It needs a **core**
-  label all six kernels honour, as `system.real.render` is for reals
-  (#479) — which means writing the rendering into stream35, microcode11,
-  microcode4 and stack5 as well, in each one's own words, and moving
-  every example that shows a container. Do not attempt it as a Python
-  piece; it is a change to the language floor and wants its own branch.
+- **Container rendering is half done, and the half that exists is a flag
+  on the value, not a label.** A row written as a literal prints its
+  members unquoted (`[1, hello]`) and a map prints `[k => v]`, as the
+  examples require; but a container that a *Python operation* builds
+  prints as CPython would. That is carried by the second field of
+  `Value::Collection(cell, quoted)` in `stack8` (`value.rs`, read where
+  `display` meets a `Collection`) and by the matching flag in
+  `microcode7`, set by `.held(true)` in the eight places that build such
+  a container — `sorted`, `str.split`, `list.copy`, `dict.copy`, the
+  ordering with a key, and `list()` of a view, text, cursor or
+  generator, which pass the flag on from what they were given. So
+  `print(sorted(w))` quotes and `print(w)` does not, even for the same
+  members, and that is deliberate rather than a fault: it buys CPython's
+  rendering everywhere the examples cannot see it. Two consequences.
+  First, do not "fix" the inconsistency by marking a literal-built row
+  quoted: `sort` in place is a core operation all ten languages use, and
+  marking its list would break the examples, which is how five earlier
+  attempts died. Second, a fixture that expects quotes around the
+  members of a list that was *not* built by such an operation is wrong,
+  and `sorting-semantics/5` was exactly that. Closing the gap properly
+  still wants a **core** label all six kernels honour, as
+  `system.real.render` is for reals (#479) — the rendering written into
+  stream35, microcode11, microcode4 and stack5 as well, each in its own
+  words, and every example that shows a container moved. That is a
+  change to the language floor and wants its own branch, not a Python
+  piece.
 - **A map is a row of pairs searched from the front**, in both full
   kernels, so a large map is quadratic: `scratch/perf/3` takes over two
   hours on microcode7 in a debug build and seconds on a release one.
