@@ -3773,7 +3773,16 @@ impl<'a> Machine<'a> {
                     // something inside it changed: where the very thing
                     // being written already stands there, nothing about
                     // the holder is to change and it is left alone.
-                    if *op == Prim::Restore {
+                    //
+                    // Only a language of sequences asks for this, and
+                    // only it may pay for it: telling whether the thing
+                    // already stands there means reading the place, and
+                    // in a language where reading a place that is not
+                    // there is worth a word of warning, the reading
+                    // would be heard. A language that spells nothing of
+                    // sequences writes the holder back as it always
+                    // did, and says nothing.
+                    if *op == Prim::Restore && self.works_sequences() {
                         let standing = { let cells = f.cells.borrow(); cells[i].clone() };
                         if let Some(key) = &key {
                             if Self::one_cell(&value, &self.element(&standing, key, Reading::Plain).unwrap_or(Value::Nil)) {
