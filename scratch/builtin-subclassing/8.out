@@ -1,0 +1,19 @@
+[1, 2] L True 2
+[1, 2, 1, 2] L
+[1, 2, 1, 2, 7, 8]
+[1, 2, 1, 2, 7, 8, 9] list
+[1, 2, 1, 2, 7, 8, 0] L
+ab str
+abab str
+{'a': 1, 'b': 2} D True
+{'a': 1, 'b': 2, 'c': 3} D
+[2, 4] U
+[2, 4, 8] U
+(1, 2) tuple
+(1, 2, 1, 2) tuple
+3 int
+7 int -6
+2.5 float
+own str
+[1, 2] Adds
+TypeError 'int' object is not iterable

@@ -2428,6 +2428,10 @@ impl<'a> Machine<'a> {
     /// come back beside the words about it, to be written first.
     fn pairs_offered(&self, source: &Value) -> (Vec<(Value, Value)>, Option<String>) {
         let mut pairs = Vec::new();
+        // A thing over a native worth offers the pairs that worth
+        // offers, standing for it as it does everywhere its blueprint
+        // appointed nothing of its own.
+        let source = Self::underlying(&source.settled()).unwrap_or_else(|| source.clone());
         let stopped = match source.settled() {
             Value::Dict(entries) => { pairs.extend(entries.iter().cloned()); None }
             Value::Vector(items) | Value::Tuple(items) => {
@@ -6319,6 +6323,11 @@ impl<'a> Machine<'a> {
             Prim::Iterator | Prim::Listed | Prim::Ordered | Prim::Tupling | Prim::Uniques | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue | Prim::Least | Prim::Greatest => &[15],
             Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary => &[],
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power | Prim::At | Prim::Fetch => &[],
+            // The bit workings reach the worth beneath a thing as the
+            // arithmetic ones do, the blueprint's own methods for them
+            // having been asked above: a thing over a whole number is
+            // that number to them, and one over a set is that set.
+            Prim::BitsUp | Prim::BitsDown | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => &[],
             _ => &[usize::MAX],
         };
         if free_at != [usize::MAX] {
@@ -6909,6 +6918,9 @@ impl<'a> Machine<'a> {
         // so that every name for it sees what was written.
         if let Prim::Landing(place) = op {
             let plain = self.table.landing_working(place);
+            if let [held, by] = v {
+                if let Some(kept) = self.native_written_over(plain, held, by)? { return Ok(kept); }
+            }
             return self.prim_values(plain, name, v);
         }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
@@ -9636,6 +9648,33 @@ impl<'a> Machine<'a> {
         };
         cell.replace(Value::Vector(Rc::new(row)));
         Ok(Some(target.clone()))
+    }
+
+    /// A thing over a native worth, written over by a compound sign
+    /// that its blueprint answered nothing for. The worth is what the
+    /// native kind's own writing reaches, so where it is a worth that
+    /// can be written into -- a row, a map or a set, each standing in a
+    /// cell of its own -- the plain working is handed that worth and the
+    /// thing is handed back, and the name written to keeps a thing of
+    /// its blueprint while every other name for it sees the change.
+    /// Nothing at all for a worth no writing changes: text, a number or
+    /// a tuple is left to the plain working, which answers with what the
+    /// worth answers and so with a value of the kind beneath.
+    fn native_written_over(&mut self, plain: Prim, place: &Value, given: &Value) -> Result<Option<Value>, String> {
+        let Some(worth) = Self::underlying(&place.settled()) else { return Ok(None) };
+        let celled = |wanted: fn(&Value) -> bool| matches!(&worth, Value::Mutable(cell, _) if wanted(&cell.borrow()));
+        let rows = celled(|held| matches!(held, Value::Vector(_)));
+        let pairs = celled(|held| matches!(held, Value::Dict(_)));
+        let uniques = matches!(worth, Value::Set(_));
+        let writes = match plain {
+            Prim::OctetAssign(_) => rows && self.works_sequences(),
+            Prim::SetAssign(0) => uniques || pairs && self.table.flag("ext.op.bit.or.maps"),
+            Prim::SetAssign(_) => uniques,
+            _ => false,
+        };
+        if !writes { return Ok(None); }
+        self.prim_values(plain, "", &[worth, given.clone()])?;
+        Ok(Some(place.clone()))
     }
 
     fn element(&self, target: &Value, at: &Value, how: Reading) -> Result<Value, String> {

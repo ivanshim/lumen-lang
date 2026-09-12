@@ -3260,6 +3260,44 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// The plain dyad a compound working stands for, where the byte and
+    /// set writings spell one of their own.
+    fn plain_dyad(op: &Action) -> Action {
+        match op {
+            Action::ByteAssign(repeat) => if *repeat { Action::Mul } else { Action::Add },
+            Action::SetWrite(0) => Action::BitEither,
+            Action::SetWrite(1) => Action::BitBoth,
+            Action::SetWrite(2) => Action::Sub,
+            Action::SetWrite(_) => Action::BitOne,
+            other => other.clone(),
+        }
+    }
+
+    /// A thing keeping a worth of a builtin kind, written over by a
+    /// compound sign its class answered nothing for. Where the worth is
+    /// one that can be written into -- a row, a map or a set, each in a
+    /// cell of its own -- the working is made in that cell and the thing
+    /// itself is the answer, so that the name written to holds a thing
+    /// of its class still and every other name for the thing sees what
+    /// was written. Nothing at all where the worth is one no writing
+    /// changes: a text, a number or a tuple has the plain dyad instead,
+    /// and the answer is then of the kind beneath, as it is where the
+    /// worth stands alone.
+    fn worth_written_over(&mut self, op: &Action, place: &Value, by: &Value) -> Res<Option<Value>> {
+        let Some(worth) = Self::worth_of(&place.contents()) else { return Ok(None) };
+        let celled = |wanted: fn(&Value) -> bool| matches!(&worth, Value::Collection(cell, _) if wanted(&cell.borrow()));
+        let rowed = celled(|held| matches!(held, Value::Array(_)));
+        let mapped = celled(|held| matches!(held, Value::Map(_)));
+        let setted = matches!(worth, Value::Set(_));
+        match op {
+            Action::ByteAssign(repeat) if rowed && self.lang.sequence_values => { self.sequence_in_place(*repeat, &worth, by)?; }
+            Action::SetWrite(0) if mapped && self.lang.or_maps => { self.special_dyad(op, &worth, by)?; }
+            Action::SetWrite(_) if setted => { self.special_dyad(op, &worth, by)?; }
+            _ => return Ok(None),
+        }
+        Ok(Some(place.clone()))
+    }
+
     /// What the place a compound write lands on answers for itself: its
     /// in-place method's answer, unless it has none or declined.
     fn settled_in_place(&mut self, op: &Action, held: &Value, by: &Value) -> Res<Option<Value>> {
@@ -4107,11 +4145,13 @@ impl<'a> Engine<'a> {
             Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
                 let v = self.drop_top()?;
                 if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
+                let v = self.worth_free_of(&v, &[44]).unwrap_or(v);
                 Value::of_big(!self.whole_bits(&v)?)
             }
             Action::BitTurn => {
                 let v = self.drop_top()?;
                 if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
+                let v = self.worth_free_of(&v, &[44]).unwrap_or(v);
                 match &v {
                     _ if self.lang.whole_bits => Value::of_big(!self.whole_for_bits(&v)?),
                     Value::Text(s) => {
@@ -4525,19 +4565,30 @@ impl<'a> Engine<'a> {
                 if let Some(fled) = self.carried.take() { return Err(fled); }
                 match asked? {
                     Some(answer) => answer,
+                    // A thing keeping a worth of a builtin kind is
+                    // written over through that worth, since it is the
+                    // worth that the kind's own writing reaches. Where
+                    // the worth is one no writing changes the plain
+                    // dyad answers for it instead, the class's own
+                    // method for that dyad heard first.
+                    None if Self::worth_of(&held.contents()).is_some() => {
+                        let told = match self.worth_written_over(inner, &held, &by) {
+                            Ok(Some(kept)) => Ok(kept),
+                            Ok(None) => { let plain = Self::plain_dyad(inner); self.special_dyad(&plain, &held, &by) }
+                            Err(fault) => Err(fault),
+                        };
+                        // What a method the writing called raised on the
+                        // way out is raised on, and not the words that
+                        // stood in for it.
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        told?
+                    }
                     // With a plain thing on either side the working goes
                     // the way any dyad goes, so the thing's ordinary
                     // methods are heard; the byte and set writings stand
                     // for their plain dyads there.
                     None if Self::plain_thing(&held.contents()) || Self::plain_thing(&by.contents()) => {
-                        let plain = match &**inner {
-                            Action::ByteAssign(repeat) => if *repeat { Action::Mul } else { Action::Add },
-                            Action::SetWrite(0) => Action::BitEither,
-                            Action::SetWrite(1) => Action::BitBoth,
-                            Action::SetWrite(2) => Action::Sub,
-                            Action::SetWrite(_) => Action::BitOne,
-                            other => other.clone(),
-                        };
+                        let plain = Self::plain_dyad(inner);
                         self.special_dyad(&plain, &held, &by)?
                     }
                     None => {
@@ -5804,6 +5855,10 @@ impl<'a> Engine<'a> {
     /// written before the complaint is made.
     fn pairs_gathered(&self, source: &Value) -> (Vec<(Value, Value)>, Option<String>) {
         let mut pairs = Vec::new();
+        // A thing keeping a worth of a builtin kind hands over the pairs
+        // of that worth, since it stands for the worth wherever its
+        // class has said nothing else.
+        let source = Self::worth_of(&source.contents()).unwrap_or_else(|| source.clone());
         match source.contents() {
             Value::Map(held) => pairs.extend(held.iter().cloned()),
             Value::Array(items) | Value::Tuple(items) => {
