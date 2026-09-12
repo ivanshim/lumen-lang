@@ -375,6 +375,22 @@ time, each into its own whole log: independence, the scratch suite, the
 3006 examples, the reference run. Any one of them fits inside a window;
 all of them together do not.
 
+**The writable disk is a fixed allowance, and a worktree per branch
+will exhaust it.** Each worktree's own `target/` is about 1.5 GB once
+its debug build is warm, so a dozen of them fill the session's share.
+When it fills, `cargo` dies with
+`failed to write query cache ... No space left on device` and a tool's
+own output cannot be written either — which is how one agent's build
+was killed without the agent noticing, leaving it waiting on a run that
+would never report. `df` is misleading here: the allowance can be spent
+while the device looks half empty. Deletes still succeed when writes
+fail, so the way out is to remove the `target/` directories of
+worktrees whose work is already folded in (`rm -rf <worktree>/target`);
+they are pure build output and cost nothing to lose. Better still,
+delete a worktree's `target/` as soon as its branch is folded in, and
+prefer building a collected fix in the main checkout, whose target is
+already warm, to building it again in the worktree it came from.
+
 Two 4-core codespaces exist on the repository (`lumen-a`, `lumen-b`), with
 Rust installed under `$HOME/.cargo` and `php` present. Everything is driven
 from a shell with `gh codespace ssh -c <name> -- 'bash -lc "…"'`. A
