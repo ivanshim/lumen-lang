@@ -211,7 +211,14 @@ scratch log each program is announced by
 `diff -u` hunk or an `Expected a successful exit.` line, so the piece at
 fault is the nearest such announcement above it; the last line is
 `Scratch failures: N`. Keep the local debug build for diagnosis, which
-is what it is good for. The `reference`
+is what it is good for. **Push once per round of fixes, not once per
+fix.** Each push starts a run of about seventy minutes, and the runs
+queue behind one another: six pushes in half an hour left six runs in
+flight at once, none of them finished, and the one that mattered was
+last. There is also no permission here to cancel a superseded run — the
+API answers `403 Resource not accessible by integration` — so a run
+started in haste cannot be taken back. Gather the fixes, verify them
+together against the debug build, then push. The `reference`
 job writes the `| all |` and Python rows and the reasons table into the
 run summary. `scratch/` holds each piece's programs with the exact output
 (`.out`) or first stderr line (`.err`) both full kernels must give; the
@@ -303,6 +310,27 @@ run summary. `scratch/` holds each piece's programs with the exact output
   (`modules-3/3`, `/6`, `stdlib-2/3`, `/6`, exit 134). The whole run is
   now made on a thread with a gigabyte of stack in `src/main.rs`; do not
   take that out.
+
+- **An in-place operator on an instance of a builtin subclass is not
+  finished, and the two kernels fail at different points.** Measured at
+  `db1a167`: `stack8` refuses `L(list) += [2]` with
+  `TypeError: can only concatenate L (not "list") to L` where CPython
+  extends and `microcode7` gets it right; `microcode7` refuses
+  `D(dict) |= {...}` with `PythonError: unsupported operand type(s)`,
+  whose bare `PythonError:` prefix is itself a sign the words are not a
+  recognised Python complaint. Each is a defect in one kernel and each
+  is therefore a disagreement between them, which the reference run
+  counts and refuses. Build on the groundwork `builtin-subclassing`
+  (#474) already laid — `kind_class`/`worth_of`/`thing_of_kind` and
+  adapter tag 14 in `stack8`, `native_kind`/`underlying`/
+  `thing_over_native` and `Wrapped` tag 14 in `microcode7` — rather than
+  inventing a second mechanism, and note that `scratch/` covered none of
+  it, which is why it survived twenty-two merges.
+- **A subagent's report of what it could not fix is a claim to check,
+  not a finding.** One reported both kernels refusing two cases as
+  pre-existing; measuring both binaries showed its own fix had repaired
+  one of them, and that the other was a disagreement between the kernels
+  rather than a shared gap. Re-measure before writing anything down.
 
 - **`getattr`, `is`, `id` and `hash` all reach values through cells** in
   both kernels — `Value::Bond`/`Binding`/`Collection` in `stack8`,
