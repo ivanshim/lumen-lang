@@ -13,8 +13,14 @@ integration of the waiting branches, one verification per branch.
 
 ## 1. Where things stand
 
-Every pull request that was waiting is now folded into the integration
-branch. The Python reader is done bar three unfinished branches, and the
+**The integration is merged.** Every pull request that was waiting is in
+`main` at `73b7ecd`, brought in as #487: twenty-five pull requests in
+twenty-two merges, green on all three ways at `a251e5c`. Twenty-four
+closed themselves; #480 was closed by hand, its port having kept all the
+descriptor work but lost the merge parent that would have made its head
+an ancestor. No pull request is open.
+
+The Python reader is done bar three unfinished branches, and the
 run-time work has gone a long way: the full `unittest` runs the test
 files now, and reports what fails in them.
 
@@ -23,9 +29,11 @@ files now, and reports what fails in them.
   refused unless that row held.
 - **The examples** agree 3006 of 3006 on all six kernels at every
   verified point, on a quiet machine (see §4).
+- **0 kernel disagreements and no reference regression**, which had to
+  be won: see the two disagreements in §1a.
 - **Python, running (stage 2).** The reference row is
-  `pass 0, differs 2, error 48` on both kernels at `674bf76`, against
-  `differs 9, error 41` at `main`. That is not a step back: the nine
+  `pass 0, differs 3, error 47` on both kernels at `a251e5c`, against
+  `differs 9, error 41` at the old `main`. That is not a step back: the nine
   files that "ran to the end without asserting anything" under the
   minimal `unittest` now run their tests under the full one and stop
   with `Uncaught test run failed` because some assertions fail, which
@@ -35,6 +43,58 @@ files now, and reports what fails in them.
   harness should run one and count its own results) is still the owner's
   decision and has not been taken. It decides how the Python row is read
   from here on.
+
+### 1a. The six defects the verification found
+
+Four belonged to the merging; two were disagreements between the kernels
+that had stood in the line since earlier merges and had been failing the
+reference run ever since.
+
+| commit | what it was |
+|---|---|
+| `fdf00b8` | two stale scratch expectations: `file-iter/15` recorded less progress through CPython's range tests than the kernels now make, and `sorting-semantics/5` expected a list sorted *in place* to print quoted |
+| `db1a167` | a compound write on a row lost the cell it was given in microcode7, so `+=` joined instead of extending and `*=` gave the name a new row. The kernel already had the way in; nothing reached it, because the cell-keeping guards tested only the unnumbered spelling of the working while Python's long special-method list wraps every compound write in a numbered landing. The map half of that road had been fixed before and the row half left |
+| `427b70b` | a place written into beyond a row now gets its own words, under a new label `ext.system.fault.index.assign`: CPython says `list assignment index out of range` for a store or delete and `list index out of range` for a read, and both kernels said the read's words for all three |
+| `950f3bb` | a compound write on a thing standing on a builtin kind now goes through the worth beneath it, so `x += [2]` on a `list` subclass extends where it stands and keeps its class. It closed three narrower splits with it, among them an inversion stack8 refused while microcode7 answered |
+| `ce8ca4f` | **a lost merge guard.** `py-sequence-ops` put its new sequence-aware store behind `ext.op.sequence.values`; the merge collapsed both sides into an unconditional `Prim::Restore`. That store reads the place to see whether the thing being written already stands there, and in PHP reading a place that is not there is worth a warning, so `$e["k"][1] = "hello"` on an array with no `k` warned before making it. Five tests of `tests/php/lang` failed on microcode7 alone |
+| `a251e5c` | every working with a complex among its values was carried to the complex reckoning, the bit workings included, and the reckoning has no case for them — a number of two parts has no bits — so they fell to its `unready` arm, a NotImplementedError. `~2j` therefore refused as the wrong kind of complaint on microcode7, and `test_unary.py` asks for a TypeError and nothing else |
+
+**How the two disagreements were found, since the job says only that it
+failed.** The disagreement detail lives in the run's uploaded artifact,
+which these tools cannot fetch. What can be read is the reference job's
+log, and in it the per-suite rows:
+
+```
+grep -E "^(PHP|Python) .* on (stack8|microcode7):"
+```
+
+Each suite is listed once per kernel with its pass/differs/error counts.
+A suite whose counts differ between the two kernels *is* the
+disagreement, and both of these sat there in plain sight for hours while
+the cause was being guessed at from the Python side. Read those rows
+first.
+
+**Both suites can then be run locally**, which the notes long said was
+impossible. `scripts/reference_tests.py` hardcodes a release binary, but
+its `main` is guarded and `BINARY` is a module global, so:
+
+```python
+import sys; sys.path.insert(0, "scripts")
+import reference_tests as rt
+rt.BINARY = rt.ROOT / "target" / "debug" / "lumen-lang"
+rt.run_phpt(path, kernel)      # -> (outcome, reason)
+rt.run_python(path, kernel)
+```
+
+Comparing every test of a suite across both kernels and printing the
+ones whose outcome differs named each defect in one run. From there a
+`git bisect` with a two-line repro as its test named the commit.
+
+One caution: `run_phpt` writes each test's program beside its `.phpt`,
+as php-src's own runner does, leaving `.php` debris. It is ignored now
+(`9dea851`), but never commit one: the runner will not overwrite a file
+that already exists, so a committed `002.php` would be run in place of
+that test's own program from then on.
 
 Brought into the integration branch in this order, each with the
 sequence in §3 (and with what its scratch programs then proved missing
@@ -90,8 +150,8 @@ one builtin the cell a collection lives in).
 
 ## 2. What is waiting on branches
 
-Nothing with a pull request. Twenty-five were open when this began and
-all twenty-five are folded into the integration branch (§1). Every one
+Nothing with a pull request. Twenty-five were open when this began, all
+twenty-five are in `main`, and none is open (§1). Every one
 was green on its own branch (build, 3006 examples, scratch programs, PHP
 unchanged) and every one in conflict with `main`, because each was cut
 from an older `main` and they touch the same rosters and, worse, the same
@@ -110,7 +170,28 @@ cleanly than the rest.
 Three branches still hold unfinished work with no pull request and a red
 last run, and are the next work: `py-copy-pickle`, `py-bytes-2`,
 `py-file-scope`. Port each from the merged head, one at a time, by the
-way described below. (`py-unicode-text` was merged into `main` as #484
+way described below.
+
+Known and left alone, worth a piece of their own. A row written at a
+place named by text is silently turned into a map: `b = [1, 2]` then
+`b["k"] = 1` gives `[0 => 1, 1 => 2, k => 1]` on **both** kernels where
+CPython raises `TypeError: list indices must be integers or slices, not
+str`. That is a wrong answer, not a wrong message, and the deletion path
+already refuses such a key — `sequence_subscript_fault` in stack8,
+`key_refused` in microcode7 — so only the store path wants the check.
+Neither the scratch harness nor CI's `scratch` step caps time or output,
+so one program that never stops printing could fill a runner; a guard
+wants `timeout` and `ulimit -f` around each run, reporting the runaway
+rather than dying (a guarded run over every piece found none today, so
+this is a hazard, not a present fault). And a handful of divergences
+both kernels share, so none is a disagreement: `[].pop()` printing a
+doubled `PythonError: IndexError: pop from empty list` where the words
+are not accepted by a label-specific recognizer while `pop index out of
+range` is; `del x[0]` on a list subclass; the set methods missing on a
+set subclass; `dict(D(...))`; `I(5).numerator` reading as a built-in
+method; unary `-` and `+` on an int or float subclass; and CPython's
+exact wording for a bad unary operand, `bad operand type for unary ~:
+'complex'`, which would want a label of its own. (`py-unicode-text` was merged into `main` as #484
 before it was verified and taken back again in `a521d8f`; its work is
 not in the line.)
 
