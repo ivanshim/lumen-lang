@@ -356,12 +356,18 @@ The last two sessions ran in a Claude Code remote container with Rust,
 the integration checkout at `/home/user/lumen-lang`. That container does
 not outlive the session; only what is pushed survives.
 
-**The container is reclaimed every fifty to sixty minutes.** Four
+**The container dies under a release build, not on a timer.** Four
 restarts in one session each killed a run in progress, twice at the
-release build. Nothing longer than about fifty minutes can be run in one
-piece, and `cargo` cannot resume inside a single compile unit — `stack8`
-is 36,000 lines whose release build is one unit of about an hour, so a
-plain `cargo build --release` never finishes. Two things make it
+release build, which looked like a fifty-to-sixty-minute reclaim. It is
+not: once the release builds were stopped the same container ran for
+over two and a half hours without interruption. The restarts correlate
+with `stack8`'s release build rather than with the clock — that build is
+one compile unit of about an hour over 36,000 lines and is by far the
+heaviest thing the container does. Treat the lesson as "do not run a
+release build here", not "everything must finish in fifty minutes"; and
+note `cargo` cannot resume inside a single compile unit anyway, so a
+plain `cargo build --release` never finishes even when nothing kills
+it. Two things make it
 survivable, and both are environment only, changing no committed file:
 
 ```
