@@ -1,7 +1,7 @@
 # Handover — read this and begin
 
-You are picking up `lumen-lang` after the sessions of 2026-09-10 and
-2026-09-11. This document is the whole briefing. It says where the work
+You are picking up `lumen-lang` after the sessions of 2026-09-10,
+2026-09-11 and 2026-09-12. This document is the whole briefing. It says where the work
 stands, what is waiting on branches, how it is verified, and what went
 wrong so that it is not done twice.
 
@@ -13,7 +13,8 @@ integration of the waiting branches, one verification per branch.
 
 ## 1. Where things stand
 
-The Python reader is done bar the pieces still on branches, and the
+Every pull request that was waiting is now folded into the integration
+branch. The Python reader is done bar three unfinished branches, and the
 run-time work has gone a long way: the full `unittest` runs the test
 files now, and reports what fails in them.
 
@@ -35,21 +36,44 @@ files now, and reports what fails in them.
   decision and has not been taken. It decides how the Python row is read
   from here on.
 
-Brought into the integration branch, each with the sequence in §3 (and
-with what its scratch programs then proved missing ported onto `main`'s
-kernels afterwards, in each kernel's own words):
+Brought into the integration branch in this order, each with the
+sequence in §3 (and with what its scratch programs then proved missing
+ported onto `main`'s kernels afterwards, in each kernel's own words):
 
-| order | branch | commit | notes |
-|---|---|---|---|
-| 1 | `py-test-support-modules` | `fe0f728` | |
-| 2 | `py-stdlib-3` | `6b357cc` | absorbs `stdlib-2` and `modules-3` |
-| 3 | `py-stdout-redirect` | `d5cbfe8` | print through `sys.stdout`; absorbs `stdlib-2` |
-| 4 | `py-warnings-module` | `315f0f5` | absorbs `unittest-2` |
-| 5 | `py-complex-type` | `c46ceb8` | union merge |
-| 6 | `py-float-repr-all-kernels` | `12664fd` | union merge; core label `system.real.render` |
-| — | ports for 1–6 | `674bf76` | verified: PHP row held, 3006/3006, 0 disagreements |
-| 7 | `py-slice-object` | `6b26474` | verified as this is written; see `verify-merge-7` below |
-| 8 | `py-hash-eq-identity` | `39e29d6` + `7f2132f` | scratch green in debug; release verification next |
+| order | branch | PR | commit | notes |
+|---|---|---|---|---|
+| 1 | `py-test-support-modules` | #463 | `fe0f728` | |
+| 2 | `py-stdlib-3` | #482 | `6b357cc` | absorbs `stdlib-2` (#464) and `modules-3` (#468) |
+| 3 | `py-stdout-redirect` | #469 | `d5cbfe8` | print through `sys.stdout` |
+| 4 | `py-warnings-module` | #478 | `315f0f5` | absorbs `unittest-2` (#472) |
+| 5 | `py-complex-type` | #476 | `c46ceb8` | union merge |
+| 6 | `py-float-repr-all-kernels` | #479 | `12664fd` | union merge; core label `system.real.render` |
+| — | ports for 1–6 | | `674bf76` | verified: PHP row held, 3006/3006, 0 disagreements |
+| 7 | `py-slice-object` | #481 | `4156398` + `6b26474` | |
+| 8 | `py-hash-eq-identity` | #477 | `aec3e1f` + `39e29d6` + `7f2132f` | |
+| 9 | `py-int-methods` | #483 | `3c15848` + `d053343` | |
+| 10 | `py-builtin-subclassing` | #474 | `b1bef8a` + `3f2a95a` | the library's own `round` had been shadowing the builtin; see §4 |
+| 11 | `py-descriptors` | #480 | `8893805` | |
+| 12 | `py-lazy-iterators` | #462 | `4c78b7e` | |
+| 13 | `py-dict-semantics` | #459 | `4dbb652` | ported onto `main`'s kernels rather than merged |
+| 14 | `py-control-flow-edges` | #460 | `ddd8101` | |
+| 15 | `py-reader-tail` | #461 | `0bf373e` | + `1e8919a`, the bare parent word; see §4 |
+| 16 | `py-builtins-2` | #466 | `04fd417` | |
+| 17 | `py-exceptions-2` | #471 | `28af333` | re-ported on top of `control-flow-edges`, which had done the same work |
+| 18 | `py-dunder-2` | #470 | `6c0239e` + `1e8919a` | |
+| 19 | `py-range-object` | #457 | `c02ed0b` + `92bbacf` | `main`'s variants kept, range's cases routed through them |
+| 20 | `py-sorting-semantics` | #485 | `4739616` | its own last run was red; green here |
+| 21 | `py-sequence-ops` | #455 | `41347b0` | |
+| 22 | `py-perf` | #473 | `a14aa3f` | head of the line |
+
+All twenty-five pull requests are therefore in the line, in twenty-two
+merges: `stdlib-2`, `modules-3` and `unittest-2` are absorbed by the
+branches that were cut after them. Of the twenty-five branches
+twenty-four are ancestors of `a14aa3f`, so merging the line closes their
+pull requests by itself. **`py-descriptors` (#480) is not an ancestor**:
+its commit `05de7ef` has a single parent, having lost the merge parent
+it was made with, though all of its work is in the line. That one pull
+request must be closed by hand.
 
 Ports worth knowing about, since they changed kernel behaviour beyond
 the branch that asked for them: `getattr` on a module reads through the
@@ -66,48 +90,29 @@ one builtin the cell a collection lives in).
 
 ## 2. What is waiting on branches
 
-Twenty-five pull requests were open when this began; eleven of them are
-now in the integration branch (marked below) and fourteen still wait.
-Every one was green on its own branch
-(build, 3006 examples, scratch programs, PHP unchanged) and every one in
-conflict with `main`, because each was cut from an older `main` and they
-touch the same rosters and, worse, the same kernel dispatch. They are
-listed oldest first with the base they were cut from. `79eefce` is the
-head of the `modules` branch, now in `main`; branches cut from it apply
-more cleanly than the rest.
+Nothing with a pull request. Twenty-five were open when this began and
+all twenty-five are folded into the integration branch (§1). Every one
+was green on its own branch (build, 3006 examples, scratch programs, PHP
+unchanged) and every one in conflict with `main`, because each was cut
+from an older `main` and they touch the same rosters and, worse, the same
+kernel dispatch. The bases they were cut from, oldest first, in case a
+piece has to be read again in its own setting: `e0e816d`
+(`sequence-ops`), `94155bd` (`range-object`, `dict-semantics`,
+`control-flow-edges`, `lazy-iterators`), `79eefce` (`test-support-modules`,
+`stdlib-2`, `modules-3`, `stdout-redirect`, `unittest-2`,
+`warnings-module`, `stdlib-3`), `8d6ad85` (`reader-tail`, `builtins-2`),
+`2026e6b` (`dunder-2`), `d7871f3` (`exceptions-2`, `perf`), `25f6848`
+(`builtin-subclassing`, `complex-type`, `hash-eq-identity`,
+`float-repr-all-kernels`, `descriptors`, `slice-object`, `int-methods`),
+`f0503a4` (`sorting-semantics`). Branches cut from `79eefce` applied more
+cleanly than the rest.
 
-| PR | branch | base | carries |
-|---|---|---|---|
-| #455 | `py-sequence-ops` | e0e816d | `+`, `*`, lexicographic comparison on sequences, tuple immutability errors. Deferred twice: it treats sets as immutable vectors where `main`'s sets are mutable hash storage. |
-| #457 | `py-range-object` | 94155bd | `range` as a lazy value. Conflicts with `builtins-core` on `main`: both implement `min`/`max`/`repr`/`reversed`/`tuple`/`set` as different enum variants in both kernels (`Greatest/Least/Represent/Backward` vs `Maximum/Minimum/Repr/Reversed`, `Highest/Lowest/…` vs `Prim::Greatest/Least/…`). Resolve by keeping `main`'s variants and routing range's cases through them. |
-| #459 | `py-dict-semantics` | 94155bd | insertion order, views, `\|`, `fromkeys`, `popitem`, mutation-during-iteration. |
-| #460 | `py-control-flow-edges` | 94155bd | `finally`/`return`/`break` interplay, `__exit__` arguments, exception chaining, recursion limit. |
-| #461 | `py-reader-tail` | 8d6ad85 | the last reader stops (fstring, print, grammar, set, listcomps, funcattrs, opcodes, with, decorators). |
-| #462 | `py-lazy-iterators` | 94155bd | iterator protocol; lazy `map`/`filter`/`zip`/`enumerate`. |
-| #463 | `py-test-support-modules` | 79eefce | **in the integration branch.** `test.support`, `test.seq_tests`, `test.list_tests`, `sys` extras, `fractions`. |
-| #464 | `py-stdlib-2` | 79eefce | **in the integration branch.** `io.StringIO`, `contextlib`, `abc`, `enum`, `dataclasses`, `typing`, a small `re`, `textwrap`, `string`, `time`. |
-| #466 | `py-builtins-2` | 8d6ad85 | `globals`, `locals`, `exec`, `eval`, `compile`, `dir`, `__name__`. |
-| #468 | `py-modules-3` | 79eefce | **in the integration branch.** `json`, `os` (minimal), `traceback`, `platform`, `locale`, `unicodedata`, guarded C-module stubs. |
-| #469 | `py-stdout-redirect` | 79eefce | **in the integration branch.** `print` follows `sys.stdout`; `captured_stdout`. |
-| #470 | `py-dunder-2` | 2026e6b | `__index__`, unary and in-place operators, `@`, `__format__`, `__missing__`. |
-| #471 | `py-exceptions-2` | d7871f3 | `ExceptionGroup`/`except*`, notes, `sys.exc_info`, `SystemExit`. |
-| #472 | `py-unittest-2` | 79eefce | **in the integration branch.** the full `assert*` surface, runner output as CPython's, loader, skips, `subTest`, cleanups. |
-| #473 | `py-perf` | d7871f3 | speed trials under `scratch/perf/`; the kernels were already fast. |
-| #474 | `py-builtin-subclassing` | 25f6848 | `class X(str)`, `(int)`, `(list)`, `(dict)`, `(tuple)`, `(float)`, `(set)`. |
-| #476 | `py-complex-type` | 25f6848 | **in the integration branch.** `complex` as a value. |
-| #477 | `py-hash-eq-identity` | 25f6848 | **in the integration branch.** `is`, `id`, `hash`, `==` and the singletons, as CPython. |
-| #478 | `py-warnings-module` | 79eefce | **in the integration branch.** `warnings`: warn, filters, `catch_warnings`, warnings as errors. |
-| #479 | `py-float-repr-all-kernels` | 25f6848 | **in the integration branch.** CPython's shortest round-trip rendering of reals behind a **core** label `system.real.render`, implemented in all six kernels; the examples agree 3006/3006. |
-| #480 | `py-descriptors` | 25f6848 | the `__get__`/`__set__` protocol behind properties and bound methods. |
-| #481 | `py-slice-object` | 25f6848 | **in the integration branch.** slice values, `Ellipsis` and tuple keys to `__getitem__`. |
-| #482 | `py-stdlib-3` | 79eefce | **in the integration branch.** `bisect`, `heapq`, `statistics`, `string`, `pprint`, `itertools`/`math`/`functools`/`operator` completeness. |
-| #483 | `py-int-methods` | 25f6848 | `bit_length`, `to_bytes`/`from_bytes`, `int()` in every base with CPython's errors, `float.hex`. |
-| #485 | `py-sorting-semantics` | f0503a4 | stability, `key`, mixed-type errors, `min`/`max`. Its last run was **red**; treat as unfinished. |
-
-Three more branches hold unfinished work with no pull request and a red
-last run: `py-copy-pickle`, `py-bytes-2`, `py-unicode-text` (the last was
-merged into `main` as #484 before it was verified and taken back again in
-`a521d8f`).
+Three branches still hold unfinished work with no pull request and a red
+last run, and are the next work: `py-copy-pickle`, `py-bytes-2`,
+`py-file-scope`. Port each from the merged head, one at a time, by the
+way described below. (`py-unicode-text` was merged into `main` as #484
+before it was verified and taken back again in `a521d8f`; its work is
+not in the line.)
 
 ### Bringing a branch in
 
@@ -200,9 +205,8 @@ run summary. `scratch/` holds each piece's programs with the exact output
   past every `ext.*` label. Five pieces in a row tried to print reals or
   strings-in-containers as CPython does behind an `ext.*` label and broke
   the examples on the two full kernels only. The way through is a **core**
-  label all six kernels honour — #479 does exactly that for reals.
-  Container rendering (`[1, hello]`, not `[1, 'hello']`) still follows the
-  examples.
+  label all six kernels honour — #479 does exactly that for reals. For
+  containers, see the next note.
 - **Floor division and rounding stay as the language floor says**:
   `//` truncates and `round` rounds half away from zero for every language,
   the examples depend on it, and CPython's flooring/half-to-even is
@@ -233,6 +237,40 @@ run summary. `scratch/` holds each piece's programs with the exact output
   and `/6`) and on a few deep programs, and a run left going while the
   binary is rebuilt under it reports nonsense. Copy the binary aside
   before a long run.
+- **Container rendering cannot be closed behind an `ext.*` label, and
+  probably not at all as things are.** A plain row prints its members
+  unquoted (`[1, hello]`) and a map prints `[k => v]` where CPython
+  prints `{k: 'v'}`. Six attempts have now tried this behind an `ext.*`
+  label and broken the examples on the two full kernels only, because
+  `test.sh` compares all six kernels against stream35 and the four
+  reference kernels read past every `ext.*` label. It needs a **core**
+  label all six kernels honour, as `system.real.render` is for reals
+  (#479) — which means writing the rendering into stream35, microcode11,
+  microcode4 and stack5 as well, in each one's own words, and moving
+  every example that shows a container. Do not attempt it as a Python
+  piece; it is a change to the language floor and wants its own branch.
+- **A map is a row of pairs searched from the front**, in both full
+  kernels, so a large map is quadratic: `scratch/perf/3` takes over two
+  hours on microcode7 in a debug build and seconds on a release one.
+  That is dictionary work, not `perf`'s, and it is the one place where
+  the kernels are not fast. Hashed storage for maps is the fix, and it
+  has to be written twice, in each kernel's own words.
+- **The library's own bindings must not shadow a builtin word.** The
+  Lumen library defines `round(x, decimals)`, and while every global
+  name stood in front of a builtin spelled the same, `round(number=5,
+  ndigits=2)` complained about a missing `decimals`. Both kernels now
+  let only the *program's own* outermost bindings shadow a builtin
+  (`program_bound` in `kernels/stack8/src/compile.rs`, `named_in_program`
+  in `kernels/microcode7/src/build.rs`). The bare parent word is the
+  same problem seen from the other end: `super` outside a class is a
+  plain name only when the program has bound it or is about to
+  (`1e8919a`).
+- **The recursion limit wants more stack than a run is given.** A
+  thousand calls deep overflowed the native stack in a debug build
+  (`modules-3/3`, `/6`, `stdlib-2/3`, `/6`, exit 134). The whole run is
+  now made on a thread with a gigabyte of stack in `src/main.rs`; do not
+  take that out.
+
 - **`getattr`, `is`, `id` and `hash` all reach values through cells** in
   both kernels — `Value::Bond`/`Binding`/`Collection` in `stack8`,
   `Value::Shared`/`Mutable` in `microcode7` — and each builtin decides
@@ -248,6 +286,27 @@ The last two sessions ran in a Claude Code remote container with Rust,
 (`merge-1` … `merge-9`, one per branch, each with its own `target/`), and
 the integration checkout at `/home/user/lumen-lang`. That container does
 not outlive the session; only what is pushed survives.
+
+**The container is reclaimed every fifty to sixty minutes.** Four
+restarts in one session each killed a run in progress, twice at the
+release build. Nothing longer than about fifty minutes can be run in one
+piece, and `cargo` cannot resume inside a single compile unit — `stack8`
+is 36,000 lines whose release build is one unit of about an hour, so a
+plain `cargo build --release` never finishes. Two things make it
+survivable, and both are environment only, changing no committed file:
+
+```
+export CARGO_PROFILE_RELEASE_INCREMENTAL=true
+export CARGO_PROFILE_RELEASE_OPT_LEVEL=2
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+```
+
+With those the build comes in pieces and each restart resumes where the
+last left off. Run it detached (`nohup … &`) into a log, and read the
+log rather than waiting on it. Then run the four checks of §3 one at a
+time, each into its own whole log: independence, the scratch suite, the
+3006 examples, the reference run. Any one of them fits inside a window;
+all of them together do not.
 
 Two 4-core codespaces exist on the repository (`lumen-a`, `lumen-b`), with
 Rust installed under `$HOME/.cargo` and `php` present. Everything is driven
