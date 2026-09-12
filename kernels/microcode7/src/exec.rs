@@ -6768,7 +6768,7 @@ impl<'a> Machine<'a> {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
             } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare) {
                 self.prim_values(op, name, v)?
-            } else if matches!(op, Prim::OctetAssign(_) | Prim::Pointed) && self.works_sequences()
+            } else if (self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences())
                 && matches!(v.first(), Some(Value::Shared(_) | Value::Mutable(..))) {
                 // A row written over keeps its cell: the write is made
                 // where the row stands, not on a copy of it, and the
@@ -6870,7 +6870,7 @@ impl<'a> Machine<'a> {
         }
         if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..)))
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
-            && !(matches!(op, Prim::OctetAssign(_) | Prim::Pointed) && self.works_sequences()) {
+            && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()) {
             let settled: Vec<Value> = v.iter().map(Value::settled).collect();
             return self.prim(op, name, &settled);
         }
@@ -9418,6 +9418,20 @@ impl<'a> Machine<'a> {
 
     /// Whether this table asks for the sequence workings at all.
     fn works_sequences(&self) -> bool { self.table.flag("ext.op.sequence.values") }
+
+    /// Whether a working writes a row over where the row stands, as
+    /// `+=` and `*=` do in a language of sequences. A landing counts by
+    /// the plain working it falls back to: a row is no thing and
+    /// answers for none of the in-place methods, so what reaches the
+    /// row is that plain working, and it must reach it with the row's
+    /// cell still about it.
+    fn writes_a_row_over(&self, op: Prim) -> bool {
+        let plain = match op {
+            Prim::Landing(place) => self.table.landing_working(place),
+            other => other,
+        };
+        self.works_sequences() && matches!(plain, Prim::OctetAssign(_))
+    }
 
     /// One piece of a sequence label, or nothing where the table is
     /// silent about it.
