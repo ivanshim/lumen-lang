@@ -259,6 +259,48 @@ The measurement before this one, 139 of 327 across 16 files, was taken
 before `doctest`, the library batch and the fixes in §1b. Files that
 reach their own tests have roughly doubled since.
 
+### 1d. What each file that runs nothing is now waiting on
+
+Measured again after `doctest`, the library batch, the logical operators,
+container rendering and `__debug__` all landed. The blockers move as each
+one is lifted, so this list is only true of the commit it was taken at;
+take it again rather than trusting it.
+
+Waiting on a module the library has not got -- library work, which
+rebuilds in seconds:
+
+    test_builtin     143 methods   builtins
+    test_dict        105 methods   test.mapping_tests
+    test_fstring      95 methods   datetime
+    test_grammar      80 methods   inspect
+    test_iter         68 methods   builtins
+    test_generators                inspect
+    test_cmath                     cmath
+
+Waiting on the kernels, which is the harder half:
+
+    test_binop       this class form cannot run yet
+    test_enumerate   this class form cannot run yet
+    test_complex     this class operation is not supported
+    test_float       reversed() is not supported for these values
+    test_fractions   a class cannot answer to complex
+    test_long        outruns a debug build's patience
+    test_set         not yet looked at again
+    test_str         not yet looked at again
+    test_string_literals, test_math, test_bigmem   not yet looked at again
+
+`test_exceptions`, which is CPython's own file of 118 methods and 2,909
+lines, now runs its tests on both kernels rather than stopping at an
+import. It is too slow to finish in a debug build, so what it settles on
+has to be read from a release run.
+
+Two disagreements between the kernels were noticed while taking this and
+have not been chased. `test_exceptions` diverges at its eighth test.
+`test_fractions` stops with different words on each kernel -- `Class
+RectComplex cannot answer to <built-in function complex>` on stack8,
+`Class RectComplex cannot answer to that` on microcode7 -- which is one
+defect wearing two faces.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
