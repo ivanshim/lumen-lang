@@ -98,3 +98,198 @@ class defaultdict:
 class Counter:
     def __init__(self, iterable=None, **kwargs):
         raise 'NotImplementedError: Counter needs object indexing methods'
+
+
+# A list and a dictionary written out in Python, for a program that
+# wants to inherit from one and change a part of it. Each keeps its
+# contents in an ordinary list or map under the name data, as CPython's
+# do, and takes the rest of its behaviour from the kind it stands on.
+from collections.abc import MutableSequence, MutableMapping
+
+
+def _is_slice(index):
+    # The reader hands a slice to an object's own __getitem__, but
+    # isinstance cannot be asked about the slice kind, hasattr says no
+    # for its parts, and reaching for one on something else fails in a
+    # way no try can hold. What is left is how a slice writes itself
+    # out. A thing of a program's own whose repr begins the same way is
+    # taken for one, which is the price of asking the question this way.
+    return repr(index)[:6] == 'slice('
+
+
+class UserList(MutableSequence):
+    def __init__(self, initlist=None):
+        self.data = []
+        if initlist is not None:
+            if isinstance(initlist, UserList):
+                self.data = list(initlist.data)
+            else:
+                self.data = list(initlist)
+
+    def __repr__(self):
+        return repr(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        if _is_slice(index):
+            return type(self)(self.data[index])
+        return self.data[index]
+
+    def __setitem__(self, index, value):
+        self.data[index] = value
+
+    def __delitem__(self, index):
+        del self.data[index]
+
+    def __contains__(self, value):
+        return value in self.data
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __eq__(self, other):
+        return self.data == self.__cast(other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __lt__(self, other):
+        return self.data < self.__cast(other)
+
+    def __le__(self, other):
+        return self.data <= self.__cast(other)
+
+    def __gt__(self, other):
+        return self.data > self.__cast(other)
+
+    def __ge__(self, other):
+        return self.data >= self.__cast(other)
+
+    def __cast(self, other):
+        if isinstance(other, UserList):
+            return other.data
+        return other
+
+    def __add__(self, other):
+        return type(self)(self.data + list(self.__cast(other)))
+
+    def __radd__(self, other):
+        return type(self)(list(self.__cast(other)) + self.data)
+
+    def __iadd__(self, other):
+        self.data += list(self.__cast(other))
+        return self
+
+    def __mul__(self, count):
+        return type(self)(self.data * count)
+
+    def __rmul__(self, count):
+        return self.__mul__(count)
+
+    def __imul__(self, count):
+        self.data *= count
+        return self
+
+    def append(self, value):
+        self.data.append(value)
+
+    def insert(self, index, value):
+        self.data.insert(index, value)
+
+    def pop(self, index=-1):
+        return self.data.pop(index)
+
+    def remove(self, value):
+        self.data.remove(value)
+
+    def clear(self):
+        self.data.clear()
+
+    def copy(self):
+        return type(self)(self)
+
+    def count(self, value):
+        return self.data.count(value)
+
+    def index(self, value, *rest):
+        return self.data.index(value, *rest)
+
+    def reverse(self):
+        self.data.reverse()
+
+    def sort(self, *args, **keywords):
+        self.data.sort(*args, **keywords)
+
+    def extend(self, other):
+        if isinstance(other, UserList):
+            self.data.extend(other.data)
+        else:
+            self.data.extend(other)
+
+
+class UserDict(MutableMapping):
+    def __init__(self, initial=None, **keywords):
+        self.data = {}
+        if initial is not None:
+            self.update(initial)
+        if keywords:
+            self.update(keywords)
+
+    def __repr__(self):
+        return repr(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, key):
+        if key in self.data:
+            return self.data[key]
+        if hasattr(type(self), '__missing__'):
+            return type(self).__missing__(self, key)
+        raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
+
+    def __delitem__(self, key):
+        del self.data[key]
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __contains__(self, key):
+        return key in self.data
+
+    def __eq__(self, other):
+        if isinstance(other, UserDict):
+            return self.data == other.data
+        return self.data == other
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def copy(self):
+        return type(self)(self.data)
+
+    def keys(self):
+        return self.data.keys()
+
+    def values(self):
+        return self.data.values()
+
+    def items(self):
+        return self.data.items()
+
+    def get(self, key, default=None):
+        if key in self.data:
+            return self.data[key]
+        return default
+
+    @classmethod
+    def fromkeys(cls, iterable, value=None):
+        made = cls()
+        for key in iterable:
+            made[key] = value
+        return made

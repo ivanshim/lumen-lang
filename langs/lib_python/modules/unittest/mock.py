@@ -73,6 +73,28 @@ class Mock:
         if self.called:
             raise AssertionError('expected no call and there were ' + str(self.call_count))
 
+    def assert_called_once(self):
+        if self.call_count != 1:
+            raise AssertionError('expected one call and there were ' + str(self.call_count))
+
+    def assert_called_with(self, *args, **kwargs):
+        if not self.called:
+            raise AssertionError('expected a call and there was none')
+        wanted = (list(args), kwargs)
+        if self.call_args != wanted:
+            raise AssertionError('expected ' + repr(wanted) + ' and the last call was ' + repr(self.call_args))
+
+    def assert_called_once_with(self, *args, **kwargs):
+        self.assert_called_once()
+        self.assert_called_with(*args, **kwargs)
+
+    def assert_any_call(self, *args, **kwargs):
+        wanted = (list(args), kwargs)
+        for made in self.call_args_list:
+            if made == wanted:
+                return
+        raise AssertionError('expected ' + repr(wanted) + ' among the calls and it is not there')
+
     def __getattr__(self, name):
         # A name asked of a stand-in is a stand-in of its own, as the
         # reference library has it. A name that begins with an
@@ -83,6 +105,98 @@ class Mock:
         child = Mock(name=name)
         setattr(self, name, child)
         return child
+
+
+# What the reference hands back from each of the double-underscore names
+# a MagicMock answers to, when nothing has said otherwise.
+_MAGIC_ANSWERS = {
+    '__lt__': NotImplemented,
+    '__gt__': NotImplemented,
+    '__le__': NotImplemented,
+    '__ge__': NotImplemented,
+    '__int__': 1,
+    '__index__': 1,
+    '__float__': 1.0,
+    '__complex__': 1j,
+    '__bool__': True,
+    '__len__': 0,
+    '__contains__': False,
+    '__exit__': False,
+}
+
+
+class MagicMock(Mock):
+    # A stand-in that also answers the operations the reader reaches
+    # through double-underscore names. Each of those is a stand-in of
+    # its own, made once when the MagicMock is and kept on it under its
+    # own name, so a test can count the calls to it and put a different
+    # answer on it. The reader looks a double-underscore name up on the
+    # class and never on the thing itself, so the methods below stand on
+    # the class and pass the work to the stand-in kept beside them.
+    #
+    # Only the names this reader asks an object for are here. The
+    # arithmetic ones, the asynchronous ones and the rest the reference
+    # carries are not, so a MagicMock added to a number is refused
+    # rather than answering with a stand-in.
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+        self._magic = {}
+        Mock.__init__(self, name, return_value, side_effect, wraps)
+        for word in _MAGIC_ANSWERS:
+            child = Mock(name=word)
+            child.return_value = _MAGIC_ANSWERS[word]
+            self._magic[word] = child
+            setattr(self, word, child)
+        walker = Mock(name='__iter__')
+        walker.return_value = iter([])
+        self._magic['__iter__'] = walker
+        setattr(self, '__iter__', walker)
+
+    def __repr__(self):
+        if self._mock_name is None:
+            return '<MagicMock>'
+        return '<MagicMock ' + str(self._mock_name) + '>'
+
+    def __lt__(self, other):
+        return self._magic['__lt__'](other)
+
+    def __gt__(self, other):
+        return self._magic['__gt__'](other)
+
+    def __le__(self, other):
+        return self._magic['__le__'](other)
+
+    def __ge__(self, other):
+        return self._magic['__ge__'](other)
+
+    def __int__(self):
+        return self._magic['__int__']()
+
+    def __index__(self):
+        return self._magic['__index__']()
+
+    def __float__(self):
+        return self._magic['__float__']()
+
+    def __complex__(self):
+        return self._magic['__complex__']()
+
+    def __bool__(self):
+        return self._magic['__bool__']()
+
+    def __len__(self):
+        return self._magic['__len__']()
+
+    def __contains__(self, item):
+        return self._magic['__contains__'](item)
+
+    def __iter__(self):
+        return self._magic['__iter__']()
+
+    def __enter__(self):
+        return MagicMock(name='__enter__')
+
+    def __exit__(self, kind, value, traceback):
+        return self._magic['__exit__'](kind, value, traceback)
 
 
 class _Patch:
