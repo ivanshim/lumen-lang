@@ -1697,10 +1697,10 @@ only. The extension labels so far, all from PHP:
   holds two pieces around the name of the kind that could not be
   walked. Where the pieces open with the name of an exception class the
   complaint is raised as one of that class, and a guard about the
-  taking-apart may take it. Arrays and
-  text may be taken apart, and maps give their keys; other walks are
-  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
-  taking-apart whose places are ill written.
+  taking-apart may take it. Arrays and text may be taken apart, and maps
+  give their keys; other walks are not yet taken apart.
+  `ext.stmt.unpack.amiss` is what is said of a taking-apart whose places
+  are ill written.
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
@@ -2879,10 +2879,10 @@ only. The extension labels so far, all from PHP:
   holds two pieces around the name of the kind that could not be
   walked. Where the pieces open with the name of an exception class the
   complaint is raised as one of that class, and a guard about the
-  taking-apart may take it. Arrays and
-  text may be taken apart, and maps give their keys; other walks are
-  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
-  taking-apart whose places are ill written.
+  taking-apart may take it. Arrays and text may be taken apart, and maps
+  give their keys; other walks are not yet taken apart.
+  `ext.stmt.unpack.amiss` is what is said of a taking-apart whose places
+  are ill written.
 - `ext.stmt.unpack`: the words that open a taking-apart — a list of
   places written on the left of a write, each taking the matching place
   of the value on the right (`list($a, $b) = $v`). A place left out is
