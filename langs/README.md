@@ -272,7 +272,12 @@ starred subscript, after the entire subscript has been read.
     before a backslash, letters for the characters that move the writing
     on, and a number for whatever else a reader could not take back as it
     stands; a collection within is written the same way again; and every
-    other value is written as it shows. The setting holds wherever a
+    other value is written as it shows. A collection reached from
+    somewhere inside itself has no end to write, so it is written as the
+    marks it would have stood between and no further: braces for a map,
+    brackets for a row and parentheses for a fixed row. A collection
+    reached twice by two roads is no such thing and is written out in
+    full on each of them. The setting holds wherever a
     collection becomes text, so joining one to a piece of text and asking
     for its text by name read as printing it does.
 

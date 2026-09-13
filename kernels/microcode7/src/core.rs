@@ -1,7 +1,7 @@
 // Quoted worths are written from the inside outward. The usual writer
 // need not change how it has always shown an array or a map.
 
-use crate::data::{IteratorKind, Value};
+use crate::data::{Among, IteratorKind, Value};
 use num_traits::{Signed, ToPrimitive};
 use num_bigint::BigInt;
 use std::hash::{Hasher, Hash};
@@ -50,6 +50,12 @@ impl Value {
             let parts: Vec<_> = items.iter().map(|item| item.quoted(brief)).collect();
             format!("{}{}{}", left, parts.join(", "), right)
         }
+        // This writer walks a collection's members too, so it leaves
+        // the same note on them the other writers leave: a collection
+        // reached from inside itself is written as the marks it would
+        // have stood between and gone no further into.
+        let among = Among::members(self);
+        if let Some(marks) = among.instead { return marks.to_string(); }
         match self {
             Self::Nil => String::from("None"),
             Self::Flag(true) => String::from("True"), Self::Flag(false) => String::from("False"),
