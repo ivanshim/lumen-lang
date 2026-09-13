@@ -2600,11 +2600,13 @@ impl<'a> Machine<'a> {
                     state.owed.push(Owed::Find(unwrapped_arm(if self.stands_true(&test) { yes } else { no })));
                 }
                 Owed::Truth(op, right) => {
+                    let whole = self.table.flag("ext.op.logical.operand");
                     let left = state.found.pop().unwrap_or(Value::Nil);
                     let holds = self.stands_true(&left);
-                    if (op == Prim::Both && !holds) || (op == Prim::Either && holds) { state.found.push(Value::Flag(holds)); }
-                    else {
-                        state.owed.push(Owed::Apply(Callee::Prim(Prim::AsTruth, Rc::from("")), 1));
+                    if (op == Prim::Both && !holds) || (op == Prim::Either && holds) {
+                        state.found.push(if whole { left } else { Value::Flag(holds) });
+                    } else {
+                        if !whole { state.owed.push(Owed::Apply(Callee::Prim(Prim::AsTruth, Rc::from("")), 1)); }
                         state.owed.push(Owed::Find(unwrapped_arm(right)));
                     }
                 }
@@ -3488,16 +3490,20 @@ impl<'a> Machine<'a> {
                 }
 
                 Prim::Both | Prim::Either => {
+                    // A language may want the side that settled the pair
+                    // handed back whole instead of a flag for its truth.
+                    let whole = self.table.flag("ext.op.logical.operand");
                     let seen = self.value_of(&args[0], frame)?;
                     let left = self.object_truth(&seen)?;
                     if (*op == Prim::Both && !left) || (*op == Prim::Either && left) {
-                        return Ok(Value::Flag(left));
+                        return Ok(if whole { seen } else { Value::Flag(left) });
                     }
                     // The right side is read in place and evaluated only here.
                     let right = match self.value_of(&args[1], frame)? {
                         Value::Bound(p, env) => self.invoke(p, env, Vec::new())?,
                         v => v,
                     };
+                    if whole { return Ok(right); }
                     Ok(Value::Flag(self.object_truth(&right)?))
                 }
                 Prim::Yield => {
