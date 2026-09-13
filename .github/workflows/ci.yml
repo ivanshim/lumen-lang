@@ -95,6 +95,7 @@ jobs:
 
   scratch:
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -119,13 +120,17 @@ jobs:
             for kernel in stack8 microcode7; do
               printf '\n=== %s (%s) ===\n' "$f" "$kernel"
               status=0
-              target/release/lumen-lang --kernel "$kernel" "$f" </dev/null >"$tmp/stdout" 2>"$tmp/stderr" || status=$?
+              timeout 120 target/release/lumen-lang --kernel "$kernel" "$f" </dev/null >"$tmp/stdout" 2>"$tmp/stderr" || status=$?
               printf '%s\n' '--- stdout ---'
-              cat "$tmp/stdout"
+              head -c 20000 "$tmp/stdout"
               printf '\n%s\n' '--- stderr ---'
-              cat "$tmp/stderr"
+              head -c 20000 "$tmp/stderr"
               printf '\nExit status: %s\n' "$status"
               failed=0
+              if [ "$status" -eq 124 ]; then
+                echo 'Gave up waiting after 120 seconds.'
+                failed=1
+              fi
               if [ -f "${f%.py}.out" ]; then
                 if [ "$status" -ne 0 ]; then
                   echo 'Expected a successful exit.'
