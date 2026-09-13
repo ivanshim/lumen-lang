@@ -76,7 +76,7 @@ builtin.len:L builtin.char_at:L builtin.ord:L builtin.chr:L builtin.typeof:L bui
 builtin.extern:L builtin.range:L builtin.real:L builtin.num:L builtin.den:L builtin.push:L \
 builtin.get:L builtin.put:L builtin.precision:L builtin.to_string:L builtin.to_int:L builtin.to_real:L \
 system.args:L system.memoization:L system.real_default_precision:L system.real.render:W \
- system.collection.render:W system.entry:L \
+system.collection.render:W system.entry:L \
 system.kind.integer:L system.kind.rational:L system.kind.real:L system.kind.string:L \
 system.kind.boolean:L system.kind.array:L system.kind.null:L";
 
