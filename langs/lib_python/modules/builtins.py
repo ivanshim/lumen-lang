@@ -133,12 +133,10 @@ __debug__ = globals()['__debug__']
 
 # True, False, None, Ellipsis, bytes and bytearray are words the reader
 # knows rather than names it can be asked for, so none of them can stand
-# on the left of an assignment. The module reaches itself through the
-# table of loaded modules and writes them on from outside instead, which
-# leaves them under the names a program asks this module for.
-import sys
-
-_self = sys.modules['builtins']
+# on the left of an assignment. The module asks the loader for itself
+# and writes them on from outside instead, which leaves them under the
+# names a program asks this module for.
+_self = __load_module('builtins')
 setattr(_self, 'True', True)
 setattr(_self, 'False', False)
 setattr(_self, 'None', None)
