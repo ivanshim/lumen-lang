@@ -89,7 +89,7 @@ microcode4's. All 498 example programs print the same on this kernel as
 on the other five. stack8 is the same promotion on the stack machine.
 
 Being a full kernel, it also reads the `ext.` labels a definition may add
-beyond the 133 core labels (see `langs/README.md`): an epilogue marker,
+beyond the 134 core labels (see `langs/README.md`): an epilogue marker,
 `echo`, bracketless builtin calls, `++`/`--` (a statement folds into a
 `Bump`; `x++` in an expression keeps the old value aside in a hidden
 binding), interpolating strings (which the scanner turns into a
