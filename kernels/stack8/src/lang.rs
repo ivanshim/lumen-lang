@@ -870,9 +870,15 @@ pub struct Lang {
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
     pub unpack_rest: Vec<String>,
-    pub unpack_short: Option<String>,
-    pub unpack_long: Option<String>,
-    pub unpack_unwalkable: Option<String>,
+    /// The pieces of the three complaints a taking-apart may raise. The
+    /// short one surrounds the count of places and the count of values
+    /// found, and carries a fourth piece that stands before the count of
+    /// places where one of them is starred and may take more than one
+    /// value. The long one surrounds the count of places, and the
+    /// unwalkable one the name of the kind that could not be walked.
+    pub unpack_short: Vec<String>,
+    pub unpack_long: Vec<String>,
+    pub unpack_unwalkable: Vec<String>,
     pub unpack_amiss: Option<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
@@ -2568,9 +2574,9 @@ impl Lang {
             args_beyond: r.head("ext.builtin.args.at.beyond")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
             unpack_rest: r.strings("ext.stmt.unpack.rest")?,
-            unpack_short: r.head("ext.stmt.unpack.short")?,
-            unpack_long: r.head("ext.stmt.unpack.long")?,
-            unpack_unwalkable: r.head("ext.stmt.unpack.unwalkable")?,
+            unpack_short: r.strings("ext.stmt.unpack.short")?,
+            unpack_long: r.strings("ext.stmt.unpack.long")?,
+            unpack_unwalkable: r.strings("ext.stmt.unpack.unwalkable")?,
             unpack_amiss: r.head("ext.stmt.unpack.amiss")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
