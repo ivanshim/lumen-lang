@@ -2449,6 +2449,15 @@ impl<'a> Builder<'a> {
         if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
         values.extend(other_parents.iter().cloned().map(Form::Read));
         if let Some(word)=table.single("ext.stmt.class.detail.qualified") {attributes.push(word.to_string());values.push(constant(Value::text(&full_name)));}
+        // What the class says about itself is text standing alone at the
+        // head of the body, kept under the word the table gives
+        // (ext.stmt.class.detail.doc). A class that says nothing keeps
+        // nothing under the word, rather than lacking the word.
+        if let Some(word) = table.single("ext.stmt.class.detail.doc") {
+            let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            attributes.push(word.to_string());
+            values.push(constant(said.unwrap_or(Value::Nil)));
+        }
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
