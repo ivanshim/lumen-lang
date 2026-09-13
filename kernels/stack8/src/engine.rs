@@ -52,6 +52,9 @@ pub struct Engine<'a> {
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
+    /// Whether the module of unbound names is being loaded just now, so
+    /// that a name missed inside it does not send the loader round again.
+    fetching_names: bool,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -695,6 +698,7 @@ impl<'a> Engine<'a> {
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             modules: HashMap::new(),
+            fetching_names: false,
             registry,
         };
         if engine.fuller_classes() {
@@ -1738,12 +1742,42 @@ impl<'a> Engine<'a> {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
             if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
         }
+        if matches!(self.world[slot.far], Value::Blank) {
+            if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
+        }
         let g = &mut self.world[slot.far];
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
             _ if slot.moving => Ok(std::mem::replace(g, Value::Gap)),
             v => Ok(v.clone()),
+        }
+    }
+
+    /// What a module of the language's own holds under a name nothing in
+    /// the program has bound. Python keeps its builtins in such a module
+    /// and reads them without importing it, so a name missed here is
+    /// looked for there before it is called missing. The module is
+    /// loaded the first time a name is missed and read from after that,
+    /// and a name it does not hold is missing as it was.
+    fn kept_by_module(&mut self, name: &str) -> Option<Value> {
+        if self.fetching_names { return None; }
+        let path = self.lang.names_module.first()?.clone();
+        let module = match self.modules.get(&path) {
+            Some(held) => held.clone(),
+            None => {
+                self.fetching_names = true;
+                let brought = self.import_module(&path);
+                self.fetching_names = false;
+                brought.ok()?
+            }
+        };
+        let Value::Object(object) = module else { return None };
+        let held = object.fields.borrow().iter().find(|(word, _)| word == name)
+            .map(|(_, held)| match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() })?;
+        match held {
+            Value::Blank => None,
+            found => Some(found),
         }
     }
 
@@ -1815,8 +1849,11 @@ impl<'a> Engine<'a> {
             }
         }
         // A name living in a dictionary is read and written the long
-        // way too, since what it holds is kept there and not here.
+        // way too, since what it holds is kept there and not here, and
+        // so is a name nothing has bound where the language keeps its
+        // unbound names in a module.
         matches!(self.world[slot.far], Value::Bond(_)) || self.book_of(slot.far).is_some()
+            || (!self.lang.names_module.is_empty() && matches!(self.world[slot.far], Value::Blank))
     }
 
     /// The cell a binding lives in, for reading in place.

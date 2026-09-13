@@ -3167,6 +3167,16 @@ only. The extension labels so far, all from PHP:
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
+- `ext.system.names.module`: the module a name is looked for in when
+  nothing in the program has bound it and the kernel knows no word of
+  its own for it. The module is fetched the first time a name is missed
+  and read from after that; a name it does not hold stays missing and is
+  told so as before, and a name the kernel already knows never reaches
+  it, so this neither shadows nor slows an ordinary name. It is how
+  Python writes a builtin without importing anything: the names live in
+  a module called `builtins`, and `langs/lib_python/modules/builtins.py`
+  is that module here. Names it holds which the kernel has no value for,
+  such as `sentinel` and `frozendict`, are reached by this path alone.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
@@ -4860,6 +4870,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.names.module` | - | - | `builtins` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
 | `ext.system.reading.unclosed.mismatch` | - | - | - | - | `does not match '` `'` | - | - | - | - | - |

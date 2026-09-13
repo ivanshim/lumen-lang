@@ -2968,6 +2968,9 @@
   "ext.system.module.builtins": [
     "__builtins__"
   ],
+  "ext.system.names.module": [
+    "builtins"
+  ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"
   ],

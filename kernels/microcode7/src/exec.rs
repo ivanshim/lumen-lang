@@ -155,6 +155,10 @@ impl Suspension {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    /// Set while the namespace that answers for unbound names is being
+    /// read, so that a name missing inside it stops there instead of
+    /// asking for the same namespace over again.
+    within_spare: bool,
     /// The dictionary kept beside the outermost names once a program
     /// has asked for it: from then on those names are read out of it
     /// and written into it, so either side sees the other's writing.
@@ -753,6 +757,7 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             imported: HashMap::new(),
+            within_spare: false,
             world_book: None,
             readings: Vec::new(),
             reading_now: None,
@@ -2175,7 +2180,7 @@ impl<'a> Machine<'a> {
 
     // ---------- bindings
 
-    fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
+    fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
@@ -2216,7 +2221,32 @@ impl<'a> Machine<'a> {
             if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)])));}
         }
+        if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         Err(format!("Undefined variable: {}", slot.ident))
+    }
+
+    /// A language may keep a namespace whose members answer for the
+    /// names a program never bound: Python writes len without importing
+    /// the namespace its len lives in. The namespace named by
+    /// ext.system.names.module is read in on the first name that misses
+    /// and consulted from then on; when it holds nothing under the name,
+    /// or cannot be read at all, the name stays missing.
+    fn spare_name(&mut self, wanted: &str) -> Option<Value> {
+        if self.within_spare { return None; }
+        let named = self.table.strings("ext.system.names.module").first()?.clone();
+        if !self.imported.contains_key(&named) {
+            self.within_spare = true;
+            let outcome = self.load_namespace(&named);
+            self.within_spare = false;
+            outcome.ok()?;
+        }
+        let Some(Value::Thing(space)) = self.imported.get(&named) else { return None };
+        for (word, cell) in space.holds.borrow().iter() {
+            if word != wanted { continue; }
+            let held = match cell { Value::Shared(link) => link.borrow().clone(), worth => worth.clone() };
+            return if matches!(held, Value::Unset) { None } else { Some(held) };
+        }
+        None
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
