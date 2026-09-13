@@ -402,7 +402,15 @@ impl Value {
 
     pub fn representation(&self, words: &Wording) -> String {
         match self {
-            Value::Collection(cell, _) => shown_once(cell, |held| held.representation(words)),
+            // A collection is written from its cell however the cell is
+            // held, so that a collection standing inside another is
+            // written out and not merely named.
+            Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => {
+                // A map come round to again is marked by the braces it
+                // would have been written in, a row by its brackets.
+                let round = if matches!(&*cell.borrow(), Value::Map(_)) { "{...}" } else { "[...]" };
+                shown_once(cell, round, |held| held.representation(words))
+            }
             Value::Text(_) => self.string_field(words, "", "r").unwrap_or_else(|| self.plain()),
             Value::Array(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
             Value::Tuple(row) => format!("({}{})", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
@@ -751,11 +759,11 @@ impl Value {
     pub fn display(&self, sp: &Wording) -> String {
         if let Some(told) = self.exception_message(sp) { return told; }
         match self {
-            Value::Collection(cell, quote) => shown_once(cell, |held| if *quote { held.representation(sp) } else { held.display(sp) }),
+            Value::Collection(cell, quote) => shown_once(cell, "[...]", |held| if *quote { held.representation(sp) } else { held.display(sp) }),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
-            Value::Bond(shared) | Value::Binding(shared) => shown_once(shared, |held| held.display(sp)),
+            Value::Bond(shared) | Value::Binding(shared) => shown_once(shared, "[...]", |held| held.display(sp)),
             Value::Set(s) => s.borrow().show(|v| v.member_text(sp)),
 
             Value::Flag(true) => match sp.flag_counts {
@@ -890,7 +898,7 @@ impl Value {
         match self {
             Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
-            Value::Collection(cell, _) => shown_once(cell, |held| held.plain()),
+            Value::Collection(cell, _) => shown_once(cell, "[...]", |held| held.plain()),
             Value::ValueMethod(_) => "<built-in method>".to_string(),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
             Value::Native(_, word) => format!("<built-in function {}>", word),
@@ -1304,8 +1312,8 @@ thread_local! {
 }
 
 /// Write out what a cell holds, unless that cell is already being
-/// written out further up, where an ellipsis stands in its stead.
-fn shown_once(cell: &Rc<RefCell<Value>>, write: impl FnOnce(&Value) -> String) -> String {
+/// written out further up, where the ellipsis given stands in its stead.
+fn shown_once(cell: &Rc<RefCell<Value>>, come_round_as: &str, write: impl FnOnce(&Value) -> String) -> String {
     let place = Rc::as_ptr(cell);
     let come_round = SHOWING.with(|held| {
         let mut held = held.borrow_mut();
@@ -1313,7 +1321,7 @@ fn shown_once(cell: &Rc<RefCell<Value>>, write: impl FnOnce(&Value) -> String) -
         held.push(place);
         false
     });
-    if come_round { return "[...]".to_string(); }
+    if come_round { return come_round_as.to_string(); }
     let written = write(&cell.borrow());
     SHOWING.with(|held| { held.borrow_mut().pop(); });
     written

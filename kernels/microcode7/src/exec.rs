@@ -6083,6 +6083,14 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Whether the table gives classes the protocol for being shown. A
+    /// language that does reads a collection the same way whether or not
+    /// a representation was asked for, every member inside it written as
+    /// a representation, so text keeps its quotes and a map its braces.
+    fn collections_read_alike(&self) -> bool {
+        self.table.has_any("ext.stmt.class.special")
+    }
+
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
@@ -6094,12 +6102,21 @@ impl<'a> Machine<'a> {
             // A collection of plain values is shown from its cell, so that
             // one reaching itself is met on the way round.
             if !quoted && !represented && matches!(inner, Value::Vector(_) | Value::Dict(_)) && !Self::carries_instance(&inner) {
-                return Ok(self.show(std::slice::from_ref(&Value::Mutable(place, false))));
+                let whole = Value::Mutable(place, false);
+                if self.collections_read_alike() { return Ok(whole.repr(&self.wording())); }
+                return Ok(self.show(std::slice::from_ref(&whole)));
             }
             return self.object_words(&inner, quoted || represented);
         }
         if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
-        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(self.show(std::slice::from_ref(subject))); }
+        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) {
+            // A collection standing in no cell of its own is shown the
+            // same way, by the walk that stops where it comes round.
+            if self.collections_read_alike() && matches!(subject, Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Row(_)) {
+                return Ok(subject.repr(&self.wording()));
+            }
+            return Ok(self.show(std::slice::from_ref(subject)));
+        }
         match subject {
             Value::Keyed(value, _) => self.object_words(value, quoted),
             Value::Attributes(t) => {
@@ -6126,6 +6143,12 @@ impl<'a> Machine<'a> {
             Value::Vector(v) => {
                 let pieces = v.iter().map(|x| self.object_words(x, true)).collect::<Result<Vec<_>, _>>()?;
                 Ok(String::from("[") + &pieces.join(", ") + "]")
+            }
+            // A fixed row is shown the same way, save that a row of one
+            // member keeps the comma marking it a row and not a bracket.
+            Value::Tuple(v) | Value::Row(v) => {
+                let pieces = v.iter().map(|x| self.object_words(x, true)).collect::<Result<Vec<_>, _>>()?;
+                Ok(String::from("(") + &pieces.join(", ") + if v.len() == 1 { "," } else { "" } + ")")
             }
             Value::Dict(d) => {
                 let pieces = d.iter().map(|(k, v)| {

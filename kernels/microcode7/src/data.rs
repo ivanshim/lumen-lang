@@ -368,14 +368,20 @@ impl Value {
     }
 
     pub fn repr(&self, names: &Names) -> String {
-        if let Value::Mutable(cell, _) | Value::Shared(cell) = self { return within_cell(cell, |inner| inner.repr(names)); }
+        if let Value::Mutable(cell, _) | Value::Shared(cell) = self {
+            let mark = if matches!(&*cell.borrow(), Value::Dict(_)) { "{...}" } else { "[...]" };
+            return within_cell_marked(cell, mark, |inner| inner.repr(names));
+        }
+        // A window on to a map keeps the name of the part it shows
+        // around the members, which are written out within it.
+        if matches!(self, Value::Window(..)) { return self.render(*names); }
         let settled = self.settled();
         match &settled {
             Value::Text(_) => settled.in_field(*names, "", "r").unwrap_or_else(|| settled.bare()),
-            Value::Vector(v) | Value::Row(v) => {
+            Value::Vector(v) | Value::Row(v) | Value::Tuple(v) => {
                 let body = v.iter().map(|item| item.repr(names)).collect::<Vec<_>>().join(", ");
-                if matches!(settled, Value::Row(_)) { format!("({body}{})", if v.len() == 1 { "," } else { "" }) }
-                else { format!("[{body}]") }
+                if matches!(settled, Value::Vector(_)) { format!("[{body}]") }
+                else { format!("({body}{})", if v.len() == 1 { "," } else { "" }) }
             }
             Value::Dict(entries) => {
                 let body = entries.iter().map(|entry| entry.0.repr(names) + ": " + &entry.1.repr(names)).collect::<Vec<_>>().join(", ");
@@ -1254,9 +1260,16 @@ thread_local! {
     static COUNTS: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
 }
 
-/// Write out a cell's contents by the writer given, or an ellipsis where
-/// the same cell is already being written further out.
+/// Write out a cell's contents by the writer given, or a row's ellipsis
+/// where the same cell is already being written further out.
 fn within_cell(cell: &Rc<RefCell<Value>>, writer: impl FnOnce(&Value) -> String) -> String {
+    within_cell_marked(cell, "[...]", writer)
+}
+
+/// The same, where the caller says what the cell come round to again is
+/// marked with: a map is marked by the braces it would have been written
+/// in, and anything else by a row's brackets.
+fn within_cell_marked(cell: &Rc<RefCell<Value>>, mark: &str, writer: impl FnOnce(&Value) -> String) -> String {
     let address = Rc::as_ptr(cell) as usize;
     let met_before = UNDERWAY.with(|stack| {
         let mut stack = stack.borrow_mut();
@@ -1264,7 +1277,7 @@ fn within_cell(cell: &Rc<RefCell<Value>>, writer: impl FnOnce(&Value) -> String)
         if !seen { stack.push(address); }
         seen
     });
-    if met_before { return String::from("[...]"); }
+    if met_before { return String::from(mark); }
     let text = writer(&cell.borrow());
     UNDERWAY.with(|stack| { stack.borrow_mut().pop(); });
     text
