@@ -1690,10 +1690,20 @@ only. The extension labels so far, all from PHP:
   places are written, and a wrong number of values stops the run.
 - `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
   `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
-  too few values, too many, or no walk to take values from. Arrays and
-  text may be taken apart, and maps give their keys; other walks are
-  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
-  taking-apart whose places are ill written.
+  too few values, too many, or no walk to take values from. Each is a
+  list of pieces with what the kernel found written between them. The
+  short one holds three pieces around the count of places asked for and
+  the count of values there were, and a fourth that stands before the
+  count of places where one of them is starred, since such a place
+  takes what is left over and the count is then only a floor. The long
+  one holds two pieces around the count of places. The unwalkable one
+  holds two pieces around the name of the kind that could not be
+  walked. Where the pieces open with the name of an exception class the
+  complaint is raised as one of that class, and a guard about the
+  taking-apart may take it. Arrays and text may be taken apart, and maps
+  give their keys; other walks are not yet taken apart.
+  `ext.stmt.unpack.amiss` is what is said of a taking-apart whose places
+  are ill written.
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
@@ -2872,10 +2882,20 @@ only. The extension labels so far, all from PHP:
   places are written, and a wrong number of values stops the run.
 - `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
   `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
-  too few values, too many, or no walk to take values from. Arrays and
-  text may be taken apart, and maps give their keys; other walks are
-  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
-  taking-apart whose places are ill written.
+  too few values, too many, or no walk to take values from. Each is a
+  list of pieces with what the kernel found written between them. The
+  short one holds three pieces around the count of places asked for and
+  the count of values there were, and a fourth that stands before the
+  count of places where one of them is starred, since such a place
+  takes what is left over and the count is then only a floor. The long
+  one holds two pieces around the count of places. The unwalkable one
+  holds two pieces around the name of the kind that could not be
+  walked. Where the pieces open with the name of an exception class the
+  complaint is raised as one of that class, and a guard about the
+  taking-apart may take it. Arrays and text may be taken apart, and maps
+  give their keys; other walks are not yet taken apart.
+  `ext.stmt.unpack.amiss` is what is said of a taking-apart whose places
+  are ill written.
 - `ext.stmt.unpack`: the words that open a taking-apart — a list of
   places written on the left of a write, each taking the matching place
   of the value on the right (`list($a, $b) = $v`). A place left out is
@@ -4701,10 +4721,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `ValueError: too many values to unpack (expected ` `)` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.short` | - | - | `not enough values to unpack` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.short` | - | - | `ValueError: not enough values to unpack (expected ` `, got ` `)` `at least ` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.unwalkable` | - | - | `TypeError: cannot unpack non-iterable ` ` object` | - | - | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.with.enter` | - | - | `__enter__` | - | - | - | - | - | - | - |

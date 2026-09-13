@@ -2689,16 +2689,21 @@
     "invalid unpacking assignment"
   ],
   "ext.stmt.unpack.long": [
-    "too many values to unpack"
+    "ValueError: too many values to unpack (expected ",
+    ")"
   ],
   "ext.stmt.unpack.rest": [
     "*"
   ],
   "ext.stmt.unpack.short": [
-    "not enough values to unpack"
+    "ValueError: not enough values to unpack (expected ",
+    ", got ",
+    ")",
+    "at least "
   ],
   "ext.stmt.unpack.unwalkable": [
-    "cannot unpack non-iterable object"
+    "TypeError: cannot unpack non-iterable ",
+    " object"
   ],
   "ext.stmt.with": [
     "with"

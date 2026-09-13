@@ -2032,6 +2032,25 @@ impl<'a> Engine<'a> {
         format!("{}{}{}", words.first().map_or("", String::as_str), name, words.get(1).map_or("", String::as_str))
     }
 
+    /// A complaint about a taking-apart, woven from the pieces the
+    /// definition gave with the counts and names the kernel found
+    /// written between them. Where the language furnishes exceptions
+    /// the pieces open with the class the complaint belongs to, so the
+    /// whole of it is marked as told and the language puts no further
+    /// naming over it. A definition that gave too few pieces has nothing
+    /// to weave and leaves the caller to say its own plain words.
+    fn apart_fault(&self, words: &[String], found: &[String]) -> Option<String> {
+        if words.len() <= found.len() { return None; }
+        let mut told = String::new();
+        for (at, part) in found.iter().enumerate() {
+            told.push_str(&words[at]);
+            told.push_str(part);
+        }
+        told.push_str(&words[found.len()]);
+        if !self.lang.exceptions.is_empty() { told.insert(0, '\0'); }
+        Some(told)
+    }
+
     /// A counted row's complaint carries the class it belongs to in the
     /// words themselves, so it is marked as told whole and the language
     /// puts no further naming over it.
@@ -4422,18 +4441,30 @@ impl<'a> Engine<'a> {
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
-                    _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
+                    _ => {
+                        let kind = source.core_kind();
+                        let told = self.apart_fault(&self.lang.unpack_unwalkable, &[kind]);
+                        return Err(told.unwrap_or_else(|| "Value cannot be taken apart".to_string()).into());
+                    }
                 };
                 let least = count - usize::from(rest.is_some());
                 if items.len() < least {
-                    return Err(self.lang.unpack_short.clone().unwrap_or_else(|| "Too few values".to_string()).into());
+                    // A starred place takes as many values as are left
+                    // over, so where one stands among the places the
+                    // count asked for is only a lower bound, and the
+                    // definition gives the words that say so.
+                    let bound = self.lang.unpack_short.get(3).filter(|_| rest.is_some());
+                    let asked = format!("{}{}", bound.map_or("", String::as_str), least);
+                    let told = self.apart_fault(&self.lang.unpack_short, &[asked, items.len().to_string()]);
+                    return Err(told.unwrap_or_else(|| "Too few values".to_string()).into());
                 }
                 if let Some(at) = rest {
                     let until = items.len() - (count - at - 1);
                     let middle = items.drain(*at..until).collect();
                     items.insert(*at, Value::array(middle));
                 } else if items.len() > *count {
-                    return Err(self.lang.unpack_long.clone().unwrap_or_else(|| "Too many values".to_string()).into());
+                    let told = self.apart_fault(&self.lang.unpack_long, &[count.to_string()]);
+                    return Err(told.unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)
             }

@@ -5040,6 +5040,24 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The words a taking-apart says when it goes wrong: the pieces the
+    /// table holds under the label, with the counts and kind names the
+    /// kernel writes between them. Where the language furnishes
+    /// exceptions those pieces open with the class the complaint belongs
+    /// to, so it goes back marked as told in full and nothing further is
+    /// put over it. A table holding too few pieces leaves nothing to
+    /// write and the caller says its own plain words instead.
+    fn apart_words(&self, key: &str, written: &[String]) -> Option<String> {
+        let pieces = self.table.strings(key);
+        if pieces.len() <= written.len() { return None; }
+        let mut said: String = pieces.iter().zip(written).map(|(piece, part)| format!("{piece}{part}")).collect();
+        said.push_str(&pieces[written.len()]);
+        match self.table.has_any("ext.builtin.exceptions") {
+            true => Some(format!("\0{said}")),
+            false => Some(said),
+        }
+    }
+
     fn argument_fault(&self, key: &str, name: Option<&str>) -> String {
         let words = self.table.strings(key);
         let mut said = words.first().cloned().unwrap_or_default();
@@ -7216,14 +7234,27 @@ impl<'a> Machine<'a> {
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
                     Value::Vector(v) => v.to_vec(),
-                    _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
+                    _ => {
+                        let said = self.apart_words("ext.stmt.unpack.unwalkable", &[v[0].kind_word()]);
+                        return Err(said.unwrap_or_else(|| "Value cannot be taken apart".to_string()));
+                    }
                 };
                 let minimum = if star.is_some() { wanted - 1 } else { wanted };
-                let fault = if values.len() < minimum { Some("ext.stmt.unpack.short") }
-                    else if star.is_none() && values.len() != wanted { Some("ext.stmt.unpack.long") }
-                    else { None };
-                if let Some(label) = fault {
-                    return Err(self.table.single(label).unwrap_or("Wrong number of values").to_string());
+                if values.len() < minimum {
+                    // A starred place takes home whatever is left over,
+                    // so where one stands among the places the count
+                    // asked for is a floor, and the table holds the
+                    // words that say so before it.
+                    let floor = match star {
+                        Some(_) => self.table.strings("ext.stmt.unpack.short").get(3).cloned().unwrap_or_default(),
+                        None => String::new(),
+                    };
+                    let said = self.apart_words("ext.stmt.unpack.short", &[format!("{floor}{minimum}"), values.len().to_string()]);
+                    return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
+                }
+                if star.is_none() && values.len() != wanted {
+                    let said = self.apart_words("ext.stmt.unpack.long", &[wanted.to_string()]);
+                    return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if let Some(middle) = star {
                     let tail = wanted - middle - 1;
