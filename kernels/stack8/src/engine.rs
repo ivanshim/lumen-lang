@@ -4438,7 +4438,13 @@ impl<'a> Engine<'a> {
                     ref cursor @ Value::Cursor(_) => {
                         let mut found = Vec::new();
                         while rest.is_some() || found.len() <= *count {
-                            let Some(value) = self.core_step(cursor)? else { break };
+                            // Taking a walk apart may run the program's
+                            // own code for each member, and what that
+                            // code raised is raised on rather than the
+                            // words that stood in for it.
+                            let stepped = self.core_step(cursor);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            let Some(value) = stepped? else { break };
                             found.push(value);
                         }
                         found
@@ -5435,7 +5441,13 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 if !self.lang.class_special.is_empty() && matches!(handed, Value::Object(_) | Value::Walk(_)) {
-                    let iterator = self.special_builtin(Builtin::Iter, std::slice::from_ref(&handed))?.ok_or_else(|| self.special_fault())?;
+                    // Asking a thing for its own walk runs a method of
+                    // the program's own, and what that method raised is
+                    // raised on, so it reaches the arms round the loop
+                    // rather than the words that stood in for it.
+                    let told = self.special_builtin(Builtin::Iter, std::slice::from_ref(&handed));
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    let iterator = told?.ok_or_else(|| self.special_fault())?;
                     self.data.push(Value::Walking(Rc::new(RefCell::new((iterator, None)))));
                     return Ok(());
                 }
@@ -5511,7 +5523,13 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 if matches!(pair[0], Value::Cursor(_)) {
-                    let more = self.core_more(&pair[0])?; self.data.push(Value::Flag(more)); return Ok(());
+                    // A walk may ask the program's own code for the next
+                    // member, as a walk over a callable does, and what
+                    // that code raised is raised on rather than the
+                    // words that stood in for it while it waited.
+                    let more = self.core_more(&pair[0]);
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    self.data.push(Value::Flag(more?)); return Ok(());
                 }
                 if let Some(set) = self.walked_set(&pair[0])? {
                     self.data.push(Value::Flag(as_index(&pair[1]).map_or(false, |at| at < set.borrow().held.len())));
@@ -5519,7 +5537,12 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Walking(walk) = &pair[0] {
                     let iterator = walk.borrow().0.clone();
-                    let answer = self.special_step(&iterator)?;
+                    // The thing's own method for the next member is a
+                    // piece of the program, and what it raised is raised
+                    // on in place of the stand-in words.
+                    let answer = self.special_step(&iterator);
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    let answer = answer?;
                     let more = answer.is_some();
                     walk.borrow_mut().1 = answer;
                     self.data.push(Value::Flag(more));
@@ -5562,7 +5585,11 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 match self.walk_asked(&pair[0], named)? {
-                    None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else { self.core_step(&pair[0])?.ok_or_else(|| self.core_fault("core.exhausted", ""))? },
+                    None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else {
+                        let stepped = self.core_step(&pair[0]);
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        stepped?.ok_or_else(|| self.core_fault("core.exhausted", ""))?
+                    },
                     Some(answer) => answer,
                     None => {
                         self.data.push(pair[0].clone());
