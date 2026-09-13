@@ -1,6 +1,6 @@
-[1, hello]
-[1, hello]
+[1, 'hello']
+[1, 'hello']
 <generator>
 {1, 'hello'}
-[1, hello]
-[a => [1, hello]]
+[1, 'hello']
+{'a': [1, 'hello']}

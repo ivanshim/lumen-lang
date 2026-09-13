@@ -3103,6 +3103,12 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        // Where a language gives its classes the protocol for being
+        // shown, a collection reads the same whether or not a
+        // representation was asked for: the members inside it are
+        // always written as representations, so that text keeps its
+        // quotes and a map keeps its braces.
+        let alike = !self.lang.class_special.is_empty();
         let celled = match value {
             Value::Binding(cell) | Value::Bond(cell) => Some((cell.clone(), false)),
             Value::Collection(cell, quoted) => Some((cell.clone(), *quoted)),
@@ -3113,12 +3119,22 @@ impl<'a> Engine<'a> {
             // A collection of plain values is written out by its cell,
             // so that one holding itself is seen coming round again.
             if !representation && !quoted && matches!(held, Value::Array(_) | Value::Map(_)) && !Self::holds_object(&held) {
-                return Ok(self.render(std::slice::from_ref(&Value::Collection(cell, false))));
+                let whole = Value::Collection(cell, false);
+                let words = self.wording();
+                return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
             }
             return self.special_text(&held, representation || quoted);
         }
         if let Value::Trace(words) = value { return Err(words.to_string()); }
-        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(self.render(std::slice::from_ref(value))); }
+        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) {
+            // A collection standing in no cell is written the same way,
+            // and by the same walk, which stops where it comes round.
+            if alike && matches!(value, Value::Array(_) | Value::Map(_) | Value::Tuple(_)) {
+                let words = self.wording();
+                return Ok(value.representation(&words));
+            }
+            return Ok(self.render(std::slice::from_ref(value)));
+        }
         if let Value::Object(object) = value {
             if self.exception_class(&object.class) && self.special_value(value, if representation { 1 } else { 0 }).is_none() {
                 let words = self.wording();
@@ -3147,6 +3163,13 @@ impl<'a> Engine<'a> {
                 let mut parts = Vec::new();
                 for item in items.iter() { parts.push(self.special_text(item, true)?); }
                 Ok(format!("[{}]", parts.join(", ")))
+            }
+            // A fixed row of members is written like any other, one
+            // member alone keeping the comma that marks it a row.
+            Value::Tuple(items) => {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.special_text(item, true)?); }
+                Ok(format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }))
             }
             Value::Map(items) => {
                 let mut parts = Vec::new();
