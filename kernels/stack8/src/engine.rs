@@ -2002,7 +2002,16 @@ impl<'a> Engine<'a> {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
                     Value::Flag(false) => match &pair.1.contents() {
-                        Value::Cursor(_) => items.extend(self.core_members(&pair.1)?.into_iter().map(|v| (None,v))),
+                        // Spreading a walk over the arguments asks it for
+                        // every member it has, and that asking may run
+                        // the program's own code. What such code raised
+                        // is raised on, and not the words that stood in
+                        // for it while the walk gave way.
+                        Value::Cursor(_) => {
+                            let members = self.core_members(&pair.1);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            items.extend(members?.into_iter().map(|v| (None,v)));
+                        }
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }

@@ -2297,20 +2297,13 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn suspension_fault(&self, fault: Escape) -> String {
-        match fault {
-            Escape::Error(words) | Escape::Stopped(words) => words,
-            Escape::Thrown(value) => format!("Uncaught {}", value.render(self.wording())),
-            _ => self.generator_words("unsupported"),
-        }
-    }
-
-    /// What a namespace's answerer raised, carried through a place that
+    /// What a piece of the program raised, carried through a place that
     /// holds only words. A furnished kind goes as its name and its words
-    /// behind the marker, so that the clause around the read and the
-    /// ending of the run alike read the thing raised back out of it;
-    /// anything else goes as a suspension's fault would.
-    fn answerer_fault(&self, fault: Escape) -> String {
+    /// behind the marker, so that the clause around the call and the
+    /// ending of the run alike read the thing raised back out of it; a
+    /// walk over a generator is such a place, and what the generator's
+    /// body raised reaches the arms round the walk this way.
+    fn suspension_fault(&self, fault: Escape) -> String {
         if let Escape::Thrown(Value::Thing(thing)) = &fault {
             let carried = thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values");
             if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| carried) {
@@ -2320,6 +2313,15 @@ impl<'a> Machine<'a> {
                 };
             }
         }
+        match fault {
+            Escape::Error(words) | Escape::Stopped(words) => words,
+            Escape::Thrown(value) => format!("Uncaught {}", value.render(self.wording())),
+            _ => self.generator_words("unsupported"),
+        }
+    }
+
+    /// What a namespace's answerer raised, carried the same way.
+    fn answerer_fault(&self, fault: Escape) -> String {
         self.suspension_fault(fault)
     }
 
