@@ -76,6 +76,9 @@ pub struct Def {
     /// Whether a flag shows as the number it counts for.
     pub flag_counts: bool,
     pub shortest: bool,
+    /// Whether a list becomes text the way a representation of it is
+    /// written, so that text within it keeps its quote marks.
+    pub representations: bool,
     /// Whether two whole numbers dividing evenly make a whole one.
     pub div_stays_whole: bool,
     /// The remainder is taken between whole numbers, whatever it is
@@ -159,7 +162,8 @@ w builtin.emit | w builtin.print | w builtin.write | w builtin.print.placeholder
 w builtin.len | w builtin.char_at | w builtin.ord | w builtin.chr | w builtin.typeof | w builtin.error
 w builtin.extern | w builtin.range | w builtin.real | w builtin.num | w builtin.den | w builtin.push
 w builtin.get | w builtin.put | w builtin.precision | w builtin.to_string | w builtin.to_int | w builtin.to_real
-w system.args | w system.memoization | w system.real_default_precision | s system.real.render | w system.entry
+w system.args | w system.memoization | w system.real_default_precision | s system.real.render
+s system.collection.render | w system.entry
 w system.kind.integer | w system.kind.rational | w system.kind.real | w system.kind.string
 w system.kind.boolean | w system.kind.array | w system.kind.null
 ";
@@ -603,6 +607,11 @@ impl Def {
                 "library" => false,
                 "shortest" => true,
                 mode => return Err(format!("Unknown real rendering '{mode}'")),
+            },
+            representations: match r.text("system.collection.render")?.as_str() {
+                "plain" => false,
+                "representation" => true,
+                mode => return Err(format!("Unknown list rendering '{mode}'")),
             },
             flag_counts: r.switch("system.flag.counts")?,
             div_stays_whole,

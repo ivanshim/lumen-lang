@@ -3122,12 +3122,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
-        // Where a language gives its classes the protocol for being
-        // shown, a collection reads the same whether or not a
-        // representation was asked for: the members inside it are
-        // always written as representations, so that text keeps its
-        // quotes and a map keeps its braces.
-        let alike = !self.lang.class_special.is_empty();
+        // Where the definition asks it, a collection reads the same
+        // whether or not a representation was asked for: the members
+        // inside it are always written as representations, so that text
+        // keeps its quotes and a map keeps its braces.
+        let alike = self.lang.collections_as_written;
         let celled = match value {
             Value::Binding(cell) | Value::Bond(cell) => Some((cell.clone(), false)),
             Value::Collection(cell, quoted) => Some((cell.clone(), *quoted)),

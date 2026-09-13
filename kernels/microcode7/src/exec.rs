@@ -6107,12 +6107,11 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Whether the table gives classes the protocol for being shown. A
-    /// language that does reads a collection the same way whether or not
-    /// a representation was asked for, every member inside it written as
-    /// a representation, so text keeps its quotes and a map its braces.
+    /// Whether the table asks that a collection written as text read as
+    /// its representation does, every member inside it written as a
+    /// representation, so text keeps its quotes and a map its braces.
     fn collections_read_alike(&self) -> bool {
-        self.table.has_any("ext.stmt.class.special")
+        self.table.lone("system.collection.render") == Some("representation")
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
