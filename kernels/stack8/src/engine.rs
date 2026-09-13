@@ -7493,7 +7493,13 @@ impl<'a> Engine<'a> {
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            let mut said = v.display(&sp);
+            // Where the definition asks a collection to read as its
+            // representation does, the plain printer writes one that
+            // way too, so that the setting means the same whether or
+            // not the language spells the printer's own keywords.
+            let written = self.lang.collections_as_written
+                && matches!(v, Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Collection(..));
+            let mut said = if written { v.representation(&sp) } else { v.display(&sp) };
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
             {

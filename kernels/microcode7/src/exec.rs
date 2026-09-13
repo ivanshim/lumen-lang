@@ -10227,7 +10227,13 @@ impl<'a> Machine<'a> {
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
-            let text = x.render(w);
+            // A table which asks that a collection read as its
+            // representation does is answered here as well as on the
+            // printer that spells its own keywords, so that the label
+            // says one thing whichever printer a language has.
+            let written = self.collections_read_alike()
+                && matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Row(_) | Value::Tuple(_) | Value::Mutable(..) | Value::Shared(_));
+            let text = if written { x.repr(&w) } else { x.render(w) };
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
