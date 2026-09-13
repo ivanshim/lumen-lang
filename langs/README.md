@@ -288,7 +288,7 @@ functions in Pascal.
 
 ## Extension labels
 
-The 133 labels of the table below are the core: every definition carries all of them,
+The 134 labels of the table below are the core: every definition carries all of them,
 and every kernel reads them. A definition may add labels under `ext.`
 for what its language has beyond the core. The full kernels, stack8 and
 microcode7, read them; the reference kernels (stream35, microcode11,
