@@ -503,6 +503,16 @@ The last two sessions ran in a Claude Code remote container with Rust,
 the integration checkout at `/home/user/lumen-lang`. That container does
 not outlive the session; only what is pushed survives.
 
+**One worker's cleanup kills another's run.** Several agents share this
+container, each in its own worktree. A `pkill -f "lumen-lang --kernel"`
+meant to stop one agent's own sweep reaches every other agent's
+interpreter too; that is what ended a full scratch run here with no
+output at all and an exit of 144, and it cost about an hour before the
+cause was known. Stop your own work by its process id, never by a
+pattern that matches the binary's name. Write results as each one is
+produced, one line per run, so that a run killed from outside still
+leaves everything it had already learnt.
+
 **The container dies under a release build, not on a timer.** Four
 restarts in one session each killed a run in progress, twice at the
 release build, which looked like a fifty-to-sixty-minute reclaim. It is
