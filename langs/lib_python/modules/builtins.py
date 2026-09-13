@@ -127,10 +127,13 @@ sum = sum
 vars = vars
 
 # The reader seeds __debug__ into the outermost names of the program
-# rather than into a module's, so it is read from there. There is no
-# switch in this runtime that turns the checks off, so it is always
+# rather than into a module's, so it is read from there. Text run with a
+# dictionary of its own for the outermost names has no such seed, and a
+# module first asked for while that text runs finds nothing there, so
+# the answer falls back on what the reader would have seeded: there is
+# no switch in this runtime that turns the checks off, so it is always
 # true.
-__debug__ = globals()['__debug__']
+__debug__ = globals().get('__debug__', True)
 
 # True, False, None, Ellipsis, bytes and bytearray are words the reader
 # knows rather than names it can be asked for, so none of them can stand

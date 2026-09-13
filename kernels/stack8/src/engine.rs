@@ -11236,6 +11236,7 @@ impl Engine<'_> {
                 let book = self.outer_book.clone()?;
                 if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
                 if self.left_out(name, &self.world[far]) { return None; }
+                if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Kept::Text(at) => {
@@ -11249,10 +11250,24 @@ impl Engine<'_> {
                 // program handing over a dictionary of its own chooses
                 // what the text may reach.
                 let roots = outer.unwrap_or(near);
+                // Only a dictionary of builtins the program made itself
+                // shuts the text in: the one the kernel put there stands
+                // for the ordinary names, and those reach the module of
+                // unbound names as any other name does.
                 let found = match self.lang.module_builtins.first().and_then(|word| book_entry(&roots, word)) {
-                    Some(Value::Bond(natives)) => book_entry(&natives, name),
+                    Some(Value::Bond(natives)) => {
+                        let ours = self.natives.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
+                        match book_entry(&natives, name) {
+                            Some(held) => Some(held),
+                            None if ours => self.kept_by_module(name),
+                            None => None,
+                        }
+                    }
                     Some(_) => None,
-                    None => self.native_named(name),
+                    None => match self.native_named(name) {
+                        Some(held) => Some(held),
+                        None => self.kept_by_module(name),
+                    },
                 };
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }
