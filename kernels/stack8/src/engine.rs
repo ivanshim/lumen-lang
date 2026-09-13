@@ -6292,7 +6292,7 @@ impl<'a> Engine<'a> {
             return Err(self.byte_fault("unready"));
         }
         let sp = self.wording();
-        let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
+        let joined = || Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)));
         Ok(match op {
             Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_else(|| "Matrix multiplication cannot run".into())),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
@@ -7490,16 +7490,22 @@ impl<'a> Engine<'a> {
 
     /// print and write: the values joined by spaces, or a template holding
     /// the definition's placeholders filled from the rest.
+    /// A value as the plain printer and the one-name conversion write
+    /// it. Where the definition asks a collection to read as its
+    /// representation does, a collection is written that way, so that
+    /// the setting means the same whether or not the language spells
+    /// the printer's own keyword arguments. Everything else is written
+    /// as it shows.
+    fn told(&self, value: &Value, sp: &Wording) -> String {
+        let collection = matches!(value, Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Collection(..));
+        if collection && self.lang.collections_as_written { return value.representation(sp); }
+        value.display(sp)
+    }
+
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            // Where the definition asks a collection to read as its
-            // representation does, the plain printer writes one that
-            // way too, so that the setting means the same whether or
-            // not the language spells the printer's own keywords.
-            let written = self.lang.collections_as_written
-                && matches!(v, Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Collection(..));
-            let mut said = if written { v.representation(&sp) } else { v.display(&sp) };
+            let mut said = self.told(v, &sp);
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
             {
@@ -9287,7 +9293,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText => {
                 arity(1)?;
                 self.digits_shown(&args[0])?;
-                Value::text(&args[0].display(&sp))
+                Value::text(&self.told(&args[0], &sp))
             }
             Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),
             Builtin::ToInt => {
