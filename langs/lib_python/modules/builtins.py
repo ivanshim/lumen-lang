@@ -4,16 +4,18 @@
 # once the kernel has run out of places of its own, which is what the
 # language means by naming this module under ext.system.names.module. A
 # name the kernel already knows never reaches this far, so rebinding
-# builtins.len changes what builtins.len answers and nothing else, while
-# a name only this module holds, such as sentinel, is reached by writing
-# it and by nothing else.
+# builtins.len changes what builtins.len answers and nothing else; a
+# name only this module holds, such as sentinel, comes from here alone,
+# and writing a new value onto the module under it changes what the bare
+# name answers with.
 #
 # Each name below is bound to the builtin of the same name, so what the
 # module hands out is the thing itself and not a copy that behaves like
-# it. The two classes at the foot of the file are the exception: the
+# it. The two classes near the foot of the file are the exception: the
 # kernel has no value of either kind, so the module carries them as
 # ordinary Python. The names CPython has and this runtime does not are
-# simply absent, so hasattr says no for them; they are listed last.
+# simply absent, so hasattr says no for them, and they are listed at the
+# very end.
 
 ArithmeticError = ArithmeticError
 AssertionError = AssertionError
