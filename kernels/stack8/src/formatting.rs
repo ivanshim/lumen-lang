@@ -93,19 +93,24 @@ impl Writer<'_> {
                 Ok(out)
             }
             Value::Bytes(..) => Ok(value.display(&self.words)),
-            Value::Tuple(items) => {
+            // This writer walks a collection's members itself, so it
+            // keeps the same note of the members it is within that the
+            // other writers keep, and a collection standing inside
+            // itself is written as the marks it would have stood
+            // between rather than walked round for ever.
+            Value::Tuple(items) => crate::value::members_once(value, || {
                 let parts = items.iter().map(|v| self.representation(v, ascii)).collect::<Result<Vec<_>>>()?;
                 Ok(format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }))
-            }
-            Value::Array(items) => {
+            }),
+            Value::Array(items) => crate::value::members_once(value, || {
                 let parts = items.iter().map(|v| self.representation(v, ascii)).collect::<Result<Vec<_>>>()?;
                 Ok(format!("[{}]", parts.join(", ")))
-            }
-            Value::Map(pairs) => {
+            }),
+            Value::Map(pairs) => crate::value::members_once(value, || {
                 let mut parts = Vec::new();
                 for (k, v) in pairs.iter() { parts.push(format!("{}: {}", self.representation(k, ascii)?, self.representation(v, ascii)?)); }
                 Ok(format!("{{{}}}", parts.join(", ")))
-            }
+            }),
             Value::Real(r) => {
                 if r.outside() { return Ok(if r.no_number() { "nan" } else if r.p.is_negative() { "-inf" } else { "inf" }.to_string()); }
                 let mut text = value.display(&self.words);

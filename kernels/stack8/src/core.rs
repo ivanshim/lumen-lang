@@ -74,10 +74,14 @@ impl Value {
                 out.push(quote);
                 out
             }
-            Value::Array(a) => format!("[{}]", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", ")),
-            Value::Tuple(a) => format!("({}{})", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" }),
+            // This writer walks a collection's members as well, so it
+            // keeps the same note of the members it is within, and a
+            // collection standing inside itself is written as the
+            // marks it would have stood between.
+            Value::Array(a) => crate::value::members_written(self, || format!("[{}]", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", "))),
+            Value::Tuple(a) => crate::value::members_written(self, || format!("({}{})", a.iter().map(|v| v.core_repr(shortest)).collect::<Vec<_>>().join(", "), if a.len() == 1 { "," } else { "" })),
             Value::Set(a) => a.borrow().show(|v| v.core_repr(shortest)),
-            Value::Map(a) => format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(shortest), v.core_repr(shortest))).collect::<Vec<_>>().join(", ")),
+            Value::Map(a) => crate::value::members_written(self, || format!("{{{}}}", a.iter().map(|(k,v)| format!("{}: {}", k.core_repr(shortest), v.core_repr(shortest))).collect::<Vec<_>>().join(", "))),
             Value::Null => "None".into(),
             Value::Flag(b) => if *b { "True" } else { "False" }.into(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => c.borrow().core_repr(shortest),

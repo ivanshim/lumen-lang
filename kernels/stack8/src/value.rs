@@ -1368,7 +1368,7 @@ pub fn members_once<E>(value: &Value, write: impl FnOnce() -> Result<String, E>)
 }
 
 /// The same for a walk that always has an answer.
-fn members_written(value: &Value, write: impl FnOnce() -> String) -> String {
+pub(crate) fn members_written(value: &Value, write: impl FnOnce() -> String) -> String {
     let note = match note_members(value) {
         Ok(note) => note,
         Err(marks) => return marks.to_string(),
