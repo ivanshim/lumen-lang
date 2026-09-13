@@ -4287,8 +4287,16 @@ impl<'a> Engine<'a> {
                     Value::Native(b, word) => {
                         let args = self.drop_many(argc - 1)?;
                         let items = self.call_items(args)?;
-                        let answer = self.builtin_call(b, &word, items)?;
-                        self.data.push(answer);
+                        let answer = self.builtin_call(b, &word, items);
+                        // A builtin reached as a value runs the same
+                        // work as one named where it is called, and
+                        // that work may run the program's own code. A
+                        // value raised by such code is set aside while
+                        // the builtin gives way, so it is raised again
+                        // here rather than the words that stood in for
+                        // it, which no handler would know.
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        self.data.push(answer?);
                         Ok(())
                     }
                     Value::Descriptor(d) => {
