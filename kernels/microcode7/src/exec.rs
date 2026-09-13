@@ -2516,6 +2516,26 @@ impl<'a> Machine<'a> {
         self.as_raised(&said).map_or(Escape::Error(said), Escape::Thrown)
     }
 
+    /// The work a suspension owes wound back to the pass of a loop so
+    /// many levels out: the pass is dropped where the loop is left
+    /// behind, and kept where the loop is to take its next pass. A
+    /// leaving with no pass among the work owed is no step this
+    /// machinery can make, and the language says so.
+    fn wind_back_turns(&self, state: &mut Suspension, levels: usize, continuing: bool) -> Result<(), Escape> {
+        let levels = levels.max(1);
+        for level in 1..=levels {
+            let at = state.owed.iter().rposition(|work| matches!(work, Owed::Turn(..)))
+                .ok_or_else(|| self.generator_words("unsupported"))?;
+            let Owed::Turn(_, floor) = &state.owed[at] else { unreachable!() };
+            let floor = *floor;
+            state.found.truncate(floor);
+            let taking_up = continuing && level == levels;
+            state.owed.truncate(if taking_up { at + 1 } else { at });
+        }
+        state.found.push(Value::Nil);
+        Ok(())
+    }
+
     fn unfold(&mut self, state: &mut Suspension, mut sent: Value) -> Res<Option<Value>> {
         if state.receiving {
             state.receiving = false;
@@ -2581,7 +2601,18 @@ impl<'a> Machine<'a> {
                     }
                     other => {
                         if suspension_within(&other) { return Err(self.generator_words("unsupported").into()); }
-                        state.found.push(self.value_of(&other, &frame)?);
+                        // A form worked out whole may still leave the
+                        // loop it stands in, take up that loop's next
+                        // pass, or end the routine. None of the three is
+                        // a fault: each is a step of the suspension's own
+                        // machinery, made here upon the work it owes.
+                        match self.value_of(&other, &frame) {
+                            Ok(value) => state.found.push(value),
+                            Err(Escape::Yield(value)) => { state.result = value; return Ok(None); }
+                            Err(Escape::Leave(levels)) => self.wind_back_turns(state, levels, false)?,
+                            Err(Escape::Resume(levels)) => self.wind_back_turns(state, levels, true)?,
+                            Err(escape) => return Err(escape),
+                        }
                     }
                 },
                 Owed::Store(place) => self.store(&place, &frame, state.found.last().cloned().unwrap_or(Value::Nil))?,
@@ -2822,6 +2853,35 @@ impl<'a> Machine<'a> {
                 // view of the thing's own, and is written into as one.
                 if self.has_class_order() && called.as_ref() == self.detail("namespace") && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Thing(_)) {
                     return self.read_class_member(thing, called, false);
+                }
+                // A class's entry is kept once for the whole class, so
+                // the cell shared for it is the cell of that entry, in
+                // whichever class of the line keeps it: a write through
+                // the cell is a write where the class reads from. Only
+                // an entry holding places of its own has such a cell; a
+                // method, a property, a furnished member or a class
+                // among the entries answers for itself when it is read,
+                // and is left where it stands, as is a name the line
+                // does not hold at all.
+                if let Value::Blueprint(class) = &thing {
+                    let holds_places = |held: &(String, Value)| held.0 == called.as_ref()
+                        && matches!(held.1.settled(), Value::Vector(_) | Value::Dict(_) | Value::Set(_) | Value::Row(_) | Value::Tuple(_) | Value::Text(_) | Value::Octets { .. });
+                    let keeper = std::iter::once(class).chain(class.ancestry.iter())
+                        .find(|held| held.shared.borrow().iter().any(holds_places)).cloned();
+                    if let Some(keeper) = keeper {
+                        let mut entries = keeper.shared.borrow_mut();
+                        let at = entries.iter().position(|(name, _)| name == called.as_ref()).expect("the entry");
+                        if let Value::Shared(cell) = &entries[at].1 {
+                            let cell = cell.clone();
+                            drop(entries);
+                            return Ok(Value::Shared(cell));
+                        }
+                        let was = std::mem::replace(&mut entries[at].1, Value::Nil);
+                        let cell = Rc::new(RefCell::new(was));
+                        entries[at].1 = Value::Shared(cell.clone());
+                        drop(entries);
+                        return Ok(Value::Shared(cell));
+                    }
                 }
                 let Value::Thing(thing) = thing else {
                     if matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..)) && self.table.has_any("ext.system.scope.unready") {
@@ -6576,6 +6636,9 @@ impl<'a> Machine<'a> {
                 Value::Vector(Rc::new(ordered)).keep(true)
             }
             (Prim::Iterated, [one @ Value::Thing(_)]) => one.clone(),
+            // A thing's own attributes are walked by the names it keeps,
+            // as a map is walked by its keys.
+            (Prim::Iterated, [one @ Value::Attributes(_)]) => Value::Vector(Rc::new(self.object_members(one)?)),
             (Prim::Listed, [one]) => {
                 let result = Value::Vector(Rc::new(self.object_members(one)?));
                 // Members an iterator hands out are kept quoted, as a window's are.
@@ -6775,6 +6838,18 @@ impl<'a> Machine<'a> {
             && v.iter().any(|item| matches!(item, Value::Keyed(..))) {
             let bare: Vec<Value> = v.iter().map(|item| match item { Value::Keyed(key, _) => key.as_ref().clone(), other => other.clone() }).collect();
             return self.prim(op, name, &bare);
+        }
+        // A thing's own attributes stand, under the arithmetic and the
+        // comparisons, for the map of the names it keeps, so a namespace
+        // weighed against a map is weighed by what is in it, and one
+        // that stands in no order to another is refused as a map is.
+        if let ([Value::Attributes(t), other], true) = (v, matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+            | Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
+            | Prim::MatrixProduct | Prim::BitsUp | Prim::BitsDown | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne)) {
+            let entries: Vec<(Value, Value)> = t.holds.borrow().iter()
+                .filter(|(name, held)| !matches!(held, Value::Unset) && !name.starts_with('\0'))
+                .map(|(name, held)| (Value::text(name), held.clone())).collect();
+            return self.prim(op, name, &[Value::Dict(Rc::new(entries)), other.clone()]);
         }
         // Two texts stand in the order of their letters' code points, where
         // the table says texts are ordered.
