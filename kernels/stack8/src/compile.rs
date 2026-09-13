@@ -3551,8 +3551,22 @@ impl<'a> Compiler<'a> {
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
         }
+        // A class keeps its own documentation under the name the
+        // language gives it (ext.stmt.class.detail.doc). The place is
+        // made before the body is read and holds nothing, so that a
+        // class that says nothing about itself still has the name.
+        let mut documentation = None;
+        if let Some(word) = lang.class_details.get("doc").and_then(|v| v.first()) {
+            self.constant(Value::Null);
+            let slot = self.gensym("documentation");
+            self.write(&slot);
+            shared.push((word.clone(), slot.clone()));
+            documentation = Some(slot);
+        }
         let body_at = self.mark();
+        let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
+            let heads_the_body = std::mem::take(&mut opening);
             if !lang.class_details.get("root").map_or(false, |v| !v.is_empty()) && self.on_any(&lang.decorator_words) {
                 let (named, slot) = self.adorned_member()?;
                 if lang.constructor.as_ref() == Some(&named) { unready = true; }
@@ -3586,7 +3600,13 @@ impl<'a> Compiler<'a> {
             } else if self.on_keyword(&lang.pass_words) {
                 self.take();
             } else if self.look().shape == Shape::Quote {
-                self.take();
+                // Text alone at the head of the body is what the class
+                // says about itself; text anywhere else is discarded.
+                let words = self.take().lexeme;
+                if let (true, Some(slot)) = (heads_the_body, documentation.clone()) {
+                    self.constant(Value::text(&words));
+                    self.write(&slot);
+                }
             } else if self.on_keyword(&lang.class_words) {
                 let named = self.look_ahead(1).lexeme.clone();
                 self.explicit_class()?;

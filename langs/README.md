@@ -1282,10 +1282,13 @@ only. The extension labels so far, all from PHP:
   name the hooks for making, inheriting, restricting members, writing,
   removing, reading and subscripting a class. `call` names the method
   answering when an object is called. The existing class `reader` label
-  names the fallback for an absent member. `doc`, `module`, `defaults`,
-  `code`, `argcount` and `varnames` name a routine's first string, module,
-  spare arguments, code, positional count and kept local names. `receiver`
-  and `function` take a bound method apart. Each takes a list of words.
+  names the fallback for an absent member. `doc` names what a routine
+  and a class keep their opening documentation under, text standing
+  alone as the first statement of the body, and nothing where a class
+  body opens with none. `module`, `defaults`, `code`, `argcount` and
+  `varnames` name a routine's module, spare arguments, code, positional
+  count and kept local names. `receiver` and `function` take a bound
+  method apart. Each takes a list of words.
   Where `root` is spelled, all direct bases take part in the C3 ordering;
   `mro.amiss` gives the words for an ordering that cannot be made.
   `attribute.amiss` gives three pieces enclosing the class and member
