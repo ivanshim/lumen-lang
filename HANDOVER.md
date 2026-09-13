@@ -513,6 +513,14 @@ pattern that matches the binary's name. Write results as each one is
 produced, one line per run, so that a run killed from outside still
 leaves everything it had already learnt.
 
+**The container can also restart with nothing heavy running.** One
+restart here came with no release build in progress and the machine
+quiet, and it killed six workers mid-task. Nothing was lost only because
+every worker had its own branch: their uncommitted work was committed to
+those branches and pushed as soon as the session came back. Push every
+branch to the remote as soon as it has anything on it, finished or not —
+a branch that lives only in this container's `.git` is not saved.
+
 **The container dies under a release build, not on a timer.** Four
 restarts in one session each killed a run in progress, twice at the
 release build, which looked like a fifty-to-sixty-minute reclaim. It is
