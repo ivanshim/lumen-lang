@@ -1,1 +1,1 @@
-PythonError: Undefined variable: sentinel
+PythonError: NotImplementedError: str encoding and errors are not supported
