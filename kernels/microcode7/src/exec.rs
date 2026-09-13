@@ -21,7 +21,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee, Clause};
-use crate::data::{Adornment, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
+use crate::data::{Adornment, Among, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
 /// command spelled out instead of a file holding one.
@@ -6190,17 +6190,28 @@ impl<'a> Machine<'a> {
                     _ => Err(self.bad_answer()),
                 }
             }
+            // This walk holds a collection's members and not the cell
+            // about them, so it leaves its own note on the members it
+            // is within. A collection reached from inside itself is
+            // shown as the marks it would have stood between, while one
+            // reached twice by two roads is shown whole on each.
             Value::Vector(v) => {
+                let among = Among::members(subject);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let pieces = v.iter().map(|x| self.object_words(x, true)).collect::<Result<Vec<_>, _>>()?;
                 Ok(String::from("[") + &pieces.join(", ") + "]")
             }
             // A fixed row is shown the same way, save that a row of one
             // member keeps the comma marking it a row and not a bracket.
             Value::Tuple(v) | Value::Row(v) => {
+                let among = Among::members(subject);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let pieces = v.iter().map(|x| self.object_words(x, true)).collect::<Result<Vec<_>, _>>()?;
                 Ok(String::from("(") + &pieces.join(", ") + if v.len() == 1 { "," } else { "" } + ")")
             }
             Value::Dict(d) => {
+                let among = Among::members(subject);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let pieces = d.iter().map(|(k, v)| {
                     Ok(self.object_words(k, true)? + ": " + &self.object_words(v, true)?)
                 }).collect::<Result<Vec<_>, String>>()?;

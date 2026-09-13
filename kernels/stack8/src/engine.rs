@@ -3223,25 +3223,30 @@ impl<'a> Engine<'a> {
                 let entries = object.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, v)| (Value::text(k), v.clone())).collect();
                 self.special_text(&Value::Map(Rc::new(entries)), true)
             }
-            Value::Array(items) => {
+            // This walk is handed a collection's members rather than
+            // the cell that holds them, so it keeps its own note of the
+            // members it is within. A collection standing inside itself
+            // is written as the marks it would have stood between, and
+            // one met twice by two roads is written in full both times.
+            Value::Array(items) => crate::value::members_once(value, || {
                 let mut parts = Vec::new();
                 for item in items.iter() { parts.push(self.special_text(item, true)?); }
                 Ok(format!("[{}]", parts.join(", ")))
-            }
+            }),
             // A fixed row of members is written like any other, one
             // member alone keeping the comma that marks it a row.
-            Value::Tuple(items) => {
+            Value::Tuple(items) => crate::value::members_once(value, || {
                 let mut parts = Vec::new();
                 for item in items.iter() { parts.push(self.special_text(item, true)?); }
                 Ok(format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }))
-            }
-            Value::Map(items) => {
+            }),
+            Value::Map(items) => crate::value::members_once(value, || {
                 let mut parts = Vec::new();
                 for (key, item) in items.iter() {
                     parts.push(format!("{}: {}", self.special_text(key, true)?, self.special_text(item, true)?));
                 }
                 Ok(format!("{{{}}}", parts.join(", ")))
-            }
+            }),
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
