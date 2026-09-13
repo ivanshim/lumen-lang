@@ -11,6 +11,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("ast", include_str!("ast.py")),
     ("bisect", include_str!("bisect.py")),
     ("builtins", include_str!("builtins.py")),
+    ("cmath", include_str!("cmath.py")),
     ("codecs", include_str!("codecs.py")),
     ("collections.abc", include_str!("collections/abc.py")),
     ("collections", include_str!("collections.py")),
