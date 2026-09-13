@@ -11238,27 +11238,47 @@ impl<'a> Machine<'a> {
 
     /// Read a slot's name out of the dictionary it lives in; nothing
     /// means the cell itself is to be read after all.
-    fn booked_read(&self, at: usize, name: &str) -> Option<Result<Value, String>> {
+    fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
         match self.book_holding(at)? {
             Held::World => {
                 let book = self.world_book.as_ref()?;
                 if let Some(worth) = looked_up(book, name) { return Some(Ok(worth)); }
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
+                if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Held::Reading(which) => {
-                let book = &self.readings[which];
-                if let Some(worth) = looked_up(&book.near, name) { return Some(Ok(worth)); }
-                if let Some(worth) = book.outer.as_ref().and_then(|outer| looked_up(outer, name)) { return Some(Ok(worth)); }
+                let near = self.readings[which].near.clone();
+                let outer = self.readings[which].outer.clone();
+                if let Some(worth) = looked_up(&near, name) { return Some(Ok(worth)); }
+                if let Some(worth) = outer.as_ref().and_then(|held| looked_up(held, name)) { return Some(Ok(worth)); }
                 // A builtin is reached through the dictionary of builtins
                 // the outer dictionary names, so a program may hand over
                 // one of its own and so choose what the text can reach.
-                let roots = book.outer.as_ref().unwrap_or(&book.near);
-                let found = match self.table.single("ext.system.module.builtins").and_then(|word| looked_up(roots, word)) {
-                    Some(Value::Shared(natives)) => looked_up(&natives, name),
+                let roots = outer.unwrap_or(near);
+                let named = self.table.single("ext.system.module.builtins").and_then(|word| looked_up(&roots, word));
+                // A dictionary of builtins the program put there shuts
+                // the text in; the one the kernel supplied stands for
+                // the ordinary names, and those find the spare namespace
+                // the way a name anywhere else does.
+                let found = match named {
+                    Some(Value::Shared(natives)) => {
+                        let supplied = self.natives_book.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
+                        match looked_up(&natives, name) {
+                            Some(worth) => Some(worth),
+                            None if supplied => self.spare_name(name),
+                            None => None,
+                        }
+                    }
                     Some(_) => None,
-                    None => self.native_of(name),
+                    // Naming no dictionary of its own leaves the text
+                    // reaching what any other name reaches, the spare
+                    // namespace with it.
+                    None => match self.native_of(name) {
+                        Some(worth) => Some(worth),
+                        None => self.spare_name(name),
+                    },
                 };
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }
