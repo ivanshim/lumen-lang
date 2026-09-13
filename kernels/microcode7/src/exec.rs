@@ -8733,7 +8733,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
-            Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+            Prim::Join => Value::text(&format!("{}{}", self.told(&v[0], w), self.told(&v[1], w))),
             Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
                 // The class's own item entry answers with the key: a
@@ -9234,7 +9234,7 @@ impl<'a> Machine<'a> {
             Prim::AsText => {
                 n(1)?;
                 self.figures_allowed(&v[0])?;
-                Value::text(&v[0].render(w))
+                Value::text(&self.told(&v[0], w))
             }
             Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,
@@ -10224,16 +10224,24 @@ impl<'a> Machine<'a> {
         })
     }
 
+    /// A value as the plain printer and the one-name conversion word
+    /// it. A table which asks that a collection read as its
+    /// representation does is answered here as well as on the printer
+    /// that spells its own keyword arguments, so that the label says
+    /// one thing whichever printer a language has; everything besides a
+    /// collection is worded as it renders.
+    fn told(&self, item: &Value, w: Names) -> String {
+        let gathered = matches!(item, Value::Vector(_) | Value::Dict(_) | Value::Row(_) | Value::Tuple(_) | Value::Mutable(..) | Value::Shared(_));
+        match gathered && self.collections_read_alike() {
+            true => item.repr(&w),
+            false => item.render(w),
+        }
+    }
+
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
-            // A table which asks that a collection read as its
-            // representation does is answered here as well as on the
-            // printer that spells its own keywords, so that the label
-            // says one thing whichever printer a language has.
-            let written = self.collections_read_alike()
-                && matches!(x, Value::Vector(_) | Value::Dict(_) | Value::Row(_) | Value::Tuple(_) | Value::Mutable(..) | Value::Shared(_));
-            let text = if written { x.repr(&w) } else { x.render(w) };
+            let text = self.told(x, w);
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
