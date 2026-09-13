@@ -128,6 +128,9 @@
   "ext.system.source.file": [
     "__file__"
   ],
+  "ext.system.debug": [
+    "__debug__"
+  ],
   "format_version": 1,
   "language": "python",
   "extensions": [

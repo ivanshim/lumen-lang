@@ -218,6 +218,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for (_, name) in &lang.source_bindings {
         registry.slot(name);
     }
+    if let Some(name) = &lang.debug_binding {
+        registry.slot(name);
+    }
     for name in &lang.module_names {
         registry.slot(name);
     }
@@ -311,6 +314,11 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         if let Some((.., value, _)) = found {
             machine.define(name, Value::text(value));
         }
+    }
+    // The kernel runs a program with its checks left in, so the name
+    // for that stands for true.
+    if let Some(name) = &lang.debug_binding {
+        machine.define(name, Value::Flag(true));
     }
     if !lang.kind_spelled {
         for (name, kind) in &lang.sort_bindings {
