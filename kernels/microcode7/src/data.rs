@@ -2,6 +2,7 @@
 // made in, so a nested program sees the bindings around it.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
@@ -1287,8 +1288,11 @@ thread_local! {
     /// moment, each by the place its members stand in. A fixed row
     /// carries no cell to know it by, and the walk that lets a thing
     /// say how it is written is given a collection's members and not
-    /// the cell about them, so this note serves for both.
-    static AMONG: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// the cell about them, so this note serves for both. The places
+    /// are gathered in a set and not a list, so that asking whether one
+    /// is already among them costs the same whether the writing stands
+    /// one deep or a hundred thousand deep.
+    static AMONG: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     /// Where a language names them, the cells a run keeps its counts of
     /// figures in: how many a real written plainly carries, and how many
     /// one shown with its kind carries. A language that names neither
@@ -1303,7 +1307,7 @@ thread_local! {
 /// when it goes out of use, so a collection reached twice by two roads
 /// is written whole on each of them.
 pub struct Among {
-    left: bool,
+    left: Option<usize>,
     pub instead: Option<&'static str>,
 }
 
@@ -1317,23 +1321,21 @@ impl Among {
             Value::Dict(pairs) => (Rc::as_ptr(pairs) as usize, "{...}"),
             Value::Tuple(parts) | Value::Row(parts) | Value::Arguments(parts) => (Rc::as_ptr(parts) as usize, "(...)"),
             Value::Vector(items) => (Rc::as_ptr(items) as usize, "[...]"),
-            _ => return Among { left: false, instead: None },
+            _ => return Among { left: None, instead: None },
         };
         AMONG.with(|notes| {
-            let mut notes = notes.borrow_mut();
-            if notes.contains(&address) {
-                return Among { left: false, instead: Some(marks) };
+            if !notes.borrow_mut().insert(address) {
+                return Among { left: None, instead: Some(marks) };
             }
-            notes.push(address);
-            Among { left: true, instead: None }
+            Among { left: Some(address), instead: None }
         })
     }
 }
 
 impl Drop for Among {
     fn drop(&mut self) {
-        if self.left {
-            AMONG.with(|notes| { notes.borrow_mut().pop(); });
+        if let Some(address) = self.left {
+            AMONG.with(|notes| { notes.borrow_mut().remove(&address); });
         }
     }
 }

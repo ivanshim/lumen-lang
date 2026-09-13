@@ -3,6 +3,7 @@
 // through a shared reference, which a taking load avoids.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::rc::Rc;
 
@@ -1307,8 +1308,11 @@ thread_local! {
     /// this moment. A fixed row keeps no cell of its own, and the walk
     /// that asks a thing how it is written is handed a collection's
     /// members rather than the cell holding them, so both are known
-    /// here by the place their members stand in.
-    static MEMBERS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// here by the place their members stand in. They are gathered in a
+    /// set and not a list, so that asking whether a place is already
+    /// among them costs the same whether the writing stands one deep or
+    /// a hundred thousand deep.
+    static MEMBERS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     /// The cells a run keeps its counts of figures in, where the
     /// language gives those counts a name of their own: how many
     /// figures a real written plainly carries, and how many one shown
@@ -1338,15 +1342,14 @@ fn note_members(value: &Value) -> Result<Option<usize>, &'static str> {
     let Some((place, marks)) = members_of(value) else { return Ok(None) };
     MEMBERS.with(|held| {
         let mut held = held.borrow_mut();
-        if held.contains(&place) { return Err(marks); }
-        held.push(place);
+        if !held.insert(place) { return Err(marks); }
         Ok(Some(place))
     })
 }
 
 fn forget_members(note: Option<usize>) {
-    if note.is_some() {
-        MEMBERS.with(|held| { held.borrow_mut().pop(); });
+    if let Some(place) = note {
+        MEMBERS.with(|held| { held.borrow_mut().remove(&place); });
     }
 }
 
