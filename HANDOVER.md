@@ -463,32 +463,30 @@ run summary. `scratch/` holds each piece's programs with the exact output
   and `/6`) and on a few deep programs, and a run left going while the
   binary is rebuilt under it reports nonsense. Copy the binary aside
   before a long run.
-- **Container rendering is half done, and the half that exists is a flag
-  on the value, not a label.** A row written as a literal prints its
-  members unquoted (`[1, hello]`) and a map prints `[k => v]`, as the
-  examples require; but a container that a *Python operation* builds
-  prints as CPython would. That is carried by the second field of
-  `Value::Collection(cell, quoted)` in `stack8` (`value.rs`, read where
-  `display` meets a `Collection`) and by the matching flag in
-  `microcode7`, set by `.held(true)` in the eight places that build such
-  a container — `sorted`, `str.split`, `list.copy`, `dict.copy`, the
-  ordering with a key, and `list()` of a view, text, cursor or
-  generator, which pass the flag on from what they were given. So
-  `print(sorted(w))` quotes and `print(w)` does not, even for the same
-  members, and that is deliberate rather than a fault: it buys CPython's
-  rendering everywhere the examples cannot see it. Two consequences.
-  First, do not "fix" the inconsistency by marking a literal-built row
-  quoted: `sort` in place is a core operation all ten languages use, and
-  marking its list would break the examples, which is how five earlier
-  attempts died. Second, a fixture that expects quotes around the
-  members of a list that was *not* built by such an operation is wrong,
-  and `sorting-semantics/5` was exactly that. Closing the gap properly
-  still wants a **core** label all six kernels honour, as
-  `system.real.render` is for reals (#479) — the rendering written into
-  stream35, microcode11, microcode4 and stack5 as well, each in its own
-  words, and every example that shows a container moved. That is a
-  change to the language floor and wants its own branch, not a Python
-  piece.
+- **Container rendering is a core label now, and the value's own flag
+  survives beneath it.** `system.collection.render` says how a
+  collection is written when its text is asked for: `plain` writes each
+  member as its own text, which is what every language but Python asks
+  and what they all printed before, and `representation` writes each
+  member as a representation, which is what Python asks and what CPython
+  gives. All six kernels read it, each in its own words, so the examples
+  agree again; before, the decision hung on `ext.stmt.class.special`,
+  which only the full kernels could see, and the mixed array among the
+  examples printed two ways. What a representation is belongs to the
+  kernel, as the real rendering does: text between quotes, a collection
+  within written the same way again, everything else as it shows.
+  Beneath that, the second field of `Value::Collection(cell, quoted)` in
+  `stack8` (`value.rs`, read where `display` meets a `Collection`) and
+  the matching flag in `microcode7` still mark a container a *Python
+  operation* built — `.held(true)` in the eight places, `sorted`,
+  `str.split`, `list.copy`, `dict.copy`, the ordering with a key, and
+  `list()` of a view, text, cursor or generator, which pass the flag on
+  from what they were given. With the label set to `representation` that
+  flag no longer decides how a collection prints, and a fixture that
+  expects quotes now expects them whatever built the list. Do not mark a
+  literal-built row quoted to reach the same end: `sort` in place is a
+  core operation all ten languages use, and marking its list would break
+  the examples, which is how five earlier attempts died.
 - **A map is a row of pairs searched from the front**, in both full
   kernels, so a large map is quadratic: `scratch/perf/3` takes over two
   hours on microcode7 in a debug build and seconds on a release one.
