@@ -7524,7 +7524,13 @@ impl<'a> Machine<'a> {
                 let mut items = Vec::with_capacity(3);
                 match self.value_of(&call, &outer) {
                     Ok(value) => items.extend([Value::Flag(true), value, Value::text("")]),
-                    Err(Escape::Error(told)) => items.extend([Value::Flag(false), Value::text(&told), Value::text(&told)]),
+                    // The mark that says a complaint is told in full is
+                    // the kernel's own note to itself, so it comes off
+                    // before the words are handed to the program.
+                    Err(Escape::Error(told)) => {
+                        let told = told.trim_start_matches('\0');
+                        items.extend([Value::Flag(false), Value::text(told), Value::text(told)]);
+                    }
                     Err(Escape::Thrown(value)) => {
                         let message = value.render(self.wording());
                         items.extend([Value::Flag(false), value, Value::text(&message)]);
