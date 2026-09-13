@@ -412,9 +412,9 @@ impl Value {
                 shown_once(cell, round, |held| held.representation(words))
             }
             Value::Text(_) => self.string_field(words, "", "r").unwrap_or_else(|| self.plain()),
-            Value::Array(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
-            Value::Tuple(row) => format!("({}{})", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
-            Value::Map(row) => format!("{{{}}}", row.iter().map(|(k,v)| format!("{}: {}", k.representation(words), v.representation(words))).collect::<Vec<_>>().join(", ")),
+            Value::Array(row) => members_written(self, || format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "))),
+            Value::Tuple(row) => members_written(self, || format!("({}{})", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" })),
+            Value::Map(row) => members_written(self, || format!("{{{}}}", row.iter().map(|(k,v)| format!("{}: {}", k.representation(words), v.representation(words))).collect::<Vec<_>>().join(", "))),
             _ => self.display(words),
         }
     }
@@ -446,8 +446,8 @@ impl Value {
                 }
                 self.display(sp)
             }
-            Value::Tuple(items) => Self::tuple_text(items, sp),
-            Value::Array(items) => format!("[{}]", items.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(items) => members_written(self, || Self::tuple_text(items, sp)),
+            Value::Array(items) => members_written(self, || format!("[{}]", items.iter().map(|v| v.repr(sp)).collect::<Vec<_>>().join(", "))),
             _ => self.display(sp),
         }
     }
@@ -775,18 +775,18 @@ impl Value {
                 false => sp.false_word.to_string(),
             },
             Value::Null | Value::Blank | Value::Gap | Value::Fence => sp.null_word.to_string(),
-            Value::Tuple(items) => {
+            Value::Tuple(items) => members_written(self, || {
                 let shown = items.iter().map(|v| v.string_field(sp, "", "r").unwrap_or_else(|| v.plain())).collect::<Vec<_>>().join(", ");
                 format!("({}{})", shown, if items.len() == 1 { "," } else { "" })
-            }
-            Value::Array(items) => {
+            }),
+            Value::Array(items) => members_written(self, || {
                 let shown: Vec<String> = items.iter().map(|v| v.display(sp)).collect();
                 format!("[{}]", shown.join(", "))
-            }
-            Value::Map(pairs) => {
+            }),
+            Value::Map(pairs) => members_written(self, || {
                 let shown: Vec<String> = pairs.iter().map(|(k, v)| format!("{} => {}", k.display(sp), v.display(sp))).collect();
                 format!("[{}]", shown.join(", "))
-            }
+            }),
             Value::Tie(pair) => format!("{} => {}", pair.0.display(sp), pair.1.display(sp)),
             // What stands outside the numbers is written by its name at
             // any width, since there are no figures to write.
@@ -921,17 +921,17 @@ impl Value {
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => (if *b { "true" } else { "false" }).to_string(),
             Value::Null | Value::Blank | Value::Gap | Value::Fence => "null".to_string(),
-            Value::Array(items) => {
+            Value::Array(items) => members_written(self, || {
                 let shown: Vec<String> = items.iter().map(Value::plain).collect();
                 format!("[{}]", shown.join(", "))
-            }
-            Value::Map(pairs) => {
+            }),
+            Value::Map(pairs) => members_written(self, || {
                 let shown: Vec<String> = pairs.iter().map(|(k, v)| format!("{} => {}", k.plain(), v.plain())).collect();
                 format!("[{}]", shown.join(", "))
-            }
+            }),
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Generator(_) => "<generator>".to_string(),
-            Value::Tuple(items) => format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" }),
+            Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
             Value::Descriptor(_) => "<descriptor>".to_string(),
             Value::Trace(words) => words.to_string(),
             Value::Hashed(pair) => pair.0.plain(),
@@ -1303,12 +1303,79 @@ thread_local! {
     /// outermost first, so that a collection holding itself, however
     /// far down, is written as an ellipsis where it comes round again.
     static SHOWING: RefCell<Vec<*const RefCell<Value>>> = const { RefCell::new(Vec::new()) };
+    /// Where the members lie of the collections being written out at
+    /// this moment. A fixed row keeps no cell of its own, and the walk
+    /// that asks a thing how it is written is handed a collection's
+    /// members rather than the cell holding them, so both are known
+    /// here by the place their members stand in.
+    static MEMBERS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     /// The cells a run keeps its counts of figures in, where the
     /// language gives those counts a name of their own: how many
     /// figures a real written plainly carries, and how many one shown
     /// with its kind carries. Both stand empty for a language that
     /// keeps no such count.
     static FIGURES: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Where a collection's members lie, and the marks the collection is
+/// put down as where it is met again within its own writing: a map
+/// stands as its braces, a fixed row as the brackets a fixed row is
+/// written between, and any other row as its own. Nothing at all for
+/// what is no collection, since nothing else can hold itself.
+fn members_of(value: &Value) -> Option<(usize, &'static str)> {
+    match value {
+        Value::Map(pairs) => Some((Rc::as_ptr(pairs) as usize, "{...}")),
+        Value::Tuple(items) => Some((Rc::as_ptr(items) as usize, "(...)")),
+        Value::Array(items) => Some((Rc::as_ptr(items) as usize, "[...]")),
+        _ => None,
+    }
+}
+
+/// Note that a collection's members are being written out. Answers the
+/// marks it stands as where a note already lies on those same members,
+/// and otherwise the note to take away again when the writing is done.
+fn note_members(value: &Value) -> Result<Option<usize>, &'static str> {
+    let Some((place, marks)) = members_of(value) else { return Ok(None) };
+    MEMBERS.with(|held| {
+        let mut held = held.borrow_mut();
+        if held.contains(&place) { return Err(marks); }
+        held.push(place);
+        Ok(Some(place))
+    })
+}
+
+fn forget_members(note: Option<usize>) {
+    if note.is_some() {
+        MEMBERS.with(|held| { held.borrow_mut().pop(); });
+    }
+}
+
+/// Write out a collection's members, unless those very members are
+/// already being written out further up, where the marks the collection
+/// would have stood between are put down in its stead. A collection met
+/// twice by two roads is written in full both times, the note being
+/// taken away as soon as its own writing is done, so only a collection
+/// standing within itself is ever cut short. This is for a walk that
+/// may be stopped by a complaint the program raised.
+pub fn members_once<E>(value: &Value, write: impl FnOnce() -> Result<String, E>) -> Result<String, E> {
+    let note = match note_members(value) {
+        Ok(note) => note,
+        Err(marks) => return Ok(marks.to_string()),
+    };
+    let written = write();
+    forget_members(note);
+    written
+}
+
+/// The same for a walk that always has an answer.
+fn members_written(value: &Value, write: impl FnOnce() -> String) -> String {
+    let note = match note_members(value) {
+        Ok(note) => note,
+        Err(marks) => return marks.to_string(),
+    };
+    let written = write();
+    forget_members(note);
+    written
 }
 
 /// Write out what a cell holds, unless that cell is already being
