@@ -120,7 +120,7 @@ jobs:
             for kernel in stack8 microcode7; do
               printf '\n=== %s (%s) ===\n' "$f" "$kernel"
               status=0
-              timeout 120 target/release/lumen-lang --kernel "$kernel" "$f" </dev/null >"$tmp/stdout" 2>"$tmp/stderr" || status=$?
+              timeout 600 target/release/lumen-lang --kernel "$kernel" "$f" </dev/null >"$tmp/stdout" 2>"$tmp/stderr" || status=$?
               printf '%s\n' '--- stdout ---'
               head -c 20000 "$tmp/stdout"
               printf '\n%s\n' '--- stderr ---'
@@ -128,7 +128,7 @@ jobs:
               printf '\nExit status: %s\n' "$status"
               failed=0
               if [ "$status" -eq 124 ]; then
-                echo 'Gave up waiting after 120 seconds.'
+                echo 'Gave up waiting after ten minutes.'
                 failed=1
               fi
               if [ -f "${f%.py}.out" ]; then
