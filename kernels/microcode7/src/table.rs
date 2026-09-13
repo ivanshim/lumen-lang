@@ -74,7 +74,7 @@ builtin.print:L builtin.write:L builtin.print.placeholder:L builtin.len:L builti
 builtin.ord:L builtin.chr:L builtin.typeof:L builtin.error:L builtin.extern:L \
 builtin.range:L builtin.real:L builtin.num:L builtin.den:L builtin.push:L \
 builtin.get:L builtin.put:L builtin.precision:L builtin.to_string:L builtin.to_int:L \
-builtin.to_real:L system.args:L system.memoization:L system.real_default_precision:L system.real.render:W system.entry:L \
+builtin.to_real:L system.args:L system.memoization:L system.real_default_precision:L system.real.render:W system.collection.render:W system.entry:L \
 system.kind.integer:L system.kind.rational:L system.kind.real:L system.kind.string:L system.kind.boolean:L \
 system.kind.array:L system.kind.null:L \
 ";
@@ -448,6 +448,9 @@ impl Table {
         };
         if !matches!(table.lone("system.real.render"), Some("library" | "shortest")) {
             return Err(String::from("The real rendering is neither 'library' nor 'shortest'"));
+        }
+        if !matches!(table.lone("system.collection.render"), Some("plain" | "representation")) {
+            return Err(String::from("The collection rendering is neither 'plain' nor 'representation'"));
         }
         table.ident = table.lone("language").unwrap_or("").to_string();
         table.check()?;

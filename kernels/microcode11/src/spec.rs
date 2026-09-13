@@ -60,7 +60,7 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("builtin.real", Words), ("builtin.num", Words), ("builtin.den", Words), ("builtin.push", Words),
     ("builtin.get", Words), ("builtin.put", Words), ("builtin.precision", Words),
     ("builtin.to_string", Words), ("builtin.to_int", Words), ("builtin.to_real", Words),
-    ("system.args", Words), ("system.memoization", Words), ("system.real_default_precision", Words), ("system.real.render", Text), ("system.entry", Words),
+    ("system.args", Words), ("system.memoization", Words), ("system.real_default_precision", Words), ("system.real.render", Text), ("system.collection.render", Text), ("system.entry", Words),
     ("system.kind.integer", Words), ("system.kind.rational", Words), ("system.kind.real", Words),
     ("system.kind.string", Words), ("system.kind.boolean", Words), ("system.kind.array", Words), ("system.kind.null", Words),
 ];
@@ -396,6 +396,9 @@ impl Spec {
         }
         if !matches!(self.text("system.real.render"), Some("library") | Some("shortest")) {
             return Err("system.real.render must name 'library' or 'shortest'".to_owned());
+        }
+        if !matches!(self.text("system.collection.render"), Some("plain") | Some("representation")) {
+            return Err("system.collection.render must name 'plain' or 'representation'".to_owned());
         }
         if !matches!(self.text("op.div.result"), None | Some("rational") | Some("real") | Some("whole_or_real")) {
             return Err("op.div.result must be 'rational', 'real', 'whole_or_real' or null".to_string());

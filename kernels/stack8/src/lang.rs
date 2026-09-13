@@ -274,6 +274,9 @@ pub struct Lang {
     pub bits_beyond: Vec<String>,
     pub real_bits: Option<usize>,
     pub shortest_reals: bool,
+    /// Whether a collection written as text reads as its representation
+    /// does, every member inside it written out as one.
+    pub collections_as_written: bool,
     pub real_digits: Option<usize>,
     /// The names the run keeps its counts of figures under: how many a
     /// real written plainly carries, and how many one shown with its
@@ -1139,7 +1142,7 @@ w builtin.char_at | w builtin.ord | w builtin.chr | w builtin.typeof
 w builtin.error | w builtin.extern | w builtin.range | w builtin.real
 w builtin.num | w builtin.den | w builtin.push | w builtin.get
 w builtin.put | w builtin.precision | w builtin.to_string | w builtin.to_int
-w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision | s system.real.render
+w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision | s system.real.render | s system.collection.render
 w system.entry | w system.kind.integer | w system.kind.rational | w system.kind.real
 w system.kind.string | w system.kind.boolean | w system.kind.array | w system.kind.null
 b system.flag.counts
@@ -2191,6 +2194,10 @@ impl Lang {
             shortest_reals: match r.string("system.real.render")?.as_str() {
                 "shortest" => true, "library" => false,
                 _ => return Err("system.real.render must be 'library' or 'shortest'".into()),
+            },
+            collections_as_written: match r.string("system.collection.render")?.as_str() {
+                "representation" => true, "plain" => false,
+                _ => return Err("system.collection.render must be 'plain' or 'representation'".into()),
             },
             real_digits: r.count("ext.system.real.digits")?,
             figures_binding: r.head("ext.system.real.figures")?,

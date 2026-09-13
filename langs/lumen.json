@@ -326,6 +326,7 @@
     "REAL_DEFAULT_PRECISION"
   ],
   "system.real.render": "library",
+  "system.collection.render": "plain",
   "system.entry": [],
   "system.kind.integer": [
     "INTEGER"

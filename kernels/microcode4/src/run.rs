@@ -90,6 +90,9 @@ impl<'a> Runner<'a> {
             yes: self.spec.one("literal.true").unwrap_or("true"),
             no: self.spec.one("literal.false").unwrap_or("false"),
             counted: self.spec.on("system.flag.counts"),
+            // A list may read as a representation of it reads, and then
+            // text standing in one is written between quotes.
+            as_written: self.spec.word("system.collection.render") == Some("representation"),
             // Nothing may show as no text at all, the way PHP shows it.
             none: match self.spec.on("literal.null.silent") {
                 true => "",
