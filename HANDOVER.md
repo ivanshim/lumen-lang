@@ -214,6 +214,51 @@ reproduced against CPython on this machine before it was believed.
 silently. That was noticed and not yet fixed; it is written here so it
 is not lost.
 
+### 1c. Where the Python reference files stand, measured
+
+Taken over all fifty files in `tests/python/` on both full kernels, and
+counted from `unittest`'s progress line with its length checked against
+the `Ran N` beside it, every line agreeing:
+
+**231 methods pass of 794, across 31 files that run tests. Nineteen run
+nothing.** On microcode7 the same sweep gives 195 of 748 across 30
+files; the difference is the five disagreements listed below, three of
+which are only a debug build running out of patience.
+
+    test_int_literal  6/6     test_slice                 4/11
+    test_unary        6/6     test_augassign              3/7
+    test_index       33/55    test_pow                    3/7
+    test_list        26/71    test_opcodes                3/8
+    test_long        25/43    test_decorators            3/16
+    test_scope       19/41    test_positional_only_arg   3/28
+    test_tuple       18/38    test_format                1/18
+    test_bool        16/31    test_funcattrs             1/39
+    test_listcomps   16/68    test_unpack                 1/2
+    test_range       12/29    test_class                 0/42
+    test_with        11/55    test_global                0/20
+    test_compare      9/16    test_print                  0/9
+    test_syntax      8/109    test_eof                    0/6
+    test_dictcomps    8/11    test_contains               0/4
+    test_int          7/52    test_setcomps               0/2
+    test_keywordonlyarg 5/11  test_genexps                0/1
+
+Running nothing at all: `test_binop`, `test_bigmem`, `test_builtin`,
+`test_cmath`, `test_complex`, `test_dict`, `test_enumerate`,
+`test_exceptions`, `test_float`, `test_fractions`, `test_fstring`,
+`test_generators`, `test_grammar`, `test_iter`, `test_math`, `test_set`,
+`test_str`, `test_string_literals`.
+
+Where the kernels do not agree: `test_listcomps` runs its 68 methods on
+microcode7 and none at all on stack8, which is the same program as
+`scratch/reader-tail/5.py`; `test_syntax` differs by a single method; and
+`test_list`, `test_long` and `test_math` each outrun a four-minute
+patience on one kernel and finish on the other, which is the debug build
+being slow rather than the kernels differing.
+
+The measurement before this one, 139 of 327 across 16 files, was taken
+before `doctest`, the library batch and the fixes in §1b. Files that
+reach their own tests have roughly doubled since.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
