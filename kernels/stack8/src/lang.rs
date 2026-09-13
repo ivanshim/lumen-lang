@@ -588,6 +588,11 @@ pub struct Lang {
     /// The names a program calls the file it is written in and the
     /// place that file lies in, where it has words for them.
     pub source_bindings: Vec<(String, String)>,
+    /// The name a program calls the flag saying that it is being run
+    /// with its checks left in. The kernel always leaves them in, so
+    /// the name stands for true for as long as the program runs unless
+    /// the program writes something else to it.
+    pub debug_binding: Option<String>,
     /// Whether being equal is the looser question. A language with an
     /// operator for being the very same means something looser by being
     /// equal: text that spells a number stands for that number.
@@ -1189,7 +1194,7 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.stmt.assign.chain | b ext.op.index.plain_keys
-w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
+w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner | w ext.system.debug
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
@@ -2390,6 +2395,7 @@ impl Lang {
                 }
                 found
             },
+            debug_binding: r.head("ext.system.debug")?,
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
             unimplemented_words: r.strings("ext.literal.unimplemented")?,

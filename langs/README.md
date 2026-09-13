@@ -3154,6 +3154,11 @@ only. The extension labels so far, all from PHP:
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
   file it was given and carries them with the request, so a kernel that
   does not read the labels binds nothing.
+- `ext.system.debug`: a name bound to true before the file runs, which
+  a program reads to find out whether its own checks are being kept
+  (`__debug__`). A kernel runs a program with every check left in, so
+  the name always stands for true. It is an ordinary binding and, unlike
+  the language it is drawn from, may be written anew by the program.
 - `ext.op.index.plain_keys`: a switch; every key of an array is either a
   whole number or text, so a key spelling a whole number the way one is
   written out is that number and `a['7']` and `a[7]` name one place. A
@@ -4801,6 +4806,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
+| `ext.system.debug` | - | - | `__debug__` | - | - | - | - | - | - | - |
 | `ext.system.fault.attribute` | - | - | `object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | `RuntimeError` | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | `ArithmeticError` | - | `ArithmeticError` | - | - | - | - | - |
