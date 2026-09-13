@@ -43,6 +43,7 @@ pub static MODULES: &[(&str, &str)] = &[
     ("pickle", include_str!("pickle.py")),
     ("platform", include_str!("platform.py")),
     ("pprint", include_str!("pprint.py")),
+    ("pty", include_str!("pty.py")),
     ("random", include_str!("random.py")),
     ("re", include_str!("re.py")),
     ("shutil", include_str!("shutil.py")),
