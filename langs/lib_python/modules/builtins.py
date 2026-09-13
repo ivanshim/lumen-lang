@@ -56,14 +56,6 @@ SyntaxWarning = SyntaxWarning
 UnicodeWarning = UnicodeWarning
 UserWarning = UserWarning
 
-# A module's names do not fall back on the reader's word for the root
-# class, so object reads as nothing inside one. An empty class stands on
-# the root all the same, and the list of bases it was built on hands the
-# real class over.
-class _Root:
-    pass
-
-
 bool = bool
 classmethod = classmethod
 complex = complex
@@ -75,7 +67,13 @@ frozenset = frozenset
 int = int
 list = list
 map = map
-object = _Root.__bases__[0]
+# A module's names do not fall back on the reader's word for the root
+# class, so object reads as nothing inside one. A class of that name
+# stands on the root all the same, and the list of bases it was built on
+# hands the real class over, which the name then stands for instead.
+class object:
+    pass
+object = object.__bases__[0]
 property = property
 range = range
 reversed = reversed
@@ -138,14 +136,15 @@ __debug__ = globals()['__debug__']
 # knows rather than names it can be asked for, so none of them can stand
 # on the left of an assignment. The module asks the loader for itself
 # and writes them on from outside instead, which leaves them under the
-# names a program asks this module for.
-_self = __load_module('builtins')
-setattr(_self, 'True', True)
-setattr(_self, 'False', False)
-setattr(_self, 'None', None)
-setattr(_self, 'Ellipsis', ...)
-setattr(_self, 'bytes', bytes)
-setattr(_self, 'bytearray', bytearray)
+# names a program asks this module for. The loader hands back the module
+# it has already begun, so asking six times costs no more than asking
+# once and leaves no name of its own standing here afterwards.
+setattr(__load_module('builtins'), 'True', True)
+setattr(__load_module('builtins'), 'False', False)
+setattr(__load_module('builtins'), 'None', None)
+setattr(__load_module('builtins'), 'Ellipsis', ...)
+setattr(__load_module('builtins'), 'bytes', bytes)
+setattr(__load_module('builtins'), 'bytearray', bytearray)
 
 # NotImplemented is the one word of that kind this module cannot carry.
 # The reader keeps the name for the answer an operation gives when it
