@@ -101,6 +101,7 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
+  "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
     "TypeError: '",

@@ -5664,7 +5664,12 @@ impl<'a> Compiler<'a> {
                     self.write(TEMP_CELL);
                     self.land(skip);
                     self.read(TEMP_CELL);
-                    self.act(Action::AsBool, 1);
+                    // Where the language asks for it, what the pair comes
+                    // to is the side that settled the matter, kept whole.
+                    // Otherwise it is a flag standing for that side's truth.
+                    if !lang.logical_operand {
+                        self.act(Action::AsBool, 1);
+                    }
                 }
                 op => {
                     // A lone name is read where the operator falls and

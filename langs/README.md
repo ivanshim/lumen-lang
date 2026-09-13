@@ -1713,6 +1713,16 @@ only. The extension labels so far, all from PHP:
   is a word before the operator that turns the answer about (`not in`).
   `ext.op.in.unsupported` holds the plain complaint where the right
   value cannot be searched, or the left of a text search is not text.
+- `ext.op.logical.operand`: a switch; `op.and` and `op.or` give back the
+  operand that settled the answer rather than a flag standing for its
+  truth. With it on, `and` gives its left side when that side is untrue
+  and its right side otherwise, and `or` gives its left side when that
+  side is true and its right side otherwise, so `"" or "z"` comes to
+  `"z"` and `"abc" and "z"` comes to `"z"`. Either way the right side is
+  worked out only when the left leaves the matter open, each side is
+  asked for its truth once at most, and `op.not` still gives a flag.
+  Anywhere the answer is read for truth, as a test or a while's condition
+  reads it, the outcome is the same as without the switch.
 - `ext.op.order.text`: a switch; two texts compared with `<`, `<=`, `>`
   or `>=` are ordered letter by letter, by code point, as CPython orders
   them, rather than by whatever number they might spell.
@@ -4443,6 +4453,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
+| `ext.op.logical.operand` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.op.matrix.unavailable` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.matrix.unready` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
