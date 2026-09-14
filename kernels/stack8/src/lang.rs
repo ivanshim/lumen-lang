@@ -371,6 +371,9 @@ pub struct Lang {
     pub quote_close: Vec<String>,
 
     pub builtins: HashMap<String, Builtin>,
+    /// The one word each builtin answers by, in the order the labels
+    /// name them: a map by word cannot say which of several came first.
+    pub builtin_words: Vec<(Builtin, String)>,
     pub core_words: HashMap<String, Vec<String>>,
     pub print_sep: Vec<String>,
     pub print_end: Vec<String>,
@@ -1768,6 +1771,7 @@ impl Lang {
         let mut next_list = || stack_lists.next().expect("eight stack lists");
 
         let mut natives = HashMap::new();
+        let mut first_words: Vec<(Builtin, String)> = Vec::new();
         for (tag, native) in [
             ("ext.builtin.complex", Builtin::Complex),
             ("ext.builtin.method.conjugate", Builtin::ValueMethod),
@@ -1987,6 +1991,11 @@ impl Lang {
                 if !begins || lex.chars().any(|c| c.is_whitespace() || quotes.contains(&c)) {
                     return Err(format!("builtin name '{lex}' must begin like an identifier and hold no spaces or quotes"));
                 }
+                // The word a builtin answers by when it is asked what
+                // kind a value is: the first the definition names for
+                // it, so that a builtin spelled more than one way, as
+                // set and frozenset are, always answers by one name.
+                if !first_words.iter().any(|(b, _)| *b == native) { first_words.push((native, lex.clone())); }
                 if natives.get(&lex) == Some(&native) { continue; }
                 if let Some(prior) = natives.get(&lex).copied() {
                     if matches!(native, Builtin::Bytes(_) | Builtin::Text(_) | Builtin::ClassTool(_)) { continue; }
@@ -2298,6 +2307,7 @@ impl Lang {
             text_repeat: r.flag("ext.builtin.text.repeat")?,
             text_words: ["ext.builtin.text.fault.protocol","ext.builtin.text.fault.index","ext.builtin.text.splitlines","ext.builtin.text.partition","ext.builtin.text.rpartition","ext.builtin.text.expandtabs","ext.builtin.text.swapcase","ext.builtin.text.casefold","ext.builtin.text.capitalize","ext.builtin.text.title","ext.builtin.text.istitle","ext.builtin.text.isidentifier","ext.builtin.text.isprintable","ext.builtin.text.isdecimal","ext.builtin.text.isnumeric","ext.builtin.text.isascii","ext.builtin.text.removeprefix","ext.builtin.text.removesuffix","ext.builtin.text.format_map","ext.builtin.text.maketrans","ext.builtin.text.translate","ext.builtin.text.encode","ext.builtin.text.join","ext.builtin.text.split","ext.builtin.text.rsplit","ext.builtin.text.strip","ext.builtin.text.lstrip","ext.builtin.text.rstrip","ext.builtin.text.center","ext.builtin.text.ljust","ext.builtin.text.rjust","ext.builtin.text.zfill","ext.builtin.text.count","ext.builtin.text.find","ext.builtin.text.rfind","ext.builtin.text.index","ext.builtin.text.rindex","ext.builtin.text.startswith","ext.builtin.text.endswith","ext.builtin.text.replace","ext.builtin.text.upper","ext.builtin.text.lower","ext.builtin.text.length","ext.builtin.text.repr","ext.builtin.text.keyword.keepends","ext.builtin.text.keyword.tabsize","ext.builtin.text.keyword.maxsplit","ext.builtin.text.keyword.sep","ext.builtin.text.keyword.encoding","ext.builtin.text.keyword.errors","ext.builtin.text.fault.arguments","ext.builtin.text.fault.receiver","ext.builtin.text.fault.string","ext.builtin.text.fault.integer","ext.builtin.text.fault.separator","ext.builtin.text.fault.fill","ext.builtin.text.fault.missing","ext.builtin.text.fault.encode","ext.builtin.text.fault.mapping","ext.builtin.text.fault.translation","ext.builtin.text.fault.codepoint","ext.builtin.text.fault.surrogate","ext.builtin.text.fault.maketrans.length","ext.builtin.text.fault.maketrans.key","ext.builtin.text.fault.maketrans.type","ext.builtin.text.fault.format","ext.builtin.text.fault.format.positional","ext.builtin.text.fault.format.brace","ext.builtin.text.fault.join","ext.builtin.text.fault.walk","ext.builtin.text.fault.room","ext.builtin.text.fault.key","ext.builtin.text.complaint"].into_iter().map(|k| Ok((k.to_string(), r.strings(k)?))).collect::<Result<_, String>>()?,
             builtins: natives,
+            builtin_words: first_words,
             holes: r.strings("builtin.print.placeholder")?,
             args_binding: args_name,
             args_list: r.head("ext.system.args.list")?,

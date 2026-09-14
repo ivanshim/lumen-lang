@@ -40,6 +40,10 @@ pub struct Table {
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
     pub prims: HashMap<String, Prim>,
+    /// One word for each primitive, kept in the order the labels write
+    /// them. A map keyed by word cannot say which word came first, and
+    /// a primitive spelled several ways has to answer by a settled one.
+    pub prim_words: Vec<(Prim, String)>,
     /// `x op= e` for each binary operator (ext.op.assign.compound).
     pub compound: HashMap<String, Prim>,
     /// The labels the definition wrote out, empty ones included.
@@ -441,6 +445,7 @@ impl Table {
             monadic: HashMap::new(),
             precedence: HashMap::new(),
             prims: HashMap::new(),
+            prim_words: Vec::new(),
             compound: HashMap::new(),
             given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
@@ -846,6 +851,10 @@ impl Table {
                 if !fine {
                     return Err(format!("builtin name '{lex}' must begin like an identifier and hold no spaces or quotes"));
                 }
+                // What this primitive answers by when a value is asked
+                // its kind: the word its label writes first, so that
+                // set and frozenset do not take turns.
+                if !self.prim_words.iter().any(|(p, _)| *p == op) { self.prim_words.push((op, lex.clone())); }
                 if self.prims.get(&lex) == Some(&op) { continue; }
                 if let Some(previous) = self.prims.get(&lex).copied() {
                     if matches!(op, Prim::Octets(_) | Prim::Textual(_) | Prim::ClassWork(_)) { continue; }
