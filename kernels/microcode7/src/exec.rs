@@ -3324,6 +3324,12 @@ impl<'a> Machine<'a> {
                         Some(Value::Blueprint(b)) => Some(b),
                         // A native kind the table lets a class stand on.
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
+                        // The byte kinds are values in their own right,
+                        // so each is looked up by the word spelling it.
+                        Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
+                            let word = self.octet_kind_word(changeable).to_owned();
+                            Some(self.native_kind(&word))
+                        }
                         // The property builtin, stood on as a class.
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
@@ -3337,6 +3343,10 @@ impl<'a> Machine<'a> {
                     match given.next() {
                         Some(Value::Blueprint(b)) => answers.push(b),
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
+                        Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
+                            let word = self.octet_kind_word(changeable).to_owned();
+                            let kind = self.native_kind(&word); answers.push(kind);
+                        }
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => { let kind = self.property_blueprint(); answers.push(kind); }
                         _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
                     }
@@ -5691,10 +5701,16 @@ impl<'a> Machine<'a> {
         Value::Octets { cell: Rc::new(RefCell::new(values)), changeable, lead: lead.into() }
     }
 
+    /// The word the table spells one of the two byte kinds with. Those
+    /// kinds are values in their own right and not intrinsic words, so
+    /// anything that has to work from the word asks for it here.
+    pub(super) fn octet_kind_word(&self, changeable: bool) -> &str {
+        self.table.single(if changeable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }).unwrap_or("")
+    }
+
     fn octet_type(&self, changeable: bool) -> Value {
-        let label = if changeable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" };
         let parts = self.table.strings("ext.system.bytes.type");
-        Value::OctetKind { changeable, shown: format!("{}{}{}", parts[0], self.table.single(label).unwrap_or(""), parts[1]).into() }
+        Value::OctetKind { changeable, shown: format!("{}{}{}", parts[0], self.octet_kind_word(changeable), parts[1]).into() }
     }
 
     fn octet_whole(&self, value: &Value) -> Result<BigInt, String> {
@@ -5876,6 +5892,10 @@ impl<'a> Machine<'a> {
             }
             16 => {
                 let [object, Value::OctetKind { changeable: wanted, .. }] = values else { return Err(refusal()); };
+                // A thing of a blueprint built on a byte kind is of it.
+                if let Value::Thing(t) = object {
+                    return Ok(Value::Flag(Self::native_beneath(&t.of).as_deref() == Some(self.octet_kind_word(*wanted))));
+                }
                 return Ok(Value::Flag(matches!(object, Value::Octets { changeable, .. } if changeable == wanted)));
             }
             17 => {
@@ -6141,6 +6161,30 @@ impl<'a> Machine<'a> {
         self.table.lone("system.collection.render") == Some("representation")
     }
 
+    /// Whether a thing over this worth puts its own blueprint's name
+    /// before the worth when it is written. A set and a row of bytes
+    /// open to change both do; every other native kind is written as
+    /// the worth by itself.
+    fn worth_leads_with_name(worth: &Value) -> bool {
+        matches!(worth.settled(), Value::Set(_) | Value::Octets { changeable: true, .. })
+    }
+
+    /// A thing over a native worth, written. Where the kind leads with
+    /// its own name the name to lead with is the thing's blueprint, so
+    /// a class built on a set or on a changeable row of bytes is named
+    /// where the builtin would have named itself.
+    fn underlying_words(&mut self, name: &str, worth: &Value, quoted: bool) -> Result<String, String> {
+        if !Self::worth_leads_with_name(worth) { return self.object_words(worth, quoted); }
+        // The worth with nothing leading it: a changeable row of bytes
+        // reads as the fixed row of the same bytes, a set as its
+        // members between braces.
+        let bare = match worth.settled() {
+            Value::Octets { cell, changeable: true, .. } => { let copy = cell.borrow().clone(); self.octets(copy, false) }
+            held => held,
+        };
+        Ok(format!("{name}({})", self.object_words(&bare, true)?))
+    }
+
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
@@ -6181,7 +6225,7 @@ impl<'a> Machine<'a> {
                 // its blueprint says nothing of how it is shown.
                 if let Some(under) = Self::underlying(subject) {
                     let own = self.appointment(subject, 1).is_some() || (!quoted && self.appointment(subject, 0).is_some());
-                    if !own { return self.object_words(&under, quoted); }
+                    if !own { let name = t.of.name.clone(); return self.underlying_words(&name, &under, quoted); }
                 }
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
@@ -6428,6 +6472,10 @@ impl<'a> Machine<'a> {
             let mut changed = false;
             for operand in operands {
                 match self.underlying_unless(operand, free_at) {
+                    // Where a kind leads with its own name the thing is
+                    // written by its blueprint, so there the worth is
+                    // not allowed to stand in for the thing.
+                    Some(worth) if matches!(operation, Prim::Quoted | Prim::AsText) && Self::worth_leads_with_name(&worth) => settled.push(operand.clone()),
                     Some(worth) => { settled.push(worth); changed = true; }
                     None => settled.push(operand.clone()),
                 }

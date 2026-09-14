@@ -505,7 +505,22 @@ impl<'a> Machine<'a> {
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.of.clone());}
             // The worth a thing keeps answers for the methods of its kind.
             if let Some(under)=Self::underlying(&value) {
-                if let Some(operation)=Self::kind_method_named(self.table,key){return Ok(Value::Member(Rc::new(under),operation));}
+                if let Some(operation)=Self::kind_method_named(self.table,key){
+                    // The parts of a complex number are members read and
+                    // not methods called, as on the number itself.
+                    if matches!(operation.as_str(),"real"|"imag") {
+                        if let Value::Complex(pair)=under.settled() {
+                            return Ok(crate::complex::decimal_value(if operation=="real"{pair.0}else{pair.1}));
+                        }
+                    }
+                    return Ok(Value::Member(Rc::new(under),operation));
+                }
+                // A set and a row of bytes answer some of their methods
+                // with primitives that take the receiver first, so one
+                // read through the thing is tied to the worth it keeps.
+                if matches!(self.table.prims.get(key),Some(Prim::SetCall(1..=17)|Prim::Octets(2..=15))) {
+                    return Ok(Self::wrap(3,vec![Value::text(key),under]));
+                }
             }
         }else if let Value::Method(code,t)=&value {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
@@ -649,6 +664,10 @@ impl<'a> Machine<'a> {
         Err(self.class_unready())
     }
     fn is_beneath(&self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        // The byte kinds are values in their own right rather than
+        // intrinsic words, so each is asked after under its own word.
+        if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)])), choice, class_only); }
+        if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)])), class_only); }
         if let Value::Intrinsic(word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)])), choice, class_only); }
         if let Value::Intrinsic(word) = choice { return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(word)])), class_only); }
         match choice {
@@ -665,7 +684,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(8,names)=>{
                 let Value::Text(word)=&names[0] else{return Err(self.class_unready());};
                 if class_only{
-                    if !matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf|Prim::Dictionary|Prim::Tupling|Prim::Uniques|Prim::Truthful)){return Err(self.class_unready());}
+                    if !matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf|Prim::Dictionary|Prim::Tupling|Prim::Uniques|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1))){return Err(self.class_unready());}
                     return match subject {Value::Blueprint(b)=>Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref())),Value::Wrapped(8,other)=>Ok(other[0].equals(&names[0])),_=>Err(self.class_unready())};
                 }
                 // A thing of a blueprint standing on the kind is of the kind.
@@ -680,6 +699,8 @@ impl<'a> Machine<'a> {
                     Some(Prim::Tupling)=>Ok(matches!(subject,Value::Tuple(_))),
                     Some(Prim::Uniques)=>Ok(matches!(subject,Value::Set(_))),
                     Some(Prim::Truthful)=>Ok(matches!(subject,Value::Flag(_))),
+                    Some(Prim::ComplexMade)=>Ok(matches!(subject,Value::Complex(_))),
+                    Some(Prim::Octets(which))=>Ok(matches!(subject,Value::Octets{changeable,..} if *changeable==(*which==1))),
                     _=>Err(self.class_unready()),
                 }
             },
