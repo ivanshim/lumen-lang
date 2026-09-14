@@ -3487,6 +3487,87 @@ impl<'a> Compiler<'a> {
         Ok((named, slot))
     }
 
+    /// The names a target writes to, in the order it writes them. A
+    /// target holding anything but names, the marks that join them,
+    /// brackets and the rest mark is no taking-apart of a value, and
+    /// nothing is given back for it.
+    fn target_names(&self, from: usize, to: usize, names: &mut Vec<String>) -> bool {
+        let lang = self.lang;
+        if from >= to { return false; }
+        for at in from..to {
+            let word = &self.tokens[at];
+            match word.shape {
+                Shape::Instr => {
+                    if lang.keywords.contains(&word.lexeme) { return false; }
+                    if [&lang.true_words, &lang.false_words, &lang.null_words].iter().any(|words| Lang::spells(words, &word.lexeme)) { return false; }
+                    names.push(word.lexeme.clone());
+                }
+                Shape::Sign if Lang::spells(&lang.tuple_marks, &word.lexeme)
+                    || Lang::spells(&lang.unpack_rest, &word.lexeme)
+                    || [&lang.grouping, &lang.array_brackets].into_iter().flatten()
+                        .any(|pair| pair.open == word.lexeme || pair.close == word.lexeme) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Members bound by taking a value apart (`a, b = 1, 2`) or by a
+    /// chain of signs (`x = y = 3`). Both name more than the one member
+    /// the walk over a body already knows, and both work their value
+    /// out once and hand it to every target in turn, so the walk reads
+    /// them here rather than leaving them to be refused. Nothing is
+    /// given back where the statement is neither form, and the walk
+    /// goes on to the readers after this one with nothing read.
+    fn class_bindings(&mut self) -> Res<Option<Vec<(String, String)>>> {
+        let lang = self.lang;
+        let begin = self.pos;
+        let (signs, _) = self.outer_marks(begin, self.tokens.len(), &lang.assign_words);
+        let Some(&last) = signs.last() else { return Ok(None); };
+        if signs.len() > 1 && !lang.assign_chain { return Ok(None); }
+        let mut spans = Vec::new();
+        let mut left = begin;
+        for &sign in &signs {
+            spans.push((left, sign));
+            left = sign + 1;
+        }
+        // One bare name before one sign is the member the walk knows
+        // already, and it is left to the reader that knows it.
+        if spans.len() == 1 && spans[0].1 == spans[0].0 + 1 { return Ok(None); }
+        let mut names = Vec::new();
+        for &(from, to) in &spans {
+            if !self.target_names(from, to, &mut names) { return Ok(None); }
+        }
+        if names.is_empty() { return Ok(None); }
+        // The value is worked out before any name is given a place, so
+        // that a value naming a member the body bound earlier still
+        // reads what that member held.
+        self.pos = last + 1;
+        match lang.tuple_marks.is_empty() {
+            true => self.expr(0)?,
+            false => self.scope_value()?,
+        }
+        let held = self.gensym("assigned");
+        self.write(&held);
+        let after = self.pos;
+        // Every name gets a place of the class's own before any of the
+        // writing is done. The writing is the ordinary one, which finds
+        // these places by the names standing for them, so what the
+        // targets are given lands in the class and not in the scope the
+        // class stands in.
+        let mut bound = Vec::new();
+        for name in names {
+            let slot = self.gensym("attribute");
+            self.class_names.last_mut().expect("a class body").1.insert(name.clone(), slot.clone());
+            bound.push((name, slot));
+        }
+        for (from, to) in spans {
+            self.give_places(from, to, &held)?;
+        }
+        self.pos = after;
+        Ok(Some(bound))
+    }
+
     fn explicit_class(&mut self) -> Res<bool> {
         let lang = self.lang;
         self.take();
@@ -3617,6 +3698,11 @@ impl<'a> Compiler<'a> {
                 self.class_names.last_mut().expect("a class body").1.insert(named.clone(), held.clone());
                 shared.retain(|(old, _)| old != &named);
                 shared.push((named, held));
+            } else if let Some(bound) = self.class_bindings()? {
+                for (named, held) in bound {
+                    shared.retain(|(old, _)| old != &named);
+                    shared.push((named, held));
+                }
             } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
                 let named = self.take().lexeme;
                 self.take();
