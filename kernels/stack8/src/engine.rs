@@ -11022,7 +11022,11 @@ impl Engine<'_> {
                 if matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.lang.round_whole_even {
                     let whole = args[0].as_big()?;
                     if digits >= 0 { return Ok(Value::of_big(whole)); }
-                    let unit = BigInt::from(10).pow(u32::try_from(-digits).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?);
+                    // How far the count of places reaches is taken as a size,
+                    // not by turning the count about: the least whole number a
+                    // machine word holds has no opposite within the word, and
+                    // reaching for one would end the run instead of refusing.
+                    let unit = BigInt::from(10).pow(u32::try_from(digits.unsigned_abs()).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?);
                     let (mut quotient, remainder) = whole.div_mod_floor(&unit);
                     let doubled = &remainder * 2;
                     if doubled > unit || (doubled == unit && quotient.is_odd()) { quotient += 1; }
@@ -11034,12 +11038,12 @@ impl Engine<'_> {
                 if q.is_zero() { return Err(self.core_fault("core.unready", name)); }
                 if self.lang.shortest_reals && matches!(x, Value::Real(_)) {
                     let scale = BigInt::from(10).pow(places);
-                    let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow((-digits).min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
+                    let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
                     let (mut whole, remainder) = top.div_rem(&bottom);
                     if remainder * 2 >= bottom { whole += 1; }
                     if p.is_negative() { whole = -whole; }
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
-                    let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow((-digits).min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
+                    let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
                     return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }

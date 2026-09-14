@@ -12236,7 +12236,11 @@ impl Machine<'_> {
                 if self.table.flag("ext.builtin.round.whole.even") && matches!(input[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
                     let number = input[0].as_big()?;
                     if places >= 0 { return Ok(Value::from_big(number)); }
-                    let unit = BigInt::from(10).pow(u32::try_from(-places).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?);
+                    // The count of places is asked for its size rather than
+                    // turned about, because the very least whole number a
+                    // machine holds cannot be turned about and the asking
+                    // would stop the run where a refusal is wanted.
+                    let unit = BigInt::from(10).pow(u32::try_from(places.unsigned_abs()).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?);
                     let (mut quotient, remainder) = number.div_mod_floor(&unit);
                     let twice = &remainder * 2;
                     if twice > unit || (twice == unit && quotient.is_odd()) { quotient += 1; }
