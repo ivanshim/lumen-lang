@@ -329,6 +329,17 @@ This is the widest of the five: `test_set` has sixteen such classes,
 `test_float` fifteen, `test_cmath` eight, `test_fractions` seven, and
 `test_enumerate` and `test_complex` six each.
 
+The lead worth following first on the class inside a function: the only
+thing that marks it unready is the line that opens `explicit_class`,
+`let mut unready = !self.piece().outermost;`. The rest of the reader
+looks as though it would cope -- each member's value goes into a
+gensym'd slot which the class is then built from by reading those slots,
+and a slot inside a function is an ordinary local. So the cheap first
+experiment is to start `unready` at `false` in a worktree and see what
+actually breaks; the likely answer is somewhere in how a method or the
+class name is bound, since only the outermost bindings have names the
+run can work out while it goes.
+
 A class named with a keyword the header does not carry, `class A(object,
 metaclass=type)`, is refused, and so is one whose bases are spread from
 a sequence, `class A(*bases)`.
