@@ -65,6 +65,10 @@ impl<'a> Machine<'a> {
         // class: each goes by its name to the forebears' subclass hook.
         let (handed,mut entries):(Vec<_>,Vec<_>)=entries.into_iter().partition(|(k,_)|k.starts_with("\0handed:"));
         let handed:Vec<Value>=handed.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k["\0handed:".len()..]),v)))).collect();
+        // A place only an arm of a conditional writes to may stay
+        // unwritten. Nothing stands in it, and the class is given no
+        // entry for it: a name a conditional never bound is no member.
+        entries.retain(|(_,v)|!matches!(v,Value::Unset));
         let mut queues=Vec::new();
         for base in &parents {
             let mut queue=Vec::with_capacity(base.ancestry.len()+1);
