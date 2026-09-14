@@ -410,6 +410,74 @@ stops that file, and `class X(frozenset)` is the same defect wearing a
 different name. So five builtins are missing from work that already
 covers eleven.
 
+### 1g. Where the second batch stands, and what is left on it
+
+The branch `claude/codebase-familiarization-t6vjhi` carries six verified
+interpreter fixes on top of the merged `12fabf1`, twenty-five commits in
+all. Each was reproduced before it was taken and checked again after, on
+both full kernels, against real `python3`:
+
+  * `reversed()` walks a byte string, and `float.fromhex` stops doubling
+    towards infinity on a zero, which never gets there
+  * a class body binds every name a taking-apart or a chain of signs
+    names, evaluating the right side once and handing it out left to
+    right
+  * four places that took the opposite of a whole number and overflowed
+    the host; in a build with the checks off the first answered one
+    where it should answer zero, so this was a wrong answer waiting as
+    well as a death
+  * `str()` takes an encoding, and four codecs answer to their names
+  * a class may stand on bytes, bytearray, complex, a frozen set or
+    enumerate; and the question of what kind a set is stopped answering
+    `set` or `frozenset` by chance from run to run
+  * a class body may ask a question -- `if`, `elif`, `else` -- before it
+    names a member
+
+Four files that ran nothing now run tests, and one that ran already runs
+more. Measured on stack8 at `eb04787` against `12fabf1`:
+
+    test_builtin       nothing  ->   17 of 143
+    test_complex       nothing  ->   18 of 37
+    test_enumerate     nothing  ->   27 of 105
+    test_float         nothing  ->   17 of 54
+    test_set           nothing  ->  290 of 644
+    test_listcomps    16 of 68  ->   18 of 68
+
+and on microcode7 `test_fractions` goes from nothing to 10 of 50. That
+sweep was stopped at forty-one of fifty files, so it is not a whole-suite
+total; what it does show is the direction, and that nothing measured
+moved backwards.
+
+WHAT IS IN THE WAY OF MERGING. CI fails on the `scratch` job alone --
+`build-and-test` and `reference` pass every run, so the build, the
+independence check, the six-kernel example sweep and the PHP row are all
+clean. Two scratch programs cannot be satisfied, because the two kernels
+now answer them differently and one fixture cannot record two answers:
+
+  * `scratch/file-iter/14.py`, the enumerate suite, where
+    `test_tuple_reuse` fails on stack8 and passes on microcode7 at six
+    places. That test is decorated `@support.cpython_only`, and
+    `langs/lib_python/modules/test/support/__init__.py` defines
+    `cpython_only = _identity`, so it is RUN where CPython would skip it
+    on any implementation that is not CPython. We are not CPython, and
+    whether the test passes turns on how each kernel happens to allocate.
+    `sys.implementation` does not exist here at all. The decorator
+    appears in eighteen of the fifty reference files. Branch
+    `fix/cpython-only` was started on this and is unfinished.
+  * `scratch/reader-tail/5.py`, where `test_no_leakage_to_locals` with
+    `scope='function'` fails on microcode7 and passes on stack8. It is
+    the only test in that file the two answer differently. Branch
+    `fix/listcomp-locals` was started on this and is unfinished. Do not
+    assume stack8 is right because it passes; find out from `python3`.
+
+Both branches are pushed and hold whatever their workers had reached.
+Neither has been verified.
+
+Making `cpython_only` skip will make the passing count go DOWN while the
+suite becomes more honest, because tests that were passing by accident
+will correctly skip. That is the right outcome and should be reported as
+such rather than hidden.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
