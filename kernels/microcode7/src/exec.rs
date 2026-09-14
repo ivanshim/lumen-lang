@@ -9449,7 +9449,7 @@ impl<'a> Machine<'a> {
                         Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
                     };
                     if let Some(operation) = wanted {
-                        if let Some((word,_)) = self.table.prims.iter().find(|(_,p)| **p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
+                        if let Some((_,word)) = self.table.prim_words.iter().find(|(p,_)| *p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
                     }
                 }
                 if let Value::Octets { changeable, .. } = &v[0] { return Ok(self.octet_type(*changeable)); }
