@@ -74,6 +74,10 @@ impl<'a> Engine<'a> {
             Some(word) => { carried.push(Value::Tie(Rc::new((Value::text(word), v.clone())))); false }
             None => true,
         });
+        // A place only an arm of a conditional writes to may never have
+        // been written. Nothing stands there, and the class keeps no
+        // member for it: a name a conditional never bound is no member.
+        members.retain(|(_, held)| !matches!(held, Value::Blank));
         let mut lines: Vec<Vec<Rc<Class>>> = bases.iter().map(|b| {
             let mut line = vec![b.clone()]; line.extend(b.lineage.iter().cloned()); line
         }).collect();
