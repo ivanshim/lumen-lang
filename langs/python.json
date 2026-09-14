@@ -1662,8 +1662,13 @@
   "ext.builtin.to_string.object": [
     "object"
   ],
+  "ext.builtin.to_string.undecodable": [
+    "TypeError: decoding str is not supported",
+    "TypeError: decoding to str: need a bytes-like object, ",
+    " found"
+  ],
   "ext.builtin.to_string.unready": [
-    "NotImplementedError: str encoding and errors are not supported"
+    "TypeError: str() takes at most 3 arguments"
   ],
   "ext.builtin.tuple": [
     "tuple"
@@ -2839,10 +2844,10 @@
     "UnicodeEncodeError: "
   ],
   "ext.system.bytes.encodings": [
-    "utf-8",
-    "utf8",
-    "ascii",
-    "us-ascii"
+    "utf-8 utf-8 utf8",
+    "ascii ascii us-ascii",
+    "latin-1 latin-1 latin1 iso-8859-1",
+    "rawunicodeescape raw-unicode-escape"
   ],
   "ext.system.bytes.hex": [
     "ValueError: non-hexadecimal number found in fromhex() arg at position "

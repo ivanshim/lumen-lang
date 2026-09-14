@@ -7861,8 +7861,13 @@ impl<'a> Engine<'a> {
                 1
             } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_object, &key) {
                 0
-            } else if builtin == Builtin::ToText && (Lang::spells(&self.lang.to_string_encoding, &key) || Lang::spells(&self.lang.to_string_errors, &key)) {
-                return Err(self.lang.to_string_unready[0].clone());
+            } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_encoding, &key) {
+                1
+            } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_errors, &key) {
+                // An error policy given by itself leaves the encoding to
+                // be the wide one.
+                if args.len() == 1 { args.push(Value::text(&self.byte_codec_name(Self::CODEC_WIDE))); }
+                2
             } else {
                 let words = &self.lang.call_builtin_amiss;
                 return Err(if words.len() > 1 { Self::named_fault(words, name.rsplit('.').next().unwrap_or(name)) }
@@ -8223,32 +8228,113 @@ impl<'a> Engine<'a> {
         n.to_usize().filter(|&at| at < size).ok_or_else(|| self.byte_fault("index"))
     }
 
-    fn byte_codec(&self, value: Option<&Value>) -> Res<bool> {
-        let Some(value) = value else { return Ok(false); };
+    // Each entry of the encodings label holds one codec. The name it
+    // complains under leads the entry, and the spellings which reach it
+    // follow, the leading name having no say in that. Their order tells
+    // this kernel which codec is which — first the wide one, then the
+    // seven-bit one, then the one that keeps every byte as it stands,
+    // then the one writing a far character as an escape.
+    const CODEC_WIDE: usize = 0;
+    const CODEC_SEVEN: usize = 1;
+    const CODEC_BYTEWISE: usize = 2;
+    const CODEC_ESCAPES: usize = 3;
+
+    fn byte_codec(&self, value: Option<&Value>) -> Res<usize> {
+        let Some(value) = value else { return Ok(Self::CODEC_WIDE); };
         let Value::Text(name) = value else { return Err(self.byte_fault("arguments")); };
         let name = name.to_ascii_lowercase().replace('_', "-");
-        self.lang.byte_words["ext.system.bytes.encodings"].iter().position(|word| word == &name)
-            .map(|at| at >= 2).ok_or_else(|| self.byte_fault("unready"))
+        self.lang.byte_words["ext.system.bytes.encodings"].iter()
+            .position(|entry| entry.split_whitespace().skip(1).any(|spelling| spelling == name))
+            .ok_or_else(|| self.byte_fault("unready"))
     }
 
-    fn byte_encode(&self, text: &str, ascii: bool) -> Res<Vec<u8>> {
-        if ascii {
+    /// How a codec names itself when it complains.
+    fn byte_codec_name(&self, codec: usize) -> String {
+        self.lang.byte_words["ext.system.bytes.encodings"].get(codec)
+            .and_then(|entry| entry.split_whitespace().next()).unwrap_or("").to_string()
+    }
+
+    fn byte_encode(&self, text: &str, codec: usize) -> Res<Vec<u8>> {
+        if codec == Self::CODEC_ESCAPES {
+            let mut row = Vec::new();
+            for letter in text.chars() {
+                let code = letter as u32;
+                if code < 256 { row.push(code as u8); }
+                else if code < 0x10000 { row.extend_from_slice(format!("\\u{:04x}", code).as_bytes()); }
+                else { row.extend_from_slice(format!("\\U{:08x}", code).as_bytes()); }
+            }
+            return Ok(row);
+        }
+        if codec == Self::CODEC_SEVEN || codec == Self::CODEC_BYTEWISE {
+            let top = if codec == Self::CODEC_SEVEN { 127 } else { 255 };
             let letters: Vec<char> = text.chars().collect();
-            if let Some(at) = letters.iter().position(|c| !c.is_ascii()) {
-                let stop = at + letters[at..].iter().take_while(|c| !c.is_ascii()).count();
+            if let Some(at) = letters.iter().position(|c| *c as u32 > top) {
+                let stop = at + letters[at..].iter().take_while(|c| **c as u32 > top).count();
                 let which = if stop == at + 1 {
                     let c = letters[at] as u32;
                     let escaped = if c <= 255 { format!("\\x{:02x}", c) } else if c <= 65535 { format!("\\u{:04x}", c) } else { format!("\\U{:08x}", c) };
                     format!("character '{}' in position {}", escaped, at)
                 } else { format!("characters in position {}-{}", at, stop - 1) };
-                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range(128)", self.byte_fault("encode"), self.lang.byte_words["ext.system.bytes.encodings"][2], which));
+                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range({})", self.byte_fault("encode"), self.byte_codec_name(codec), which, top + 1));
             }
+            if codec == Self::CODEC_BYTEWISE { return Ok(text.chars().map(|c| c as u8).collect()); }
         }
         Ok(text.as_bytes().to_vec())
     }
 
-    fn byte_decode(&self, row: &[u8], ascii: bool) -> Res<Value> {
-        let failure = if ascii {
+    /// The complaint about bytes a codec will not read, naming the first
+    /// and the last of them.
+    fn byte_decode_fault(&self, codec: usize, row: &[u8], at: usize, upto: usize, reason: &str) -> String {
+        let place = if upto == at { format!("byte 0x{:02x} in position {}", row[at], at) }
+            else { format!("bytes in position {}-{}", at, upto) };
+        format!("{}'{}' codec can't decode {}: {}", self.byte_fault("decode"), self.byte_codec_name(codec), place, reason)
+    }
+
+    /// Bytes read as text where a character beyond the byte range was
+    /// written out as an escape. Backslashes count: a run of them hides
+    /// the escape unless the run is odd, and then it is the closing
+    /// backslash of the run that opens it.
+    fn byte_unescape(&self, row: &[u8]) -> Res<Value> {
+        let mut told = String::new();
+        let mut at = 0;
+        while at < row.len() {
+            if row[at] != b'\\' { told.push(row[at] as char); at += 1; continue; }
+            let slashes = row[at..].iter().take_while(|b| **b == b'\\').count();
+            let opener = row.get(at + slashes).copied();
+            if slashes % 2 == 0 || !matches!(opener, Some(b'u') | Some(b'U')) {
+                told.extend(std::iter::repeat('\\').take(slashes));
+                at += slashes;
+                continue;
+            }
+            told.extend(std::iter::repeat('\\').take(slashes - 1));
+            let opened = at + slashes - 1;
+            let long = opener == Some(b'U');
+            let asked = if long { 8 } else { 4 };
+            let figures = row[opened + 2..].iter().take(asked).take_while(|b| b.is_ascii_hexdigit()).count();
+            if figures < asked {
+                let shape = if long { "\\UXXXXXXXX" } else { "\\uXXXX" };
+                return Err(self.byte_decode_fault(Self::CODEC_ESCAPES, row, opened, opened + 1 + figures, &format!("truncated {} escape", shape)));
+            }
+            let read = std::str::from_utf8(&row[opened + 2..opened + 2 + asked]).map_err(|_| self.byte_fault("unready"))?;
+            let code = u32::from_str_radix(read, 16).map_err(|_| self.byte_fault("unready"))?;
+            match char::from_u32(code) {
+                Some(letter) => told.push(letter),
+                // Past the last character there is nothing to name; a
+                // code naming one half of a pair is a character this
+                // kernel has no room for, and it owns up instead of
+                // putting something else in its place.
+                None if code > 0x10ffff => return Err(self.byte_decode_fault(Self::CODEC_ESCAPES, row, opened, opened + 1 + asked, "\\Uxxxxxxxx out of range")),
+                None => return Err(self.byte_fault("unready")),
+            }
+            at = opened + 2 + asked;
+        }
+        Ok(Value::text(&told))
+    }
+
+    fn byte_decode(&self, row: &[u8], codec: usize) -> Res<Value> {
+        if codec == Self::CODEC_ESCAPES { return self.byte_unescape(row); }
+        if codec == Self::CODEC_BYTEWISE { return Ok(Value::text(&row.iter().map(|b| *b as char).collect::<String>())); }
+        let failure = if codec == Self::CODEC_SEVEN {
             row.iter().position(|b| !b.is_ascii()).map(|at| (at, 1, "ordinal not in range(128)"))
         } else {
             std::str::from_utf8(row).err().map(|bad| {
@@ -8259,11 +8345,28 @@ impl<'a> Engine<'a> {
             })
         };
         if let Some((at, count, reason)) = failure {
-            let place = if count == 1 { format!("byte 0x{:02x} in position {}", row[at], at) }
-                else { format!("bytes in position {}-{}", at, at + count - 1) };
-            return Err(format!("{}'{}' codec can't decode {}: {}", self.byte_fault("decode"), self.lang.byte_words["ext.system.bytes.encodings"][if ascii { 2 } else { 0 }], place, reason));
+            return Err(self.byte_decode_fault(codec, row, at, at + count - 1, reason));
         }
         Ok(Value::text(std::str::from_utf8(row).map_err(|_| self.byte_fault("unready"))?))
+    }
+
+    /// A row of bytes read back as text, the encoding and then the error
+    /// policy standing after it. Only a row of bytes can be read so:
+    /// text is turned away by name, and every other value by its kind.
+    fn text_from_bytes(&self, args: &[Value]) -> Res<Value> {
+        if args.len() > 3 { return Err(self.lang.to_string_unready[0].clone()); }
+        let words = &self.lang.to_string_undecodable;
+        let part = |at: usize| words.get(at).cloned().unwrap_or_default();
+        let row = match &args[0] {
+            Value::Bytes(row, ..) => row.borrow().clone(),
+            Value::Text(_) => return Err(part(0)),
+            other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
+        };
+        if let Some(policy) = args.get(2) {
+            let Value::Text(policy) = policy else { return Err(self.byte_fault("arguments")); };
+            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
+        }
+        self.byte_decode(&row, self.byte_codec(args.get(1))?)
     }
 
     fn byte_call(&self, task: u8, args: &[Value]) -> Res<Value> {
@@ -9379,7 +9482,7 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
-            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
+            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
                 self.digits_shown(&args[0])?;

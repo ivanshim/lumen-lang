@@ -4961,8 +4961,12 @@ impl<'a> Machine<'a> {
                 Prim::Total if table.spells("ext.builtin.start", &key) => 1,
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
                 Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
-                Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
-                    return Err(self.argument_fault("ext.builtin.to_string.unready", None).into());
+                Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) => 1,
+                Prim::AsText if table.spells("ext.builtin.to_string.errors", &key) => {
+                    // The error policy may be named on its own, and the
+                    // wide encoding is then the one meant.
+                    if positional.len() == 1 { positional.push(Value::text(&self.octet_codec_name(Self::WIDE))); }
+                    2
                 }
                 _ => return Err(self.builtin_keyword_fault(name).into()),
             };
@@ -5729,40 +5733,122 @@ impl<'a> Machine<'a> {
         }
     }
 
+    // The codecs stand in the encodings label one to an entry. An entry
+    // begins with the name the codec complains under and goes on with
+    // the spellings which reach it, which need not include the first.
+    // Their order is the order this kernel knows them by: the wide
+    // encoding, the seven-bit one, the byte-for-byte one, and the one
+    // that spells a far character as an escape.
+    const WIDE: usize = 0;
+    const SEVEN_BIT: usize = 1;
+    const BYTE_FOR_BYTE: usize = 2;
+    const ESCAPED: usize = 3;
+
     fn octet_encoding(&self, argument: Option<&Value>) -> Result<usize, String> {
         match argument {
-            None => Ok(0),
+            None => Ok(Self::WIDE),
             Some(Value::Text(encoding)) => {
-                let normalized = encoding.to_lowercase().replace('_', "-");
+                let wanted = encoding.to_lowercase().replace('_', "-");
                 let entries = self.table.strings("ext.system.bytes.encodings");
-                entries.iter().enumerate().find_map(|(i, e)| (e == &normalized).then_some(i / 2))
+                entries.iter().position(|entry| entry.split_whitespace().skip(1).any(|name| name == wanted))
                     .ok_or_else(|| self.octet_error("unready"))
             }
             _ => Err(self.octet_error("arguments")),
         }
     }
 
+    /// The proper name of a codec, which is the one its complaints carry.
+    fn octet_codec_name(&self, alphabet: usize) -> String {
+        self.table.strings("ext.system.bytes.encodings").get(alphabet)
+            .and_then(|entry| entry.split_whitespace().next()).unwrap_or("").to_owned()
+    }
+
     fn octets_from_text(&self, text: &str, alphabet: usize) -> Result<Vec<u8>, String> {
-        if alphabet != 0 {
+        if alphabet == Self::ESCAPED {
+            let mut result = Vec::new();
+            for letter in text.chars() {
+                let code = letter as u32;
+                match code {
+                    0..=255 => result.push(code as u8),
+                    256..=65535 => result.extend_from_slice(format!("\\u{code:04x}").as_bytes()),
+                    _ => result.extend_from_slice(format!("\\U{code:08x}").as_bytes()),
+                }
+            }
+            return Ok(result);
+        }
+        if alphabet != Self::WIDE {
+            let ceiling = if alphabet == Self::SEVEN_BIT { 127 } else { 255 };
             let chars = text.chars().collect::<Vec<_>>();
-            if let Some(first) = chars.iter().position(|c| *c as u32 > 127) {
-                let last = chars[first..].iter().position(|c| c.is_ascii()).map_or(chars.len(), |i| first + i);
+            if let Some(first) = chars.iter().position(|c| *c as u32 > ceiling) {
+                let last = chars[first..].iter().position(|c| *c as u32 <= ceiling).map_or(chars.len(), |i| first + i);
                 let location = if last - first > 1 { format!("characters in position {}-{}", first, last - 1) }
                     else {
                         let code = chars[first] as u32;
                         let escape = match code { 0..=255 => format!("\\x{code:02x}"), 256..=65535 => format!("\\u{code:04x}"), _ => format!("\\U{code:08x}") };
                         format!("character '{}' in position {}", escape, first)
                     };
-                let name = &self.table.strings("ext.system.bytes.encodings")[2];
-                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range(128)", self.octet_error("encode"), name, location));
+                let name = self.octet_codec_name(alphabet);
+                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range({})", self.octet_error("encode"), name, location, ceiling + 1));
             }
+            if alphabet == Self::BYTE_FOR_BYTE { return Ok(text.chars().map(|c| c as u8).collect()); }
         }
         Ok(Vec::from(text.as_bytes()))
     }
 
+    /// What is said of bytes a codec cannot read. The places run from the
+    /// first byte at fault to the last, both counted in.
+    fn octet_decode_fault(&self, alphabet: usize, first: usize, last: usize, numbers: &[u8], why: &str) -> String {
+        let subject = match last - first {
+            0 => format!("byte 0x{:02x} in position {}", numbers[first], first),
+            _ => format!("bytes in position {}-{}", first, last),
+        };
+        format!("{}'{}' codec can't decode {}: {}", self.octet_error("decode"), self.octet_codec_name(alphabet), subject, why)
+    }
+
+    /// Bytes read back as text where a far character was written as an
+    /// escape. A run of backslashes hides the escape unless the run is
+    /// odd, and the last backslash of an odd run begins it.
+    fn octets_unescaped(&self, numbers: &[u8]) -> Result<Value, String> {
+        let mut text = String::new();
+        let mut at = 0;
+        while at < numbers.len() {
+            if numbers[at] != b'\\' { text.push(numbers[at] as char); at += 1; continue; }
+            let run = numbers[at..].iter().take_while(|b| **b == b'\\').count();
+            let marker = numbers.get(at + run).copied();
+            if run % 2 == 0 || !matches!(marker, Some(b'u') | Some(b'U')) {
+                for _ in 0..run { text.push('\\'); }
+                at += run;
+                continue;
+            }
+            for _ in 0..run - 1 { text.push('\\'); }
+            let start = at + run - 1;
+            let wide = marker == Some(b'U');
+            let wanted = if wide { 8 } else { 4 };
+            let shape = if wide { "\\UXXXXXXXX" } else { "\\uXXXX" };
+            let figures = numbers[start + 2..].iter().take(wanted).take_while(|b| b.is_ascii_hexdigit()).count();
+            if figures < wanted {
+                return Err(self.octet_decode_fault(Self::ESCAPED, start, start + 1 + figures, numbers, &format!("truncated {shape} escape")));
+            }
+            let spelled = std::str::from_utf8(&numbers[start + 2..start + 2 + wanted]).map_err(|_| self.octet_error("unready"))?;
+            let code = u32::from_str_radix(spelled, 16).map_err(|_| self.octet_error("unready"))?;
+            match char::from_u32(code) {
+                Some(letter) => text.push(letter),
+                // A code above the last character is out of range; one
+                // that names half a pair is a character this kernel
+                // cannot hold, and it says so rather than guess.
+                None if code > 0x10ffff => return Err(self.octet_decode_fault(Self::ESCAPED, start, start + 1 + wanted, numbers, "\\Uxxxxxxxx out of range")),
+                None => return Err(self.octet_error("unready")),
+            }
+            at = start + 2 + wanted;
+        }
+        Ok(Value::text(&text))
+    }
+
     fn octets_to_text(&self, numbers: &[u8], alphabet: usize) -> Result<Value, String> {
+        if alphabet == Self::ESCAPED { return self.octets_unescaped(numbers); }
+        if alphabet == Self::BYTE_FOR_BYTE { return Ok(Value::text(&numbers.iter().map(|b| *b as char).collect::<String>())); }
         let mut fault = None;
-        if alphabet == 1 {
+        if alphabet == Self::SEVEN_BIT {
             for (i, &number) in numbers.iter().enumerate() {
                 if number > 127 { fault = Some((i, i + 1, "ordinal not in range(128)")); break; }
             }
@@ -5776,15 +5862,32 @@ impl<'a> Machine<'a> {
             fault = Some((first, last, why));
         }
         match fault {
-            Some((first, last, why)) => {
-                let subject = match last - first {
-                    1 => format!("byte 0x{:02x} in position {}", numbers[first], first),
-                    _ => format!("bytes in position {}-{}", first, last - 1),
-                };
-                Err(format!("{}'{}' codec can't decode {}: {}", self.octet_error("decode"), self.table.strings("ext.system.bytes.encodings")[alphabet * 2], subject, why))
-            }
+            Some((first, last, why)) => Err(self.octet_decode_fault(alphabet, first, last - 1, numbers, why)),
             None => Ok(Value::text(std::str::from_utf8(numbers).map_err(|_| self.octet_error("unready"))?)),
         }
+    }
+
+    /// Text asked for from a row of bytes, with the encoding named and
+    /// the error policy named after it. Nothing but a row of bytes can
+    /// be read this way; text asked of text is refused outright, as is
+    /// anything else.
+    fn text_decoded(&self, values: &[Value]) -> Result<Value, String> {
+        if values.len() > 3 { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
+        let words = self.table.strings("ext.builtin.to_string.undecodable");
+        let said = |at: usize| words.get(at).cloned().unwrap_or_default();
+        let content = match &values[0] {
+            Value::Octets { cell, .. } => cell.borrow().clone(),
+            Value::Text(_) => return Err(said(0)),
+            other => return Err(format!("{}{}{}", said(1), other.kind_word(), said(2))),
+        };
+        if let Some(policy) = values.get(2) {
+            match policy {
+                Value::Text(word) if self.table.spells("ext.system.bytes.strict", word) => {}
+                Value::Text(_) => return Err(self.octet_error("unready")),
+                _ => return Err(self.octet_error("arguments")),
+            }
+        }
+        self.octets_to_text(&content, self.octet_encoding(values.get(1))?)
     }
 
     fn octet_routine(&self, operation: u8, values: &[Value]) -> Result<Value, String> {
@@ -9242,7 +9345,7 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AsText if self.table.single("ext.builtin.to_string.object").is_some() && v.len() != 1 => {
-                if v.is_empty() { Value::text("") } else { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
+                if v.is_empty() { Value::text("") } else { return self.text_decoded(&v); }
             }
             Prim::Iterate => {
                 n(1)?;

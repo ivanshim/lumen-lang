@@ -384,9 +384,15 @@ only. The extension labels so far, all from PHP:
   which spells no number.
 - `ext.builtin.to_string.object`, `.encoding` and `.errors`: lists of
   names the text reader takes. Object names its first argument; an empty
-  call gives empty text. Encoding and errors are read but cannot yet be
-  run, nor can their positional forms; `ext.builtin.to_string.unready`
-  gives the plain complaint rather than pretending to decode bytes.
+  call gives empty text. An encoding, named or standing second, reads a
+  row of bytes back as text by the codecs of `ext.system.bytes.encodings`;
+  an error policy standing third is read by `ext.system.bytes.strict`,
+  and no other policy is run. The row alone, with no encoding, is written
+  out as it is spelled rather than decoded. `ext.builtin.to_string.undecodable`
+  complains of a call asking text of something which is no row of bytes:
+  its first entry for text, then a part before and a part after the kind
+  of any other value. `ext.builtin.to_string.unready` gives the complaint
+  where the call carries more than the three arguments read here.
 - `ext.builtin.text.*`: words for the operations upon text below. Each
   takes its text first, whether called through a member mark or by its
   whole name. A language leaving these words unspelled keeps its former
@@ -493,8 +499,18 @@ only. The extension labels so far, all from PHP:
   immutable value, whose places hold whole numbers. Rows admit joining, repetition, ordering, membership
   and equality; a byte row and text are never equal.
 - `ext.builtin.bytes.encode` and `.decode`: the methods taking text to
-  bytes and bytes to text. `ext.system.bytes.encodings` names the wide
-  encoding and its alias, then the seven-bit encoding and its alias.
+  bytes and bytes to text. `ext.system.bytes.encodings` holds one codec
+  to an entry. The entry begins with the name that codec complains
+  under, and the words after it are the spellings which reach it, a
+  spelling being read without regard to letter case and with underscores
+  read as hyphens; the leading name is a spelling only where it stands
+  again among them. Their order is what tells the kernels which codec is
+  which: the wide encoding, then the seven-bit one, then the one holding
+  every byte to be the character of that number, then the one which
+  writes a character past a byte as a backslash escape and reads such an
+  escape back. A codec beyond the fourth is not known. An escape naming
+  half a surrogate pair is refused rather than read, since the kernels
+  keep no such character.
   `ext.system.bytes.strict` names strict conversion; other error policies
   remain wanting.
 - `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
@@ -4358,7 +4374,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.encoding` | - | - | `encoding` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
-| `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |
@@ -4811,7 +4828,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.bad_order` | - | - | `ValueError: byteorder must be either 'little' or 'big'` | - | - | - | - | - | - | - |
 | `ext.system.bytes.decode` | - | - | `UnicodeDecodeError: ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.encode` | - | - | `UnicodeEncodeError: ` | - | - | - | - | - | - | - |
-| `ext.system.bytes.encodings` | - | - | `utf-8` `utf8` `ascii` `us-ascii` | - | - | - | - | - | - | - |
+| `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
 | `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
 | `ext.system.bytes.index` | - | - | `IndexError: index out of range` | - | - | - | - | - | - | - |

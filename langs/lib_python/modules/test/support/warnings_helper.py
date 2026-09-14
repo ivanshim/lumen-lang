@@ -10,5 +10,8 @@ def ignore_warnings(*args, **kwargs):
 def _identity(function):
     return function
 
-def ignore_fork_in_thread_deprecation_warnings(function):
-    return function
+# The reference suite writes this one with a call of its own before the
+# thing it decorates, so it hands back the decorator rather than being
+# one itself.
+def ignore_fork_in_thread_deprecation_warnings():
+    return _identity
