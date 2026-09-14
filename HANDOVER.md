@@ -301,6 +301,50 @@ RectComplex cannot answer to <built-in function complex>` on stack8,
 `Class RectComplex cannot answer to that` on microcode7 -- which is one
 defect wearing two faces.
 
+### 1e. What "this class form cannot run yet" actually covers
+
+Four of the files that run nothing stop with the same sentence, so it
+reads like one defect. It is not: the sentence is raised from seven
+places in `explicit_class` in `kernels/stack8/src/compile.rs`, and the
+class body ends up refused for several unrelated reasons. Each was
+reduced to a few lines and checked against real `python3` on this
+machine. Five separate defects came out of it.
+
+A class body may hold only the member forms the reader knows -- a
+method, a `pass`, a plain `name = value`, an annotated one. Anything
+else falls to a catch-all that refuses the whole class at the point it
+is defined. So all of these, which CPython runs without comment, stop
+the program:
+
+    if True: x = 1                for i in (1, 2, 3): pass
+    import sys                    from math import pi
+    del x                         try: ... except: ...
+    x.append(3)                   print("in body")
+    while False: pass             x += 1
+
+A class written inside a function is refused outright, whatever its
+body, because the reader marks a body unready when it is not the
+outermost piece. `def f(): class A: x = 1` never gets as far as `A`.
+This is the widest of the five: `test_set` has sixteen such classes,
+`test_float` fifteen, `test_cmath` eight, `test_fractions` seven, and
+`test_enumerate` and `test_complex` six each.
+
+A class named with a keyword the header does not carry, `class A(object,
+metaclass=type)`, is refused, and so is one whose bases are spread from
+a sequence, `class A(*bases)`.
+
+A tuple-unpacking assignment in the body, `seq, res = 'abc', [1, 2]`,
+is refused. This one alone stops the whole of `test_enumerate`, whose
+`EnumerateTestCase` opens with exactly that line.
+
+A chained assignment in the body, `x = y = 3`, is worse than a refusal:
+it binds `x` and quietly loses `y`, so the class is built and answers
+wrongly later. A refusal is a defect one can see; this one has to be
+looked for.
+
+Two bases are fine -- `class A(P, Q)` was checked and works -- so
+multiple inheritance is not among these.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
