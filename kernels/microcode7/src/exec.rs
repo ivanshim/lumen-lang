@@ -7017,6 +7017,19 @@ impl<'a> Machine<'a> {
             return self.prim_values(plain, name, v);
         }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
+        // Building octets asks for the numbers they are to keep. A
+        // cursor gives those numbers up one at a time rather than all at
+        // once, so draw it out into a row first; that is what lets a run
+        // backwards over octets be built straight back into octets.
+        if let Prim::Octets(which @ (0 | 1)) = op {
+            if let [lone] = v {
+                let plain = lone.settled();
+                let already = matches!(plain, Value::Octets { .. } | Value::Vector(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                if !already {
+                    if let Ok(numbers) = self.core_collect(&plain) { return self.octet_routine(which, &[Value::Vector(Rc::new(numbers))]); }
+                }
+            }
+        }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
         if v.len() == 2 {
             if let (Value::Octets { cell: x, changeable, .. }, Value::Octets { cell: y, .. }) = (&v[0], &v[1]) {
@@ -12048,7 +12061,10 @@ impl Machine<'_> {
             }
             Backwards => {
                 require(1, 1)?;
-                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_)) { return Err(self.core_complaint("core.unready", name)); }
+                // Octets run backwards as well. A run forwards over them
+                // gives up the numbers they keep rather than any letters,
+                // so running the other way gives up those same numbers.
+                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_) | Value::Octets { .. }) { return Err(self.core_complaint("core.unready", name)); }
                 // A progression runs backwards as a progression, last
                 // place first, never gathered into the row it stands for.
                 if let Value::Progression(walk) = &input[0] {

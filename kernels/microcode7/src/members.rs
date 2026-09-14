@@ -427,7 +427,11 @@ fn read_hex_real(spelling:&str)->Option<f64>{
     let mut place=1.0/16.0;
     for c in after.chars(){worth+=f64::from(c.to_digit(16)?)*place;place/=16.0;}
     let mut remaining=power;
-    while remaining>0&&worth.is_finite(){worth*=2.0;remaining-=1;}
+    // Nothing comes of doubling a worth of nothing, so it halts the
+    // climb the way a worth beyond the numbers does. Otherwise a power
+    // of eighteen figures written against a zero is counted down one
+    // step at a time to arrive back at the zero it started from.
+    while remaining>0&&worth.is_finite()&&worth!=0.0{worth*=2.0;remaining-=1;}
     while remaining<0&&worth!=0.0{worth/=2.0;remaining+=1;}
     Some(sign*worth)
 }

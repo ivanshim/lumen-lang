@@ -8527,7 +8527,19 @@ impl<'a> Engine<'a> {
                 };
                 Value::text(&writer.field(&args[0], spec, "")?)
             }
-            Builtin::Bytes(task) => return self.byte_call(task, args),
+            // Bytes are made of the numbers they are handed, and a walk
+            // stands for its numbers as plainly as a list does. Gather
+            // the walk into a row first so that a walk backwards over a
+            // byte string can be built straight back into one.
+            Builtin::Bytes(task) => {
+                let gathered = matches!(task, 0 | 1) && args.len() == 1
+                    && !matches!(args[0], Value::Bytes(..) | Value::Array(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                if gathered {
+                    let source = args[0].clone();
+                    if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[Value::array(items)]); }
+                }
+                return self.byte_call(task, args);
+            }
             Builtin::Text(op) => { let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect(); crate::strings::run(op, name, &normalized, self.lang, &sp)? },
             Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
@@ -10849,8 +10861,11 @@ impl Engine<'_> {
                     let mut keys = self.comprehension_items(&args[0])?; keys.reverse();
                     return Ok(self.watched_walk(&args[0], keys));
                 }
+                // A byte string belongs here beside the text: what it
+                // holds are numbers, and a walk backwards hands them over
+                // last to first, exactly the members a walk forwards has.
                 let source = args[0].contents();
-                if !matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_)) { return Err(self.core_fault("core.unready", name)); }
+                if !matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_) | Value::Bytes(..)) { return Err(self.core_fault("core.unready", name)); }
                 // A counted row is walked backwards as a counted row,
                 // from its last place to its first, without ever being
                 // made into the row it counts.

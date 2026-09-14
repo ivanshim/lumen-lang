@@ -2314,6 +2314,76 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    /// The words a target hands a value to, in the order it hands them.
+    /// Where the target carries anything besides words, the marks that
+    /// join them, brackets and the rest mark, it hands nothing to a
+    /// member and none of it is gathered.
+    fn target_words(&self, span: std::ops::Range<usize>, gathered: &mut Vec<String>) -> bool {
+        if span.start >= span.end { return false; }
+        for at in span {
+            let token = &self.tokens[at];
+            let punctuation = ["ext.op.tuple", "ext.stmt.unpack.rest", "syntax.group.open", "syntax.group.close",
+                "syntax.array.open", "syntax.array.close"];
+            match token.shape {
+                Shape::Bare if !self.table.keywords.contains(&token.lexeme) => gathered.push(token.lexeme.clone()),
+                Shape::Sign if punctuation.iter().any(|label| self.table.spells(label, &token.lexeme)) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Members a body binds by taking a value apart (`a, b = 1, 2`) or
+    /// through a chain of signs (`x = y = 3`). Each of these names more
+    /// members than the one member the walk over a body knows how to
+    /// keep, and each works its value out once before handing it to
+    /// every target in turn. Nothing comes back where the statement is
+    /// neither form, and nothing has been read, so the walk goes on to
+    /// the readers that come after this one.
+    fn taken_apart_members(&mut self, setup: &mut Vec<Form>) -> Res<Option<Vec<(String, Address)>>> {
+        let mut begins = self.pos;
+        let signs = self.divided_at(begins, self.tokens.len(), "stmt.assign");
+        if signs.is_empty() || (signs.len() > 1 && !self.table.flag("ext.stmt.assign.chain")) { return Ok(None); }
+        // A single word before a single sign is the member the walk
+        // already keeps, so it is left to the reader that keeps it.
+        if signs.len() == 1 && signs[0] == begins + 1 { return Ok(None); }
+        let mut targets = Vec::new();
+        for sign in &signs {
+            targets.push(begins..*sign);
+            begins = sign + 1;
+        }
+        let mut gathered = Vec::new();
+        if targets.iter().any(|span| !self.target_words(span.clone(), &mut gathered)) { return Ok(None); }
+        if gathered.is_empty() { return Ok(None); }
+        // The value is worked out while the words still stand for what
+        // the body bound earlier, so that `a, b = a + 1, 2` reads the
+        // member `a` held rather than the place about to replace it.
+        self.pos = signs[signs.len() - 1] + 1;
+        let answer = match self.table.has_any("ext.op.tuple") {
+            true => self.comma_value()?,
+            false => self.expr(0)?,
+        };
+        let resume = self.pos;
+        let source = self.gensym("given").ident.to_string();
+        setup.push(self.write(&source, answer));
+        // Now each word is given a place belonging to the class. The
+        // handing out below is the ordinary one, and it looks the words
+        // up as any reading in a body does, so what a target receives
+        // lands in these places and not in the scope around the class.
+        let mut kept = Vec::new();
+        for word in gathered {
+            let place = self.gensym("attribute");
+            self.class_bindings.last_mut().expect("the class namespace").1.insert(word.clone(), place.clone());
+            kept.push((word, place));
+        }
+        for span in targets {
+            let handed = self.distribute(span, &source)?;
+            setup.push(handed);
+        }
+        self.pos = resume;
+        Ok(Some(kept))
+    }
+
     fn class_not_ready(&self) -> Form {
         let said = self.table.single("ext.stmt.class.unready").unwrap_or("This class form cannot run yet");
         prim_call(Prim::Raise, vec![constant(Value::text(said))])
@@ -2500,6 +2570,15 @@ impl<'a> Builder<'a> {
                 if !decorated {methods.push((method_name, body));}
             } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
                 self.advance();
+            } else if let Some(kept) = self.taken_apart_members(&mut setup)? {
+                for (word, place) in kept {
+                    if let Some(index) = attributes.iter().position(|old| old == &word) {
+                        attributes.remove(index);
+                        values.remove(index + usize::from(parent.is_some()) + other_parents.len());
+                    }
+                    attributes.push(word);
+                    values.push(Form::Read(place));
+                }
             } else {
                 let member = self.look().lexeme.clone();
                 let value = if self.key("ext.stmt.class") {

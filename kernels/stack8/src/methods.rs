@@ -384,7 +384,11 @@ fn hex_real(spelling: &str) -> Option<f64> {
             for c in fraction.chars() { value += c.to_digit(16)? as f64 * scale; scale /= 16.0; }
             let mut exponent = power;
             let mut result = value;
-            while exponent > 0 { result *= 2.0; exponent -= 1; if result.is_infinite() { break; } }
+            // Doubling leaves a zero alone just as it leaves a real that
+            // has grown past the numbers alone, so both stop the count.
+            // Without the zero, a spelling such as 0x0p123456789123456789
+            // would be doubled that many times over to reach the same 0.
+            while exponent > 0 { result *= 2.0; exponent -= 1; if result.is_infinite() || result == 0.0 { break; } }
             while exponent < 0 { result /= 2.0; exponent += 1; if result == 0.0 { break; } }
             result
         }
