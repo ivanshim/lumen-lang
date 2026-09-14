@@ -391,8 +391,8 @@ only. The extension labels so far, all from PHP:
   out as it is spelled rather than decoded. `ext.builtin.to_string.undecodable`
   complains of a call asking text of something which is no row of bytes:
   its first entry for text, then a part before and a part after the kind
-  of any other value. `ext.builtin.to_string.unready` gives the plain
-  complaint where the call has more arguments than these.
+  of any other value. `ext.builtin.to_string.unready` gives the complaint
+  where the call carries more than the three arguments read here.
 - `ext.builtin.text.*`: words for the operations upon text below. Each
   takes its text first, whether called through a member mark or by its
   whole name. A language leaving these words unspelled keeps its former
@@ -4375,7 +4375,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.errors` | - | - | `errors` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
-| `ext.builtin.to_string.unready` | - | - | `NotImplementedError: str encoding and errors are not supported` | - | - | - | - | - | - | - |
+| `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.uncaught` | - | - | - | - | `__uncaught_handler` | - | - | - | - | - |
 | `ext.builtin.unset` | - | - | - | - | `unset` | - | - | - | - | - |

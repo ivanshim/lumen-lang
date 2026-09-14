@@ -1668,7 +1668,7 @@
     " found"
   ],
   "ext.builtin.to_string.unready": [
-    "NotImplementedError: str encoding and errors are not supported"
+    "TypeError: str() takes at most 3 arguments"
   ],
   "ext.builtin.tuple": [
     "tuple"
