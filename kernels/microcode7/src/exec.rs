@@ -142,13 +142,19 @@ pub struct Suspension {
     /// pairs it held then, so a step may notice the map has grown or
     /// shrunk under the walk.
     overseen: Option<(Rc<RefCell<Value>>, usize)>,
+    /// The routine the body belongs to, where the walk is a routine's
+    /// body and not a row of members already in hand. A step back into
+    /// it stands inside that routine, so it is named while the step
+    /// lasts and anything asking what names are in reach is answered
+    /// about the right one.
+    of: Option<Rc<Routine>>,
 }
 
 impl Suspension {
-    fn body(program: &Routine, frame: Rc<Env>) -> Self {
+    fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: None, ready: None, overseen: None }
+            inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()) }
     }
 }
 
@@ -2372,7 +2378,7 @@ impl<'a> Machine<'a> {
         Value::Generator(Rc::new(RefCell::new(Suspension {
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: Some(members.into_iter()), ready: None, overseen,
+            inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
         })))
     }
 
@@ -2514,7 +2520,13 @@ impl<'a> Machine<'a> {
             return Ok(next);
         }
         let row = self.row;
+        // The body picks up where it left off, so while it runs the run
+        // stands in the routine it was written in and not in whichever
+        // one asked for the next value.
+        let named = state.of.clone();
+        if let Some(program) = &named { self.frames_named.push(program.clone()); }
         let outcome = self.unfold(&mut state, sent);
+        if named.is_some() { self.frames_named.pop(); }
         self.row = row;
         // The stop kind raised in the body is the generator's fault,
         // not the end of its walk.
@@ -11537,6 +11549,21 @@ impl<'a> Machine<'a> {
                 let cells = frame.cells.borrow();
                 for (word, held) in program.idents.iter().zip(cells.iter()) {
                     if Self::visible_name(word) && !matches!(held, Value::Unset) { entries.push((Value::text(word), held.clone())); }
+                }
+                drop(cells);
+                // A name the routine reads from the scope around it is in
+                // reach where the call stands, so it belongs here too. It
+                // lives in a frame further out; a name still holding
+                // nothing there is left out, as an unwritten name of the
+                // routine's own is.
+                for slot in &program.reaching {
+                    if !Self::visible_name(&slot.ident) || entries.iter().any(|(word, _)| word.bare() == slot.ident.as_ref()) { continue; }
+                    let held = match ascend(frame, slot.up).cells.borrow().get(slot.at) {
+                        Some(Value::Shared(cell)) => cell.borrow().clone(),
+                        Some(held) => held.clone(),
+                        None => continue,
+                    };
+                    if !matches!(held, Value::Unset) { entries.push((Value::text(&slot.ident), held)); }
                 }
             }
             Rc::new(RefCell::new(Value::Dict(Rc::new(entries))))
