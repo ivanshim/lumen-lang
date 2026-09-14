@@ -704,14 +704,14 @@ impl<'a> Engine<'a> {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()) else{return Err(self.class_refusal());};
                 if subclass{
-                    if !matches!(builtin,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf|Builtin::Dict|Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)){return Err(self.class_refusal());}
+                    if !matches!(builtin,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf|Builtin::Dict|Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Enumerate){return Err(self.class_refusal());}
                     if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
                     if let Value::Adapter(other)=value {if other.0==8{return Ok(other.1[0].equals(&w.1[0]));}}
                     return Err(self.class_refusal());
                 }
                 // A thing of a class standing on the kind is of the kind.
                 if let Value::Object(o)=value{return Ok(Self::kind_beneath(&o.class).as_deref()==Some(word.as_ref()));}
-                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),Builtin::SortOf=>matches!(value,Value::Class(_)),Builtin::Dict=>matches!(value,Value::Map(_)),Builtin::Tuple=>matches!(value,Value::Tuple(_)),Builtin::Set=>matches!(value,Value::Set(_)),Builtin::Bool=>matches!(value,Value::Flag(_)),Builtin::Complex=>matches!(value,Value::Complex(_)),Builtin::Bytes(m)=>matches!(value,Value::Bytes(_,mutable,_) if *mutable==(*m==1)),_=>return Err(self.class_refusal())});
+                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),Builtin::SortOf=>matches!(value,Value::Class(_)),Builtin::Dict=>matches!(value,Value::Map(_)),Builtin::Tuple=>matches!(value,Value::Tuple(_)),Builtin::Set=>matches!(value,Value::Set(_)),Builtin::Bool=>matches!(value,Value::Flag(_)),Builtin::Complex=>matches!(value,Value::Complex(_)),Builtin::Enumerate=>matches!(value,Value::Walk(_)|Value::Walking(_)|Value::Cursor(_)),Builtin::Bytes(m)=>matches!(value,Value::Bytes(_,mutable,_) if *mutable==(*m==1)),_=>return Err(self.class_refusal())});
             }}
         }
         Err(self.class_refusal())

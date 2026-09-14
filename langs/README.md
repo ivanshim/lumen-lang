@@ -1385,7 +1385,10 @@ only. The extension labels so far, all from PHP:
   or by the kind's own maker where the class asks for it. Whatever the class
   does not say of its things, how they show, count, compare, hash, walk,
   are indexed or written into, and the methods of the kind, the worth
-  answers. A class standing on two such kinds at once is refused with
+  answers. Where the kind writes its own name before the worth, as a set,
+  a frozen set and a row of bytes open to change do, the name written is
+  the thing's own class rather than the kind's.
+  A class standing on two such kinds at once is refused with
   `ext.stmt.class.layout`.
 - `ext.stmt.class.missing`: the method a thing standing on a mapping kind
   answers with when a key it has not is asked for.
@@ -4612,7 +4615,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.binary.amiss` | - | - | `TypeError: unsupported operand type(s) for ` `: '` `' and '` `'` | - | - | - | - | - | - | - |
-| `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` | - | - | - | - | - | - | - |
+| `ext.stmt.class.builtin` | - | - | `str` `int` `float` `list` `dict` `tuple` `set` `frozenset` `bytes` `bytearray` `complex` `enumerate` | - | - | - | - | - | - | - |
 | `ext.stmt.class.called` | - | - | `__class_call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.caller` | - | - | - | - | `__call` | - | - | - | - | - |
 | `ext.stmt.class.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |

@@ -684,7 +684,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(8,names)=>{
                 let Value::Text(word)=&names[0] else{return Err(self.class_unready());};
                 if class_only{
-                    if !matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf|Prim::Dictionary|Prim::Tupling|Prim::Uniques|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1))){return Err(self.class_unready());}
+                    if !matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf|Prim::Dictionary|Prim::Tupling|Prim::Uniques|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1)|Prim::Numbered)){return Err(self.class_unready());}
                     return match subject {Value::Blueprint(b)=>Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref())),Value::Wrapped(8,other)=>Ok(other[0].equals(&names[0])),_=>Err(self.class_unready())};
                 }
                 // A thing of a blueprint standing on the kind is of the kind.
@@ -700,6 +700,7 @@ impl<'a> Machine<'a> {
                     Some(Prim::Uniques)=>Ok(matches!(subject,Value::Set(_))),
                     Some(Prim::Truthful)=>Ok(matches!(subject,Value::Flag(_))),
                     Some(Prim::ComplexMade)=>Ok(matches!(subject,Value::Complex(_))),
+                    Some(Prim::Numbered)=>Ok(matches!(subject,Value::Iterator(_)|Value::Cursor(_)|Value::Traversal(..))),
                     Some(Prim::Octets(which))=>Ok(matches!(subject,Value::Octets{changeable,..} if *changeable==(*which==1))),
                     _=>Err(self.class_unready()),
                 }

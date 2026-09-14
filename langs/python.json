@@ -2251,7 +2251,8 @@
     "frozenset",
     "bytes",
     "bytearray",
-    "complex"
+    "complex",
+    "enumerate"
   ],
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"
