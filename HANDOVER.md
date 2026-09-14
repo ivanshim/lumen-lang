@@ -443,10 +443,18 @@ more. Measured on stack8 at `eb04787` against `12fabf1`:
     test_set           nothing  ->  290 of 644
     test_listcomps    16 of 68  ->   18 of 68
 
-and on microcode7 `test_fractions` goes from nothing to 10 of 50. That
-sweep was stopped at forty-one of fifty files, so it is not a whole-suite
-total; what it does show is the direction, and that nothing measured
-moved backwards.
+and on microcode7 `test_fractions` goes from nothing to 10 of 50.
+
+The sweep finished. The whole-suite figures at `eb04787`, against the
+same measuring at `12fabf1`:
+
+    stack8       380 of 1,381 across 38 files  ->  752 of 2,364 across 43
+    microcode7   333 of 1,239 across 37 files  ->  719 of 2,272 across 43
+
+Files running nothing fall from twelve to seven on stack8 and from
+thirteen to seven on microcode7. Two of the seven outlast fifteen minutes
+in a debug build rather than refusing anything, so what they settle on
+has to be read from a release run. Nothing measured moved backwards.
 
 WHAT IS IN THE WAY OF MERGING. CI fails on the `scratch` job alone --
 `build-and-test` and `reference` pass every run, so the build, the
