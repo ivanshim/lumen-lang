@@ -278,10 +278,13 @@ fn step_toward(from: f64, toward: f64) -> f64 {
 /// A real scaled by a power of two a piece at a time: the piece is small
 /// enough to be a real itself, so the scaling reaches the least reals and
 /// the greatest instead of meeting a power already nought or endless.
+/// The power is compared against the piece from either side rather than
+/// by its size, because the very least whole number a machine holds has
+/// no size the machine can name and asking for one would stop the run.
 fn scaled_by_twos(mut real: f64, mut power: i64) -> f64 {
     const PIECE: i64 = 900;
     if real == 0.0 || !real.is_finite() { return real; }
-    while power.abs() > PIECE {
+    while power > PIECE || power < -PIECE {
         let step = if power > 0 { PIECE } else { -PIECE };
         real *= 2f64.powi(step as i32);
         power -= step;
