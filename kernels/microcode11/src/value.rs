@@ -69,6 +69,9 @@ pub struct Literals<'a> {
     /// Whether a language counts a flag rather than wording it: true
     /// shows as one, false as nothing at all.
     pub counted: bool,
+    /// Whether a row reads as its representation reads, each member
+    /// within it written out rather than merely shown.
+    pub quoted: bool,
 }
 
 impl Value {
@@ -150,7 +153,7 @@ impl Value {
             Value::Truth(false) => lit.no.to_string(),
             Value::Nothing | Value::Empty => lit.none.to_string(),
             Value::Array(items) => {
-                let parts: Vec<String> = items.iter().map(|v| v.show(lit)).collect();
+                let parts: Vec<String> = items.iter().map(|v| if lit.quoted { v.written(lit) } else { v.show(lit) }).collect();
                 format!("[{}]", parts.join(", "))
             }
             Value::Small(n) => n.to_string(),
@@ -163,6 +166,17 @@ impl Value {
             Value::Text(s) => s.to_string(),
             Value::Routine(p) => format!("<function({})>", p.params.join(", ")),
             Value::Tag(t) => t.name().to_string(),
+        }
+    }
+
+    /// A member written as a representation writes it: text between its
+    /// quote marks, a row within written the same way again, and every
+    /// other value just as it shows.
+    fn written(&self, lit: Literals) -> String {
+        match self {
+            Value::Text(s) => in_quotes(s),
+            Value::Array(items) => format!("[{}]", items.iter().map(|v| v.written(lit)).collect::<Vec<_>>().join(", ")),
+            plain => plain.show(lit),
         }
     }
 
@@ -183,9 +197,44 @@ impl Value {
                 into.push(']');
             }
             Value::Routine(p) => into.push_str(&format!("@{:p}", Rc::as_ptr(p))),
-            other => into.push_str(&other.show(Literals { yes: "true", no: "false", none: "null", counted: false })),
+            other => into.push_str(&other.show(Literals { yes: "true", no: "false", none: "null", counted: false, quoted: false })),
         }
         into.push(',');
+    }
+}
+
+/// Text with quote marks about it. The mark is an apostrophe unless the
+/// text holds one and no double quote. The mark, the backslash and the
+/// characters that move the writing on are spelled as escapes, and so is
+/// anything else a reader could not take back as it stands.
+pub fn in_quotes(text: &str) -> String {
+    let mark = match (text.contains('\''), text.contains('"')) {
+        (true, false) => '"',
+        _ => '\'',
+    };
+    let body: String = text
+        .chars()
+        .map(|letter| match letter {
+            '\r' => String::from("\\r"),
+            '\t' => String::from("\\t"),
+            '\n' => String::from("\\n"),
+            '\\' => String::from("\\\\"),
+            same if same == mark => format!("\\{same}"),
+            odd if odd.is_control() => numbered(odd),
+            other => String::from(other),
+        })
+        .collect();
+    format!("{mark}{body}{mark}")
+}
+
+/// A character spelled by its number, in the shortest of the three widths
+/// that holds it.
+fn numbered(letter: char) -> String {
+    let place = u32::from(letter);
+    match place {
+        0..=0xff => format!("\\x{place:02x}"),
+        0x100..=0xffff => format!("\\u{place:04x}"),
+        _ => format!("\\U{place:08x}"),
     }
 }
 

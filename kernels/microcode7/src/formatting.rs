@@ -2,7 +2,7 @@
 // The description belongs to the field, never to ordinary real output.
 
 use num_traits::{ToPrimitive, Signed};
-use crate::data::{Names, Value};
+use crate::data::{Among, Names, Value};
 use crate::table::Table;
 
 pub struct Layout<'a> {
@@ -54,17 +54,28 @@ impl Layout<'_> {
                 }).collect::<Result<String, String>>()?
             }
             Value::Octets { .. } => item.render(self.names),
+            // A field lays a collection out by walking its members
+            // here, so it leaves the same note on them that the other
+            // writers leave, and a collection reached from inside
+            // itself is laid out as the marks it would have stood
+            // between rather than walked round without end.
             Value::Dict(entries) => {
+                let among = Among::members(item);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let rendered = entries.iter().map(|(a, b)| {
                     Ok(format!("{}: {}", self.quote(a, escaped)?, self.quote(b, escaped)?))
                 }).collect::<Result<Vec<_>, String>>()?;
                 format!("{{{}}}", rendered.join(", "))
             }
             Value::Tuple(row) | Value::Row(row) | Value::Arguments(row) => {
+                let among = Among::members(item);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let pieces = row.iter().map(|x| self.quote(x, escaped)).collect::<Result<Vec<_>, _>>()?;
                 format!("({}{})", pieces.join(", "), if row.len() == 1 { "," } else { "" })
             }
             Value::Vector(entries) => {
+                let among = Among::members(item);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let mut rendered = Vec::with_capacity(entries.len());
                 for entry in entries.iter() { rendered.push(self.quote(entry, escaped)?); }
                 format!("[{}]", rendered.join(", "))

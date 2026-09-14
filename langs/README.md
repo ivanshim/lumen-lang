@@ -258,6 +258,29 @@ starred subscript, after the entire subscript has been read.
     `write` are kernel builtins here because Lumen's renderers are written
     in infix Lumen.
 
+25. `system.collection.render` is a core string setting, read by every
+    kernel, saying how a collection is written when its text is asked
+    for. `plain` writes each member as its own text, so a piece of text
+    standing in a collection shows without quotes, as Lumen, PHP and the
+    rest write it. `representation` writes each member as a
+    representation of it instead, which is how Python writes a
+    collection: `print(["a"])` gives `['a']` and not `[a]`, the text
+    keeping the marks it was written between. What a representation is
+    belongs to the kernel and is the same for every language: a piece of
+    text is written between quotes, the apostrophe unless the text holds
+    one and holds no double quote, with a backslash before the quote and
+    before a backslash, letters for the characters that move the writing
+    on, and a number for whatever else a reader could not take back as it
+    stands; a collection within is written the same way again; and every
+    other value is written as it shows. A collection reached from
+    somewhere inside itself has no end to write, so it is written as the
+    marks it would have stood between and no further: braces for a map,
+    brackets for a row and parentheses for a fixed row. A collection
+    reached twice by two roads is no such thing and is written out in
+    full on each of them. The setting holds wherever a
+    collection becomes text, so joining one to a piece of text and asking
+    for its text by name read as printing it does.
+
 ## The Lumen examples in every language
 
 `scripts/port_examples.py` writes every program under `examples/lumen/` in
@@ -270,7 +293,7 @@ functions in Pascal.
 
 ## Extension labels
 
-The 133 labels of the table below are the core: every definition carries all of them,
+The 134 labels of the table below are the core: every definition carries all of them,
 and every kernel reads them. A definition may add labels under `ext.`
 for what its language has beyond the core. The full kernels, stack8 and
 microcode7, read them; the reference kernels (stream35, microcode11,
@@ -1282,10 +1305,13 @@ only. The extension labels so far, all from PHP:
   name the hooks for making, inheriting, restricting members, writing,
   removing, reading and subscripting a class. `call` names the method
   answering when an object is called. The existing class `reader` label
-  names the fallback for an absent member. `doc`, `module`, `defaults`,
-  `code`, `argcount` and `varnames` name a routine's first string, module,
-  spare arguments, code, positional count and kept local names. `receiver`
-  and `function` take a bound method apart. Each takes a list of words.
+  names the fallback for an absent member. `doc` names what a routine
+  and a class keep their opening documentation under, text standing
+  alone as the first statement of the body, and nothing where a class
+  body opens with none. `module`, `defaults`, `code`, `argcount` and
+  `varnames` name a routine's module, spare arguments, code, positional
+  count and kept local names. `receiver` and `function` take a bound
+  method apart. Each takes a list of words.
   Where `root` is spelled, all direct bases take part in the C3 ordering;
   `mro.amiss` gives the words for an ordering that cannot be made.
   `attribute.amiss` gives three pieces enclosing the class and member
@@ -1687,10 +1713,20 @@ only. The extension labels so far, all from PHP:
   places are written, and a wrong number of values stops the run.
 - `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
   `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
-  too few values, too many, or no walk to take values from. Arrays and
-  text may be taken apart, and maps give their keys; other walks are
-  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
-  taking-apart whose places are ill written.
+  too few values, too many, or no walk to take values from. Each is a
+  list of pieces with what the kernel found written between them. The
+  short one holds three pieces around the count of places asked for and
+  the count of values there were, and a fourth that stands before the
+  count of places where one of them is starred, since such a place
+  takes what is left over and the count is then only a floor. The long
+  one holds two pieces around the count of places. The unwalkable one
+  holds two pieces around the name of the kind that could not be
+  walked. Where the pieces open with the name of an exception class the
+  complaint is raised as one of that class, and a guard about the
+  taking-apart may take it. Arrays and text may be taken apart, and maps
+  give their keys; other walks are not yet taken apart.
+  `ext.stmt.unpack.amiss` is what is said of a taking-apart whose places
+  are ill written.
 - `ext.op.identical.negated`: the word directly after the identity
   operator that turns it about (`is not`). With this spelling, equality
   keeps its ordinary meaning; it does not take the looser rules above.
@@ -1713,6 +1749,16 @@ only. The extension labels so far, all from PHP:
   is a word before the operator that turns the answer about (`not in`).
   `ext.op.in.unsupported` holds the plain complaint where the right
   value cannot be searched, or the left of a text search is not text.
+- `ext.op.logical.operand`: a switch; `op.and` and `op.or` give back the
+  operand that settled the answer rather than a flag standing for its
+  truth. With it on, `and` gives its left side when that side is untrue
+  and its right side otherwise, and `or` gives its left side when that
+  side is true and its right side otherwise, so `"" or "z"` comes to
+  `"z"` and `"abc" and "z"` comes to `"z"`. Either way the right side is
+  worked out only when the left leaves the matter open, each side is
+  asked for its truth once at most, and `op.not` still gives a flag.
+  Anywhere the answer is read for truth, as a test or a while's condition
+  reads it, the outcome is the same as without the switch.
 - `ext.op.order.text`: a switch; two texts compared with `<`, `<=`, `>`
   or `>=` are ordered letter by letter, by code point, as CPython orders
   them, rather than by whatever number they might spell.
@@ -2859,10 +2905,20 @@ only. The extension labels so far, all from PHP:
   places are written, and a wrong number of values stops the run.
 - `ext.stmt.unpack.short`, `ext.stmt.unpack.long`, and
   `ext.stmt.unpack.unwalkable`: the words said when a taking-apart has
-  too few values, too many, or no walk to take values from. Arrays and
-  text may be taken apart, and maps give their keys; other walks are
-  not yet taken apart. `ext.stmt.unpack.amiss` is what is said of a
-  taking-apart whose places are ill written.
+  too few values, too many, or no walk to take values from. Each is a
+  list of pieces with what the kernel found written between them. The
+  short one holds three pieces around the count of places asked for and
+  the count of values there were, and a fourth that stands before the
+  count of places where one of them is starred, since such a place
+  takes what is left over and the count is then only a floor. The long
+  one holds two pieces around the count of places. The unwalkable one
+  holds two pieces around the name of the kind that could not be
+  walked. Where the pieces open with the name of an exception class the
+  complaint is raised as one of that class, and a guard about the
+  taking-apart may take it. Arrays and text may be taken apart, and maps
+  give their keys; other walks are not yet taken apart.
+  `ext.stmt.unpack.amiss` is what is said of a taking-apart whose places
+  are ill written.
 - `ext.stmt.unpack`: the words that open a taking-apart — a list of
   places written on the left of a write, each taking the matching place
   of the value on the right (`list($a, $b) = $v`). A place left out is
@@ -3116,11 +3172,26 @@ only. The extension labels so far, all from PHP:
 - `ext.system.module.name`: a list of names bound to the text
   `"__main__"` before the file runs. These are ordinary bindings and
   may be written anew by the program.
+- `ext.system.names.module`: the module a name is looked for in when
+  nothing in the program has bound it and the kernel knows no word of
+  its own for it. The module is fetched the first time a name is missed
+  and read from after that; a name it does not hold stays missing and is
+  told so as before, and a name the kernel already knows never reaches
+  it, so this neither shadows nor slows an ordinary name. It is how
+  Python writes a builtin without importing anything: the names live in
+  a module called `builtins`, and `langs/lib_python/modules/builtins.py`
+  is that module here. Names it holds which the kernel has no value for,
+  such as `sentinel` and `frozendict`, are reached by this path alone.
 - `ext.system.source.file` and `ext.system.source.directory`: the names
   a program calls the file it is written in and the place that file
   lies in (`__FILE__`, `__DIR__`). The host works both out from the
   file it was given and carries them with the request, so a kernel that
   does not read the labels binds nothing.
+- `ext.system.debug`: a name bound to true before the file runs, which
+  a program reads to find out whether its own checks are being kept
+  (`__debug__`). A kernel runs a program with every check left in, so
+  the name always stands for true. It is an ordinary binding and, unlike
+  the language it is drawn from, may be written anew by the program.
 - `ext.op.index.plain_keys`: a switch; every key of an array is either a
   whole number or text, so a key spelling a whole number the way one is
   written out is that number and `a['7']` and `a[7]` name one place. A
@@ -3813,6 +3884,7 @@ Generated by `python3 scripts/lang_table.py`; edit the JSON, not the table.
 | `system.memoization` | `MEMOIZATION` | - | - | - | - | - | - | - | - | - |
 | `system.real_default_precision` | `REAL_DEFAULT_PRECISION` | - | - | - | - | - | - | - | - | - |
 | `system.real.render` | `library` | `library` | `shortest` | `library` | `library` | `library` | `library` | `library` | `library` | `library` |
+| `system.collection.render` | `plain` | `plain` | `representation` | `plain` | `plain` | `plain` | `plain` | `plain` | `plain` | `plain` |
 | `system.entry` | - | - | - | `main` | - | `main` | - | - | - | - |
 | `system.kind.integer` | `INTEGER` | `INTEGER` | - | - | `integer` | - | - | - | - | - |
 | `system.kind.rational` | `RATIONAL` | `RATIONAL` | - | - | - | - | - | - | - | - |
@@ -4443,6 +4515,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.lambda.enclosing` | - | - | `Lambda cannot read an enclosing function variable` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unready` | - | - | `NotImplementedError: lambda values are not supported` | - | - | - | - | - | - | - |
 | `ext.op.lambda.unsupported` | - | - | `Lambda keyword parameters are not supported` | - | - | - | - | - | - | - |
+| `ext.op.logical.operand` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.matrix` | - | - | `@` | - | - | - | - | - | - | - |
 | `ext.op.matrix.unavailable` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
 | `ext.op.matrix.unready` | - | - | `NotImplementedError: matrix multiplication is not supported` | - | - | - | - | - | - | - |
@@ -4687,10 +4760,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.type_params.open` | - | - | `[` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack` | - | - | `[` | - | `list` | - | - | - | - | - |
 | `ext.stmt.unpack.amiss` | - | - | `invalid unpacking assignment` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.long` | - | - | `too many values to unpack` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.long` | - | - | `ValueError: too many values to unpack (expected ` `)` | - | - | - | - | - | - | - |
 | `ext.stmt.unpack.rest` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.short` | - | - | `not enough values to unpack` | - | - | - | - | - | - | - |
-| `ext.stmt.unpack.unwalkable` | - | - | `cannot unpack non-iterable object` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.short` | - | - | `ValueError: not enough values to unpack (expected ` `, got ` `)` `at least ` | - | - | - | - | - | - | - |
+| `ext.stmt.unpack.unwalkable` | - | - | `TypeError: cannot unpack non-iterable ` ` object` | - | - | - | - | - | - | - |
 | `ext.stmt.with` | - | - | `with` | - | - | - | - | - | - | - |
 | `ext.stmt.with.as` | - | - | `as` | - | - | - | - | - | - | - |
 | `ext.stmt.with.enter` | - | - | `__enter__` | - | - | - | - | - | - | - |
@@ -4767,6 +4840,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.complaint.reference.page` | - | - | - | - | `function.` `.html` | - | - | - | - | - |
 | `ext.system.complaint.reference.setting` | - | - | - | - | `docref_root` | - | - | - | - | - |
 | `ext.system.complaint.warning` | - | - | - | - | `Warning` | - | - | - | - | - |
+| `ext.system.debug` | - | - | `__debug__` | - | - | - | - | - | - | - |
 | `ext.system.fault.attribute` | - | - | `object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.system.fault.class` | - | - | `RuntimeError` | - | `Error` | - | - | - | - | - |
 | `ext.system.fault.class.arithmetic` | - | - | `ArithmeticError` | - | `ArithmeticError` | - | - | - | - | - |
@@ -4801,6 +4875,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.module.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.system.module.getattr` | - | - | `__getattr__` | - | - | - | - | - | - | - |
 | `ext.system.module.name` | - | - | `__name__` | - | - | - | - | - | - | - |
+| `ext.system.names.module` | - | - | `builtins` | - | - | - | - | - | - | - |
 | `ext.system.reading.unclosed` | - | - | - | - | `Unclosed '` `'` | - | - | - | - | - |
 | `ext.system.reading.unclosed.line` | - | - | - | - | `on line` | - | - | - | - | - |
 | `ext.system.reading.unclosed.mismatch` | - | - | - | - | `does not match '` `'` | - | - | - | - | - |

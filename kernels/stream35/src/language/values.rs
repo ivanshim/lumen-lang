@@ -242,6 +242,55 @@ impl RuntimeValue for LumenString {
     }
 }
 
+/// A value as a representation of it is written: a piece of text between
+/// quotes, an array with every member written the same way, and anything
+/// else exactly as it shows.
+pub fn as_written(value: &dyn RuntimeValue) -> String {
+    if let Some(text) = value.as_any().downcast_ref::<LumenString>() {
+        return between_quotes(&text.value);
+    }
+    if let Some(array) = value.as_any().downcast_ref::<LumenArray>() {
+        let members: Vec<String> = array.elements.iter().map(|e| as_written(e.as_ref())).collect();
+        return format!("[{}]", members.join(", "));
+    }
+    value.as_display_string()
+}
+
+/// Text with quotes about it. The quote is the apostrophe, save where the
+/// text holds one and no double quote; the quote itself, the backslash
+/// and the line and tab characters are written as escapes, and so is any
+/// other character the reader could not take back as it stands.
+fn between_quotes(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+    let mut written = String::new();
+    written.push(quote);
+    for letter in text.chars() {
+        match letter {
+            '\\' => written.push_str("\\\\"),
+            '\n' => written.push_str("\\n"),
+            '\t' => written.push_str("\\t"),
+            '\r' => written.push_str("\\r"),
+            _ if letter == quote => {
+                written.push('\\');
+                written.push(quote);
+            }
+            _ if letter.is_control() => written.push_str(&by_number(letter)),
+            _ => written.push(letter),
+        }
+    }
+    written.push(quote);
+    written
+}
+
+/// A character named by its number, in as few figures as hold it.
+fn by_number(letter: char) -> String {
+    match u32::from(letter) {
+        number if number <= 0xff => format!("\\x{:02x}", number),
+        number if number <= 0xffff => format!("\\u{:04x}", number),
+        number => format!("\\U{:08x}", number),
+    }
+}
+
 /// Helper to extract a LumenRational if the value is one.
 pub fn as_rational(val: &dyn RuntimeValue) -> Result<&LumenRational, String> {
     val.as_any()
@@ -485,10 +534,13 @@ impl RuntimeValue for LumenArray {
     }
 
     fn as_display_string(&self) -> String {
+        // Where the definition says an array reads as its representation
+        // does, each member is written out rather than merely shown.
+        let written = crate::language::definition::def().quoted_members;
         let elements_str = self
             .elements
             .iter()
-            .map(|e| e.as_display_string())
+            .map(|e| if written { as_written(e.as_ref()) } else { e.as_display_string() })
             .collect::<Vec<_>>()
             .join(", ");
         format!("[{}]", elements_str)

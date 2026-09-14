@@ -78,6 +78,9 @@ pub struct Spelling<'a> {
     /// Whether a language counts a flag rather than spelling it: true
     /// shows as one, false as nothing at all.
     pub counted: bool,
+    /// Whether a list becomes text as a representation of it is written,
+    /// each member in it written down instead of merely shown.
+    pub written: bool,
 }
 
 impl Value {
@@ -165,10 +168,24 @@ impl Value {
             Value::Bool(false) => sp.no.to_string(),
             Value::Null | Value::Empty | Value::Hole | Value::Mark => sp.none.to_string(),
             Value::List(items) => {
-                let shown: Vec<String> = items.iter().map(|v| v.show(sp)).collect();
+                let shown: Vec<String> = items.iter().map(|v| if sp.written { v.down(sp) } else { v.show(sp) }).collect();
                 format!("[{}]", shown.join(", "))
             }
             other => other.bare(),
+        }
+    }
+
+    /// A member of a list as a representation of it is written down:
+    /// text between quote marks, a list within written the same way,
+    /// and every other value as it shows.
+    fn down(&self, sp: &Spelling) -> String {
+        match self {
+            Value::Str(s) => marked(s),
+            Value::List(items) => {
+                let inside: Vec<String> = items.iter().map(|v| v.down(sp)).collect();
+                format!("[{}]", inside.join(", "))
+            }
+            rest => rest.show(sp),
         }
     }
 
@@ -213,6 +230,45 @@ impl Value {
         }
         into.push('|');
     }
+}
+
+/// Text with quote marks set about it. The mark is the apostrophe unless
+/// the text carries one and carries no double quote. Within the marks a
+/// backslash stands before the mark itself and before a backslash, the
+/// characters that move the writing on take their letters, and whatever
+/// else a reader could not take back as it stands takes its number.
+pub fn marked(text: &str) -> String {
+    let mark = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
+    let mut out = String::from(mark);
+    for c in text.chars() {
+        let spelt = match c {
+            '\n' => Some("\\n".to_string()),
+            '\t' => Some("\\t".to_string()),
+            '\r' => Some("\\r".to_string()),
+            '\\' => Some("\\\\".to_string()),
+            _ if c == mark => Some(format!("\\{c}")),
+            _ if c.is_control() => Some(by_place(u32::from(c))),
+            _ => None,
+        };
+        match spelt {
+            Some(letters) => out.push_str(&letters),
+            None => out.push(c),
+        }
+    }
+    out.push(mark);
+    out
+}
+
+/// A character written by its place among the characters, in two figures
+/// where two hold it, else four, else eight.
+fn by_place(place: u32) -> String {
+    if place <= 0xff {
+        return format!("\\x{place:02x}");
+    }
+    if place <= 0xffff {
+        return format!("\\u{place:04x}");
+    }
+    format!("\\U{place:08x}")
 }
 
 /// p/q to `places` significant digits: the whole part in full, then the

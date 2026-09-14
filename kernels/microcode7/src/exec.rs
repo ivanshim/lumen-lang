@@ -21,7 +21,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee, Clause};
-use crate::data::{Adornment, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
+use crate::data::{Adornment, Among, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
 /// command spelled out instead of a file holding one.
@@ -155,6 +155,10 @@ impl Suspension {
 pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     imported: HashMap<String, Value>,
+    /// Set while the namespace that answers for unbound names is being
+    /// read, so that a name missing inside it stops there instead of
+    /// asking for the same namespace over again.
+    within_spare: bool,
     /// The dictionary kept beside the outermost names once a program
     /// has asked for it: from then on those names are read out of it
     /// and written into it, so either side sees the other's writing.
@@ -753,6 +757,7 @@ impl<'a> Machine<'a> {
             fault_kinds,
             library_sources: HashMap::new(),
             imported: HashMap::new(),
+            within_spare: false,
             world_book: None,
             readings: Vec::new(),
             reading_now: None,
@@ -2175,7 +2180,7 @@ impl<'a> Machine<'a> {
 
     // ---------- bindings
 
-    fn fetch(&self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
+    fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
             if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
@@ -2216,7 +2221,32 @@ impl<'a> Machine<'a> {
             if slot.ident.as_ref()==self.detail("root") {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)])));}
         }
+        if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         Err(format!("Undefined variable: {}", slot.ident))
+    }
+
+    /// A language may keep a namespace whose members answer for the
+    /// names a program never bound: Python writes len without importing
+    /// the namespace its len lives in. The namespace named by
+    /// ext.system.names.module is read in on the first name that misses
+    /// and consulted from then on; when it holds nothing under the name,
+    /// or cannot be read at all, the name stays missing.
+    fn spare_name(&mut self, wanted: &str) -> Option<Value> {
+        if self.within_spare { return None; }
+        let named = self.table.strings("ext.system.names.module").first()?.clone();
+        if !self.imported.contains_key(&named) {
+            self.within_spare = true;
+            let outcome = self.load_namespace(&named);
+            self.within_spare = false;
+            outcome.ok()?;
+        }
+        let Some(Value::Thing(space)) = self.imported.get(&named) else { return None };
+        for (word, cell) in space.holds.borrow().iter() {
+            if word != wanted { continue; }
+            let held = match cell { Value::Shared(link) => link.borrow().clone(), worth => worth.clone() };
+            return if matches!(held, Value::Unset) { None } else { Some(held) };
+        }
+        None
     }
 
     fn store(&self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
@@ -2297,20 +2327,13 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn suspension_fault(&self, fault: Escape) -> String {
-        match fault {
-            Escape::Error(words) | Escape::Stopped(words) => words,
-            Escape::Thrown(value) => format!("Uncaught {}", value.render(self.wording())),
-            _ => self.generator_words("unsupported"),
-        }
-    }
-
-    /// What a namespace's answerer raised, carried through a place that
+    /// What a piece of the program raised, carried through a place that
     /// holds only words. A furnished kind goes as its name and its words
-    /// behind the marker, so that the clause around the read and the
-    /// ending of the run alike read the thing raised back out of it;
-    /// anything else goes as a suspension's fault would.
-    fn answerer_fault(&self, fault: Escape) -> String {
+    /// behind the marker, so that the clause around the call and the
+    /// ending of the run alike read the thing raised back out of it; a
+    /// walk over a generator is such a place, and what the generator's
+    /// body raised reaches the arms round the walk this way.
+    fn suspension_fault(&self, fault: Escape) -> String {
         if let Escape::Thrown(Value::Thing(thing)) = &fault {
             let carried = thing.holds.borrow().iter().any(|(key, _)| key == "\0raised-values");
             if let Some(words) = Value::Thing(thing.clone()).raised_words(self.wording()).filter(|_| carried) {
@@ -2320,7 +2343,11 @@ impl<'a> Machine<'a> {
                 };
             }
         }
-        self.suspension_fault(fault)
+        match fault {
+            Escape::Error(words) | Escape::Stopped(words) => words,
+            Escape::Thrown(value) => format!("Uncaught {}", value.render(self.wording())),
+            _ => self.generator_words("unsupported"),
+        }
     }
 
     fn generator_words(&self, suffix: &str) -> String {
@@ -2600,11 +2627,13 @@ impl<'a> Machine<'a> {
                     state.owed.push(Owed::Find(unwrapped_arm(if self.stands_true(&test) { yes } else { no })));
                 }
                 Owed::Truth(op, right) => {
+                    let whole = self.table.flag("ext.op.logical.operand");
                     let left = state.found.pop().unwrap_or(Value::Nil);
                     let holds = self.stands_true(&left);
-                    if (op == Prim::Both && !holds) || (op == Prim::Either && holds) { state.found.push(Value::Flag(holds)); }
-                    else {
-                        state.owed.push(Owed::Apply(Callee::Prim(Prim::AsTruth, Rc::from("")), 1));
+                    if (op == Prim::Both && !holds) || (op == Prim::Either && holds) {
+                        state.found.push(if whole { left } else { Value::Flag(holds) });
+                    } else {
+                        if !whole { state.owed.push(Owed::Apply(Callee::Prim(Prim::AsTruth, Rc::from("")), 1)); }
                         state.owed.push(Owed::Find(unwrapped_arm(right)));
                     }
                 }
@@ -3488,16 +3517,20 @@ impl<'a> Machine<'a> {
                 }
 
                 Prim::Both | Prim::Either => {
+                    // A language may want the side that settled the pair
+                    // handed back whole instead of a flag for its truth.
+                    let whole = self.table.flag("ext.op.logical.operand");
                     let seen = self.value_of(&args[0], frame)?;
                     let left = self.object_truth(&seen)?;
                     if (*op == Prim::Both && !left) || (*op == Prim::Either && left) {
-                        return Ok(Value::Flag(left));
+                        return Ok(if whole { seen } else { Value::Flag(left) });
                     }
                     // The right side is read in place and evaluated only here.
                     let right = match self.value_of(&args[1], frame)? {
                         Value::Bound(p, env) => self.invoke(p, env, Vec::new())?,
                         v => v,
                     };
+                    if whole { return Ok(right); }
                     Ok(Value::Flag(self.object_truth(&right)?))
                 }
                 Prim::Yield => {
@@ -5034,6 +5067,24 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The words a taking-apart says when it goes wrong: the pieces the
+    /// table holds under the label, with the counts and kind names the
+    /// kernel writes between them. Where the language furnishes
+    /// exceptions those pieces open with the class the complaint belongs
+    /// to, so it goes back marked as told in full and nothing further is
+    /// put over it. A table holding too few pieces leaves nothing to
+    /// write and the caller says its own plain words instead.
+    fn apart_words(&self, key: &str, written: &[String]) -> Option<String> {
+        let pieces = self.table.strings(key);
+        if pieces.len() <= written.len() { return None; }
+        let mut said: String = pieces.iter().zip(written).map(|(piece, part)| format!("{piece}{part}")).collect();
+        said.push_str(&pieces[written.len()]);
+        match self.table.has_any("ext.builtin.exceptions") {
+            true => Some(format!("\0{said}")),
+            false => Some(said),
+        }
+    }
+
     fn argument_fault(&self, key: &str, name: Option<&str>) -> String {
         let words = self.table.strings(key);
         let mut said = words.first().cloned().unwrap_or_default();
@@ -6083,6 +6134,13 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Whether the table asks that a collection written as text read as
+    /// its representation does, every member inside it written as a
+    /// representation, so text keeps its quotes and a map its braces.
+    fn collections_read_alike(&self) -> bool {
+        self.table.lone("system.collection.render") == Some("representation")
+    }
+
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
         let celled = match subject {
             Value::Mutable(place, represented) => Some((place.clone(), *represented)),
@@ -6094,12 +6152,21 @@ impl<'a> Machine<'a> {
             // A collection of plain values is shown from its cell, so that
             // one reaching itself is met on the way round.
             if !quoted && !represented && matches!(inner, Value::Vector(_) | Value::Dict(_)) && !Self::carries_instance(&inner) {
-                return Ok(self.show(std::slice::from_ref(&Value::Mutable(place, false))));
+                let whole = Value::Mutable(place, false);
+                if self.collections_read_alike() { return Ok(whole.repr(&self.wording())); }
+                return Ok(self.show(std::slice::from_ref(&whole)));
             }
             return self.object_words(&inner, quoted || represented);
         }
         if let Value::Backtrace(words) = subject { return Err(words.to_string()); }
-        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) { return Ok(self.show(std::slice::from_ref(subject))); }
+        if self.table.strings("ext.stmt.class.special").is_empty() || (!quoted && !Self::carries_instance(subject)) {
+            // A collection standing in no cell of its own is shown the
+            // same way, by the walk that stops where it comes round.
+            if self.collections_read_alike() && matches!(subject, Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Row(_)) {
+                return Ok(subject.repr(&self.wording()));
+            }
+            return Ok(self.show(std::slice::from_ref(subject)));
+        }
         match subject {
             Value::Keyed(value, _) => self.object_words(value, quoted),
             Value::Attributes(t) => {
@@ -6123,11 +6190,28 @@ impl<'a> Machine<'a> {
                     _ => Err(self.bad_answer()),
                 }
             }
+            // This walk holds a collection's members and not the cell
+            // about them, so it leaves its own note on the members it
+            // is within. A collection reached from inside itself is
+            // shown as the marks it would have stood between, while one
+            // reached twice by two roads is shown whole on each.
             Value::Vector(v) => {
+                let among = Among::members(subject);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let pieces = v.iter().map(|x| self.object_words(x, true)).collect::<Result<Vec<_>, _>>()?;
                 Ok(String::from("[") + &pieces.join(", ") + "]")
             }
+            // A fixed row is shown the same way, save that a row of one
+            // member keeps the comma marking it a row and not a bracket.
+            Value::Tuple(v) | Value::Row(v) => {
+                let among = Among::members(subject);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
+                let pieces = v.iter().map(|x| self.object_words(x, true)).collect::<Result<Vec<_>, _>>()?;
+                Ok(String::from("(") + &pieces.join(", ") + if v.len() == 1 { "," } else { "" } + ")")
+            }
             Value::Dict(d) => {
+                let among = Among::members(subject);
+                if let Some(marks) = among.instead { return Ok(marks.to_string()); }
                 let pieces = d.iter().map(|(k, v)| {
                     Ok(self.object_words(k, true)? + ": " + &self.object_words(v, true)?)
                 }).collect::<Result<Vec<_>, String>>()?;
@@ -7187,14 +7271,27 @@ impl<'a> Machine<'a> {
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
                     Value::Dict(entries) => entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() }).collect(),
                     Value::Vector(v) => v.to_vec(),
-                    _ => return Err(self.table.single("ext.stmt.unpack.unwalkable").unwrap_or("Value cannot be taken apart").to_string()),
+                    _ => {
+                        let said = self.apart_words("ext.stmt.unpack.unwalkable", &[v[0].kind_word()]);
+                        return Err(said.unwrap_or_else(|| "Value cannot be taken apart".to_string()));
+                    }
                 };
                 let minimum = if star.is_some() { wanted - 1 } else { wanted };
-                let fault = if values.len() < minimum { Some("ext.stmt.unpack.short") }
-                    else if star.is_none() && values.len() != wanted { Some("ext.stmt.unpack.long") }
-                    else { None };
-                if let Some(label) = fault {
-                    return Err(self.table.single(label).unwrap_or("Wrong number of values").to_string());
+                if values.len() < minimum {
+                    // A starred place takes home whatever is left over,
+                    // so where one stands among the places the count
+                    // asked for is a floor, and the table holds the
+                    // words that say so before it.
+                    let floor = match star {
+                        Some(_) => self.table.strings("ext.stmt.unpack.short").get(3).cloned().unwrap_or_default(),
+                        None => String::new(),
+                    };
+                    let said = self.apart_words("ext.stmt.unpack.short", &[format!("{floor}{minimum}"), values.len().to_string()]);
+                    return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
+                }
+                if star.is_none() && values.len() != wanted {
+                    let said = self.apart_words("ext.stmt.unpack.long", &[wanted.to_string()]);
+                    return Err(said.unwrap_or_else(|| "Wrong number of values".to_string()));
                 }
                 if let Some(middle) = star {
                     let tail = wanted - middle - 1;
@@ -7464,7 +7561,13 @@ impl<'a> Machine<'a> {
                 let mut items = Vec::with_capacity(3);
                 match self.value_of(&call, &outer) {
                     Ok(value) => items.extend([Value::Flag(true), value, Value::text("")]),
-                    Err(Escape::Error(told)) => items.extend([Value::Flag(false), Value::text(&told), Value::text(&told)]),
+                    // The mark that says a complaint is told in full is
+                    // the kernel's own note to itself, so it comes off
+                    // before the words are handed to the program.
+                    Err(Escape::Error(told)) => {
+                        let told = told.trim_start_matches('\0');
+                        items.extend([Value::Flag(false), Value::text(told), Value::text(told)]);
+                    }
                     Err(Escape::Thrown(value)) => {
                         let message = value.render(self.wording());
                         items.extend([Value::Flag(false), value, Value::text(&message)]);
@@ -7498,7 +7601,7 @@ impl<'a> Machine<'a> {
                             _ => None,
                         };
                         match answerer {
-                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.answerer_fault(fault))?,
+                            Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&word)]).map_err(|fault| self.suspension_fault(fault))?,
                             _ => {
                                 let (opening, ending) = self.table.around("ext.builtin.member.absent").unwrap_or(("", ""));
                                 return Err(format!("{opening}{word}{ending}"));
@@ -7581,7 +7684,7 @@ impl<'a> Machine<'a> {
                                 let word = self.table.single("ext.system.module.getattr").unwrap_or_default();
                                 let answerer = thing.holds.borrow().iter().find(|(n, _)| n == word).map(|(_, held)| match held { Value::Shared(cell) => cell.borrow().clone(), other => other.settled() });
                                 match answerer {
-                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.answerer_fault(fault))?,
+                                    Some(routine @ (Value::Routine(_) | Value::Bound(..))) => self.apply_class_member(routine, vec![Value::text(&called)]).map_err(|fault| self.suspension_fault(fault))?,
                                     _ => return Err(format!("Undefined property: {}::${}", thing.of.name, called)),
                                 }
                             }
@@ -8668,7 +8771,7 @@ impl<'a> Machine<'a> {
             }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
             Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
-            Prim::Join => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
+            Prim::Join => Value::text(&format!("{}{}", self.told(&v[0], w), self.told(&v[1], w))),
             Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
                 // The class's own item entry answers with the key: a
@@ -9169,7 +9272,7 @@ impl<'a> Machine<'a> {
             Prim::AsText => {
                 n(1)?;
                 self.figures_allowed(&v[0])?;
-                Value::text(&v[0].render(w))
+                Value::text(&self.told(&v[0], w))
             }
             Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
             Prim::AsInt if self.table.single("ext.builtin.to_int.base").is_some() => self.whole_from_call(v)?,
@@ -10159,10 +10262,24 @@ impl<'a> Machine<'a> {
         })
     }
 
+    /// A value as the plain printer and the one-name conversion word
+    /// it. A table which asks that a collection read as its
+    /// representation does is answered here as well as on the printer
+    /// that spells its own keyword arguments, so that the label says
+    /// one thing whichever printer a language has; everything besides a
+    /// collection is worded as it renders.
+    fn told(&self, item: &Value, w: Names) -> String {
+        let gathered = matches!(item, Value::Vector(_) | Value::Dict(_) | Value::Row(_) | Value::Tuple(_) | Value::Mutable(..) | Value::Shared(_));
+        match gathered && self.collections_read_alike() {
+            true => item.repr(&w),
+            false => item.render(w),
+        }
+    }
+
     fn show(&self, v: &[Value]) -> String {
         let w = self.wording();
         let argument = |x: &Value| {
-            let text = x.render(w);
+            let text = self.told(x, w);
             match (self.table.flag("ext.builtin.print.real_point"), x.point_kept()) {
                 (true, true) if text.trim_start_matches('-').bytes().all(|c| c.is_ascii_digit()) => format!("{}.0", text),
                 _ => text,
@@ -11132,27 +11249,47 @@ impl<'a> Machine<'a> {
 
     /// Read a slot's name out of the dictionary it lives in; nothing
     /// means the cell itself is to be read after all.
-    fn booked_read(&self, at: usize, name: &str) -> Option<Result<Value, String>> {
+    fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
         match self.book_holding(at)? {
             Held::World => {
                 let book = self.world_book.as_ref()?;
                 if let Some(worth) = looked_up(book, name) { return Some(Ok(worth)); }
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
+                if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Held::Reading(which) => {
-                let book = &self.readings[which];
-                if let Some(worth) = looked_up(&book.near, name) { return Some(Ok(worth)); }
-                if let Some(worth) = book.outer.as_ref().and_then(|outer| looked_up(outer, name)) { return Some(Ok(worth)); }
+                let near = self.readings[which].near.clone();
+                let outer = self.readings[which].outer.clone();
+                if let Some(worth) = looked_up(&near, name) { return Some(Ok(worth)); }
+                if let Some(worth) = outer.as_ref().and_then(|held| looked_up(held, name)) { return Some(Ok(worth)); }
                 // A builtin is reached through the dictionary of builtins
                 // the outer dictionary names, so a program may hand over
                 // one of its own and so choose what the text can reach.
-                let roots = book.outer.as_ref().unwrap_or(&book.near);
-                let found = match self.table.single("ext.system.module.builtins").and_then(|word| looked_up(roots, word)) {
-                    Some(Value::Shared(natives)) => looked_up(&natives, name),
+                let roots = outer.unwrap_or(near);
+                let named = self.table.single("ext.system.module.builtins").and_then(|word| looked_up(&roots, word));
+                // A dictionary of builtins the program put there shuts
+                // the text in; the one the kernel supplied stands for
+                // the ordinary names, and those find the spare namespace
+                // the way a name anywhere else does.
+                let found = match named {
+                    Some(Value::Shared(natives)) => {
+                        let supplied = self.natives_book.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
+                        match looked_up(&natives, name) {
+                            Some(worth) => Some(worth),
+                            None if supplied => self.spare_name(name),
+                            None => None,
+                        }
+                    }
                     Some(_) => None,
-                    None => self.native_of(name),
+                    // Naming no dictionary of its own leaves the text
+                    // reaching what any other name reaches, the spare
+                    // namespace with it.
+                    None => match self.native_of(name) {
+                        Some(worth) => Some(worth),
+                        None => self.spare_name(name),
+                    },
                 };
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }

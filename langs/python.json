@@ -101,6 +101,7 @@
   "ext.op.index.slice.amiss": [
     "SyntaxError: invalid syntax"
   ],
+  "ext.op.logical.operand": true,
   "ext.op.order.text": true,
   "ext.op.order.unsupported": [
     "TypeError: '",
@@ -126,6 +127,9 @@
   "ext.system.source.marked": true,
   "ext.system.source.file": [
     "__file__"
+  ],
+  "ext.system.debug": [
+    "__debug__"
   ],
   "format_version": 1,
   "language": "python",
@@ -453,6 +457,7 @@
   "system.memoization": [],
   "system.real_default_precision": [],
   "system.real.render": "shortest",
+  "system.collection.render": "representation",
   "ext.system.real.bits": 64,
   "system.entry": [],
   "system.kind.integer": [],
@@ -2688,16 +2693,21 @@
     "invalid unpacking assignment"
   ],
   "ext.stmt.unpack.long": [
-    "too many values to unpack"
+    "ValueError: too many values to unpack (expected ",
+    ")"
   ],
   "ext.stmt.unpack.rest": [
     "*"
   ],
   "ext.stmt.unpack.short": [
-    "not enough values to unpack"
+    "ValueError: not enough values to unpack (expected ",
+    ", got ",
+    ")",
+    "at least "
   ],
   "ext.stmt.unpack.unwalkable": [
-    "cannot unpack non-iterable object"
+    "TypeError: cannot unpack non-iterable ",
+    " object"
   ],
   "ext.stmt.with": [
     "with"
@@ -2957,6 +2967,9 @@
   ],
   "ext.system.module.builtins": [
     "__builtins__"
+  ],
+  "ext.system.names.module": [
+    "builtins"
   ],
   "ext.system.scope.unready": [
     "NotImplementedError: this scope form cannot run yet"

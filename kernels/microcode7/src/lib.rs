@@ -227,6 +227,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(table.single("ext.system.request.body").map(str::to_string));
     seeded.extend(OWN_PLACE.iter().filter_map(|(_, key)| table.single(key).map(str::to_string)));
     seeded.extend(table.single("ext.system.source.line").map(str::to_string));
+    seeded.extend(table.single("ext.system.debug").map(str::to_string));
     seeded.extend(table.strings("ext.system.module.name").iter().cloned());
     seeded.extend(table.strings("ext.system.module.doc").iter().cloned());
     let before: u32 = request
@@ -336,6 +337,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         if let Some((.., value, _)) = request.iter().find(|(from, field, ..)| from == "SELF" && field == part) {
             machine.define(name, Value::text(value));
         }
+    }
+    if let Some(name) = table.single("ext.system.debug") {
+        // Nothing here turns a program's checks off, so the word for
+        // whether they are on says that they are.
+        machine.define(name, Value::Flag(true));
     }
     if !table.flag("ext.system.kind.spelled") {
         if table.has_any("ext.builtin.isinstance") {

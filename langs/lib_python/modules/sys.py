@@ -133,6 +133,11 @@ def exc_info():
         return (None, None, None)
     return (type(held), held, None)
 
+# No path to a program that could run this one again is handed to a
+# library here, and the empty string is what a Python says when it
+# cannot find its own program, so a test that needs one skips.
+executable = ''
+
 float_repr_style = 'short'
 byteorder = 'little'
 maxunicode = 1114111

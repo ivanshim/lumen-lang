@@ -100,8 +100,10 @@ fn repr(v: &Value, words: &Wording) -> String {
     match v {
         Value::Text(s) => quoted(s),
         Value::Words(items, tuple) => row(items, *tuple),
-        Value::Array(items) => format!("[{}]", items.iter().map(|x| repr(x, words)).collect::<Vec<_>>().join(", ")),
-        Value::Map(pairs) => format!("{{{}}}", pairs.iter().map(|(k,v)| format!("{}: {}", repr(k,words),repr(v,words))).collect::<Vec<_>>().join(", ")),
+        // This writer walks a collection's members as well, so it keeps
+        // the same note of the members it is within.
+        Value::Array(items) => crate::value::members_written(v, || format!("[{}]", items.iter().map(|x| repr(x, words)).collect::<Vec<_>>().join(", "))),
+        Value::Map(pairs) => crate::value::members_written(v, || format!("{{{}}}", pairs.iter().map(|(k,v)| format!("{}: {}", repr(k,words),repr(v,words))).collect::<Vec<_>>().join(", "))),
         _ => v.display(words),
     }
 }

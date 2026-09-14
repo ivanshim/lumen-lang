@@ -60,7 +60,8 @@ const LABELS: &[&str] = &[
     "builtin.chr", "builtin.typeof", "builtin.error", "builtin.extern", "builtin.range",
     "builtin.real", "builtin.num", "builtin.den", "builtin.push", "builtin.get", "builtin.put",
     "builtin.precision", "builtin.to_string", "builtin.to_int", "builtin.to_real",
-    "system.args", "system.memoization", "system.real_default_precision", "system.real.render", "system.entry",
+    "system.args", "system.memoization", "system.real_default_precision", "system.real.render",
+    "system.collection.render", "system.entry",
     "system.kind.integer", "system.kind.rational", "system.kind.real", "system.kind.string",
     "system.kind.boolean", "system.kind.array", "system.kind.null",
 ];
@@ -89,6 +90,10 @@ pub struct Definition {
     /// holding true becomes `1`, one holding false nothing at all.
     pub flag_counts: bool,
     pub shortest_reals: bool,
+    /// Whether the members of an array printed as text are written the
+    /// way a representation writes them, a piece of text among them
+    /// keeping the quotes it was written between.
+    pub quoted_members: bool,
     /// The binding words are type names placed first (C's `int x = 1;`),
     /// and a name followed by the call bracket defines a function.
     pub type_first: bool,
@@ -175,6 +180,7 @@ impl Definition {
             nothing_silent: false,
             flag_counts: false,
             shortest_reals: false,
+            quoted_members: false,
             keywords_case_insensitive: false,
             type_first: false,
             div_real: false,
@@ -219,6 +225,12 @@ impl Definition {
                     definition.shortest_reals = match mode.as_str() {
                         "library" => false, "shortest" => true,
                         _ => return Err(format!("unknown system.real.render setting '{mode}'")),
+                    };
+                }
+                ("system.collection.render", Json::String(mode)) => {
+                    definition.quoted_members = match mode.as_str() {
+                        "plain" => false, "representation" => true,
+                        _ => return Err(format!("unknown system.collection.render setting '{mode}'")),
                     };
                 }
                 ("op.mod.whole", Json::Bool(flag)) => definition.rem_whole = *flag,

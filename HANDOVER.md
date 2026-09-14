@@ -13,8 +13,14 @@ integration of the waiting branches, one verification per branch.
 
 ## 1. Where things stand
 
-Every pull request that was waiting is now folded into the integration
-branch. The Python reader is done bar three unfinished branches, and the
+**The integration is merged.** Every pull request that was waiting is in
+`main` at `73b7ecd`, brought in as #487: twenty-five pull requests in
+twenty-two merges, green on all three ways at `a251e5c`. Twenty-four
+closed themselves; #480 was closed by hand, its port having kept all the
+descriptor work but lost the merge parent that would have made its head
+an ancestor. No pull request is open.
+
+The Python reader is done bar three unfinished branches, and the
 run-time work has gone a long way: the full `unittest` runs the test
 files now, and reports what fails in them.
 
@@ -23,9 +29,11 @@ files now, and reports what fails in them.
   refused unless that row held.
 - **The examples** agree 3006 of 3006 on all six kernels at every
   verified point, on a quiet machine (see §4).
+- **0 kernel disagreements and no reference regression**, which had to
+  be won: see the two disagreements in §1a.
 - **Python, running (stage 2).** The reference row is
-  `pass 0, differs 2, error 48` on both kernels at `674bf76`, against
-  `differs 9, error 41` at `main`. That is not a step back: the nine
+  `pass 0, differs 3, error 47` on both kernels at `a251e5c`, against
+  `differs 9, error 41` at the old `main`. That is not a step back: the nine
   files that "ran to the end without asserting anything" under the
   minimal `unittest` now run their tests under the full one and stop
   with `Uncaught test run failed` because some assertions fail, which
@@ -35,6 +43,58 @@ files now, and reports what fails in them.
   harness should run one and count its own results) is still the owner's
   decision and has not been taken. It decides how the Python row is read
   from here on.
+
+### 1a. The six defects the verification found
+
+Four belonged to the merging; two were disagreements between the kernels
+that had stood in the line since earlier merges and had been failing the
+reference run ever since.
+
+| commit | what it was |
+|---|---|
+| `fdf00b8` | two stale scratch expectations: `file-iter/15` recorded less progress through CPython's range tests than the kernels now make, and `sorting-semantics/5` expected a list sorted *in place* to print quoted |
+| `db1a167` | a compound write on a row lost the cell it was given in microcode7, so `+=` joined instead of extending and `*=` gave the name a new row. The kernel already had the way in; nothing reached it, because the cell-keeping guards tested only the unnumbered spelling of the working while Python's long special-method list wraps every compound write in a numbered landing. The map half of that road had been fixed before and the row half left |
+| `427b70b` | a place written into beyond a row now gets its own words, under a new label `ext.system.fault.index.assign`: CPython says `list assignment index out of range` for a store or delete and `list index out of range` for a read, and both kernels said the read's words for all three |
+| `950f3bb` | a compound write on a thing standing on a builtin kind now goes through the worth beneath it, so `x += [2]` on a `list` subclass extends where it stands and keeps its class. It closed three narrower splits with it, among them an inversion stack8 refused while microcode7 answered |
+| `ce8ca4f` | **a lost merge guard.** `py-sequence-ops` put its new sequence-aware store behind `ext.op.sequence.values`; the merge collapsed both sides into an unconditional `Prim::Restore`. That store reads the place to see whether the thing being written already stands there, and in PHP reading a place that is not there is worth a warning, so `$e["k"][1] = "hello"` on an array with no `k` warned before making it. Five tests of `tests/php/lang` failed on microcode7 alone |
+| `a251e5c` | every working with a complex among its values was carried to the complex reckoning, the bit workings included, and the reckoning has no case for them — a number of two parts has no bits — so they fell to its `unready` arm, a NotImplementedError. `~2j` therefore refused as the wrong kind of complaint on microcode7, and `test_unary.py` asks for a TypeError and nothing else |
+
+**How the two disagreements were found, since the job says only that it
+failed.** The disagreement detail lives in the run's uploaded artifact,
+which these tools cannot fetch. What can be read is the reference job's
+log, and in it the per-suite rows:
+
+```
+grep -E "^(PHP|Python) .* on (stack8|microcode7):"
+```
+
+Each suite is listed once per kernel with its pass/differs/error counts.
+A suite whose counts differ between the two kernels *is* the
+disagreement, and both of these sat there in plain sight for hours while
+the cause was being guessed at from the Python side. Read those rows
+first.
+
+**Both suites can then be run locally**, which the notes long said was
+impossible. `scripts/reference_tests.py` hardcodes a release binary, but
+its `main` is guarded and `BINARY` is a module global, so:
+
+```python
+import sys; sys.path.insert(0, "scripts")
+import reference_tests as rt
+rt.BINARY = rt.ROOT / "target" / "debug" / "lumen-lang"
+rt.run_phpt(path, kernel)      # -> (outcome, reason)
+rt.run_python(path, kernel)
+```
+
+Comparing every test of a suite across both kernels and printing the
+ones whose outcome differs named each defect in one run. From there a
+`git bisect` with a two-line repro as its test named the commit.
+
+One caution: `run_phpt` writes each test's program beside its `.phpt`,
+as php-src's own runner does, leaving `.php` debris. It is ignored now
+(`9dea851`), but never commit one: the runner will not overwrite a file
+that already exists, so a committed `002.php` would be run in place of
+that test's own program from then on.
 
 Brought into the integration branch in this order, each with the
 sequence in §3 (and with what its scratch programs then proved missing
@@ -88,10 +148,163 @@ dyadic operation is raised on rather than reported as an invalid
 answer; `id` is stable across a list's growth (both kernels hand that
 one builtin the cell a collection lives in).
 
+### 1b. The Python run-time work since the merge
+
+The merge is behind us and the work since is a different thing: making
+the fifty Python reference test files in `tests/python/` actually run
+their own tests and pass them. What follows is what has been learnt, so
+that none of it is learnt twice.
+
+**How to count a passing test, and how not to.** `ran - failures -
+errors` is not a count of passing methods. `subTest` lets one method
+report many failures, so `test_format` prints `Ran 18 tests` with
+`failures=5, errors=15`, and the subtraction gives a negative number.
+The honest measure is `unittest`'s progress line, one character per
+method -- `.` passed, `F` failed, `E` errored, `s` skipped. Check that
+its length equals the `Ran N` it reports, then count the dots. Two
+figures were circulated from the bad formula before this was caught;
+neither should be repeated.
+
+**The library is the near bank, the kernels the far one.** Most files
+stop before their first test on a module the library has not got, and
+the blockers are chained -- lifting one reveals the next. Since the
+merge the library has gained `doctest` (a real one, which finds the
+`>>>` examples in docstrings and in a module's `__test__` table, runs
+them, and honours the `+ELLIPSIS`, `+NORMALIZE_WHITESPACE`, `+SKIP` and
+`+IGNORE_EXCEPTION_DETAIL` directives), `collections.abc`, `types`,
+`numbers`, `errno`, `signal`, `shutil`, `dis`, `_string`,
+`annotationlib`, `threading`, `ast`, `marshal`, `unittest.mock`,
+`_decimal`, `test.typinganndata` and `test.test_math`, along with
+`codecs.BOM_UTF8` and `sys.executable`.
+
+`unittest`'s loader also stopped running an abstract base class's tests
+a second time through each subclass that inherits from it. That is a
+correction, not a loss, though it makes a file's collected count fall:
+`test_tuple` went from 60 collected to 38, with the same 18 passing.
+
+**Defects the running found, beyond the six in §1a.** Each was
+reproduced against CPython on this machine before it was believed.
+
+- An exception raised inside a context manager's `__enter__` was thrown
+  away by stack8 and replaced with the words for a special method that
+  gave back nothing usable, so an arm written round the `with` block
+  never caught it. Fixed: the raised value is carried out as it is, the
+  way every other place that asks a special method already does.
+- `print(d)` and `str(d)` of a map give the interpreter's own rendering,
+  `[k => 1]`, where Python wants `{'k': 1}`. `repr`, `%s` and an
+  f-string are all already right, so only the plain-text path is wrong.
+- A failed unpacking assignment is a raw fault that `try`/`except`
+  cannot catch, and its message lacks CPython's detail. This is the
+  largest single lever found: thirteen of `test_unpack`'s fifteen
+  failures.
+- A class's `__doc__` cannot be read at all; a function's, a method's
+  and a module's all can.
+- Found and written down but not yet chased: unpacking a thing that has
+  only `__getitem__`; `compile(src, name, 'single')` accepted but not
+  honoured; a generator's `type()`, its repr and `gi_running`; a stray
+  top-level `break` inside `try`/`finally` ending the program silently
+  where CPython refuses the file; `exec` globals not finding a name put
+  there by a subscript store, and `iter(genexp) is genexp` false, both
+  on microcode7 only.
+- Kernel-side blockers on whole files: `test_math` and `test_float` stop
+  with `this slice operation is not supported`; `test_long` outruns a
+  debug build's patience.
+
+**A text key stored into a row turns it into a map** (`b["k"] = 1`),
+silently. That was noticed and not yet fixed; it is written here so it
+is not lost.
+
+### 1c. Where the Python reference files stand, measured
+
+Taken over all fifty files in `tests/python/` on both full kernels, and
+counted from `unittest`'s progress line with its length checked against
+the `Ran N` beside it, every line agreeing:
+
+**231 methods pass of 794, across 31 files that run tests. Nineteen run
+nothing.** On microcode7 the same sweep gives 195 of 748 across 30
+files; the difference is the five disagreements listed below, three of
+which are only a debug build running out of patience.
+
+    test_int_literal  6/6     test_slice                 4/11
+    test_unary        6/6     test_augassign              3/7
+    test_index       33/55    test_pow                    3/7
+    test_list        26/71    test_opcodes                3/8
+    test_long        25/43    test_decorators            3/16
+    test_scope       19/41    test_positional_only_arg   3/28
+    test_tuple       18/38    test_format                1/18
+    test_bool        16/31    test_funcattrs             1/39
+    test_listcomps   16/68    test_unpack                 1/2
+    test_range       12/29    test_class                 0/42
+    test_with        11/55    test_global                0/20
+    test_compare      9/16    test_print                  0/9
+    test_syntax      8/109    test_eof                    0/6
+    test_dictcomps    8/11    test_contains               0/4
+    test_int          7/52    test_setcomps               0/2
+    test_keywordonlyarg 5/11  test_genexps                0/1
+
+Running nothing at all: `test_binop`, `test_bigmem`, `test_builtin`,
+`test_cmath`, `test_complex`, `test_dict`, `test_enumerate`,
+`test_exceptions`, `test_float`, `test_fractions`, `test_fstring`,
+`test_generators`, `test_grammar`, `test_iter`, `test_math`, `test_set`,
+`test_str`, `test_string_literals`.
+
+Where the kernels do not agree: `test_listcomps` runs its 68 methods on
+microcode7 and none at all on stack8, which is the same program as
+`scratch/reader-tail/5.py`; `test_syntax` differs by a single method; and
+`test_list`, `test_long` and `test_math` each outrun a four-minute
+patience on one kernel and finish on the other, which is the debug build
+being slow rather than the kernels differing.
+
+The measurement before this one, 139 of 327 across 16 files, was taken
+before `doctest`, the library batch and the fixes in §1b. Files that
+reach their own tests have roughly doubled since.
+
+### 1d. What each file that runs nothing is now waiting on
+
+Measured again after `doctest`, the library batch, the logical operators,
+container rendering and `__debug__` all landed. The blockers move as each
+one is lifted, so this list is only true of the commit it was taken at;
+take it again rather than trusting it.
+
+Waiting on a module the library has not got -- library work, which
+rebuilds in seconds:
+
+    test_builtin     143 methods   builtins
+    test_dict        105 methods   test.mapping_tests
+    test_fstring      95 methods   datetime
+    test_grammar      80 methods   inspect
+    test_iter         68 methods   builtins
+    test_generators                inspect
+    test_cmath                     cmath
+
+Waiting on the kernels, which is the harder half:
+
+    test_binop       this class form cannot run yet
+    test_enumerate   this class form cannot run yet
+    test_complex     this class operation is not supported
+    test_float       reversed() is not supported for these values
+    test_fractions   a class cannot answer to complex
+    test_long        outruns a debug build's patience
+    test_set         not yet looked at again
+    test_str         not yet looked at again
+    test_string_literals, test_math, test_bigmem   not yet looked at again
+
+`test_exceptions`, which is CPython's own file of 118 methods and 2,909
+lines, now runs its tests on both kernels rather than stopping at an
+import. It is too slow to finish in a debug build, so what it settles on
+has to be read from a release run.
+
+Two disagreements between the kernels were noticed while taking this and
+have not been chased. `test_exceptions` diverges at its eighth test.
+`test_fractions` stops with different words on each kernel -- `Class
+RectComplex cannot answer to <built-in function complex>` on stack8,
+`Class RectComplex cannot answer to that` on microcode7 -- which is one
+defect wearing two faces.
+
 ## 2. What is waiting on branches
 
-Nothing with a pull request. Twenty-five were open when this began and
-all twenty-five are folded into the integration branch (§1). Every one
+Nothing with a pull request. Twenty-five were open when this began, all
+twenty-five are in `main`, and none is open (§1). Every one
 was green on its own branch (build, 3006 examples, scratch programs, PHP
 unchanged) and every one in conflict with `main`, because each was cut
 from an older `main` and they touch the same rosters and, worse, the same
@@ -110,7 +323,28 @@ cleanly than the rest.
 Three branches still hold unfinished work with no pull request and a red
 last run, and are the next work: `py-copy-pickle`, `py-bytes-2`,
 `py-file-scope`. Port each from the merged head, one at a time, by the
-way described below. (`py-unicode-text` was merged into `main` as #484
+way described below.
+
+Known and left alone, worth a piece of their own. A row written at a
+place named by text is silently turned into a map: `b = [1, 2]` then
+`b["k"] = 1` gives `[0 => 1, 1 => 2, k => 1]` on **both** kernels where
+CPython raises `TypeError: list indices must be integers or slices, not
+str`. That is a wrong answer, not a wrong message, and the deletion path
+already refuses such a key — `sequence_subscript_fault` in stack8,
+`key_refused` in microcode7 — so only the store path wants the check.
+Neither the scratch harness nor CI's `scratch` step caps time or output,
+so one program that never stops printing could fill a runner; a guard
+wants `timeout` and `ulimit -f` around each run, reporting the runaway
+rather than dying (a guarded run over every piece found none today, so
+this is a hazard, not a present fault). And a handful of divergences
+both kernels share, so none is a disagreement: `[].pop()` printing a
+doubled `PythonError: IndexError: pop from empty list` where the words
+are not accepted by a label-specific recognizer while `pop index out of
+range` is; `del x[0]` on a list subclass; the set methods missing on a
+set subclass; `dict(D(...))`; `I(5).numerator` reading as a built-in
+method; unary `-` and `+` on an int or float subclass; and CPython's
+exact wording for a bad unary operand, `bad operand type for unary ~:
+'complex'`, which would want a label of its own. (`py-unicode-text` was merged into `main` as #484
 before it was verified and taken back again in `a521d8f`; its work is
 not in the line.)
 
@@ -271,32 +505,30 @@ run summary. `scratch/` holds each piece's programs with the exact output
   and `/6`) and on a few deep programs, and a run left going while the
   binary is rebuilt under it reports nonsense. Copy the binary aside
   before a long run.
-- **Container rendering is half done, and the half that exists is a flag
-  on the value, not a label.** A row written as a literal prints its
-  members unquoted (`[1, hello]`) and a map prints `[k => v]`, as the
-  examples require; but a container that a *Python operation* builds
-  prints as CPython would. That is carried by the second field of
-  `Value::Collection(cell, quoted)` in `stack8` (`value.rs`, read where
-  `display` meets a `Collection`) and by the matching flag in
-  `microcode7`, set by `.held(true)` in the eight places that build such
-  a container — `sorted`, `str.split`, `list.copy`, `dict.copy`, the
-  ordering with a key, and `list()` of a view, text, cursor or
-  generator, which pass the flag on from what they were given. So
-  `print(sorted(w))` quotes and `print(w)` does not, even for the same
-  members, and that is deliberate rather than a fault: it buys CPython's
-  rendering everywhere the examples cannot see it. Two consequences.
-  First, do not "fix" the inconsistency by marking a literal-built row
-  quoted: `sort` in place is a core operation all ten languages use, and
-  marking its list would break the examples, which is how five earlier
-  attempts died. Second, a fixture that expects quotes around the
-  members of a list that was *not* built by such an operation is wrong,
-  and `sorting-semantics/5` was exactly that. Closing the gap properly
-  still wants a **core** label all six kernels honour, as
-  `system.real.render` is for reals (#479) — the rendering written into
-  stream35, microcode11, microcode4 and stack5 as well, each in its own
-  words, and every example that shows a container moved. That is a
-  change to the language floor and wants its own branch, not a Python
-  piece.
+- **Container rendering is a core label now, and the value's own flag
+  survives beneath it.** `system.collection.render` says how a
+  collection is written when its text is asked for: `plain` writes each
+  member as its own text, which is what every language but Python asks
+  and what they all printed before, and `representation` writes each
+  member as a representation, which is what Python asks and what CPython
+  gives. All six kernels read it, each in its own words, so the examples
+  agree again; before, the decision hung on `ext.stmt.class.special`,
+  which only the full kernels could see, and the mixed array among the
+  examples printed two ways. What a representation is belongs to the
+  kernel, as the real rendering does: text between quotes, a collection
+  within written the same way again, everything else as it shows.
+  Beneath that, the second field of `Value::Collection(cell, quoted)` in
+  `stack8` (`value.rs`, read where `display` meets a `Collection`) and
+  the matching flag in `microcode7` still mark a container a *Python
+  operation* built — `.held(true)` in the eight places, `sorted`,
+  `str.split`, `list.copy`, `dict.copy`, the ordering with a key, and
+  `list()` of a view, text, cursor or generator, which pass the flag on
+  from what they were given. With the label set to `representation` that
+  flag no longer decides how a collection prints, and a fixture that
+  expects quotes now expects them whatever built the list. Do not mark a
+  literal-built row quoted to reach the same end: `sort` in place is a
+  core operation all ten languages use, and marking its list would break
+  the examples, which is how five earlier attempts died.
 - **A map is a row of pairs searched from the front**, in both full
   kernels, so a large map is quadratic: `scratch/perf/3` takes over two
   hours on microcode7 in a debug build and seconds on a release one.
@@ -355,6 +587,24 @@ The last two sessions ran in a Claude Code remote container with Rust,
 (`merge-1` … `merge-9`, one per branch, each with its own `target/`), and
 the integration checkout at `/home/user/lumen-lang`. That container does
 not outlive the session; only what is pushed survives.
+
+**One worker's cleanup kills another's run.** Several agents share this
+container, each in its own worktree. A `pkill -f "lumen-lang --kernel"`
+meant to stop one agent's own sweep reaches every other agent's
+interpreter too; that is what ended a full scratch run here with no
+output at all and an exit of 144, and it cost about an hour before the
+cause was known. Stop your own work by its process id, never by a
+pattern that matches the binary's name. Write results as each one is
+produced, one line per run, so that a run killed from outside still
+leaves everything it had already learnt.
+
+**The container can also restart with nothing heavy running.** One
+restart here came with no release build in progress and the machine
+quiet, and it killed six workers mid-task. Nothing was lost only because
+every worker had its own branch: their uncommitted work was committed to
+those branches and pushed as soon as the session came back. Push every
+branch to the remote as soon as it has anything on it, finished or not —
+a branch that lives only in this container's `.git` is not saved.
 
 **The container dies under a release build, not on a timer.** Four
 restarts in one session each killed a run in progress, twice at the

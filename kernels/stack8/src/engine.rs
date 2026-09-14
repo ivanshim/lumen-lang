@@ -52,6 +52,9 @@ pub struct Engine<'a> {
     fresh_routines: bool,
     pub module_sources: HashMap<String, String>,
     modules: HashMap<String, Value>,
+    /// Whether the module of unbound names is being loaded just now, so
+    /// that a name missed inside it does not send the loader round again.
+    fetching_names: bool,
     /// The names of the globals, kept whole so that source read while
     /// the program runs can be assembled against the same ones.
     registry: crate::compile::Registry,
@@ -695,6 +698,7 @@ impl<'a> Engine<'a> {
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
             modules: HashMap::new(),
+            fetching_names: false,
             registry,
         };
         if engine.fuller_classes() {
@@ -1738,12 +1742,42 @@ impl<'a> Engine<'a> {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
             if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
         }
+        if matches!(self.world[slot.far], Value::Blank) {
+            if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
+        }
         let g = &mut self.world[slot.far];
         match g {
             Value::Blank if slot.moving => Err(format!("Undefined variable '{}'", slot.ident)),
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
             _ if slot.moving => Ok(std::mem::replace(g, Value::Gap)),
             v => Ok(v.clone()),
+        }
+    }
+
+    /// What a module of the language's own holds under a name nothing in
+    /// the program has bound. Python keeps its builtins in such a module
+    /// and reads them without importing it, so a name missed here is
+    /// looked for there before it is called missing. The module is
+    /// loaded the first time a name is missed and read from after that,
+    /// and a name it does not hold is missing as it was.
+    fn kept_by_module(&mut self, name: &str) -> Option<Value> {
+        if self.fetching_names { return None; }
+        let path = self.lang.names_module.first()?.clone();
+        let module = match self.modules.get(&path) {
+            Some(held) => held.clone(),
+            None => {
+                self.fetching_names = true;
+                let brought = self.import_module(&path);
+                self.fetching_names = false;
+                brought.ok()?
+            }
+        };
+        let Value::Object(object) = module else { return None };
+        let held = object.fields.borrow().iter().find(|(word, _)| word == name)
+            .map(|(_, held)| match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() })?;
+        match held {
+            Value::Blank => None,
+            found => Some(found),
         }
     }
 
@@ -1815,8 +1849,11 @@ impl<'a> Engine<'a> {
             }
         }
         // A name living in a dictionary is read and written the long
-        // way too, since what it holds is kept there and not here.
+        // way too, since what it holds is kept there and not here, and
+        // so is a name nothing has bound where the language keeps its
+        // unbound names in a module.
         matches!(self.world[slot.far], Value::Bond(_)) || self.book_of(slot.far).is_some()
+            || (!self.lang.names_module.is_empty() && matches!(self.world[slot.far], Value::Blank))
     }
 
     /// The cell a binding lives in, for reading in place.
@@ -2002,7 +2039,16 @@ impl<'a> Engine<'a> {
                 Value::Tie(pair) => match &pair.0 {
                     Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
                     Value::Flag(false) => match &pair.1.contents() {
-                        Value::Cursor(_) => items.extend(self.core_members(&pair.1)?.into_iter().map(|v| (None,v))),
+                        // Spreading a walk over the arguments asks it for
+                        // every member it has, and that asking may run
+                        // the program's own code. What such code raised
+                        // is raised on, and not the words that stood in
+                        // for it while the walk gave way.
+                        Value::Cursor(_) => {
+                            let members = self.core_members(&pair.1);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            items.extend(members?.into_iter().map(|v| (None,v)));
+                        }
                         Value::Counted(r) => {
                             let mut i = BigInt::from(0);
                             while let Some(v) = r.at(i.clone()) { items.push((None, v)); i += 1; }
@@ -2030,6 +2076,25 @@ impl<'a> Engine<'a> {
 
     fn named_fault(words: &[String], name: &str) -> String {
         format!("{}{}{}", words.first().map_or("", String::as_str), name, words.get(1).map_or("", String::as_str))
+    }
+
+    /// A complaint about a taking-apart, woven from the pieces the
+    /// definition gave with the counts and names the kernel found
+    /// written between them. Where the language furnishes exceptions
+    /// the pieces open with the class the complaint belongs to, so the
+    /// whole of it is marked as told and the language puts no further
+    /// naming over it. A definition that gave too few pieces has nothing
+    /// to weave and leaves the caller to say its own plain words.
+    fn apart_fault(&self, words: &[String], found: &[String]) -> Option<String> {
+        if words.len() <= found.len() { return None; }
+        let mut told = String::new();
+        for (at, part) in found.iter().enumerate() {
+            told.push_str(&words[at]);
+            told.push_str(part);
+        }
+        told.push_str(&words[found.len()]);
+        if !self.lang.exceptions.is_empty() { told.insert(0, '\0'); }
+        Some(told)
     }
 
     /// A counted row's complaint carries the class it belongs to in the
@@ -3103,6 +3168,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
+        // Where the definition asks it, a collection reads the same
+        // whether or not a representation was asked for: the members
+        // inside it are always written as representations, so that text
+        // keeps its quotes and a map keeps its braces.
+        let alike = self.lang.collections_as_written;
         let celled = match value {
             Value::Binding(cell) | Value::Bond(cell) => Some((cell.clone(), false)),
             Value::Collection(cell, quoted) => Some((cell.clone(), *quoted)),
@@ -3113,12 +3183,22 @@ impl<'a> Engine<'a> {
             // A collection of plain values is written out by its cell,
             // so that one holding itself is seen coming round again.
             if !representation && !quoted && matches!(held, Value::Array(_) | Value::Map(_)) && !Self::holds_object(&held) {
-                return Ok(self.render(std::slice::from_ref(&Value::Collection(cell, false))));
+                let whole = Value::Collection(cell, false);
+                let words = self.wording();
+                return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
             }
             return self.special_text(&held, representation || quoted);
         }
         if let Value::Trace(words) = value { return Err(words.to_string()); }
-        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) { return Ok(self.render(std::slice::from_ref(value))); }
+        if self.lang.class_special.is_empty() || (!representation && !Self::holds_object(value)) {
+            // A collection standing in no cell is written the same way,
+            // and by the same walk, which stops where it comes round.
+            if alike && matches!(value, Value::Array(_) | Value::Map(_) | Value::Tuple(_)) {
+                let words = self.wording();
+                return Ok(value.representation(&words));
+            }
+            return Ok(self.render(std::slice::from_ref(value)));
+        }
         if let Value::Object(object) = value {
             if self.exception_class(&object.class) && self.special_value(value, if representation { 1 } else { 0 }).is_none() {
                 let words = self.wording();
@@ -3143,18 +3223,30 @@ impl<'a> Engine<'a> {
                 let entries = object.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, v)| (Value::text(k), v.clone())).collect();
                 self.special_text(&Value::Map(Rc::new(entries)), true)
             }
-            Value::Array(items) => {
+            // This walk is handed a collection's members rather than
+            // the cell that holds them, so it keeps its own note of the
+            // members it is within. A collection standing inside itself
+            // is written as the marks it would have stood between, and
+            // one met twice by two roads is written in full both times.
+            Value::Array(items) => crate::value::members_once(value, || {
                 let mut parts = Vec::new();
                 for item in items.iter() { parts.push(self.special_text(item, true)?); }
                 Ok(format!("[{}]", parts.join(", ")))
-            }
-            Value::Map(items) => {
+            }),
+            // A fixed row of members is written like any other, one
+            // member alone keeping the comma that marks it a row.
+            Value::Tuple(items) => crate::value::members_once(value, || {
+                let mut parts = Vec::new();
+                for item in items.iter() { parts.push(self.special_text(item, true)?); }
+                Ok(format!("({}{})", parts.join(", "), if items.len() == 1 { "," } else { "" }))
+            }),
+            Value::Map(items) => crate::value::members_once(value, || {
                 let mut parts = Vec::new();
                 for (key, item) in items.iter() {
                     parts.push(format!("{}: {}", self.special_text(key, true)?, self.special_text(item, true)?));
                 }
                 Ok(format!("{{{}}}", parts.join(", ")))
-            }
+            }),
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
@@ -4245,8 +4337,16 @@ impl<'a> Engine<'a> {
                     Value::Native(b, word) => {
                         let args = self.drop_many(argc - 1)?;
                         let items = self.call_items(args)?;
-                        let answer = self.builtin_call(b, &word, items)?;
-                        self.data.push(answer);
+                        let answer = self.builtin_call(b, &word, items);
+                        // A builtin reached as a value runs the same
+                        // work as one named where it is called, and
+                        // that work may run the program's own code. A
+                        // value raised by such code is set aside while
+                        // the builtin gives way, so it is raised again
+                        // here rather than the words that stood in for
+                        // it, which no handler would know.
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        self.data.push(answer?);
                         Ok(())
                     }
                     Value::Descriptor(d) => {
@@ -4389,7 +4489,13 @@ impl<'a> Engine<'a> {
                     ref cursor @ Value::Cursor(_) => {
                         let mut found = Vec::new();
                         while rest.is_some() || found.len() <= *count {
-                            let Some(value) = self.core_step(cursor)? else { break };
+                            // Taking a walk apart may run the program's
+                            // own code for each member, and what that
+                            // code raised is raised on rather than the
+                            // words that stood in for it.
+                            let stepped = self.core_step(cursor);
+                            if let Some(fled) = self.carried.take() { return Err(fled); }
+                            let Some(value) = stepped? else { break };
                             found.push(value);
                         }
                         found
@@ -4399,18 +4505,30 @@ impl<'a> Engine<'a> {
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| key.clone()).collect(),
-                    _ => return Err(self.lang.unpack_unwalkable.clone().unwrap_or_else(|| "Value cannot be taken apart".to_string()).into()),
+                    _ => {
+                        let kind = source.core_kind();
+                        let told = self.apart_fault(&self.lang.unpack_unwalkable, &[kind]);
+                        return Err(told.unwrap_or_else(|| "Value cannot be taken apart".to_string()).into());
+                    }
                 };
                 let least = count - usize::from(rest.is_some());
                 if items.len() < least {
-                    return Err(self.lang.unpack_short.clone().unwrap_or_else(|| "Too few values".to_string()).into());
+                    // A starred place takes as many values as are left
+                    // over, so where one stands among the places the
+                    // count asked for is only a lower bound, and the
+                    // definition gives the words that say so.
+                    let bound = self.lang.unpack_short.get(3).filter(|_| rest.is_some());
+                    let asked = format!("{}{}", bound.map_or("", String::as_str), least);
+                    let told = self.apart_fault(&self.lang.unpack_short, &[asked, items.len().to_string()]);
+                    return Err(told.unwrap_or_else(|| "Too few values".to_string()).into());
                 }
                 if let Some(at) = rest {
                     let until = items.len() - (count - at - 1);
                     let middle = items.drain(*at..until).collect();
                     items.insert(*at, Value::array(middle));
                 } else if items.len() > *count {
-                    return Err(self.lang.unpack_long.clone().unwrap_or_else(|| "Too many values".to_string()).into());
+                    let told = self.apart_fault(&self.lang.unpack_long, &[count.to_string()]);
+                    return Err(told.unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)
             }
@@ -5329,7 +5447,13 @@ impl<'a> Engine<'a> {
                 let held = object.contents();
                 if let Value::Object(o) = &held {
                     if self.special_value(&held, 34).is_none() { return Err(self.unmanaged(&o.class.name).into()); }
-                    self.special_call(&held, 33, Vec::new())?.ok_or_else(|| self.unmanaged(&o.class.name))?
+                    // What the opening method raised is raised on, so that
+                    // it reaches the arms standing round the whole block,
+                    // and not the words that stand in for a method giving
+                    // back nothing of its own.
+                    let told = self.special_call(&held, 33, Vec::new());
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    told?.ok_or_else(|| self.unmanaged(&o.class.name))?
                 } else if self.lang.with_invalid.len() == 2 {
                     // A value that is no object has no such methods at all,
                     // and a language with words for that says so by kind.
@@ -5368,7 +5492,13 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 if !self.lang.class_special.is_empty() && matches!(handed, Value::Object(_) | Value::Walk(_)) {
-                    let iterator = self.special_builtin(Builtin::Iter, std::slice::from_ref(&handed))?.ok_or_else(|| self.special_fault())?;
+                    // Asking a thing for its own walk runs a method of
+                    // the program's own, and what that method raised is
+                    // raised on, so it reaches the arms round the loop
+                    // rather than the words that stood in for it.
+                    let told = self.special_builtin(Builtin::Iter, std::slice::from_ref(&handed));
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    let iterator = told?.ok_or_else(|| self.special_fault())?;
                     self.data.push(Value::Walking(Rc::new(RefCell::new((iterator, None)))));
                     return Ok(());
                 }
@@ -5444,7 +5574,13 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 if matches!(pair[0], Value::Cursor(_)) {
-                    let more = self.core_more(&pair[0])?; self.data.push(Value::Flag(more)); return Ok(());
+                    // A walk may ask the program's own code for the next
+                    // member, as a walk over a callable does, and what
+                    // that code raised is raised on rather than the
+                    // words that stood in for it while it waited.
+                    let more = self.core_more(&pair[0]);
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    self.data.push(Value::Flag(more?)); return Ok(());
                 }
                 if let Some(set) = self.walked_set(&pair[0])? {
                     self.data.push(Value::Flag(as_index(&pair[1]).map_or(false, |at| at < set.borrow().held.len())));
@@ -5452,7 +5588,12 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Walking(walk) = &pair[0] {
                     let iterator = walk.borrow().0.clone();
-                    let answer = self.special_step(&iterator)?;
+                    // The thing's own method for the next member is a
+                    // piece of the program, and what it raised is raised
+                    // on in place of the stand-in words.
+                    let answer = self.special_step(&iterator);
+                    if let Some(fled) = self.carried.take() { return Err(fled); }
+                    let answer = answer?;
                     let more = answer.is_some();
                     walk.borrow_mut().1 = answer;
                     self.data.push(Value::Flag(more));
@@ -5495,7 +5636,11 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
                 match self.walk_asked(&pair[0], named)? {
-                    None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else { self.core_step(&pair[0])?.ok_or_else(|| self.core_fault("core.exhausted", ""))? },
+                    None if matches!(pair[0], Value::Cursor(_)) => if key { pair[1].clone() } else {
+                        let stepped = self.core_step(&pair[0]);
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        stepped?.ok_or_else(|| self.core_fault("core.exhausted", ""))?
+                    },
                     Some(answer) => answer,
                     None => {
                         self.data.push(pair[0].clone());
@@ -6225,7 +6370,7 @@ impl<'a> Engine<'a> {
             return Err(self.byte_fault("unready"));
         }
         let sp = self.wording();
-        let joined = || Value::text(&format!("{}{}", a.display(&sp), b.display(&sp)));
+        let joined = || Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)));
         Ok(match op {
             Action::Matrix => return Err(self.lang.matrix_unready.clone().unwrap_or_else(|| "Matrix multiplication cannot run".into())),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
@@ -7423,10 +7568,22 @@ impl<'a> Engine<'a> {
 
     /// print and write: the values joined by spaces, or a template holding
     /// the definition's placeholders filled from the rest.
+    /// A value as the plain printer and the one-name conversion write
+    /// it. Where the definition asks a collection to read as its
+    /// representation does, a collection is written that way, so that
+    /// the setting means the same whether or not the language spells
+    /// the printer's own keyword arguments. Everything else is written
+    /// as it shows.
+    fn told(&self, value: &Value, sp: &Wording) -> String {
+        let collection = matches!(value, Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Collection(..));
+        if collection && self.lang.collections_as_written { return value.representation(sp); }
+        value.display(sp)
+    }
+
     fn render(&self, values: &[Value]) -> String {
         let sp = self.wording();
         let printed = |v: &Value| {
-            let mut said = v.display(&sp);
+            let mut said = self.told(v, &sp);
             if self.lang.print_real_point && v.keeps_point()
                 && said.chars().all(|c| c.is_ascii_digit() || c == '-')
             {
@@ -9214,7 +9371,7 @@ impl<'a> Engine<'a> {
             Builtin::ToText => {
                 arity(1)?;
                 self.digits_shown(&args[0])?;
-                Value::text(&args[0].display(&sp))
+                Value::text(&self.told(&args[0], &sp))
             }
             Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),
             Builtin::ToInt => {
@@ -11084,6 +11241,7 @@ impl Engine<'_> {
                 let book = self.outer_book.clone()?;
                 if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
                 if self.left_out(name, &self.world[far]) { return None; }
+                if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Kept::Text(at) => {
@@ -11097,10 +11255,24 @@ impl Engine<'_> {
                 // program handing over a dictionary of its own chooses
                 // what the text may reach.
                 let roots = outer.unwrap_or(near);
+                // Only a dictionary of builtins the program made itself
+                // shuts the text in: the one the kernel put there stands
+                // for the ordinary names, and those reach the module of
+                // unbound names as any other name does.
                 let found = match self.lang.module_builtins.first().and_then(|word| book_entry(&roots, word)) {
-                    Some(Value::Bond(natives)) => book_entry(&natives, name),
+                    Some(Value::Bond(natives)) => {
+                        let ours = self.natives.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
+                        match book_entry(&natives, name) {
+                            Some(held) => Some(held),
+                            None if ours => self.kept_by_module(name),
+                            None => None,
+                        }
+                    }
                     Some(_) => None,
-                    None => self.native_named(name),
+                    None => match self.native_named(name) {
+                        Some(held) => Some(held),
+                        None => self.kept_by_module(name),
+                    },
                 };
                 Some(found.ok_or_else(|| format!("Undefined variable: {}", name)))
             }

@@ -76,6 +76,9 @@ impl<'a> Machine<'a> {
             yes: self.spec.first("literal.true").unwrap_or("true"),
             no: self.spec.first("literal.false").unwrap_or("false"),
             counted: self.spec.flag("system.flag.counts"),
+            // A row may read as its representation reads, in which case
+            // a piece of text standing in one keeps its quote marks.
+            quoted: self.spec.text("system.collection.render") == Some("representation"),
             // A language may show nothing as no text at all.
             none: match self.spec.flag("literal.null.silent") {
                 true => "",

@@ -1,1 +1,1 @@
-ModuleNotFoundError: No module named 'ast'
+PythonError: NotImplementedError: str encoding and errors are not supported

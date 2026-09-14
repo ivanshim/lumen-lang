@@ -85,6 +85,9 @@ pub struct Words<'a> {
     /// Whether a language counts a flag rather than wording it: true
     /// shows as one, false as nothing at all.
     pub counted: bool,
+    /// Whether a list reads as a representation of it reads, its members
+    /// written down rather than merely shown.
+    pub as_written: bool,
 }
 
 impl Value {
@@ -165,8 +168,22 @@ impl Value {
             Value::Bool(true) => w.yes.to_string(),
             Value::Bool(false) => w.no.to_string(),
             Value::Null | Value::Empty => w.none.to_string(),
+            Value::List(items) if w.as_written => {
+                format!("[{}]", items.iter().map(|v| v.down(w)).collect::<Vec<_>>().join(", "))
+            }
             Value::List(items) => format!("[{}]", items.iter().map(|v| v.text(w)).collect::<Vec<_>>().join(", ")),
             other => other.plain(),
+        }
+    }
+
+    /// A member written down as a representation writes it: text between
+    /// quotes, a list within written down the same way, everything else
+    /// as its text stands.
+    fn down(&self, w: Words) -> String {
+        match self {
+            Value::Str(s) => quoted(s),
+            Value::List(items) => format!("[{}]", items.iter().map(|v| v.down(w)).collect::<Vec<_>>().join(", ")),
+            rest => rest.text(w),
         }
     }
 
@@ -201,6 +218,45 @@ impl Value {
         }
         out.push('|');
     }
+}
+
+/// The characters written as an escape wherever they stand, whatever the
+/// quote about the text happens to be.
+const ESCAPED: [(char, &str); 4] = [('\\', "\\\\"), ('\n', "\\n"), ('\t', "\\t"), ('\r', "\\r")];
+
+/// Text between quotes: an apostrophe, or a double quote where the text
+/// holds an apostrophe and no double quote of its own. The quote itself
+/// takes a backslash, and a character no reader could take back as it
+/// stands is written by its number instead.
+pub fn quoted(s: &str) -> String {
+    let edge = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::new();
+    out.push(edge);
+    for c in s.chars() {
+        if c == edge {
+            out.push('\\');
+            out.push(c);
+            continue;
+        }
+        if let Some((_, spelling)) = ESCAPED.iter().find(|(marked, _)| *marked == c) {
+            out.push_str(spelling);
+            continue;
+        }
+        if !c.is_control() {
+            out.push(c);
+            continue;
+        }
+        let n = u32::from(c);
+        out.push_str(&if n <= 0xff {
+            format!("\\x{n:02x}")
+        } else if n <= 0xffff {
+            format!("\\u{n:04x}")
+        } else {
+            format!("\\U{n:08x}")
+        });
+    }
+    out.push(edge);
+    out
 }
 
 /// The whole part, then fraction digits while the significant digits last.

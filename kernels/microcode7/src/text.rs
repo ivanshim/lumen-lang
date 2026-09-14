@@ -1,7 +1,7 @@
 // Text primitives take a subject and a row of arguments. The table lends
 // them their names and their complaints; no word chooses a language here.
 
-use crate::data::{Names, Value};
+use crate::data::{Among, Names, Value};
 use crate::table::Table;
 use crate::unicode::{altered, property};
 use std::rc::Rc;
@@ -98,11 +98,17 @@ fn expression(value: &Value, words: Names) -> String {
     match value {
         Value::Text(word)=>quotation(word),
         Value::TextRow(row,closed)=>written_row(row,*closed),
+        // This writer walks a collection's members too, so it leaves
+        // the same note on them the other writers leave.
         Value::Vector(row)=>{
+            let among=Among::members(value);
+            if let Some(marks)=among.instead { return marks.to_string(); }
             let contents: Vec<_>=row.iter().map(|v|expression(v,words)).collect();
             format!("[{}]",contents.join(", "))
         }
         Value::Dict(pairs)=>{
+            let among=Among::members(value);
+            if let Some(marks)=among.instead { return marks.to_string(); }
             let contents: Vec<_>=pairs.iter().map(|(key,item)|format!("{}: {}",expression(key,words),expression(item,words))).collect();
             format!("{{{}}}",contents.join(", "))
         }

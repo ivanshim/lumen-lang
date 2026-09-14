@@ -2,6 +2,7 @@
 // made in, so a nested program sees the bindings around it.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
@@ -368,16 +369,26 @@ impl Value {
     }
 
     pub fn repr(&self, names: &Names) -> String {
-        if let Value::Mutable(cell, _) | Value::Shared(cell) = self { return within_cell(cell, |inner| inner.repr(names)); }
+        if let Value::Mutable(cell, _) | Value::Shared(cell) = self {
+            let mark = if matches!(&*cell.borrow(), Value::Dict(_)) { "{...}" } else { "[...]" };
+            return within_cell_marked(cell, mark, |inner| inner.repr(names));
+        }
+        // A window on to a map keeps the name of the part it shows
+        // around the members, which are written out within it.
+        if matches!(self, Value::Window(..)) { return self.render(*names); }
         let settled = self.settled();
         match &settled {
             Value::Text(_) => settled.in_field(*names, "", "r").unwrap_or_else(|| settled.bare()),
-            Value::Vector(v) | Value::Row(v) => {
+            Value::Vector(v) | Value::Row(v) | Value::Tuple(v) => {
+                let among = Among::members(&settled);
+                if let Some(marks) = among.instead { return marks.to_string(); }
                 let body = v.iter().map(|item| item.repr(names)).collect::<Vec<_>>().join(", ");
-                if matches!(settled, Value::Row(_)) { format!("({body}{})", if v.len() == 1 { "," } else { "" }) }
-                else { format!("[{body}]") }
+                if matches!(settled, Value::Vector(_)) { format!("[{body}]") }
+                else { format!("({body}{})", if v.len() == 1 { "," } else { "" }) }
             }
             Value::Dict(entries) => {
+                let among = Among::members(&settled);
+                if let Some(marks) = among.instead { return marks.to_string(); }
                 let body = entries.iter().map(|entry| entry.0.repr(names) + ": " + &entry.1.repr(names)).collect::<Vec<_>>().join(", ");
                 format!("{{{body}}}")
             }
@@ -434,7 +445,13 @@ impl Value {
                 Some(row) => format!("{}({})", thing.of.name, row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
                 None => self.render(words),
             },
-            Value::Vector(row) => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+            Value::Vector(row) => {
+                let among = Among::members(self);
+                match among.instead {
+                    Some(marks) => marks.to_string(),
+                    None => format!("[{}]", row.iter().map(|x| x.representation(words)).collect::<Vec<_>>().join(", ")),
+                }
+            }
             _ => self.render(words),
         }
     }
@@ -703,11 +720,21 @@ impl Value {
             Value::Flag(false) => w.falsity.to_string(),
             Value::Nil | Value::Unset => w.nil.to_string(),
             Value::Tuple(parts) => {
+                let among = Among::members(self);
+                if let Some(marks) = among.instead { return marks.to_string(); }
                 let inside = parts.iter().map(|part| part.in_field(w, "", "r").unwrap_or_else(|| part.bare())).collect::<Vec<_>>().join(", ");
                 format!("({}{})", inside, if parts.len() == 1 { "," } else { "" })
             }
-            Value::Vector(items) => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+            Value::Vector(items) => {
+                let among = Among::members(self);
+                match among.instead {
+                    Some(marks) => marks.to_string(),
+                    None => format!("[{}]", items.iter().map(|v| v.render(w)).collect::<Vec<_>>().join(", ")),
+                }
+            }
             Value::Dict(entries) => {
+                let among = Among::members(self);
+                if let Some(marks) = among.instead { return marks.to_string(); }
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.render(w), v.render(w))).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.render(w), e.1.render(w)),
@@ -869,8 +896,16 @@ impl Value {
             Value::Text(s) => s.to_string(),
             Value::Flag(b) => if *b { "true" } else { "false" }.to_string(),
             Value::Nil | Value::Unset => "null".to_string(),
-            Value::Vector(items) => format!("[{}]", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+            Value::Vector(items) => {
+                let among = Among::members(self);
+                match among.instead {
+                    Some(marks) => marks.to_string(),
+                    None => format!("[{}]", items.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
+                }
+            }
             Value::Dict(entries) => {
+                let among = Among::members(self);
+                if let Some(marks) = among.instead { return marks.to_string(); }
                 format!("[{}]", entries.iter().map(|(k, v)| format!("{} => {}", k.bare(), v.bare())).collect::<Vec<_>>().join(", "))
             }
             Value::Couple(e) => format!("{} => {}", e.0.bare(), e.1.bare()),
@@ -886,6 +921,8 @@ impl Value {
             Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
+                let among = Among::members(self);
+                if let Some(marks) = among.instead { return marks.to_string(); }
                 let body = items.iter().map(|item| if let Value::Text(t) = item { format!("{t:?}") } else { item.bare() }).collect::<Vec<_>>().join(", ");
                 format!("({body}{})", if items.len() == 1 { "," } else { "" })
             },
@@ -1247,6 +1284,15 @@ thread_local! {
     /// A collection that reaches itself is met here on the way round,
     /// and an ellipsis is written for it in its own stead.
     static UNDERWAY: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// The collections whose members are being written out at this
+    /// moment, each by the place its members stand in. A fixed row
+    /// carries no cell to know it by, and the walk that lets a thing
+    /// say how it is written is given a collection's members and not
+    /// the cell about them, so this note serves for both. The places
+    /// are gathered in a set and not a list, so that asking whether one
+    /// is already among them costs the same whether the writing stands
+    /// one deep or a hundred thousand deep.
+    static AMONG: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     /// Where a language names them, the cells a run keeps its counts of
     /// figures in: how many a real written plainly carries, and how many
     /// one shown with its kind carries. A language that names neither
@@ -1254,9 +1300,56 @@ thread_local! {
     static COUNTS: RefCell<(Option<Rc<RefCell<Value>>>, Option<Rc<RefCell<Value>>>)> = const { RefCell::new((None, None)) };
 }
 
-/// Write out a cell's contents by the writer given, or an ellipsis where
-/// the same cell is already being written further out.
+/// A note left on a collection's members for as long as they are being
+/// written out. Where a note already lies on the very same members, the
+/// collection has been reached from somewhere within itself, and
+/// `instead` holds the marks to write in its place. The note is lifted
+/// when it goes out of use, so a collection reached twice by two roads
+/// is written whole on each of them.
+pub struct Among {
+    left: Option<usize>,
+    pub instead: Option<&'static str>,
+}
+
+impl Among {
+    /// A map is marked by its braces, a fixed row by the brackets a
+    /// fixed row stands between, and any other row by its own. What is
+    /// no collection takes no note, nothing else being able to hold
+    /// itself.
+    pub fn members(value: &Value) -> Among {
+        let (address, marks) = match value {
+            Value::Dict(pairs) => (Rc::as_ptr(pairs) as usize, "{...}"),
+            Value::Tuple(parts) | Value::Row(parts) | Value::Arguments(parts) => (Rc::as_ptr(parts) as usize, "(...)"),
+            Value::Vector(items) => (Rc::as_ptr(items) as usize, "[...]"),
+            _ => return Among { left: None, instead: None },
+        };
+        AMONG.with(|notes| {
+            if !notes.borrow_mut().insert(address) {
+                return Among { left: None, instead: Some(marks) };
+            }
+            Among { left: Some(address), instead: None }
+        })
+    }
+}
+
+impl Drop for Among {
+    fn drop(&mut self) {
+        if let Some(address) = self.left {
+            AMONG.with(|notes| { notes.borrow_mut().remove(&address); });
+        }
+    }
+}
+
+/// Write out a cell's contents by the writer given, or a row's ellipsis
+/// where the same cell is already being written further out.
 fn within_cell(cell: &Rc<RefCell<Value>>, writer: impl FnOnce(&Value) -> String) -> String {
+    within_cell_marked(cell, "[...]", writer)
+}
+
+/// The same, where the caller says what the cell come round to again is
+/// marked with: a map is marked by the braces it would have been written
+/// in, and anything else by a row's brackets.
+fn within_cell_marked(cell: &Rc<RefCell<Value>>, mark: &str, writer: impl FnOnce(&Value) -> String) -> String {
     let address = Rc::as_ptr(cell) as usize;
     let met_before = UNDERWAY.with(|stack| {
         let mut stack = stack.borrow_mut();
@@ -1264,7 +1357,7 @@ fn within_cell(cell: &Rc<RefCell<Value>>, writer: impl FnOnce(&Value) -> String)
         if !seen { stack.push(address); }
         seen
     });
-    if met_before { return String::from("[...]"); }
+    if met_before { return String::from(mark); }
     let text = writer(&cell.borrow());
     UNDERWAY.with(|stack| { stack.borrow_mut().pop(); });
     text

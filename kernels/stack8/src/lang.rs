@@ -274,6 +274,9 @@ pub struct Lang {
     pub bits_beyond: Vec<String>,
     pub real_bits: Option<usize>,
     pub shortest_reals: bool,
+    /// Whether a collection written as text reads as its representation
+    /// does, every member inside it written out as one.
+    pub collections_as_written: bool,
     pub real_digits: Option<usize>,
     /// The names the run keeps its counts of figures under: how many a
     /// real written plainly carries, and how many one shown with its
@@ -588,6 +591,11 @@ pub struct Lang {
     /// The names a program calls the file it is written in and the
     /// place that file lies in, where it has words for them.
     pub source_bindings: Vec<(String, String)>,
+    /// The name a program calls the flag saying that it is being run
+    /// with its checks left in. The kernel always leaves them in, so
+    /// the name stands for true for as long as the program runs unless
+    /// the program writes something else to it.
+    pub debug_binding: Option<String>,
     /// Whether being equal is the looser question. A language with an
     /// operator for being the very same means something looser by being
     /// equal: text that spells a number stands for that number.
@@ -685,6 +693,10 @@ pub struct Lang {
     /// builtin words under (ext.system.module.builtins).
     pub module_doc: Vec<String>,
     pub module_builtins: Vec<String>,
+    /// The module a name nothing has bound is looked for in
+    /// (ext.system.names.module), which is how Python reaches the names
+    /// it keeps in its builtins module without importing them.
+    pub names_module: Vec<String>,
     /// The three ways text may be read ahead of time: as statements, as
     /// one expression, and as one statement shown as it runs
     /// (ext.builtin.compile.modes); the names compile gives its
@@ -870,9 +882,15 @@ pub struct Lang {
     /// the left of a write, each taking the matching place of the value.
     pub unpack_words: Vec<String>,
     pub unpack_rest: Vec<String>,
-    pub unpack_short: Option<String>,
-    pub unpack_long: Option<String>,
-    pub unpack_unwalkable: Option<String>,
+    /// The pieces of the three complaints a taking-apart may raise. The
+    /// short one surrounds the count of places and the count of values
+    /// found, and carries a fourth piece that stands before the count of
+    /// places where one of them is starred and may take more than one
+    /// value. The long one surrounds the count of places, and the
+    /// unwalkable one the name of the kind that could not be walked.
+    pub unpack_short: Vec<String>,
+    pub unpack_long: Vec<String>,
+    pub unpack_unwalkable: Vec<String>,
     pub unpack_amiss: Option<String>,
     /// Whether writing into a place makes what is needed to hold it:
     /// an array where a name holds nothing, and one at each place along
@@ -959,6 +977,9 @@ pub struct Lang {
     pub class_called: Option<String>,
     /// Whether two texts are ordered letter by letter, by code point.
     pub text_ordered: bool,
+    /// Whether `and` and `or` give back the operand that settled the
+    /// answer rather than a flag standing for its truth.
+    pub logical_operand: bool,
     /// The words of the slice value: its three bounds' names, the complaints
     /// for the wrong count of bounds, a negative length and a bound written
     /// amiss, and the method a bound is asked for its whole number by.
@@ -1130,7 +1151,7 @@ w builtin.char_at | w builtin.ord | w builtin.chr | w builtin.typeof
 w builtin.error | w builtin.extern | w builtin.range | w builtin.real
 w builtin.num | w builtin.den | w builtin.push | w builtin.get
 w builtin.put | w builtin.precision | w builtin.to_string | w builtin.to_int
-w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision | s system.real.render
+w builtin.to_real | w system.args | w system.memoization | w system.real_default_precision | s system.real.render | s system.collection.render
 w system.entry | w system.kind.integer | w system.kind.rational | w system.kind.real
 w system.kind.string | w system.kind.boolean | w system.kind.array | w system.kind.null
 b system.flag.counts
@@ -1180,12 +1201,12 @@ w ext.op.identical | w ext.op.not_identical | b ext.system.kind.spelled
 w ext.builtin.args.all | w ext.builtin.args.count | w ext.builtin.args.at
 w ext.builtin.args.all.outside | w ext.builtin.args.count.outside | w ext.builtin.args.at.outside
 w ext.builtin.args.at.below | w ext.builtin.args.at.beyond | b ext.op.assign.value | b ext.stmt.assign.chain | b ext.op.index.plain_keys
-w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner
+w ext.system.source.file | w ext.system.source.directory | w ext.system.source.line | w ext.system.runner | w ext.system.debug
 w ext.system.complaint.warning | w ext.system.complaint.notice | w ext.system.complaint.deprecated | w ext.system.complaint.fatal | w ext.system.complaint.reading
 w ext.system.complaint.markup.setting | w ext.system.complaint.markup.kind | w ext.system.complaint.markup.place | w ext.system.complaint.markup.line | w ext.system.complaint.markup.reference
 w ext.system.complaint.reference.setting | w ext.system.complaint.reference.page | w ext.system.complaint.reference.mark
 w ext.builtin.include.demanded | w ext.builtin.include.demanded.missing
-w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief | w ext.system.fault.index.assign
+w ext.builtin.iter | w ext.builtin.next | w ext.builtin.repr | w ext.builtin.class.name | w ext.builtin.exceptions | w ext.builtin.exceptions.args | w ext.builtin.exceptions.cause | w ext.builtin.exceptions.unready | w ext.system.fault.attribute | w ext.system.fault.class.attribute | w ext.system.fault.class.index | w ext.system.fault.class.key | b ext.system.source.marked | w ext.system.fault.current | w ext.system.module.getattr | w ext.stmt.class.annotations | w ext.stmt.class.called | b ext.op.order.text | b ext.op.logical.operand | w ext.literal.unimplemented | b ext.syntax.names.shadow_builtins | w ext.builtin.method.bit_count | w ext.builtin.method.numerator | w ext.builtin.method.denominator | w ext.builtin.method.real | w ext.builtin.method.imag | w ext.builtin.method.__index__ | w ext.builtin.method.__truediv__ | w ext.builtin.method.fromhex | n ext.builtin.to_int.digits | w ext.builtin.to_int.digits.amiss | w ext.builtin.to_int.infinity | w ext.builtin.to_int.nan | b ext.builtin.round.whole.even | w ext.builtin.bool.base | w ext.builtin.bool.result | w ext.op.order.unsupported | w ext.builtin.slice | w ext.builtin.slice.start | w ext.builtin.slice.stop | w ext.builtin.slice.step | w ext.builtin.slice.arity | w ext.builtin.slice.length | w ext.op.index.integer | w ext.op.index.slice.amiss | w ext.builtin.method.indices | w ext.builtin.method.slice_hash | w ext.stmt.class.walked | w ext.system.fault.class.name | w ext.system.fault.class.stop | w ext.system.fault.division | w ext.system.fault.index | w ext.system.fault.kind | w ext.system.fault.name | w ext.system.fault.class | w ext.builtin.time_limit | w ext.system.kind.brief | w ext.system.fault.index.assign
 w ext.builtin.file.read | w ext.builtin.file.write | w ext.builtin.file.exists | w ext.builtin.file.kind | w ext.builtin.host.info | w ext.builtin.file.remove | w ext.builtin.shell | w ext.builtin.wait | w ext.builtin.net.ask | w ext.builtin.run.begin | w ext.builtin.run.end
 w ext.builtin.room.used | w ext.builtin.room.most | w ext.builtin.room.most.forget | w ext.builtin.room.limit
 w ext.builtin.eval | w ext.builtin.include | w ext.builtin.include.once
@@ -1215,7 +1236,7 @@ w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
  | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready
 w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long
-w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign ";
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | w ext.system.names.module | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -2183,6 +2204,10 @@ impl Lang {
                 "shortest" => true, "library" => false,
                 _ => return Err("system.real.render must be 'library' or 'shortest'".into()),
             },
+            collections_as_written: match r.string("system.collection.render")?.as_str() {
+                "representation" => true, "plain" => false,
+                _ => return Err("system.collection.render must be 'plain' or 'representation'".into()),
+            },
             real_digits: r.count("ext.system.real.digits")?,
             figures_binding: r.head("ext.system.real.figures")?,
             figures_shown_binding: r.head("ext.system.real.figures.shown")?,
@@ -2381,6 +2406,7 @@ impl Lang {
                 }
                 found
             },
+            debug_binding: r.head("ext.system.debug")?,
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
             unimplemented_words: r.strings("ext.literal.unimplemented")?,
@@ -2464,6 +2490,7 @@ impl Lang {
             module_names: r.strings("ext.system.module.name")?,
             module_doc: r.strings("ext.system.module.doc")?,
             module_builtins: r.strings("ext.system.module.builtins")?,
+            names_module: r.strings("ext.system.names.module")?,
             compile_modes: r.strings("ext.builtin.compile.modes")?,
             compile_parameters: r.strings("ext.builtin.compile.parameters")?,
             compile_kind: r.head("ext.builtin.compile.kind")?,
@@ -2568,9 +2595,9 @@ impl Lang {
             args_beyond: r.head("ext.builtin.args.at.beyond")?,
             unpack_words: r.strings("ext.stmt.unpack")?,
             unpack_rest: r.strings("ext.stmt.unpack.rest")?,
-            unpack_short: r.head("ext.stmt.unpack.short")?,
-            unpack_long: r.head("ext.stmt.unpack.long")?,
-            unpack_unwalkable: r.head("ext.stmt.unpack.unwalkable")?,
+            unpack_short: r.strings("ext.stmt.unpack.short")?,
+            unpack_long: r.strings("ext.stmt.unpack.long")?,
+            unpack_unwalkable: r.strings("ext.stmt.unpack.unwalkable")?,
             unpack_amiss: r.head("ext.stmt.unpack.amiss")?,
             makes_places: r.flag("ext.op.index.makes")?,
             untrue_text: r.strings("ext.system.untrue.text")?,
@@ -2626,6 +2653,7 @@ impl Lang {
             class_annotations: r.strings("ext.stmt.class.annotations")?,
             class_called: r.head("ext.stmt.class.called")?,
             text_ordered: r.flag("ext.op.order.text")?,
+            logical_operand: r.flag("ext.op.logical.operand")?,
             slice_parts: ["ext.builtin.slice", "ext.builtin.slice.start", "ext.builtin.slice.stop", "ext.builtin.slice.step", "ext.builtin.slice.arity", "ext.builtin.slice.length", "ext.op.index.integer", "ext.op.index.slice.amiss"].into_iter().map(|k| Ok((k.to_string(), r.head(k)?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             class_walked: r.head("ext.stmt.class.walked")?,
             writer: r.head("ext.stmt.class.writer")?,
