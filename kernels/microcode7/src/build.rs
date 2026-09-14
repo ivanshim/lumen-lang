@@ -27,6 +27,21 @@ enum Holds {
     Nothing,
 }
 
+/// What reading a class body gathers. `arms` counts the arms of
+/// conditionals open around the member being read: only one arm of a
+/// conditional runs, so a member named within one may go unwritten, and
+/// `uncertain` holds those names, whose places are glanced at when the
+/// class is built rather than read outright.
+struct ClassParts {
+    methods: Vec<(String, Rc<Routine>)>,
+    attributes: Vec<String>,
+    held: Vec<Form>,
+    annotated_names: Vec<(Value, Value)>,
+    uncertain: Vec<String>,
+    arms: usize,
+    cannot: bool,
+}
+
 #[derive(Clone, Default)]
 struct ScopeWords {
     bound: Vec<String>,
@@ -2372,7 +2387,7 @@ impl<'a> Builder<'a> {
         // lands in these places and not in the scope around the class.
         let mut kept = Vec::new();
         for word in gathered {
-            let place = self.gensym("attribute");
+            let place = self.member_address(&word, "attribute");
             self.class_bindings.last_mut().expect("the class namespace").1.insert(word.clone(), place.clone());
             kept.push((word, place));
         }
@@ -2382,6 +2397,197 @@ impl<'a> Builder<'a> {
         }
         self.pos = resume;
         Ok(Some(kept))
+    }
+
+    /// The place a member's value is kept in. A name the body has
+    /// already used keeps the place it was given, so an arm of a
+    /// conditional writes where the rest of the body reads; a name new
+    /// to the body is given a place of its own.
+    fn member_address(&mut self, word: &str, purpose: &str) -> Address {
+        match self.class_bindings.last().and_then(|(_, names)| names.get(word)).cloned() {
+            Some(place) => place,
+            None => self.gensym(purpose),
+        }
+    }
+
+    /// A member entered under its name, in the place given, and made
+    /// known by that name to the rest of the body. One entered from
+    /// within an arm is noted as a member whose place may stay unwritten,
+    /// and it displaces any method of that name, since the arm decides
+    /// which of the two the class ends up with.
+    fn member_noted(&mut self, parts: &mut ClassParts, word: &str, place: Address) {
+        if let Some(at) = parts.attributes.iter().position(|old| old == word) {
+            parts.attributes.remove(at);
+            parts.held.remove(at);
+        }
+        if parts.arms > 0 {
+            parts.methods.retain(|(old, _)| old != word);
+            if !parts.uncertain.iter().any(|n| n == word) { parts.uncertain.push(word.to_string()); }
+        }
+        parts.attributes.push(word.to_string());
+        parts.held.push(Form::Read(place.clone()));
+        self.class_bindings.last_mut().expect("the class namespace").1.insert(word.to_string(), place);
+    }
+
+    /// One arm of a conditional in a class body, read the way the body
+    /// around it is read. An arm may stand on the line of its own head,
+    /// as any block may.
+    fn class_limb(&mut self, parts: &mut ClassParts) -> Res<Form> {
+        let head_mark = self.on_any("block.intro");
+        self.skip_lead_word();
+        let mut items = Vec::new();
+        if head_mark && self.table.flag("ext.block.lone_statement") && !self.on_stmt_end()
+            && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish) {
+            loop {
+                let gone_past = self.class_item(parts, &mut items)?;
+                if gone_past { break; }
+                if !(self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme)) { break; }
+                self.advance();
+                if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
+            }
+            return Ok(sequence(items));
+        }
+        self.skip_line_ends();
+        if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
+        self.advance();
+        self.skip_line_ends();
+        while self.look().shape != Shape::Close && !self.exhausted() {
+            self.class_item(parts, &mut items)?;
+            self.skip_line_ends();
+        }
+        if self.look().shape != Shape::Close { return Err("Expected the end of a class body".to_string()); }
+        self.advance();
+        Ok(sequence(items))
+    }
+
+    /// A conditional in a class body. Whichever arm runs names members
+    /// of the class, so the names of every arm are gathered together and
+    /// each is given one place that every arm naming it writes into. A
+    /// place no arm reached holds nothing and the class is given no
+    /// member for it, since a name a conditional never bound is no
+    /// member of the class in the language this follows.
+    fn class_choice(&mut self, parts: &mut ClassParts) -> Res<Form> {
+        let table = self.table;
+        self.advance();
+        let test = self.expr(0)?;
+        parts.arms += 1;
+        let taken = self.class_limb(parts);
+        parts.arms -= 1;
+        let taken = taken?;
+        // A further arm may follow the ends of lines.
+        let mut ahead = 0;
+        while self.glance(ahead).shape == Shape::LineEnd
+            || (self.glance(ahead).shape == Shape::Sign && table.separates(&self.glance(ahead).lexeme)) {
+            ahead += 1;
+        }
+        let next = self.glance(ahead);
+        let further = next.shape == Shape::Bare && table.spells("stmt.elif", &next.lexeme);
+        let remaining = next.shape == Shape::Bare && table.spells("stmt.else", &next.lexeme);
+        if !further && !remaining {
+            return Ok(self.choose(test, taken, constant(Value::Nil)));
+        }
+        self.pos += ahead;
+        if remaining { self.advance(); }
+        parts.arms += 1;
+        let untaken = match further || self.key("stmt.if") {
+            true => self.class_choice(parts),
+            false => self.class_limb(parts),
+        };
+        parts.arms -= 1;
+        Ok(self.choose(test, taken, untaken?))
+    }
+
+    /// One member of a class body. True where the member has already
+    /// gone past whatever follows it, so the walk leaves that alone.
+    fn class_item(&mut self, parts: &mut ClassParts, setup: &mut Vec<Form>) -> Res<bool> {
+        let table = self.table;
+        if !table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
+            let (word, address) = self.member_adornments(setup)?;
+            parts.cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
+            parts.methods.retain(|(n, _)| n != &word);
+            self.member_noted(parts, &word, address);
+            self.skip_line_ends();
+            return Ok(true);
+        }
+        let mut wrappers=Vec::new();
+        while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
+            self.advance();let expression=self.expr(0)?;let address=self.gensym("member_wrapper");
+            setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
+            self.skip_line_ends();
+        }
+        if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {parts.cannot=true;}
+        if self.key("stmt.function") {
+            self.advance();
+            let method_name = self.need_word("as the method name")?;
+            let body = self.method(&method_name)?;
+            parts.methods.retain(|(old, _)| old != &method_name);
+            if let Some(at) = parts.attributes.iter().position(|old| old == &method_name) {
+                parts.attributes.remove(at);
+                parts.held.remove(at);
+            }
+            let slot = self.member_address(&method_name, "method_body");
+            let decorated=!wrappers.is_empty();
+            let mut expression=constant(Value::Routine(body.clone()));
+            while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
+            setup.push(Form::Write(slot.clone(),Box::new(expression)));
+            // A method an arm of a conditional writes belongs among the
+            // members the class is handed, not among the methods it
+            // always has: the arm holding it may never run.
+            match decorated || parts.arms > 0 {
+                true => self.member_noted(parts, &method_name, slot),
+                false => {
+                    self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
+                    parts.methods.push((method_name, body));
+                }
+            }
+        } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
+            self.advance();
+        } else if table.blocks == Blocks::Indented && self.key("stmt.if") {
+            let chosen = self.class_choice(parts)?;
+            setup.push(chosen);
+        } else if let Some(kept) = self.taken_apart_members(setup)? {
+            for (word, place) in kept {
+                self.member_noted(parts, &word, place);
+            }
+        } else {
+            let member = self.look().lexeme.clone();
+            let value = if self.key("ext.stmt.class") {
+                let member = self.glance(1).lexeme.clone();
+                setup.push(self.class_with_receiver()?.0);
+                let mut nested = self.read(&member);
+                while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
+                Some((member, nested))
+            } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
+                self.pos += 2;
+                // Commas after the value gather a tuple for the member,
+                // where the language has them.
+                let gathered = table.has_any("ext.op.tuple");
+                let value = if gathered { self.comma_value()? } else { self.expr(0)? };
+                Some((member, value))
+            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+                && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
+                // A keyword ahead of the mark, as `try:`, begins a
+                // statement of the body, not an annotated member.
+                self.pos += 2;
+                self.put_by_annotation(&["stmt.assign"])?;
+                parts.annotated_names.push((Value::text(&member), Value::Nil));
+                if self.on_assign() {
+                    self.advance();
+                    let value = self.comma_value()?;
+                    Some((member, value))
+                } else { None }
+            } else {
+                let _read = self.stmt()?;
+                parts.cannot = true;
+                None
+            };
+            if let Some((word, value)) = value {
+                let place = self.member_address(&word, "attribute");
+                setup.push(Form::Write(place.clone(), Box::new(value)));
+                self.member_noted(parts, &word, place);
+            }
+        }
+        Ok(false)
     }
 
     fn class_not_ready(&self) -> Form {
@@ -2511,119 +2717,23 @@ impl<'a> Builder<'a> {
             self.advance();
             self.skip_line_ends();
         }
-        let mut methods = Vec::new();
         self.class_bindings.push((self.layers.len(), HashMap::new()));
-        let mut attributes = Vec::new();
-        let mut annotated_names: Vec<(Value, Value)> = Vec::new();
-        let mut values = Vec::new();
-        if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
-        values.extend(other_parents.iter().cloned().map(Form::Read));
-        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {attributes.push(word.to_string());values.push(constant(Value::text(&full_name)));}
+        let mut parts = ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+            annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot };
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {parts.attributes.push(word.to_string());parts.held.push(constant(Value::text(&full_name)));}
         // What the class says about itself is text standing alone at the
         // head of the body, kept under the word the table gives
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
             let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
-            attributes.push(word.to_string());
-            values.push(constant(said.unwrap_or(Value::Nil)));
+            parts.attributes.push(word.to_string());
+            parts.held.push(constant(said.unwrap_or(Value::Nil)));
         }
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
-            if !table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
-                let (word, address) = self.member_adornments(&mut setup)?;
-                cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
-                methods.retain(|(n, _)| n != &word);
-                if let Some(index) = attributes.iter().position(|n| n == &word) {
-                    attributes.remove(index);
-                    values.remove(index + usize::from(parent.is_some()));
-                }
-                attributes.push(word);
-                values.push(Form::Read(address));
-                self.skip_line_ends();
-                continue;
-            }
-            let mut wrappers=Vec::new();
-            while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
-                self.advance();let expression=self.expr(0)?;let address=self.gensym("member_wrapper");
-                setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
-                self.skip_line_ends();
-            }
-            if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {cannot=true;}
-            if self.key("stmt.function") {
-                self.advance();
-                let method_name = self.need_word("as the method name")?;
-                let body = self.method(&method_name)?;
-                methods.retain(|(old, _)| old != &method_name);
-                if let Some(i) = attributes.iter().position(|old| old == &method_name) {
-                    attributes.remove(i);
-                    values.remove(i + usize::from(parent.is_some()) + other_parents.len());
-                }
-                let slot = self.gensym("method_body");
-                let decorated=!wrappers.is_empty();
-                let mut expression=constant(Value::Routine(body.clone()));
-                while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
-                setup.push(Form::Write(slot.clone(),Box::new(expression)));
-                if decorated {attributes.push(method_name.clone());values.push(Form::Read(slot.clone()));}
-                self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
-                if !decorated {methods.push((method_name, body));}
-            } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
-                self.advance();
-            } else if let Some(kept) = self.taken_apart_members(&mut setup)? {
-                for (word, place) in kept {
-                    if let Some(index) = attributes.iter().position(|old| old == &word) {
-                        attributes.remove(index);
-                        values.remove(index + usize::from(parent.is_some()) + other_parents.len());
-                    }
-                    attributes.push(word);
-                    values.push(Form::Read(place));
-                }
-            } else {
-                let member = self.look().lexeme.clone();
-                let value = if self.key("ext.stmt.class") {
-                    let member = self.glance(1).lexeme.clone();
-                    setup.push(self.class_with_receiver()?.0);
-                    attributes.push(member.clone());
-                    let mut nested = self.read(&member);
-                    while let Some(address) = wrappers.pop() { nested = Form::Apply(Callee::Code(Box::new(Form::Read(address))), vec![nested]); }
-                    Some(nested)
-                } else if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme) {
-                    self.pos += 2;
-                    attributes.push(member);
-                    // Commas after the value gather a tuple for the member,
-                    // where the language has them.
-                    let gathered = table.has_any("ext.op.tuple");
-                    Some(if gathered { self.comma_value()? } else { self.expr(0)? })
-                } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
-                    && table.spells("ext.stmt.annotation", &self.glance(1).lexeme) {
-                    // A keyword ahead of the mark, as `try:`, begins a
-                    // statement of the body, not an annotated member.
-                    self.pos += 2;
-                    self.put_by_annotation(&["stmt.assign"])?;
-                    annotated_names.push((Value::text(&member), Value::Nil));
-                    if self.on_assign() {
-                        self.advance();
-                        attributes.push(member);
-                        Some(self.comma_value()?)
-                    } else { None }
-                } else {
-                    let _read = self.stmt()?;
-                    cannot = true;
-                    None
-                };
-                if let Some(value) = value {
-                    let place = self.gensym("attribute");
-                    setup.push(Form::Write(place.clone(), Box::new(value)));
-                    let word = attributes.last().expect("an attribute").clone();
-                    if let Some(index) = attributes[..attributes.len() - 1].iter().position(|n| n == &word) {
-                        attributes.remove(index);
-                        values.remove(index + usize::from(parent.is_some()) + other_parents.len());
-                    }
-                    self.class_bindings.last_mut().expect("the class namespace").1.insert(word, place.clone());
-                    values.push(Form::Read(place));
-                }
-            }
+            if self.class_item(&mut parts, &mut setup)? { continue; }
             if on_one_line {
                 while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
                     self.advance();
@@ -2636,6 +2746,7 @@ impl<'a> Builder<'a> {
         }
         self.class_bindings.pop();
         self.within = previous;
+        let ClassParts { methods, mut attributes, mut held, annotated_names, uncertain, cannot, .. } = parts;
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -2644,14 +2755,32 @@ impl<'a> Builder<'a> {
         // word; a body that annotated nothing leaves the class without it.
         if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
             attributes.push(word.clone());
-            values.push(constant(Value::Dict(Rc::new(annotated_names))));
+            held.push(constant(Value::Dict(Rc::new(annotated_names))));
         }
         // The header's keywords ride along as entries under their hidden
         // names, for the building of the class to hand on.
         for (word, read) in handed_words {
             attributes.push(word);
-            values.push(read);
+            held.push(read);
         }
+        // A member only an arm of a conditional writes to may stay
+        // unwritten, and reading such a place outright would stop the
+        // run. Each is glanced at instead, and each is emptied again
+        // once the class holds what it found, so that a class statement
+        // read a second time — one standing in a loop — does not find
+        // what the pass before it left behind.
+        let mut emptied = Vec::new();
+        for (at, word) in attributes.iter().enumerate() {
+            if !uncertain.iter().any(|n| n == word) { continue; }
+            if let Form::Read(place) = held[at].clone() {
+                held[at] = Form::Glance(place.clone());
+                emptied.push(place);
+            }
+        }
+        let mut values = Vec::new();
+        if let Some(slot) = &parent { values.push(Form::Read(slot.clone())); }
+        values.extend(other_parents.iter().cloned().map(Form::Read));
+        values.extend(held);
         let plan = Plan {
             name: named.clone(), answers: other_parents.len(), field_names: vec![], field_reach: vec![],
             shared_names: attributes, constant_names: vec![], methods, extends: parent.is_some(),
@@ -2662,6 +2791,7 @@ impl<'a> Builder<'a> {
             self.class_bindings.last_mut().expect("an outer class").1.insert(named, slot.clone());
             setup.push(Form::Write(slot, Box::new(declaration)));
         } else { setup.push(self.write(&named, declaration)); }
+        for place in emptied { setup.push(Form::Forget(place)); }
         Ok((sequence(setup), cannot))
     }
 
