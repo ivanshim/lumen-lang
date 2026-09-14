@@ -259,6 +259,24 @@ The measurement before this one, 139 of 327 across 16 files, was taken
 before `doctest`, the library batch and the fixes in §1b. Files that
 reach their own tests have roughly doubled since.
 
+### 1c-bis. The count taken again with a longer patience
+
+Taken at `12fabf1` with the per-file patience raised from four minutes
+to fifteen, because the shorter one was scoring three files that finish
+as though they ran nothing:
+
+    stack8       380 passing of 1,381 methods across 38 files, 12 run nothing
+    microcode7   333 passing of 1,239 methods across 37 files, 13 run nothing
+
+Two of the files that run nothing do so by outlasting even fifteen
+minutes in a debug build: `test_exceptions` and `test_math`. What they
+settle on has to be read from a release run.
+
+The three the shorter patience was losing: `test_dict` finishes in 318
+seconds with 48 of 142, `test_list` in 266 with 27 of 71, `test_long` in
+243 with 25 of 43. Quoting a total taken with the four-minute cap makes
+the number fall while the work rises, which has happened once already.
+
 ### 1d. What each file that runs nothing is now waiting on
 
 Measured again after `doctest`, the library batch, the logical operators,
@@ -368,6 +386,12 @@ way walking one does.
     list(reversed(b'\x01\x02\x03'))        CPython [3, 2, 1]   ours refuses
     bytes(reversed(b'\x01\x02\x03'))       CPython b'\x03\x02\x01'
     list(reversed(bytearray(b'\x01\x02')))  CPython [2, 1]
+
+What `reversed()` says when it genuinely cannot walk a value is a
+separate defect, left alone for now: CPython raises a catchable
+`TypeError: 'int' object is not reversible`, and we raise
+`NotImplementedError: reversed() is not supported for these values`, so
+a program that catches TypeError around it does not catch ours.
 
 This one refusal stops the whole of `test_float`, which reaches
 `LE_DOUBLE_INF = bytes(reversed(BE_DOUBLE_INF))` at line 685 while it is
