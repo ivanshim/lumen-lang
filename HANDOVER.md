@@ -345,6 +345,36 @@ looked for.
 Two bases are fine -- `class A(P, Q)` was checked and works -- so
 multiple inheritance is not among these.
 
+### 1f. Two more blockers reduced to a line each
+
+`reversed()` refuses a byte string, and nothing else. Everything else it
+is asked about already agrees with CPython -- a list, a tuple, a string,
+a range, a dict and its keys, values and items were all checked -- so
+the fix is to teach the builtin two more values, not to build anything.
+Reversing a byte string gives a list of integers, `[3, 2, 1]`, the same
+way walking one does.
+
+    list(reversed(b'\x01\x02\x03'))        CPython [3, 2, 1]   ours refuses
+    bytes(reversed(b'\x01\x02\x03'))       CPython b'\x03\x02\x01'
+    list(reversed(bytearray(b'\x01\x02')))  CPython [2, 1]
+
+This one refusal stops the whole of `test_float`, which reaches
+`LE_DOUBLE_INF = bytes(reversed(BE_DOUBLE_INF))` at line 685 while it is
+still importing and never runs a test.
+
+"This class operation is not supported" means a builtin that cannot be
+subclassed, and the list of which ones is short. Each of these was
+written as `class S(X): pass` and run against real python3:
+
+    subclass fine   int float str list tuple dict set bool object
+                    Exception BaseException
+    refused         bytes bytearray complex frozenset type
+
+`class ComplexSubclass(complex): pass` at line 38 of `test_complex`
+stops that file, and `class X(frozenset)` is the same defect wearing a
+different name. So five builtins are missing from work that already
+covers eleven.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
