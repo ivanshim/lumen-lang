@@ -3208,7 +3208,7 @@ impl<'a> Engine<'a> {
             // where its class says nothing of how it is shown.
             if let Some(worth) = Self::worth_of(value) {
                 let told = self.special_value(value, 1).is_some() || (!representation && self.special_value(value, 0).is_some());
-                if !told { return self.special_text(&worth, representation); }
+                if !told { let name = object.class.name.clone(); return self.worth_shown(&name, &worth, representation); }
             }
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
@@ -3250,6 +3250,29 @@ impl<'a> Engine<'a> {
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
+    }
+
+    /// Whether a thing keeping this worth names its own class before
+    /// the worth: a set and a row of bytes that can be written to both
+    /// do, and every other builtin kind is written as the worth alone.
+    fn worth_names_class(worth: &Value) -> bool {
+        matches!(worth.contents(), Value::Set(_) | Value::Bytes(_, true, _))
+    }
+
+    /// How a thing keeping a worth of a builtin kind is written. Most
+    /// kinds write the worth alone, but a set and a row of bytes that
+    /// can be written to each name their kind before it, and there the
+    /// name to give is the thing's own class rather than the builtin's.
+    fn worth_shown(&mut self, class: &str, worth: &Value, representation: bool) -> Res<String> {
+        if !Self::worth_names_class(worth) { return self.special_text(worth, representation); }
+        // The worth as it reads with no name before it: a row of bytes
+        // that can be written to reads as the fixed row of the same
+        // bytes, and a set reads as its members between braces.
+        let bare = match worth.contents() {
+            Value::Bytes(row, true, _) => { let copy = row.borrow().clone(); self.byte_make(copy, false) }
+            held => held,
+        };
+        Ok(format!("{class}({})", self.special_text(&bare, true)?))
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
@@ -3652,6 +3675,10 @@ impl<'a> Engine<'a> {
         let mut changed = false;
         for value in args {
             match if places == [usize::MAX] { None } else { self.worth_free_of(value, places) } {
+                // A kind that names itself before its worth is written
+                // by the thing's own class, so the worth cannot stand
+                // in for the thing where the writing is what is asked.
+                Some(worth) if matches!(op, Builtin::Repr | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
                 Some(worth) => { settled.push(worth); changed = true; }
                 None => settled.push(value.clone()),
             }
@@ -4760,6 +4787,12 @@ impl<'a> Engine<'a> {
                         Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
                         // A builtin kind the definition lets a class stand on.
                         Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => Some(self.kind_class(&word)),
+                        // The bytes kinds are values of their own, and
+                        // are found by the word each is spelled with.
+                        Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
+                            let word = self.byte_kind_word(mutable).to_string();
+                            Some(self.kind_class(&word))
+                        }
                         // The property builtin, read as a class to stand on.
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => Some(self.property_class()),
                         Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
@@ -4771,6 +4804,10 @@ impl<'a> Engine<'a> {
                     match given.next() {
                         Some(Value::Class(c)) => answers.push(c),
                         Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => { let kind = self.kind_class(&word); answers.push(kind); }
+                        Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
+                            let word = self.byte_kind_word(mutable).to_string();
+                            let kind = self.kind_class(&word); answers.push(kind);
+                        }
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => { let class = self.property_class(); answers.push(class); }
                         Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
                         None => return Err("Stack underflow".to_string().into()),
@@ -8197,8 +8234,15 @@ impl<'a> Engine<'a> {
         Value::Bytes(Rc::new(RefCell::new(row)), mutable, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][usize::from(mutable)].as_str()))
     }
 
+    /// The word a definition spells one of the two bytes kinds with. The
+    /// kinds stand as values of their own rather than as builtin words,
+    /// so anything that works by the word asks for it here.
+    pub(super) fn byte_kind_word(&self, mutable: bool) -> &str {
+        &self.lang.byte_words[if mutable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }][0]
+    }
+
     fn byte_kind(&self, mutable: bool) -> Value {
-        let name = &self.lang.byte_words[if mutable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }][0];
+        let name = self.byte_kind_word(mutable);
         let words = &self.lang.byte_words["ext.system.bytes.type"];
         Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1])))
     }
@@ -8298,6 +8342,10 @@ impl<'a> Engine<'a> {
         if task == 16 {
             if args.len() != 2 { return Err(bad()); }
             let Value::ByteKind(wanted, _) = &args[1] else { return Err(unready()); };
+            // A thing of a class standing on a bytes kind is of that kind.
+            if let Value::Object(o) = &args[0] {
+                return Ok(Value::Flag(Self::kind_beneath(&o.class).as_deref() == Some(self.byte_kind_word(*wanted))));
+            }
             return Ok(Value::Flag(matches!(&args[0], Value::Bytes(_, actual, _) if wanted == actual)));
         }
         if task == 17 {

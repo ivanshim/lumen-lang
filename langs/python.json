@@ -2247,7 +2247,11 @@
     "list",
     "dict",
     "tuple",
-    "set"
+    "set",
+    "frozenset",
+    "bytes",
+    "bytearray",
+    "complex"
   ],
   "ext.stmt.class.layout": [
     "TypeError: multiple bases have instance lay-out conflict"

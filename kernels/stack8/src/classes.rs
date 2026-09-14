@@ -510,8 +510,23 @@ impl<'a> Engine<'a> {
                 if let Some((_,v))=o.fields.borrow().iter().find(|(n,_)| n==name) {return Ok(v.clone());}
                 if let Some(v)=member {return self.bind_class_value(v,Some(subject.clone()),o.class.clone());}
                 // The worth a thing keeps answers for the methods of its kind.
-                if let (Some(worth),Some(op))=(Self::worth_of(&subject),self.lang.value_methods.get(name).cloned()) {
-                    return Ok(Value::ValueMethod(Rc::new((worth,op))));
+                if let Some(worth)=Self::worth_of(&subject) {
+                    if let Some(op)=self.lang.value_methods.get(name).cloned() {
+                        // The parts of a complex number are read rather
+                        // than called, as they are on the number itself.
+                        if matches!(op.as_str(),"real"|"imag") {
+                            if let Value::Complex(z)=worth.contents() {
+                                return Ok(crate::complex::real(if op=="real" {z.real} else {z.imag}));
+                            }
+                        }
+                        return Ok(Value::ValueMethod(Rc::new((worth,op))));
+                    }
+                    // A set and a row of bytes answer some of their
+                    // methods through builtins that take the receiver
+                    // first, so reading one binds it to the worth.
+                    if matches!(self.lang.builtins.get(name),Some(b) if b.set_method()||matches!(b,Builtin::Bytes(2..=15))) {
+                        return Ok(Self::adapter(3,vec![Value::text(name),worth]));
+                    }
                 }
             }
             Value::Method(o,f) => {
@@ -669,6 +684,10 @@ impl<'a> Engine<'a> {
         }
     }
     fn beneath(&self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+        // The bytes kinds stand as values of their own rather than as
+        // builtin words, so each is asked about under its own word.
+        if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
+        if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
@@ -685,14 +704,14 @@ impl<'a> Engine<'a> {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
                 let Some(builtin)=self.lang.builtins.get(word.as_ref()) else{return Err(self.class_refusal());};
                 if subclass{
-                    if !matches!(builtin,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf|Builtin::Dict|Builtin::Tuple|Builtin::Set|Builtin::Bool){return Err(self.class_refusal());}
+                    if !matches!(builtin,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf|Builtin::Dict|Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)){return Err(self.class_refusal());}
                     if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
                     if let Value::Adapter(other)=value {if other.0==8{return Ok(other.1[0].equals(&w.1[0]));}}
                     return Err(self.class_refusal());
                 }
                 // A thing of a class standing on the kind is of the kind.
                 if let Value::Object(o)=value{return Ok(Self::kind_beneath(&o.class).as_deref()==Some(word.as_ref()));}
-                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),Builtin::SortOf=>matches!(value,Value::Class(_)),Builtin::Dict=>matches!(value,Value::Map(_)),Builtin::Tuple=>matches!(value,Value::Tuple(_)),Builtin::Set=>matches!(value,Value::Set(_)),Builtin::Bool=>matches!(value,Value::Flag(_)),_=>return Err(self.class_refusal())});
+                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),Builtin::SortOf=>matches!(value,Value::Class(_)),Builtin::Dict=>matches!(value,Value::Map(_)),Builtin::Tuple=>matches!(value,Value::Tuple(_)),Builtin::Set=>matches!(value,Value::Set(_)),Builtin::Bool=>matches!(value,Value::Flag(_)),Builtin::Complex=>matches!(value,Value::Complex(_)),Builtin::Bytes(m)=>matches!(value,Value::Bytes(_,mutable,_) if *mutable==(*m==1)),_=>return Err(self.class_refusal())});
             }}
         }
         Err(self.class_refusal())
