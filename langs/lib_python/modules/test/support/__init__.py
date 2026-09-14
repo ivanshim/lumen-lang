@@ -1,4 +1,8 @@
-# Environment decorators are stubs: they retain the decorated function.
+# Environment decorators which ask about the environment we have are
+# stubs: they retain the decorated function. Those which ask whether
+# this is the reference implementation answer no and skip, because a
+# test of another implementation's internals says nothing about this one
+# whichever way it comes out.
 # Helpers whose work is unavailable complain when called, never pass a test.
 import gc
 import sys
@@ -21,13 +25,60 @@ _TPFLAGS_IMMUTABLETYPE = 256
 def _identity(function):
     return function
 
-cpython_only = _identity
+# A guard names the implementations a test is for, all together wanted
+# or all together unwanted; an implementation it does not name gets the
+# opposite answer. Naming none of them means the reference one.
+def _parse_guards(guards):
+    if not guards:
+        return ({'cpython': True}, False)
+    wanted = list(guards.values())[0]
+    return (guards, not wanted)
+
+def check_impl_detail(**guards):
+    named, otherwise = _parse_guards(guards)
+    return named.get(sys.implementation.name, otherwise)
+
+def impl_detail(message=None, **guards):
+    if check_impl_detail(**guards):
+        return _identity
+    if message is None:
+        named, otherwise = _parse_guards(guards)
+        names = ' or '.join(sorted(named))
+        if otherwise:
+            message = 'implementation detail not available on ' + names
+        else:
+            message = 'implementation detail specific to ' + names
+    return unittest.skip(message)
+
+# Tests of the reference implementation's own internals -- which tuple
+# it hands back a second time, how many names hold a value, what its C
+# code does at the edges. This is not that implementation, so running
+# them proves nothing: they pass or fail on how this kernel happens to
+# allocate, and either answer is an accident.
+def cpython_only(test):
+    return impl_detail(cpython=True)(test)
+
+# Reference counting is that implementation's own way of knowing when a
+# value is finished with. There is none here to count, so these belong
+# with the rest of its internals.
+refcount_test = cpython_only
+
+# The memory-exhaustion tests turn off that implementation's allocator
+# through its own C test module, so they are its internals too.
+nomemtest = cpython_only
+
+# This kernel's floats are the host's binary64, so the tests which ask
+# for IEEE 754 doubles are asking for what they get and simply run.
 requires_IEEE_754 = _identity
+
+# Only Cygwin's newlib C library fails these, and the host is not it.
 skip_on_newlib = _identity
-nomemtest = _identity
-refcount_test = _identity
+
 def requires_subprocess():
     return unittest.skip('subprocesses are not supported')
+
+# Nothing here colours its output, so a class asking for plain output
+# already has it and runs unchanged.
 force_not_colorized_test_class = _identity
 
 def is_resource_enabled(resource):
@@ -36,6 +87,8 @@ def is_resource_enabled(resource):
 def requires_resource(resource):
     return unittest.skipUnless(is_resource_enabled(resource), 'resource ' + resource + ' is not enabled')
 
+# A note for a runner that would put tests in threads at once. Nothing
+# here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):
     return _identity
 
@@ -117,10 +170,6 @@ class captured_stderr:
     def __exit__(self, kind, value, traceback):
         sys.stderr = self.saved
         return False
-
-def check_impl_detail(**guards):
-    # Stub: this run claims no reference implementation internals.
-    return False
 
 def _unavailable(*args, **kwargs):
     raise 'NotImplementedError: this test support helper is not supported'
