@@ -500,6 +500,23 @@ no program under `scratch/` or `tests/python/` was edited. Skipping the
 CPython-internals tests makes the passing count fall by exactly the
 tests that were passing by accident, which is the right way round.
 
+### 1g-bis. The count once the CPython-internals tests step aside
+
+Measured at 78e9c4d, the commit that makes `cpython_only` skip, against
+the count at eb04787 just before it:
+
+    stack8       752 of 2,364  ->  743 of 2,366   (43 files, 7 run nothing)
+    microcode7   719 of 2,272  ->  706 of 2,274
+
+The fall is the honest one that was promised. Every character that
+changed in every progress line was checked: each is a pass, failure or
+error turning into a skip, or a failure turning into a pass. Nothing
+went from a pass to a failure or an error, and in `test_long`, whose
+collected count grew from 43 to 45, no test fails now that did not fail
+before. The three files that carry the skips are `test_enumerate` (14
+on stack8, 14 on microcode7), `test_syntax` (16 each) and `test_scope`
+(3 each), with one or two in `test_list` and `test_long`.
+
 ### 1h. The seventh parked raise, and the one fix that covers the rest
 
 The parked-raise shape turned up a seventh time, and this time it was
