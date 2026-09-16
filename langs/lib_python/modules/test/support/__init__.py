@@ -147,6 +147,21 @@ class swap_attr:
         setattr(self.obj, self.attr, self.old)
         return False
 
+# The digit limit is set for the block and put back after it, whatever
+# the block did.
+class adjust_int_max_str_digits:
+    def __init__(self, max_digits):
+        self.max_digits = max_digits
+
+    def __enter__(self):
+        self.old = sys.get_int_max_str_digits()
+        sys.set_int_max_str_digits(self.max_digits)
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        sys.set_int_max_str_digits(self.old)
+        return False
+
 # The printer follows whatever sys holds as its stream, so capturing is
 # putting a StringIO in the stream's place and taking it out again.
 class captured_stdout:
@@ -174,7 +189,6 @@ class captured_stderr:
 def _unavailable(*args, **kwargs):
     raise 'NotImplementedError: this test support helper is not supported'
 
-adjust_int_max_str_digits = _unavailable
 calcobjsize = _unavailable
 catch_unraisable_exception = _unavailable
 check_free_after_iterating = _unavailable

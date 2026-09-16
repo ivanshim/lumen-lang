@@ -91,6 +91,22 @@ def setrecursionlimit(limit):
     # A stored limit would pretend to govern calls which it cannot govern.
     raise 'NotImplementedError: setting the recursion limit is not supported'
 
+# The limit CPython puts on the digits an integer may be written with
+# or read from. Conversions here are not held to it; the value is kept
+# so a program may read and set it.
+_int_max_str_digits = 4300
+
+def get_int_max_str_digits():
+    return _int_max_str_digits
+
+def set_int_max_str_digits(maxdigits):
+    global _int_max_str_digits
+    if not isinstance(maxdigits, int):
+        raise TypeError("'" + type(maxdigits).__name__ + "' object cannot be interpreted as an integer")
+    if maxdigits != 0 and maxdigits < 640:
+        raise ValueError('maxdigits must be 0 or larger than 640')
+    _int_max_str_digits = maxdigits
+
 class _Output:
     def write(self, *args, **keywords):
         if keywords:

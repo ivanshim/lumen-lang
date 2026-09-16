@@ -201,6 +201,13 @@ class TestCase:
     def addCleanup(self, function, *args, **kwargs):
         self._cleanups = [*self._cleanups, [function, args, kwargs]]
 
+    def enterContext(self, cm):
+        # The context is entered now and left when the test is cleaned
+        # up, so a test may use one without a with statement around it.
+        result = cm.__enter__()
+        self.addCleanup(cm.__exit__, None, None, None)
+        return result
+
     def doCleanups(self):
         successful = True
         while len(self._cleanups) > 0:
