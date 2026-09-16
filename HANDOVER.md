@@ -573,6 +573,43 @@ What still refuses a class: a `metaclass=` keyword or `*bases` in the
 header (`test_binop`, twelve checks, waits on `metaclass=ABCMeta`), and
 a class written inside a function, which is on its own branch.
 
+### 1j. Three fixtures CI caught, and a class inside a function
+
+The pull request's first run on CI found three scratch programs whose
+records the class-body work had moved past, none of them caught by the
+progress-line filter because their `.err` held the refusal text and
+not a progress line. `reader-tail/14` exits quietly on both kernels
+and on CPython, so its record is an empty `.out`. `syntax-modern/20`
+now reaches its annotation, which names a class that was never
+defined: CPython ends with `NameError: name 'Missing' is not defined`,
+both kernels with the class-operation refusal, so the record moved to
+the refusal and the gap is noted here. An annotation naming an
+undefined name should raise NameError.
+
+`reader-tail/3` was a real defect: `del abcd[1:2]` inside a test
+method refused on microcode7 with "Cannot take a place out of", since
+the deletion arm took the cell it was handed to be the collection and
+met a mutable standing for the list. The arm now steps through each
+mutable or shared wrapping until the collection is in hand, as the
+stack8 arm already does. Six deletion shapes checked against
+`python3` on both kernels.
+
+A class written inside a function runs on both kernels: each member
+lands in a place of the function's own and the class is formed from
+those places when the definition runs, a method that reaches a name of
+the enclosing function is closed over that frame where the definition
+runs, two closures of one definition are two values, and the qualified
+name lists only the routines opened inside the enclosing class. A
+probe of twelve shapes (closures over enclosing names, a class made
+twice from one definition, `super()` inside such a class, a property
+and a staticmethod, an exception class, `vars()`, a class inside a
+function inside a function) prints the same as CPython on both
+kernels. The branch was written before the class-body statement
+family landed, and the two met in the class reader on both kernels:
+the branch's `reaches_out` and `stands_in_routine` conditions were
+carried onto the `gathering()` and `parts()` accessors the family
+introduced. `class/8` exits quietly on both kernels and on CPython.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

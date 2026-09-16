@@ -2307,13 +2307,23 @@ impl<'a> Machine<'a> {
     }
 
     /// The frame and index an array lives in, for writing it in place.
-    fn locate(&self, slot: &Address, frame: &Rc<Env>) -> Result<(Rc<Env>, usize), String> {
+    fn locate(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<(Rc<Env>, usize), String> {
         let f = ascend(frame, slot.up);
         if !matches!(f.cells.borrow()[slot.at], Value::Unset) {
             return Ok((f.clone(), slot.at));
         }
+        // A name that lives only in a dictionary handed over for a text
+        // to run in, as exec is handed one, has no cell of its own to
+        // find, though a read of it finds the dictionary's entry. The
+        // write goes through what that entry holds, or lands in the
+        // dictionary, so the cell the name would have had is answered.
+        let booked = |run: &mut Self, at: usize| matches!(run.booked_read(at, &slot.ident), Some(Ok(_)));
+        if Rc::ptr_eq(f, &self.outermost) && booked(self, slot.at) {
+            return Ok((f.clone(), slot.at));
+        }
         match slot.fallback {
             Some(g) if !matches!(self.outermost.cells.borrow()[g], Value::Unset) => Ok((self.outermost.clone(), g)),
+            Some(g) if booked(self, g) => Ok((self.outermost.clone(), g)),
             // Where a language makes a place on writing into it, a name
             // holding nothing is where the write goes, and the array it
             // needs is made there.
@@ -6224,8 +6234,18 @@ impl<'a> Machine<'a> {
     }
 
     fn appointed(&self, subject: &Value, index: usize) -> Option<Rc<Routine>> {
+        self.appointed_within(subject, index).map(|(body, _)| body)
+    }
+
+    /// The special method and the frame it runs in. A method handed
+    /// over from its address keeps the frame its class was formed in,
+    /// which a class inside a function needs beneath it to reach any
+    /// name outside its own; one the plan carries runs from the
+    /// outermost, having no other.
+    fn appointed_within(&self, subject: &Value, index: usize) -> Option<(Rc<Routine>, Rc<Env>)> {
         match self.appointment(subject, index) {
-            Some(Value::Routine(body) | Value::Bound(body, _)) => Some(body),
+            Some(Value::Bound(body, frame)) => Some((body, frame)),
+            Some(Value::Routine(body)) => Some((body, self.outermost.clone())),
             _ => None,
         }
     }
@@ -6244,9 +6264,9 @@ impl<'a> Machine<'a> {
         }
         match self.appointment(subject, index) {
             None => Ok(None),
-            Some(Value::Routine(body) | Value::Bound(body, _)) => {
+            Some(Value::Routine(_) | Value::Bound(..)) => {
+                let (body, scope) = self.appointed_within(subject, index).expect("the method just found");
                 let arguments = std::iter::once(subject.clone()).chain(tail.iter().cloned()).collect();
-                let scope = self.outermost.clone();
                 match self.invoke(body, scope, arguments) {
                     Ok(value) => Ok(Some(value)),
                     Err(Escape::Error(message)) => Err(message),
@@ -6430,8 +6450,8 @@ impl<'a> Machine<'a> {
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
             _ => {
-                let routine = self.appointed(source, 16).ok_or_else(|| self.bad_answer())?;
-                match self.invoke(routine, self.outermost.clone(), vec![source.clone()]) {
+                let (routine, scope) = self.appointed_within(source, 16).ok_or_else(|| self.bad_answer())?;
+                match self.invoke(routine, scope, vec![source.clone()]) {
                     Ok(v) => Ok(Some(v)),
                     Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
                     Err(Escape::Error(s)) => Err(s),
@@ -8944,7 +8964,7 @@ impl<'a> Machine<'a> {
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
-                    (Value::Bound(a,_), Value::Bound(b,_)) => Rc::ptr_eq(a,b),
+                    (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
@@ -9585,6 +9605,9 @@ impl<'a> Machine<'a> {
                         Value::Complex(_) => Some(Prim::ComplexMade),
                         Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
                         Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
+                        // What a routine keeps under its names, seen as
+                        // a view of the entries, is of the dictionary kind.
+                        Value::Attributes(_) => Some(Prim::Dictionary),
                         Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
                         Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
                     };
@@ -11868,8 +11891,8 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Placed(thing, at) => {
-                    let Some(reader) = self.appointed(thing, 11) else { return Ok(None) };
-                    match self.invoke(reader, self.outermost.clone(), vec![thing.clone(), Value::from_big(at.clone())]) {
+                    let Some((reader, scope)) = self.appointed_within(thing, 11) else { return Ok(None) };
+                    match self.invoke(reader, scope, vec![thing.clone(), Value::from_big(at.clone())]) {
                         Ok(item) => { *at += 1; Ok(Some(item)) }
                         Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
                         Err(Escape::Error(complaint)) => Err(complaint),

@@ -3467,6 +3467,12 @@ impl<'a> Engine<'a> {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
         }
+        // The view standing on the right of the sign is that dictionary
+        // just the same, so `{} == f.__dict__` answers as CPython does.
+        if let Value::Fields(o) = b {
+            let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
+            return self.special_dyad(op, a, &Value::Map(Rc::new(entries)));
+        }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
             Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
@@ -9663,7 +9669,10 @@ impl<'a> Engine<'a> {
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
-                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict), _ => None,
+                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict),
+                        // A routine's own names, read as a view of them,
+                        // are a dictionary as far as the program can tell.
+                        Value::Fields(_) => Some(Builtin::Dict), _ => None,
                     };
                     if let Some(b) = which { if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
                 }

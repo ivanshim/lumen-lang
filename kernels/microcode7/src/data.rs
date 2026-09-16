@@ -577,6 +577,11 @@ impl Value {
         if let (Value::Text(here), Value::Text(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
+        // A view of the entries a routine keeps is equal to whatever
+        // the dictionary of those entries is equal to, whichever side
+        // of the asking it stands on.
+        if let Value::Attributes(held) = self { return held.entries_shown().equals(other); }
+        if let Value::Attributes(held) = other { return self.equals(&held.entries_shown()); }
         match (self, other) {
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
             (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
@@ -644,7 +649,10 @@ impl Value {
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
-            (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
+            // A routine bound to a frame is one value with itself alone:
+            // the same code bound in another frame is another closure,
+            // with names and a namespace of its own, as CPython has it.
+            (Value::Bound(a, here), Value::Bound(b, there)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(here, there),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
         }
@@ -1114,6 +1122,17 @@ pub struct Thing {
     /// Which thing this is by the turn it was made in, counting from
     /// one, for a language that names them when showing them.
     pub turn: usize,
+}
+
+impl Thing {
+    /// The entries a program can see, as the dictionary of them: none
+    /// that is unset, and none under a name no program can spell.
+    pub fn entries_shown(&self) -> Value {
+        let pairs = self.holds.borrow().iter()
+            .filter(|(name, v)| !matches!(v, Value::Unset) && !name.starts_with('\0'))
+            .map(|(name, v)| (Value::text(name), v.clone())).collect();
+        Value::Dict(Rc::new(pairs))
+    }
 }
 
 /// A ratio as the nearest binary number of sixty-four bits. One too
