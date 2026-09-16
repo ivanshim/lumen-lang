@@ -535,6 +535,27 @@ instances of 'Fraction' and 'str'` -- consistent across kernels, and
 the CPython wording comes from returning NotImplemented from both sides,
 which the library does not yet do.
 
+### 1i. A class body runs any statement now
+
+Every statement form a class body used to refuse is taken: a statement
+run for its effect, `+=` on a member, `for` and `while` (the loop's
+target is a member, as CPython has it; a loop that runs no pass leaves
+its names unbound), `import` and `from ... import`, `try`/`except` with
+the partial bindings of an arm that raised part-way surviving, `with`,
+and `del`. Checked against real `python3` on both kernels with a probe
+covering each form, a class re-run in a loop starting clean, and
+nothing leaking to module scope.
+
+Two suites that ran nothing reach their tests on both kernels because
+of it: `test_grammar` (75 checks, held by one `from ... import` in a
+class body at line 32) and `test_cmath` (33, held by a bare statement).
+microcode7 read the target of `for j in ():` as the imaginary suffix of
+a number rather than as a name and refused the class; settled with it.
+
+What still refuses a class: a `metaclass=` keyword or `*bases` in the
+header (`test_binop`, twelve checks, waits on `metaclass=ABCMeta`), and
+a class written inside a function, which is on its own branch.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
