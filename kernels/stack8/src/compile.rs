@@ -168,6 +168,9 @@ pub struct Compiler<'a> {
     within: Option<(String, Option<String>)>,
     method_self: Option<String>,
     class_names: Vec<(usize, HashMap<String, String>)>,
+    /// The class bodies being read, the innermost last: what each has
+    /// gathered so far of its members.
+    gathered: Vec<ClassBody>,
     /// Which parameters of each program take a name's own cell rather
     /// than a copy of what it holds, found before anything is read.
     shared_args: HashMap<String, Vec<bool>>,
@@ -338,7 +341,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -685,6 +688,11 @@ impl<'a> Compiler<'a> {
     /// a name outside every block is global; inside a block it is the
     /// block's own, forgotten on leaving.
     fn cell_to_write(&mut self, name: &str) -> Cell {
+        // A name a class body knows is written where the body keeps
+        // it, as it is read from there: so the loops, imports and
+        // handlers of a body bind members by the ordinary writes.
+        let kept = self.member_of(name);
+        let name = kept.as_deref().unwrap_or(name);
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
         // A named write in a comprehension belongs to the function
@@ -794,6 +802,33 @@ impl<'a> Compiler<'a> {
     fn glance(&mut self, name: &str) {
         let cell = self.cell_to_read(name, false);
         self.put(Instr::Glance(cell));
+    }
+
+    /// The place a class body keeps the member of this name in, where
+    /// the statements being read are that body's own.
+    fn member_of(&self, name: &str) -> Option<String> {
+        self.class_names.last().filter(|(depth, _)| *depth == self.pieces.len()).and_then(|(_, names)| names.get(name)).cloned()
+    }
+
+    /// Whether the statements being read are a class body's own, and
+    /// not a method's within it or the program's around it.
+    fn in_class_body(&self) -> bool {
+        self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len())
+    }
+
+    /// What the class body being read has gathered so far.
+    fn gathering(&mut self) -> &mut ClassBody {
+        self.gathered.last_mut().expect("a class body being read")
+    }
+
+    /// A name a statement of a class body is about to write is a
+    /// member of the class: the body's place for it is settled before
+    /// the write, so that the write lands there. Anywhere else, and for
+    /// the places the assembler makes for itself, nothing is done.
+    fn claim(&mut self, name: &str) {
+        if !self.in_class_body() || name.starts_with('#') { return; }
+        let place = self.member_place(name, "attribute");
+        self.member_kept(name, &place);
     }
 
     fn read_taking(&mut self, name: &str) {
@@ -1088,6 +1123,10 @@ impl<'a> Compiler<'a> {
             self.bind_for_targets(&held)?;
             self.pos = block;
         }
+        // The block of a loop or a watched statement standing in a class
+        // body names members of the class, so it is read as the body
+        // around it is read.
+        if self.in_class_body() { return self.class_arm(); }
         // A loop with nothing to do may be written with the mark that
         // ends a statement standing where its block would: the mark is
         // the whole body, and nothing runs each pass.
@@ -1592,6 +1631,16 @@ impl<'a> Compiler<'a> {
         }
         let from = self.mark();
         self.awkward_place = false;
+        // A bare name bound here is a member where the binding stands
+        // in a class body; a place within something binds no name.
+        let next = self.look_ahead(1);
+        let within = Lang::spells(&self.lang.pipe_words, &next.lexeme)
+            || [&self.lang.grouping, &self.lang.array_brackets, &self.lang.index_brackets].into_iter().flatten()
+                .any(|pair| next.shape == Shape::Sign && pair.open == next.lexeme);
+        if self.look().shape == Shape::Instr && !within {
+            let name = self.look().lexeme.clone();
+            self.claim(&name);
+        }
         self.block_place()?;
         if self.awkward_place {
             self.piece().instrs.truncate(from);
@@ -2260,6 +2309,7 @@ impl<'a> Compiler<'a> {
             self.read(&over);
             self.read(&at);
             self.act(Action::WalkThis, 2);
+            self.claim(value);
             self.write(value);
         }
         if let Some(key) = key {
@@ -2275,6 +2325,10 @@ impl<'a> Compiler<'a> {
             if !lang.tuple_marks.is_empty() && !lang.unpack_words.is_empty() {
                 let (marks, _) = self.outer_marks(began, self.tokens.len(), &lang.in_words);
                 let end = marks.first().copied().ok_or_else(|| "Expected loop target".to_string())?;
+                let mut names = Vec::new();
+                if self.target_names(began, end, &mut names) {
+                    for name in names { self.claim(&name); }
+                }
                 self.give_places(began, end, value)?;
             } else {
                 self.pos = began;
@@ -3028,10 +3082,12 @@ impl<'a> Compiler<'a> {
                 let bound = self.gensym("end");
                 self.write(&bound);
                 self.constant(Value::Small(0));
+                self.claim(&var);
                 self.write(&var);
                 self.take();
                 return self.count_loop(&var, &bound, false);
             }
+            self.claim(&var);
             self.write(&var);
             if let Some(sep) = &call.between {
                 self.want_sign(sep, "between the range bounds")?;
@@ -3063,6 +3119,7 @@ impl<'a> Compiler<'a> {
                 return self.walk(&bag, None, &var, false, target);
             }
             self.take();
+            self.claim(&var);
             self.write(&var);
             self.expr(tier + 1)?;
         }
@@ -3605,7 +3662,8 @@ impl<'a> Compiler<'a> {
     /// A member kept under its name in the place given, and known by
     /// that name to the rest of the body. A member named inside an arm
     /// of a conditional is noted as one whose place may go unwritten.
-    fn member_kept(&mut self, held: &mut ClassBody, named: &str, place: &str) {
+    fn member_kept(&mut self, named: &str, place: &str) {
+        let held = self.gathering();
         held.shared.retain(|(old, _)| old != named);
         held.shared.push((named.to_string(), place.to_string()));
         if held.arms > 0 && !held.uncertain.iter().any(|n| n == named) {
@@ -3617,13 +3675,13 @@ impl<'a> Compiler<'a> {
     /// One arm of a conditional in a class body, read as the body
     /// around it is read. An arm may stand on the line of its own head,
     /// as any block may.
-    fn class_arm(&mut self, held: &mut ClassBody) -> Res<()> {
+    fn class_arm(&mut self) -> Res<()> {
         let introduced = self.on_any(&self.lang.block_intros);
         self.skip_intro();
         if introduced && self.lang.lone_stmt && !self.on_sep()
             && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish) {
             while !matches!(self.look().shape, Shape::LineEnd | Shape::Finish | Shape::Close) {
-                let tidied = self.class_member(held, false)?;
+                let tidied = self.class_member(false)?;
                 if !tidied && self.look().shape == Shape::Sign && self.lang.ends_stmt(&self.look().lexeme) {
                     self.take();
                 } else { break; }
@@ -3635,7 +3693,7 @@ impl<'a> Compiler<'a> {
         self.take();
         self.skip_seps();
         while self.look().shape != Shape::Close && !self.exhausted() {
-            self.class_member(held, false)?;
+            self.class_member(false)?;
             self.skip_seps();
         }
         if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
@@ -3649,14 +3707,14 @@ impl<'a> Compiler<'a> {
     /// no arm reached holds nothing, and the class keeps no member for
     /// it: a name a conditional never bound is no member, exactly as it
     /// is none in the language this follows.
-    fn class_branch(&mut self, held: &mut ClassBody) -> Res<()> {
+    fn class_branch(&mut self) -> Res<()> {
         let lang = self.lang;
         self.take();
         self.expr(0)?;
         let unless = self.skip();
-        held.arms += 1;
-        let first = self.class_arm(held);
-        held.arms -= 1;
+        self.gathering().arms += 1;
+        let first = self.class_arm();
+        self.gathering().arms -= 1;
         first?;
         // A further arm may stand after the ends of lines.
         let mut ahead = 0;
@@ -3674,17 +3732,17 @@ impl<'a> Compiler<'a> {
         let over = self.leap();
         self.land(unless);
         self.pos += ahead;
-        held.arms += 1;
+        self.gathering().arms += 1;
         let rest = if another {
-            self.class_branch(held)
+            self.class_branch()
         } else {
             self.take();
             match self.on_keyword(&lang.if_words) {
-                true => self.class_branch(held),
-                false => self.class_arm(held),
+                true => self.class_branch(),
+                false => self.class_arm(),
             }
         };
-        held.arms -= 1;
+        self.gathering().arms -= 1;
         rest?;
         self.land(over);
         Ok(())
@@ -3692,14 +3750,14 @@ impl<'a> Compiler<'a> {
 
     /// One member of a class body. True where the member has already
     /// gone past what follows it, so that the walk leaves it alone.
-    fn class_member(&mut self, held: &mut ClassBody, heads_the_body: bool) -> Res<bool> {
+    fn class_member(&mut self, heads_the_body: bool) -> Res<bool> {
         let lang = self.lang;
         if !lang.class_details.get("root").map_or(false, |v| !v.is_empty()) && self.on_any(&lang.decorator_words) {
             let (named, slot) = self.adorned_member()?;
-            if lang.constructor.as_ref() == Some(&named) { held.unready = true; }
-            held.methods.retain(|(old, _)| old != &named);
-            held.shared.retain(|(old, _)| old != &named);
-            held.shared.push((named, slot));
+            if lang.constructor.as_ref() == Some(&named) { self.gathering().unready = true; }
+            self.gathering().methods.retain(|(old, _)| old != &named);
+            self.gathering().shared.retain(|(old, _)| old != &named);
+            self.gathering().shared.push((named, slot));
             self.skip_seps();
             return Ok(true);
         }
@@ -3709,13 +3767,13 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
-        if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {held.unready=true;}
+        if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.take();
             let named = self.want_name("as the method name")?;
             let method = self.method(&named)?;
-            held.methods.retain(|(old, _)| old != &named);
-            held.shared.retain(|(old, _)| old != &named);
+            self.gathering().methods.retain(|(old, _)| old != &named);
+            self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
             self.constant(Value::Routine(method.clone()));
             let wrapped=!decorators.is_empty();
@@ -3724,11 +3782,11 @@ impl<'a> Compiler<'a> {
             // A method an arm of a conditional defines is a member like
             // any other: the class cannot carry it among the methods it
             // always has, since the arm may not run.
-            match wrapped || held.arms > 0 {
-                true => self.member_kept(held, &named, &slot),
+            match wrapped || self.gathering().arms > 0 {
+                true => self.member_kept(&named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
-                    held.methods.push((named, method));
+                    self.gathering().methods.push((named, method));
                 }
             }
         } else if self.on_keyword(&lang.pass_words) {
@@ -3737,7 +3795,7 @@ impl<'a> Compiler<'a> {
             // Text alone at the head of the body is what the class
             // says about itself; text anywhere else is discarded.
             let words = self.take().lexeme;
-            if let (true, Some(slot)) = (heads_the_body, held.documentation.clone()) {
+            if let (true, Some(slot)) = (heads_the_body, self.gathering().documentation.clone()) {
                 self.constant(Value::text(&words));
                 self.write(&slot);
             }
@@ -3748,12 +3806,14 @@ impl<'a> Compiler<'a> {
             for place in decorators.into_iter().rev() { self.read(&place); self.act(Action::Invoke(Rc::from("")), 2); }
             let slot = self.member_place(&named, "nested");
             self.write(&slot);
-            self.member_kept(held, &named, &slot);
+            self.member_kept(&named, &slot);
         } else if lang.blocks == Blocks::Indented && self.on_keyword(&lang.if_words) {
-            self.class_branch(held)?;
+            self.class_branch()?;
+        } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.for_words) || self.on_keyword(&lang.while_words)) {
+            self.class_loop()?;
         } else if let Some(bound) = self.class_bindings()? {
             for (named, place) in bound {
-                self.member_kept(held, &named, &place);
+                self.member_kept(&named, &place);
             }
         } else if self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme) {
             let named = self.take().lexeme;
@@ -3766,7 +3826,7 @@ impl<'a> Compiler<'a> {
             }
             let slot = self.member_place(&named, "attribute");
             self.write(&slot);
-            self.member_kept(held, &named, &slot);
+            self.member_kept(&named, &slot);
         } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
             // A keyword before the mark (`try:`) heads a statement
@@ -3774,21 +3834,48 @@ impl<'a> Compiler<'a> {
             let named = self.take().lexeme;
             self.take();
             self.annotation_expression(&lang.assign_words)?;
-            held.annotated.push((Value::text(&named), Value::Null));
+            self.gathering().annotated.push((Value::text(&named), Value::Null));
             if self.on_assign() {
                 self.take();
                 self.scope_value()?;
                 let slot = self.member_place(&named, "attribute");
                 self.write(&slot);
-                self.member_kept(held, &named, &slot);
+                self.member_kept(&named, &slot);
             }
         } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
             && self.look_ahead(1).shape == Shape::Sign && lang.compound.contains_key(&self.look_ahead(1).lexeme) {
-            self.class_compound(held)?;
+            self.class_compound()?;
         } else {
-            self.class_plain(held)?;
+            self.class_plain()?;
         }
         Ok(false)
+    }
+
+    /// A loop in a class body. What its block binds are members, and
+    /// so is the loop's own variable, which the language this follows
+    /// keeps in the class once the loop is over. The block is read as
+    /// the body around it is read, and every name the loop writes is
+    /// given the body's place for it as it is written, so that the
+    /// last pass's value is the member's. A loop may run no times, so
+    /// all it names are members the class may find unwritten, and a
+    /// target that is anything but names -- a place within something
+    /// -- binds no member and is refused.
+    fn class_loop(&mut self) -> Res<()> {
+        let lang = self.lang;
+        if self.on_keyword(&lang.for_words) {
+            let (marks, _) = self.outer_marks(self.pos + 1, self.tokens.len(), &lang.in_words);
+            let mut names = Vec::new();
+            let plain = marks.first().map_or(false, |&at| self.target_names(self.pos + 1, at, &mut names));
+            if !plain {
+                self.stmt()?;
+                self.gathering().unready = true;
+                return Ok(());
+            }
+        }
+        self.gathering().arms += 1;
+        let read = self.stmt();
+        self.gathering().arms -= 1;
+        read
     }
 
     /// `x += 1` in a class body. What x holds is read as the body reads
@@ -3797,7 +3884,7 @@ impl<'a> Compiler<'a> {
     /// working comes to is a member of the class either way, as it is
     /// in the language this follows, which looks x up the same way and
     /// keeps the answer in the class.
-    fn class_compound(&mut self, held: &mut ClassBody) -> Res<()> {
+    fn class_compound(&mut self, ) -> Res<()> {
         let named = self.take().lexeme;
         let sign = self.take().lexeme;
         let op = self.compound_of(&sign).expect("a compound sign");
@@ -3806,26 +3893,27 @@ impl<'a> Compiler<'a> {
         self.compound_act(op);
         let place = self.member_place(&named, "attribute");
         self.write(&place);
-        self.member_kept(held, &named, &place);
+        self.member_kept(&named, &place);
         Ok(())
     }
 
     /// Any other statement of a class body. One that binds no name --
     /// a call made for what it does, a write into a place within a
-    /// member, a raise or an assertion -- is read as it is read
+    /// member, a raise, an assertion, a break or a continue in a loop
+    /// of the body -- is read as it is read
     /// anywhere, and the members it names it reads as the body reads
     /// them. A statement whose bindings the walk cannot yet follow is
     /// read the same way and the class refused, as before.
-    fn class_plain(&mut self, held: &mut ClassBody) -> Res<()> {
+    fn class_plain(&mut self, ) -> Res<()> {
         let lang = self.lang;
         let begin = self.pos;
         let word = self.look().clone();
         let harmless = match word.shape == Shape::Instr && lang.keywords.contains(&word.lexeme) {
-            true => [&lang.throw_words, &lang.assert_words].iter().any(|words| Lang::spells(words, &word.lexeme)),
+            true => [&lang.throw_words, &lang.assert_words, &lang.break_words, &lang.continue_words].iter().any(|words| Lang::spells(words, &word.lexeme)),
             false => !self.binds_within(begin),
         };
         self.stmt()?;
-        if !harmless { held.unready = true; }
+        if !harmless { self.gathering().unready = true; }
         Ok(())
     }
 
@@ -3941,12 +4029,12 @@ impl<'a> Compiler<'a> {
             documentation = Some(slot);
         }
         let body_at = self.mark();
-        let mut held = ClassBody { methods: Vec::new(), shared, annotated: Vec::new(),
-            documentation, uncertain: Vec::new(), arms: 0, unready };
+        self.gathered.push(ClassBody { methods: Vec::new(), shared, annotated: Vec::new(),
+            documentation, uncertain: Vec::new(), arms: 0, unready });
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             let heads_the_body = std::mem::take(&mut opening);
-            if self.class_member(&mut held, heads_the_body)? { continue; }
+            if self.class_member(heads_the_body)? { continue; }
             if inline {
                 while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.take(); }
             } else { self.skip_seps(); }
@@ -3955,7 +4043,7 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
         }
-        let ClassBody { methods, mut shared, annotated, uncertain, unready, .. } = held;
+        let ClassBody { methods, mut shared, annotated, uncertain, unready, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
         self.within = outer;
         if unready {
