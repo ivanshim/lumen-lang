@@ -500,6 +500,41 @@ no program under `scratch/` or `tests/python/` was edited. Skipping the
 CPython-internals tests makes the passing count fall by exactly the
 tests that were passing by accident, which is the right way round.
 
+### 1h. The seventh parked raise, and the one fix that covers the rest
+
+The parked-raise shape turned up a seventh time, and this time it was
+mended where every instance meets rather than at the caller that forgot.
+On stack8 an exception raised inside a comparison dunder escaped every
+`except` around the call whenever the comparison ran inside a called
+function -- a `def` or a `lambda` -- and ended the run; at module level
+the same raise was caught. microcode7 caught all of it. Reduced to:
+
+    def bad(o): raise TypeError("helper")
+    class P:
+        def __lt__(self, o): return bad(o)
+    try:
+        (lambda: P() < "a")()
+    except TypeError:
+        print("caught")        # CPython and microcode7: caught; stack8: the run ended
+
+The comparison path calls the dunder through `special_call`, which
+parks what was raised in `self.carried` and returns words in its place,
+and the comparison path used `?` on the words without taking the value
+back. The try statement (`run_attempt`) now looks for a parked value
+before it reads the words, and shows the arms the value. That covers
+the comparison path and every other caller that forgot, since the
+parked value is by construction the real fault behind the placeholder.
+
+This is what killed `test_fractions` on stack8 at its second test; it
+now reaches `Ran 50 tests` and prints the same progress line as
+microcode7. A second, library-side defect was in front of it: a fraction
+compared with a complex was refused outright; it now answers as CPython
+does. What remains: `Fraction(1, 2) < "a"` raises the library's own
+wording on both kernels where CPython says `'<' not supported between
+instances of 'Fraction' and 'str'` -- consistent across kernels, and
+the CPython wording comes from returning NotImplemented from both sides,
+which the library does not yet do.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
