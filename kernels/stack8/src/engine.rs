@@ -4856,6 +4856,11 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
                     members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
+                    // The values arrive in the order the body wrote
+                    // them, the methods last of all; the namespace the
+                    // class shows names them in the order the body
+                    // bound them instead.
+                    members.sort_by_key(|(named,_)|plan.member_order.iter().position(|o|o==named).unwrap_or(usize::MAX));
                     let mut bases=base.into_iter().collect::<Vec<_>>();bases.extend(answers);
                     let result=self.form_class(plan.name.clone(),bases,members)?;
                     self.data.push(result);return Ok(());

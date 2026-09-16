@@ -636,6 +636,10 @@ pub struct Plan {
     pub constant_names: Vec<String>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub extends: bool,
+    /// Every member's name, standing where the body bound it, methods
+    /// among attributes: the namespace of the built class is shown in
+    /// this order, with any name missing from it shown after them all.
+    pub ranking: Vec<String>,
 }
 
 /// An operand of a dyad that is a binding or a

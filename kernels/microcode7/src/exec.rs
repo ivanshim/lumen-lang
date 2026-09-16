@@ -3408,6 +3408,11 @@ impl<'a> Machine<'a> {
                 if self.has_class_order() {
                     let mut entries=shared;
                     entries.extend(plan.methods.iter().map(|(key,p)|(key.clone(),Value::Routine(p.clone()))));
+                    // Written in the order of the writing, the methods
+                    // behind the rest; the class is to hold them in the
+                    // order in which the body named them.
+                    let rank=|key:&String|plan.ranking.iter().position(|name|name==key).unwrap_or(usize::MAX);
+                    entries.sort_by_key(|(key,_)|rank(key));
                     let mut parents=Vec::new();parents.extend(under);parents.extend(answers);
                     return self.build_class_value(plan.name.clone(),parents,entries);
                 }
