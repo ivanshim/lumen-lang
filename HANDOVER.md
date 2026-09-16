@@ -622,6 +622,31 @@ past, reader-tail/3, whose record was still the refusal though both
 kernels print one progress line; it moves here to the line the
 class-in-function work gives, which both kernels print alike.
 
+### 1k. Batch 2 and 3 merged as #489; batch 4 begins
+
+Pull request #489 merged into main at 601a8a2 with every check green
+on 0c0f119. The branch restarts on that main. Batch 4 opens with the
+one-line method form; verified and waiting to join it are the sequence
+protocol (a class with only `__getitem__` walked until IndexError,
+and enumerate, zip and map taking any user iterable lazily), once its
+one exposure is settled: on microcode7 the members of `dict.items()`
+were lists, not tuples, which the branch is mending. A closure written
+onto a class as a special method already kept its frame on microcode7
+through the class-in-function work, so that branch is dropped.
+
+Gaps found this round and handed out: subscript assignment on a
+module name inside a function makes the name local on both kernels
+(long-standing, on main too; `callLst[:] = []` costs test_class 23
+methods); a class namespace lists attributes before methods rather
+than in definition order; generators cannot yield inside try, lack
+throw(), and do not carry their return value on StopIteration; the
+`metaclass=` header keyword. Recorded, not yet handed out: `*args`
+packs into a list rather than a tuple on both kernels; an explicit
+`it.__next__()` on a native iterator is an undefined variable; stack8
+panics on `del a["k"]` when `__delitem__` is a class-body method
+(index out of bounds at compile.rs:619) where microcode7 refuses the
+form; `self.d.__setitem__(k, v)` by name is unsupported.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
