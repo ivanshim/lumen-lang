@@ -548,9 +548,15 @@ impl<'a> Machine<'a> {
             }
         }else if let Value::Wrapped(tag,items)=&value {
             if (*tag==4||*tag==5)&&key==self.detail("function"){return Ok(items[0].clone());}
+            // A method bound to its thing answers for the thing and the
+            // function by the table's words, and for anything else as
+            // the function itself would: a method of a class formed in
+            // a function is bound this way, and its name, its full name
+            // and what it says of itself are the function's.
             if *tag==3 {
                 if key==self.detail("receiver"){return Ok(items[1].clone());}
                 if key==self.detail("function"){return Ok(items[0].clone());}
+                return self.read_class_member(items[0].clone(),key,true);
             }
             if *tag==7 {
                 if let Value::Routine(p)|Value::Bound(p,_)=&items[0] {
