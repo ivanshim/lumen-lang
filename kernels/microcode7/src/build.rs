@@ -2188,6 +2188,9 @@ impl<'a> Builder<'a> {
     /// A watched arm written beside its colon ends at the line end;
     /// one written below it follows the ordinary indentation reading.
     fn watched_body(&mut self) -> Res<Form> {
+        // Standing in a class body, the arm names members and is read
+        // the way the body around it is read.
+        if self.in_class_body() { return self.class_limb(); }
         if self.table.blocks != Blocks::Indented || !self.on_any("block.intro") {
             return self.body();
         }
@@ -2246,6 +2249,7 @@ impl<'a> Builder<'a> {
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
                     let binding = self.need_word("after the caught value's binding word")?;
+                    self.claim(&binding);
                     Some(self.address_to_write(&binding))
                 } else { None };
                 choices = Some(selectors);
@@ -2263,6 +2267,13 @@ impl<'a> Builder<'a> {
                 self.need_sign(&close, "after the class caught")?;
             }
             let body = if bare_clauses { self.watched_body()? } else { self.body()? };
+            // A class body lets the caught value's name go when the
+            // clause is through with it, as the language this follows
+            // does, and so keeps no member under that name.
+            let body = match (&held, self.in_class_body()) {
+                (Some(place), true) => sequence(vec![body, Form::Forget(place.clone())]),
+                _ => body,
+            };
             clauses.push(Clause { classes, choices, grouped, takes_all, held, body });
             self.skip_line_ends();
         }
@@ -2606,9 +2617,10 @@ impl<'a> Builder<'a> {
         } else if table.blocks == Blocks::Indented && self.key("stmt.if") {
             let chosen = self.class_choice()?;
             setup.push(chosen);
-        } else if table.blocks == Blocks::Indented && (self.key("stmt.for") || self.key("stmt.while")) {
-            let looped = self.class_cycle()?;
-            setup.push(looped);
+        } else if table.blocks == Blocks::Indented && (self.key("stmt.for") || self.key("stmt.while")
+            || self.key("ext.stmt.try") || self.key("ext.stmt.with")) {
+            let block = self.class_block()?;
+            setup.push(block);
         } else if table.blocks == Blocks::Indented && (self.key("ext.stmt.import") || self.key("ext.stmt.import.from")) {
             let brought = self.class_import()?;
             setup.push(brought);
@@ -2683,16 +2695,20 @@ impl<'a> Builder<'a> {
         Ok(false)
     }
 
-    /// A loop in a class body. What its block binds are members, and
-    /// so is the loop's own variable, which the language this follows
-    /// leaves in the class when the loop is done. The block is read the
-    /// way the body around it is read, and each name the loop writes
-    /// gets the body's place for it as it is written, so the member
-    /// holds what the last pass wrote. A loop may run no times, so
-    /// everything it names is a member the class may find unwritten;
-    /// a target that is not made of words -- a place within something
-    /// -- binds no member, and is refused.
-    fn class_cycle(&mut self) -> Res<Form> {
+    /// A loop, a watched statement or a context in a class body. What
+    /// their blocks bind are members, as are the loop's own variable,
+    /// which the language this follows leaves in the class when the
+    /// loop is done, and the context's name. The blocks are read the
+    /// way the body around them is read, and each name written in them
+    /// gets the body's place for it as it is written, so the write
+    /// lands in the class and the member holds what the last pass
+    /// wrote. A loop may run no times and a watched block may stop
+    /// part way, so everything they name is a member the class may
+    /// find unwritten; what a block bound before stopping stays bound,
+    /// as it does in the language this follows. A loop target that is
+    /// not made of words -- a place within something -- binds no
+    /// member, and is refused.
+    fn class_block(&mut self) -> Res<Form> {
         if self.key("stmt.for") {
             let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "stmt.for.in");
             let mut words = Vec::new();

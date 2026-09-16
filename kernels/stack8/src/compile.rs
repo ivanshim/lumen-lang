@@ -3257,6 +3257,12 @@ impl<'a> Compiler<'a> {
     /// reading belongs to the watched statement and each of its arms.
     fn attempt_body(&mut self) -> Res<(usize, usize)> {
         let start = self.mark();
+        // In a class body the arm names members, and is read as the
+        // body around it is read.
+        if self.in_class_body() {
+            self.class_arm()?;
+            return Ok((start, self.mark()));
+        }
         if self.lang.blocks == Blocks::Indented && self.on_any(&self.lang.block_intros) {
             self.take();
             if self.look().shape != Shape::LineEnd {
@@ -3314,9 +3320,17 @@ impl<'a> Compiler<'a> {
             let held = if self.on_keyword(&lang.catch_as) {
                 self.take();
                 let name = self.want_name("after the caught value's binding word")?;
+                self.claim(&name);
                 Some(self.cell_to_write(&name))
             } else { None };
-            let arm = self.attempt_body()?;
+            let (start, _) = self.attempt_body()?;
+            // A class body lets the caught value's name go once the
+            // clause is done with it, as the language this follows lets
+            // it go, so the class keeps no member of that name.
+            if let (Some(cell), true) = (&held, self.in_class_body()) {
+                self.put(Instr::Forget(cell.clone()));
+            }
+            let arm = (start, self.mark());
             clauses.push(Taking { kinds, held, body: arm, grouped, bare });
             self.skip_seps();
         }
@@ -3810,8 +3824,9 @@ impl<'a> Compiler<'a> {
             self.member_kept(&named, &slot);
         } else if lang.blocks == Blocks::Indented && self.on_keyword(&lang.if_words) {
             self.class_branch()?;
-        } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.for_words) || self.on_keyword(&lang.while_words)) {
-            self.class_loop()?;
+        } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.for_words) || self.on_keyword(&lang.while_words)
+            || self.on_keyword(&lang.try_words) || self.on_keyword(&lang.with_words)) {
+            self.class_block()?;
         } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.import_words) || self.on_keyword(&lang.import_from_words)) {
             self.class_import()?;
         } else if let Some(bound) = self.class_bindings()? {
@@ -3854,16 +3869,20 @@ impl<'a> Compiler<'a> {
         Ok(false)
     }
 
-    /// A loop in a class body. What its block binds are members, and
-    /// so is the loop's own variable, which the language this follows
-    /// keeps in the class once the loop is over. The block is read as
-    /// the body around it is read, and every name the loop writes is
-    /// given the body's place for it as it is written, so that the
-    /// last pass's value is the member's. A loop may run no times, so
-    /// all it names are members the class may find unwritten, and a
-    /// target that is anything but names -- a place within something
-    /// -- binds no member and is refused.
-    fn class_loop(&mut self) -> Res<()> {
+    /// A loop, a watched statement or a context in a class body. What
+    /// their blocks bind are members, and so are the loop's own
+    /// variable, which the language this follows keeps in the class
+    /// once the loop is over, and the context's name. The blocks are
+    /// read as the body around them is read, and every name written in
+    /// them is given the body's place for it as it is written, so that
+    /// the write lands in the class and the last pass's value is the
+    /// member's. A loop may run no times and a watched block may stop
+    /// part way, so all they name are members the class may find
+    /// unwritten; what a block bound before it stopped is bound still,
+    /// as it is in the language this follows. A loop target that is
+    /// anything but names -- a place within something -- binds no
+    /// member and is refused.
+    fn class_block(&mut self) -> Res<()> {
         let lang = self.lang;
         if self.on_keyword(&lang.for_words) {
             let (marks, _) = self.outer_marks(self.pos + 1, self.tokens.len(), &lang.in_words);
