@@ -1742,6 +1742,7 @@ impl<'a> Builder<'a> {
                 let worth = if self.table.flag("ext.stmt.import.value") {
                     prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
                 } else { constant(Value::Nil) };
+                self.claim(&local);
                 writes.push(self.write(&local, worth));
                 if !self.on_any("syntax.call.separator") {
                     break;
@@ -2608,6 +2609,9 @@ impl<'a> Builder<'a> {
         } else if table.blocks == Blocks::Indented && (self.key("stmt.for") || self.key("stmt.while")) {
             let looped = self.class_cycle()?;
             setup.push(looped);
+        } else if table.blocks == Blocks::Indented && (self.key("ext.stmt.import") || self.key("ext.stmt.import.from")) {
+            let brought = self.class_import()?;
+            setup.push(brought);
         } else if let Some(kept) = self.taken_apart_members(setup)? {
             for (word, place) in kept {
                 self.member_noted(&word, place);
@@ -2703,6 +2707,22 @@ impl<'a> Builder<'a> {
         let looped = self.stmt();
         self.parts().arms -= 1;
         looped
+    }
+
+    /// An import in a class body. Each name it binds is a member, the
+    /// module or what was taken out of it standing under the name it
+    /// was bound to, and nothing of it reaches the scope around the
+    /// class. What a star brings out of a module is unknown until the
+    /// module is read, so that form stays refused.
+    fn class_import(&mut self) -> Res<Form> {
+        let table = self.table;
+        let starred = (self.pos..self.tokens.len())
+            .map(|at| &self.tokens[at])
+            .take_while(|word| !matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close))
+            .any(|word| word.shape == Shape::Sign && table.spells("op.mul", &word.lexeme));
+        let brought = self.stmt()?;
+        if starred { self.parts().cannot = true; }
+        Ok(brought)
     }
 
     /// The working a compound sign asks for, as the write of a name

@@ -1889,6 +1889,7 @@ impl<'a> Compiler<'a> {
                 if lang.import_values {
                     self.act(Action::Import(if from { module.clone() } else { original.clone() }, from.then_some(original), !from && !aliased), 0);
                 } else { self.constant(Value::Null); }
+                self.claim(&bound);
                 self.write(&bound);
                 let comma = lang.calling.as_ref().and_then(|g| g.between.as_ref());
                 if !comma.map_or(false, |mark| self.at_symbol(mark)) {
@@ -3811,6 +3812,8 @@ impl<'a> Compiler<'a> {
             self.class_branch()?;
         } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.for_words) || self.on_keyword(&lang.while_words)) {
             self.class_loop()?;
+        } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.import_words) || self.on_keyword(&lang.import_from_words)) {
+            self.class_import()?;
         } else if let Some(bound) = self.class_bindings()? {
             for (named, place) in bound {
                 self.member_kept(&named, &place);
@@ -3876,6 +3879,24 @@ impl<'a> Compiler<'a> {
         let read = self.stmt();
         self.gathering().arms -= 1;
         read
+    }
+
+    /// An import in a class body. Every name it binds is a member --
+    /// the module, or what was taken from it, under the name it is
+    /// bound to -- and none of it reaches the scope around the class.
+    /// What a star takes from a module is not known until the module
+    /// is read, so that form is still refused.
+    fn class_import(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let mut starred = false;
+        for at in self.pos..self.tokens.len() {
+            let word = &self.tokens[at];
+            if matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close) { break; }
+            starred |= word.shape == Shape::Sign && lang.dyadic.get(&word.lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
+        }
+        self.stmt()?;
+        if starred { self.gathering().unready = true; }
+        Ok(())
     }
 
     /// `x += 1` in a class body. What x holds is read as the body reads
