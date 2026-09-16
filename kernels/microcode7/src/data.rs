@@ -649,7 +649,10 @@ impl Value {
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
             (Value::Wrapped(k,x), Value::Wrapped(l,y)) => k == l && Rc::ptr_eq(x,y),
-            (Value::Bound(a, _), Value::Bound(b, _)) => Rc::ptr_eq(a, b),
+            // A routine bound to a frame is one value with itself alone:
+            // the same code bound in another frame is another closure,
+            // with names and a namespace of its own, as CPython has it.
+            (Value::Bound(a, here), Value::Bound(b, there)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(here, there),
             (Value::KindOf(a), Value::KindOf(b)) => a == b,
             _ => false,
         }

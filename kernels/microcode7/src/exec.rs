@@ -2307,13 +2307,23 @@ impl<'a> Machine<'a> {
     }
 
     /// The frame and index an array lives in, for writing it in place.
-    fn locate(&self, slot: &Address, frame: &Rc<Env>) -> Result<(Rc<Env>, usize), String> {
+    fn locate(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<(Rc<Env>, usize), String> {
         let f = ascend(frame, slot.up);
         if !matches!(f.cells.borrow()[slot.at], Value::Unset) {
             return Ok((f.clone(), slot.at));
         }
+        // A name that lives only in a dictionary handed over for a text
+        // to run in, as exec is handed one, has no cell of its own to
+        // find, though a read of it finds the dictionary's entry. The
+        // write goes through what that entry holds, or lands in the
+        // dictionary, so the cell the name would have had is answered.
+        let booked = |run: &mut Self, at: usize| matches!(run.booked_read(at, &slot.ident), Some(Ok(_)));
+        if Rc::ptr_eq(f, &self.outermost) && booked(self, slot.at) {
+            return Ok((f.clone(), slot.at));
+        }
         match slot.fallback {
             Some(g) if !matches!(self.outermost.cells.borrow()[g], Value::Unset) => Ok((self.outermost.clone(), g)),
+            Some(g) if booked(self, g) => Ok((self.outermost.clone(), g)),
             // Where a language makes a place on writing into it, a name
             // holding nothing is where the write goes, and the array it
             // needs is made there.
@@ -8942,7 +8952,7 @@ impl<'a> Machine<'a> {
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
-                    (Value::Bound(a,_), Value::Bound(b,_)) => Rc::ptr_eq(a,b),
+                    (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
