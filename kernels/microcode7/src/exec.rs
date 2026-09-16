@@ -6751,7 +6751,11 @@ impl<'a> Machine<'a> {
                 }
                 Value::Dict(Rc::new(remaining))
             }
-            (Prim::Contains | Prim::Absent, [needle, haystack]) if self.appointed(haystack, 14).is_some() => {
+            // A class names the method for membership, or names nothing
+            // for it: a class that sets the name to nothing has said
+            // there is no membership in its things, and the asking
+            // fails rather than falling back upon a walk.
+            (Prim::Contains | Prim::Absent, [needle, haystack]) if self.appointment(haystack, 14).is_some() => {
                 let found = self.ask_special(haystack, 14, std::slice::from_ref(needle))?.unwrap();
                 Value::Flag(self.object_truth(&found)? != (operation == Prim::Absent))
             }
