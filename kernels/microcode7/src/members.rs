@@ -109,7 +109,9 @@ impl Request<'_> {
             let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(_)=>return Err(self.fail("unready")),other=>(other.as_big()?,BigInt::from(1))};
             let mut divisor=pair.0.abs();let mut remainder=pair.1.clone();
             while !remainder.is_zero(){let next=&divisor%&remainder;divisor=remainder;remainder=next;}
-            return Ok(Value::Row(Rc::new(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)])));
+            // The two whole numbers are handed back as a tuple, which
+            // is what they are, and not a row that only reads like one.
+            return Ok(Value::Tuple(Rc::new(vec![Value::from_big(pair.0/&divisor),Value::from_big(pair.1/divisor)])));
         }
         if self.operation=="hex" && real {
             let Value::Frac(ratio)=value else {unreachable!()};
