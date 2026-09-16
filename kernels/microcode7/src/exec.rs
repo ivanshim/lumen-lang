@@ -11847,6 +11847,30 @@ impl Machine<'_> {
         match source {
             Value::Iterator(_) => Ok(source.clone()),
             Value::Progression(walk) => Ok(Self::cursor_value(IteratorKind::Stepping(walk.clone(), BigInt::from(0)))),
+            // A thing of the program's own is walked the way a loop
+            // walks it: by the walk it hands over, or by its places
+            // where it hands over none. That walk is kept as it stands
+            // rather than gathered, so the builtins built upon it ask
+            // for a member only when one is wanted.
+            Value::Cursor(_) => Ok(Self::cursor_value(IteratorKind::Handed(source.clone()))),
+            Value::Thing(_) => {
+                if let Some(handed) = self.ask_special(source, 15, &[])? {
+                    // What a thing hands over is a walk or it is
+                    // nothing: one that cannot be asked for a next
+                    // member is refused where the walk is asked for,
+                    // not at its first step.
+                    return match handed {
+                        Value::Iterator(_) | Value::Generator(_) => Ok(handed),
+                        Value::Cursor(_) => Ok(Self::cursor_value(IteratorKind::Handed(handed))),
+                        other if self.appointed(&other, 16).is_some() => Ok(Self::cursor_value(IteratorKind::Handed(other))),
+                        _ => Err(self.bad_answer()),
+                    };
+                }
+                match self.placed_walk(source) {
+                    Some(places) => Ok(places),
+                    None => Err(self.core_complaint("core.uniterable", &source.kind_word())),
+                }
+            }
             _ => {
                 let entries = self.core_collect(source)?;
                 Ok(Self::cursor_value(IteratorKind::Stored(entries.into_iter().collect())))
@@ -11912,6 +11936,11 @@ impl Machine<'_> {
                     if item.is_some() { *at += 1; }
                     Ok(item)
                 }
+                // A thing of the program's own is asked for its next
+                // member the way a loop asks it, so a walk taken from it
+                // hands out one member at a time and asks for no more
+                // than it is asked for.
+                IteratorKind::Handed(thing) => self.advance_object(thing),
                 IteratorKind::Count(inner, number) => match self.next_value(inner)? {
                     None => Ok(None),
                     Some(member) => {

@@ -33,6 +33,7 @@ impl Value {
                 IteratorKind::Watching { window: Value::Window(_, portion), .. } => match portion { 'k' => "dict_keyiterator", 'v' => "dict_valueiterator", _ => "dict_itemiterator" },
                 IteratorKind::Summoned { .. } => "callable_iterator",
                 IteratorKind::Count(..) => "enumerate",
+                IteratorKind::Handed(..) => "iterator",
                 IteratorKind::Parallel { mapper: Some(_), .. } => "map",
                 IteratorKind::Parallel { .. } => "zip",
                 IteratorKind::Select(..) => "filter",

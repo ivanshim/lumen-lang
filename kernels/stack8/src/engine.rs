@@ -10621,6 +10621,26 @@ impl Engine<'_> {
     fn core_iterator(&mut self, source: &Value) -> Res<Value> {
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
         if let Value::Counted(row) = source { return Ok(Self::core_cursor(CursorSource::Counted(row.clone(), BigInt::from(0)))); }
+        // A thing of the program's own is walked the way a loop walks
+        // it: by the walk it hands over, or by its places where it
+        // hands over none. The walk is kept as it stands rather than
+        // gathered, so the builtins built upon it ask for a member only
+        // when one is wanted.
+        if matches!(source, Value::Object(_) | Value::Walk(_)) {
+            if let Value::Walk(_) = source { return Ok(Self::core_cursor(CursorSource::Handed(source.clone()))); }
+            if let Some(handed) = self.special_call(source, 15, Vec::new())? {
+                // What a thing hands over is a walk or it is nothing:
+                // one that cannot be asked for a next member is refused
+                // where the walk is asked for, not at its first step.
+                return match handed {
+                    Value::Cursor(_) | Value::Generator(_) => Ok(handed),
+                    Value::Walk(_) => Ok(Self::core_cursor(CursorSource::Handed(handed))),
+                    other if self.special_method(&other, 16).is_some() => Ok(Self::core_cursor(CursorSource::Handed(other))),
+                    _ => Err(self.special_fault()),
+                };
+            }
+            if let Some(places) = self.indexed_walk(source) { return Ok(places); }
+        }
         Ok(Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0)))
     }
 
@@ -10684,6 +10704,11 @@ impl Engine<'_> {
                 Ok(None) => Ok(None),
                 Err(words) => if self.places_over(&words) { Ok(None) } else { Err(words) },
             },
+            // A thing of the program's own is asked for its next member
+            // the way a loop asks it, so a walk taken from it hands out
+            // one member at a time and asks for no more than it is
+            // asked for.
+            CursorSource::Handed(thing) => self.special_step(thing),
             CursorSource::Numbered(inner, count) => {
                 let Some(value) = self.core_step(inner)? else { return Ok(None); };
                 let numbered = Value::Tuple(Rc::new(vec![Value::of_big(count.clone()), value]));

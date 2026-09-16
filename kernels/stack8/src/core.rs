@@ -43,7 +43,7 @@ impl Value {
                 CursorSource::Combined(_, Some(_), _) => "map",
                 CursorSource::Combined(_, None, _) => "zip",
                 CursorSource::Selected(..) => "filter",
-                CursorSource::Items(..) | CursorSource::Indexed(..) | CursorSource::Viewed(..) => "iterator",
+                CursorSource::Items(..) | CursorSource::Indexed(..) | CursorSource::Handed(..) | CursorSource::Viewed(..) => "iterator",
             }).to_string(),
             Value::Native(..) => "builtin_function_or_method",
             Value::Routine(_) => "function",

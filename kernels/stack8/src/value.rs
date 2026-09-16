@@ -203,6 +203,9 @@ pub enum CursorSource {
     Indexed(Value, BigInt),
     /// A callable asked again and again until it answers the sentinel.
     Called(Value, Value),
+    /// A thing of the program's own, asked for each member the way a
+    /// loop asks it.
+    Handed(Value),
     Numbered(Value, BigInt),
     /// Walks taken abreast, with the work applied to each row where
     /// there is any, and whether they must all end together.

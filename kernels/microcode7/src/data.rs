@@ -172,6 +172,9 @@ pub enum IteratorKind {
     Placed(Value, BigInt),
     /// A callable summoned for each member until it answers the sentinel.
     Summoned { work: Value, stop: Value },
+    /// A thing of the program's own, asked for each member the way a
+    /// loop asks it.
+    Handed(Value),
     Count(Value, BigInt),
     /// Inputs walked abreast, mapped where a mapper is given, and made
     /// to end together where exactness is demanded.
