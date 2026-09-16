@@ -2462,16 +2462,27 @@ impl<'a> Engine<'a> {
                             // A module's own binding stands in a cell;
                             // the class is what the cell holds.
                             let kind = self.drop_top()?.contents();
-                            match kind {
-                                Value::Blank => {},
-                                Value::Class(class) => {
-                                    if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
-                                    if let Value::Object(object) = &raised {
-                                        takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
-                                            else { Self::exception_beneath(&object.class, &class) };
+                            // A tuple stands for the classes it holds, and an
+                            // empty one for none of them. Every member is
+                            // looked at before the clause takes anything, so a
+                            // member that is no class is refused however early
+                            // another member of the tuple fits.
+                            let kinds = match kind {
+                                Value::Tuple(members) => members.iter().map(Value::contents).collect(),
+                                lone => vec![lone],
+                            };
+                            for kind in kinds {
+                                match kind {
+                                    Value::Blank => {},
+                                    Value::Class(class) => {
+                                        if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
+                                        if let Value::Object(object) = &raised {
+                                            takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
+                                                else { Self::exception_beneath(&object.class, &class) };
+                                        }
                                     }
+                                    _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
                                 }
-                                _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
                             }
                             if takes { break; }
                         }
