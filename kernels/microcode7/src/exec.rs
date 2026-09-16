@@ -6212,8 +6212,18 @@ impl<'a> Machine<'a> {
     }
 
     fn appointed(&self, subject: &Value, index: usize) -> Option<Rc<Routine>> {
+        self.appointed_within(subject, index).map(|(body, _)| body)
+    }
+
+    /// The special method and the frame it runs in. A method handed
+    /// over from its address keeps the frame its class was formed in,
+    /// which a class inside a function needs beneath it to reach any
+    /// name outside its own; one the plan carries runs from the
+    /// outermost, having no other.
+    fn appointed_within(&self, subject: &Value, index: usize) -> Option<(Rc<Routine>, Rc<Env>)> {
         match self.appointment(subject, index) {
-            Some(Value::Routine(body) | Value::Bound(body, _)) => Some(body),
+            Some(Value::Bound(body, frame)) => Some((body, frame)),
+            Some(Value::Routine(body)) => Some((body, self.outermost.clone())),
             _ => None,
         }
     }
@@ -6232,9 +6242,9 @@ impl<'a> Machine<'a> {
         }
         match self.appointment(subject, index) {
             None => Ok(None),
-            Some(Value::Routine(body) | Value::Bound(body, _)) => {
+            Some(Value::Routine(_) | Value::Bound(..)) => {
+                let (body, scope) = self.appointed_within(subject, index).expect("the method just found");
                 let arguments = std::iter::once(subject.clone()).chain(tail.iter().cloned()).collect();
-                let scope = self.outermost.clone();
                 match self.invoke(body, scope, arguments) {
                     Ok(value) => Ok(Some(value)),
                     Err(Escape::Error(message)) => Err(message),
@@ -6418,8 +6428,8 @@ impl<'a> Machine<'a> {
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
             _ => {
-                let routine = self.appointed(source, 16).ok_or_else(|| self.bad_answer())?;
-                match self.invoke(routine, self.outermost.clone(), vec![source.clone()]) {
+                let (routine, scope) = self.appointed_within(source, 16).ok_or_else(|| self.bad_answer())?;
+                match self.invoke(routine, scope, vec![source.clone()]) {
                     Ok(v) => Ok(Some(v)),
                     Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
                     Err(Escape::Error(s)) => Err(s),
@@ -11856,8 +11866,8 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Placed(thing, at) => {
-                    let Some(reader) = self.appointed(thing, 11) else { return Ok(None) };
-                    match self.invoke(reader, self.outermost.clone(), vec![thing.clone(), Value::from_big(at.clone())]) {
+                    let Some((reader, scope)) = self.appointed_within(thing, 11) else { return Ok(None) };
+                    match self.invoke(reader, scope, vec![thing.clone(), Value::from_big(at.clone())]) {
                         Ok(item) => { *at += 1; Ok(Some(item)) }
                         Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
                         Err(Escape::Error(complaint)) => Err(complaint),
