@@ -3050,6 +3050,18 @@ impl<'a> Machine<'a> {
                 // A key that could be no key at all is refused before
                 // the map is taken up for writing, since the key may be
                 // the very map the place is taken out of.
+                // What the cell holds may be the collection wrapped once
+                // or more, a mutable standing for it or another shared
+                // cell, so each wrapping is stepped through until the
+                // collection itself is in hand.
+                let mut cell = cell;
+                loop {
+                    let within = match &*cell.borrow() {
+                        Value::Mutable(inner, _) | Value::Shared(inner) => Some(inner.clone()),
+                        _ => None,
+                    };
+                    match within { Some(inner) => cell = inner, None => break }
+                }
                 let keyless = matches!(&*cell.borrow(), Value::Dict(_)).then(|| self.cannot_key(&at)).flatten();
                 if let Some(words) = keyless { return Err(words.into()); }
                 let mut inside = cell.borrow_mut();
