@@ -858,4 +858,8 @@ pub struct Plan {
     pub methods: Vec<(String, Rc<Routine>)>,
     /// Whether a class to stand on is given first.
     pub extends: bool,
+    /// The names of the members in the order the body bound them, the
+    /// methods among the rest. The namespace the class shows follows
+    /// this; a name left out of it comes after those named here.
+    pub member_order: Vec<String>,
 }

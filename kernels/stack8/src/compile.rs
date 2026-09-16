@@ -104,6 +104,10 @@ struct Cycle {
 struct ClassBody {
     methods: Vec<(String, Rc<Routine>)>,
     shared: Vec<(String, String)>,
+    /// The names the body has bound, each where the body first bound
+    /// it, methods standing among the attributes. The namespace the
+    /// class shows follows this and nothing else.
+    order: Vec<String>,
     annotated: Vec<(Value, Value)>,
     documentation: Option<String>,
     uncertain: Vec<String>,
@@ -3687,10 +3691,20 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Where a name stands in the class's namespace. A name the body
+    /// binds again keeps the place of its first binding, as writing to
+    /// a map a second time does; a name the body removes gives that
+    /// place up, so that binding it again puts it last.
+    fn member_ordered(&mut self, named: &str) {
+        let held = self.gathering();
+        if !held.order.iter().any(|old| old == named) { held.order.push(named.to_string()); }
+    }
+
     /// A member kept under its name in the place given, and known by
     /// that name to the rest of the body. A member named inside an arm
     /// of a conditional is noted as one whose place may go unwritten.
     fn member_kept(&mut self, named: &str, place: &str) {
+        self.member_ordered(named);
         let held = self.gathering();
         held.shared.retain(|(old, _)| old != named);
         held.shared.push((named.to_string(), place.to_string()));
@@ -3785,6 +3799,7 @@ impl<'a> Compiler<'a> {
             if lang.constructor.as_ref() == Some(&named) { self.gathering().unready = true; }
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
+            self.member_ordered(&named);
             self.gathering().shared.push((named, slot));
             self.skip_seps();
             return Ok(true);
@@ -3819,6 +3834,7 @@ impl<'a> Compiler<'a> {
                 true => self.member_kept(&named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
+                    self.member_ordered(&named);
                     self.gathering().methods.push((named, method));
                 }
             }
@@ -3978,6 +3994,7 @@ impl<'a> Compiler<'a> {
             let held = self.gathering();
             held.methods.retain(|(old, _)| old != &name);
             held.shared.retain(|(old, _)| old != &name);
+            held.order.retain(|old| old != &name);
             held.shared.push((name.clone(), place));
             if !held.uncertain.iter().any(|n| n == &name) { held.uncertain.push(name); }
         }
@@ -4140,7 +4157,8 @@ impl<'a> Compiler<'a> {
             documentation = Some(slot);
         }
         let body_at = self.mark();
-        self.gathered.push(ClassBody { methods: Vec::new(), shared, annotated: Vec::new(),
+        let order = shared.iter().map(|(named, _)| named.clone()).collect();
+        self.gathered.push(ClassBody { methods: Vec::new(), shared, order, annotated: Vec::new(),
             documentation, uncertain: Vec::new(), arms: 0, unready });
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
@@ -4154,7 +4172,7 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
         }
-        let ClassBody { methods, mut shared, annotated, uncertain, unready, .. } = self.gathered.pop().expect("the class body just read");
+        let ClassBody { methods, mut shared, mut order, annotated, uncertain, unready, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
         self.within = outer;
         self.class_depth = outer_depth;
@@ -4169,6 +4187,7 @@ impl<'a> Compiler<'a> {
             let slot = self.gensym("annotations");
             self.constant(Value::Map(Rc::new(annotated)));
             self.write(&slot);
+            if !order.iter().any(|old| old == word) { order.push(word.clone()); }
             shared.push((word.clone(), slot));
         }
         let mut count = shared.len();
@@ -4194,7 +4213,8 @@ impl<'a> Compiler<'a> {
             }
         }
         let plan = Plan { name: name.clone(), answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
-            shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some() };
+            shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some(),
+            member_order: order };
         self.act(Action::Forge(Rc::new(plan)), count);
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
             let private = self.gensym("class");
@@ -4315,7 +4335,7 @@ impl<'a> Compiler<'a> {
         let field_names = names(fields, self, &mut argc);
         let shared_names = names(shared, self, &mut argc);
         let constant_names = names(constants, self, &mut argc);
-        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: base.is_some() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: base.is_some(), member_order: Vec::new() };
         self.act(Action::Forge(Rc::new(plan)), argc);
         let filed = self.class_key(&name);
         self.write_global(&filed);
