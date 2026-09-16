@@ -234,6 +234,12 @@ class Fraction:
                 return False
         if other is None or isinstance(other, str):
             return False
+        # A complex with nothing imaginary is its real part; one with
+        # an imaginary part equals no fraction.
+        if isinstance(other, complex):
+            if other.imag != 0:
+                return False
+            return self.__eq__(other.real)
         if not isinstance(other, Fraction) and not isinstance(other, int) and not isinstance(other, float) and not isinstance(other, bool):
             raise 'NotImplementedError: comparison with this Fraction operand is not supported'
         right = _number(other)
