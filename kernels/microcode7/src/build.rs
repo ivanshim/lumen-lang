@@ -3364,10 +3364,11 @@ impl<'a> Builder<'a> {
                 let held = r.read(member);
                 items.push(prim_call(Prim::Onto, vec![thing, constant(Value::text(&bare)), held]));
             }
-            let body = if explicit && table.blocks == Blocks::Indented {
-                r.skip_lead_word();
-                if r.on_stmt_end() || r.look().shape == Shape::Open { r.body()? } else { r.stmt()? }
-            } else { r.body()? };
+            // A body on the line of its own name is read the way any
+            // body on the line of its head is read, so a method that
+            // joins its statements with the mark that ends a statement
+            // holds every one of them and not the first alone.
+            let body = r.body()?;
             items.push(body);
             if explicit && table.blocks == Blocks::Indented { items.push(constant(Value::Nil)); }
             Ok(sequence(items))
