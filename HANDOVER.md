@@ -456,35 +456,49 @@ thirteen to seven on microcode7. Two of the seven outlast fifteen minutes
 in a debug build rather than refusing anything, so what they settle on
 has to be read from a release run. Nothing measured moved backwards.
 
-WHAT IS IN THE WAY OF MERGING. CI fails on the `scratch` job alone --
-`build-and-test` and `reference` pass every run, so the build, the
-independence check, the six-kernel example sweep and the PHP row are all
-clean. Two scratch programs cannot be satisfied, because the two kernels
-now answer them differently and one fixture cannot record two answers:
+WHAT WAS IN THE WAY OF MERGING, AND IS NOT NOW. CI failed on the
+`scratch` job alone -- `build-and-test` and `reference` passed every
+run -- because three scratch programs were answered differently by the
+two kernels, and one fixture cannot record two answers. All three are
+mended, each reduced to a few lines against real `python3` first:
 
-  * `scratch/file-iter/14.py`, the enumerate suite, where
-    `test_tuple_reuse` fails on stack8 and passes on microcode7 at six
-    places. That test is decorated `@support.cpython_only`, and
-    `langs/lib_python/modules/test/support/__init__.py` defines
-    `cpython_only = _identity`, so it is RUN where CPython would skip it
-    on any implementation that is not CPython. We are not CPython, and
-    whether the test passes turns on how each kernel happens to allocate.
-    `sys.implementation` does not exist here at all. The decorator
-    appears in eighteen of the fifty reference files. Branch
-    `fix/cpython-only` was started on this and is unfinished.
-  * `scratch/reader-tail/5.py`, where `test_no_leakage_to_locals` with
-    `scope='function'` fails on microcode7 and passes on stack8. It is
-    the only test in that file the two answer differently. Branch
-    `fix/listcomp-locals` was started on this and is unfinished. Do not
-    assume stack8 is right because it passes; find out from `python3`.
+  * `scratch/file-iter/14.py`, the enumerate suite: `test_tuple_reuse`
+    is decorated `@support.cpython_only` and was being RUN, passing on
+    one kernel and failing on the other by accident of allocation. The
+    stand-in for that decorator kept the test; it now steps aside with a
+    reason, as CPython does on any other implementation, and
+    `sys.implementation` exists and says `lumen`. Reference counting and
+    the memory-exhaustion tests step aside with it; the IEEE 754 tests
+    still run, since the floats are the host's binary64.
+  * `scratch/reader-tail/5.py`: `test_no_leakage_to_locals` failed on
+    microcode7, which was the kernel in the wrong. What a call could see
+    left out the names it reads from the scopes around it; each routine
+    now carries those and where they stand.
+  * `scratch/file-builtin/28.py`, the builtins suite, `test_exec`: this
+    one was already there before the two above landed and had gone
+    unnoticed because the file only began running tests in this batch.
+    `del d[k]` inside any function or method failed on stack8 for a dict
+    and a list alike, and worked at module level. Inside a function the
+    shared cell holds the collection at one remove or more (a bond of a
+    bond), and the deletion looked through one wrapping only. It now
+    follows them all.
 
-Both branches are pushed and hold whatever their workers had reached.
-Neither has been verified.
+A fourth, found while reducing the third and fixed on BOTH kernels: a
+module's dictionary reached from inside a function, `del d[k]` with `d`
+global and not declared, was never touched; both kernels made a fresh
+local of that spelling to delete from. Where names close over, the cell
+shared is now the one the read resolved to. Languages whose names do
+not close over are untouched, and PHP's `unset` was checked against real
+php for the local and the global case.
 
-Making `cpython_only` skip will make the passing count go DOWN while the
-suite becomes more honest, because tests that were passing by accident
-will correctly skip. That is the right outcome and should be reported as
-such rather than hidden.
+Found and NOT fixed: `del q["a"]` where `q` is not bound anywhere gives
+`TypeError: unsupported operand types` on both kernels where CPython
+raises NameError. Consistent across kernels, so it blocks nothing.
+
+The three affected fixtures record the line both kernels now agree on;
+no program under `scratch/` or `tests/python/` was edited. Skipping the
+CPython-internals tests makes the passing count fall by exactly the
+tests that were passing by accident, which is the right way round.
 
 ## 2. What is waiting on branches
 
