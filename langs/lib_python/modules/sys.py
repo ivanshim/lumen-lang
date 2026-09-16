@@ -3,6 +3,19 @@ argv = __program_namespace()['__program_argv']
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
+# Which Python this is. A test that reaches for the internals of the
+# reference implementation asks the name here first, and the honest
+# answer -- not cpython -- is what lets such a test step aside instead
+# of measuring this kernel against machinery it does not have.
+class _Implementation:
+    name = 'lumen'
+    version = (0, 2, 0, 'final', 0)
+    hexversion = 0x000200f0
+    # Nothing is written beside a module as compiled code, and a name
+    # of None is how a Python says exactly that.
+    cache_tag = None
+
+implementation = _Implementation()
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
@@ -77,6 +90,22 @@ def getrecursionlimit():
 def setrecursionlimit(limit):
     # A stored limit would pretend to govern calls which it cannot govern.
     raise 'NotImplementedError: setting the recursion limit is not supported'
+
+# The limit CPython puts on the digits an integer may be written with
+# or read from. Conversions here are not held to it; the value is kept
+# so a program may read and set it.
+_int_max_str_digits = 4300
+
+def get_int_max_str_digits():
+    return _int_max_str_digits
+
+def set_int_max_str_digits(maxdigits):
+    global _int_max_str_digits
+    if not isinstance(maxdigits, int):
+        raise TypeError("'" + type(maxdigits).__name__ + "' object cannot be interpreted as an integer")
+    if maxdigits != 0 and maxdigits < 640:
+        raise ValueError('maxdigits must be 0 or larger than 640')
+    _int_max_str_digits = maxdigits
 
 class _Output:
     def write(self, *args, **keywords):

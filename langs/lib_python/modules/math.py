@@ -100,6 +100,22 @@ def gcd(*integers):
             result, value = value, result % value
     return result
 
+def lcm(*integers):
+    # The least common multiple, built up one value at a time from the
+    # greatest common divisor; a zero anywhere makes the whole thing
+    # zero, and asking with nothing gives one, as CPython has it.
+    result = 1
+    for value in integers:
+        if type(value) != type(1) and type(value) != type(True):
+            raise 'TypeError: ' + repr(type(value).__name__) + ' object cannot be interpreted as an integer'
+        if value < 0:
+            value = -value
+        if value == 0 or result == 0:
+            result = 0
+        else:
+            result = result * value // gcd(result, value)
+    return result
+
 def factorial(n):
     if n < 0:
         raise 'ValueError: factorial() not defined for negative values'

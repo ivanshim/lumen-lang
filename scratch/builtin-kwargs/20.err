@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: str encoding and errors are not supported
+PythonError: TypeError: decoding str is not supported

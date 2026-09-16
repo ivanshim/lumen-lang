@@ -2389,8 +2389,17 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
+        // A special method the body ran may have raised, and what it
+        // raised is parked while words stand in for it on the way out.
+        // The words are not the fault; the parked value is, and it is
+        // the one the arms are shown, so that a comparison or a walk
+        // that raised inside a called function is caught by the try
+        // around the call as it is by one around the comparison itself.
         let ending = match self.run_span(program, frame, instrs, plan.body) {
-            Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+            Err(Fault::Note(words)) => match self.carried.take() {
+                Some(fled) => Err(fled),
+                None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+            },
             other => other,
         };
         if let Some(cell) = &plan.context {
@@ -2453,16 +2462,27 @@ impl<'a> Engine<'a> {
                             // A module's own binding stands in a cell;
                             // the class is what the cell holds.
                             let kind = self.drop_top()?.contents();
-                            match kind {
-                                Value::Blank => {},
-                                Value::Class(class) => {
-                                    if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
-                                    if let Value::Object(object) = &raised {
-                                        takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
-                                            else { Self::exception_beneath(&object.class, &class) };
+                            // A tuple stands for the classes it holds, and an
+                            // empty one for none of them. Every member is
+                            // looked at before the clause takes anything, so a
+                            // member that is no class is refused however early
+                            // another member of the tuple fits.
+                            let kinds = match kind {
+                                Value::Tuple(members) => members.iter().map(Value::contents).collect(),
+                                lone => vec![lone],
+                            };
+                            for kind in kinds {
+                                match kind {
+                                    Value::Blank => {},
+                                    Value::Class(class) => {
+                                        if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
+                                        if let Value::Object(object) = &raised {
+                                            takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
+                                                else { Self::exception_beneath(&object.class, &class) };
+                                        }
                                     }
+                                    _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
                                 }
-                                _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
                             }
                             if takes { break; }
                         }
@@ -3208,7 +3228,7 @@ impl<'a> Engine<'a> {
             // where its class says nothing of how it is shown.
             if let Some(worth) = Self::worth_of(value) {
                 let told = self.special_value(value, 1).is_some() || (!representation && self.special_value(value, 0).is_some());
-                if !told { return self.special_text(&worth, representation); }
+                if !told { let name = object.class.name.clone(); return self.worth_shown(&name, &worth, representation); }
             }
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
             return match self.special_call(value, place, Vec::new())? {
@@ -3250,6 +3270,29 @@ impl<'a> Engine<'a> {
             Value::Text(_) if representation => self.rem_repr(value),
             _ => Ok(value.display(&self.wording())),
         }
+    }
+
+    /// Whether a thing keeping this worth names its own class before
+    /// the worth: a set and a row of bytes that can be written to both
+    /// do, and every other builtin kind is written as the worth alone.
+    fn worth_names_class(worth: &Value) -> bool {
+        matches!(worth.contents(), Value::Set(_) | Value::Bytes(_, true, _))
+    }
+
+    /// How a thing keeping a worth of a builtin kind is written. Most
+    /// kinds write the worth alone, but a set and a row of bytes that
+    /// can be written to each name their kind before it, and there the
+    /// name to give is the thing's own class rather than the builtin's.
+    fn worth_shown(&mut self, class: &str, worth: &Value, representation: bool) -> Res<String> {
+        if !Self::worth_names_class(worth) { return self.special_text(worth, representation); }
+        // The worth as it reads with no name before it: a row of bytes
+        // that can be written to reads as the fixed row of the same
+        // bytes, and a set reads as its members between braces.
+        let bare = match worth.contents() {
+            Value::Bytes(row, true, _) => { let copy = row.borrow().clone(); self.byte_make(copy, false) }
+            held => held,
+        };
+        Ok(format!("{class}({})", self.special_text(&bare, true)?))
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
@@ -3434,6 +3477,12 @@ impl<'a> Engine<'a> {
         if let Value::Fields(o) = a {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
+        }
+        // The view standing on the right of the sign is that dictionary
+        // just the same, so `{} == f.__dict__` answers as CPython does.
+        if let Value::Fields(o) = b {
+            let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
+            return self.special_dyad(op, a, &Value::Map(Rc::new(entries)));
         }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
@@ -3652,6 +3701,10 @@ impl<'a> Engine<'a> {
         let mut changed = false;
         for value in args {
             match if places == [usize::MAX] { None } else { self.worth_free_of(value, places) } {
+                // A kind that names itself before its worth is written
+                // by the thing's own class, so the worth cannot stand
+                // in for the thing where the writing is what is asked.
+                Some(worth) if matches!(op, Builtin::Repr | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
                 Some(worth) => { settled.push(worth); changed = true; }
                 None => settled.push(value.clone()),
             }
@@ -4121,8 +4174,19 @@ impl<'a> Engine<'a> {
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
-                let nested = match &*cell.borrow() { Value::Collection(held, _) => Some(held.clone()), _ => None };
-                let cell = nested.unwrap_or(cell);
+                // The cell may hold the collection at one remove or more:
+                // a name inside a function is shared as a binding, and
+                // what that binding holds may itself be a shared cell, so
+                // the collection is reached by following each in turn
+                // until one holds the collection and not another cell.
+                let mut cell = cell;
+                loop {
+                    let deeper = match &*cell.borrow() {
+                        Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
+                        _ => None,
+                    };
+                    match deeper { Some(held) => cell = held, None => break }
+                }
                 // A key that cannot key a map is refused before the map is
                 // taken up for writing, since the key may be the map itself.
                 if matches!(&*cell.borrow(), Value::Map(_)) {
@@ -4760,6 +4824,12 @@ impl<'a> Engine<'a> {
                         Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
                         // A builtin kind the definition lets a class stand on.
                         Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => Some(self.kind_class(&word)),
+                        // The bytes kinds are values of their own, and
+                        // are found by the word each is spelled with.
+                        Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
+                            let word = self.byte_kind_word(mutable).to_string();
+                            Some(self.kind_class(&word))
+                        }
                         // The property builtin, read as a class to stand on.
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => Some(self.property_class()),
                         Some(v) => return Err(if self.fuller_classes(){self.class_word("unready").to_string()}else{format!("Class {} cannot stand on {}", plan.name, v.plain())}.into()),
@@ -4771,6 +4841,10 @@ impl<'a> Engine<'a> {
                     match given.next() {
                         Some(Value::Class(c)) => answers.push(c),
                         Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => { let kind = self.kind_class(&word); answers.push(kind); }
+                        Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
+                            let word = self.byte_kind_word(mutable).to_string();
+                            let kind = self.kind_class(&word); answers.push(kind);
+                        }
                         Some(v) if self.fuller_classes() && self.names_property_class(&v) => { let class = self.property_class(); answers.push(class); }
                         Some(v) => return Err(format!("Class {} cannot answer to {}", plan.name, v.plain()).into()),
                         None => return Err("Stack underflow".to_string().into()),
@@ -7861,8 +7935,13 @@ impl<'a> Engine<'a> {
                 1
             } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_object, &key) {
                 0
-            } else if builtin == Builtin::ToText && (Lang::spells(&self.lang.to_string_encoding, &key) || Lang::spells(&self.lang.to_string_errors, &key)) {
-                return Err(self.lang.to_string_unready[0].clone());
+            } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_encoding, &key) {
+                1
+            } else if builtin == Builtin::ToText && Lang::spells(&self.lang.to_string_errors, &key) {
+                // An error policy given by itself leaves the encoding to
+                // be the wide one.
+                if args.len() == 1 { args.push(Value::text(&self.byte_codec_name(Self::CODEC_WIDE))); }
+                2
             } else {
                 let words = &self.lang.call_builtin_amiss;
                 return Err(if words.len() > 1 { Self::named_fault(words, name.rsplit('.').next().unwrap_or(name)) }
@@ -8197,8 +8276,15 @@ impl<'a> Engine<'a> {
         Value::Bytes(Rc::new(RefCell::new(row)), mutable, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][usize::from(mutable)].as_str()))
     }
 
+    /// The word a definition spells one of the two bytes kinds with. The
+    /// kinds stand as values of their own rather than as builtin words,
+    /// so anything that works by the word asks for it here.
+    pub(super) fn byte_kind_word(&self, mutable: bool) -> &str {
+        &self.lang.byte_words[if mutable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }][0]
+    }
+
     fn byte_kind(&self, mutable: bool) -> Value {
-        let name = &self.lang.byte_words[if mutable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }][0];
+        let name = self.byte_kind_word(mutable);
         let words = &self.lang.byte_words["ext.system.bytes.type"];
         Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1])))
     }
@@ -8223,32 +8309,113 @@ impl<'a> Engine<'a> {
         n.to_usize().filter(|&at| at < size).ok_or_else(|| self.byte_fault("index"))
     }
 
-    fn byte_codec(&self, value: Option<&Value>) -> Res<bool> {
-        let Some(value) = value else { return Ok(false); };
+    // Each entry of the encodings label holds one codec. The name it
+    // complains under leads the entry, and the spellings which reach it
+    // follow, the leading name having no say in that. Their order tells
+    // this kernel which codec is which — first the wide one, then the
+    // seven-bit one, then the one that keeps every byte as it stands,
+    // then the one writing a far character as an escape.
+    const CODEC_WIDE: usize = 0;
+    const CODEC_SEVEN: usize = 1;
+    const CODEC_BYTEWISE: usize = 2;
+    const CODEC_ESCAPES: usize = 3;
+
+    fn byte_codec(&self, value: Option<&Value>) -> Res<usize> {
+        let Some(value) = value else { return Ok(Self::CODEC_WIDE); };
         let Value::Text(name) = value else { return Err(self.byte_fault("arguments")); };
         let name = name.to_ascii_lowercase().replace('_', "-");
-        self.lang.byte_words["ext.system.bytes.encodings"].iter().position(|word| word == &name)
-            .map(|at| at >= 2).ok_or_else(|| self.byte_fault("unready"))
+        self.lang.byte_words["ext.system.bytes.encodings"].iter()
+            .position(|entry| entry.split_whitespace().skip(1).any(|spelling| spelling == name))
+            .ok_or_else(|| self.byte_fault("unready"))
     }
 
-    fn byte_encode(&self, text: &str, ascii: bool) -> Res<Vec<u8>> {
-        if ascii {
+    /// How a codec names itself when it complains.
+    fn byte_codec_name(&self, codec: usize) -> String {
+        self.lang.byte_words["ext.system.bytes.encodings"].get(codec)
+            .and_then(|entry| entry.split_whitespace().next()).unwrap_or("").to_string()
+    }
+
+    fn byte_encode(&self, text: &str, codec: usize) -> Res<Vec<u8>> {
+        if codec == Self::CODEC_ESCAPES {
+            let mut row = Vec::new();
+            for letter in text.chars() {
+                let code = letter as u32;
+                if code < 256 { row.push(code as u8); }
+                else if code < 0x10000 { row.extend_from_slice(format!("\\u{:04x}", code).as_bytes()); }
+                else { row.extend_from_slice(format!("\\U{:08x}", code).as_bytes()); }
+            }
+            return Ok(row);
+        }
+        if codec == Self::CODEC_SEVEN || codec == Self::CODEC_BYTEWISE {
+            let top = if codec == Self::CODEC_SEVEN { 127 } else { 255 };
             let letters: Vec<char> = text.chars().collect();
-            if let Some(at) = letters.iter().position(|c| !c.is_ascii()) {
-                let stop = at + letters[at..].iter().take_while(|c| !c.is_ascii()).count();
+            if let Some(at) = letters.iter().position(|c| *c as u32 > top) {
+                let stop = at + letters[at..].iter().take_while(|c| **c as u32 > top).count();
                 let which = if stop == at + 1 {
                     let c = letters[at] as u32;
                     let escaped = if c <= 255 { format!("\\x{:02x}", c) } else if c <= 65535 { format!("\\u{:04x}", c) } else { format!("\\U{:08x}", c) };
                     format!("character '{}' in position {}", escaped, at)
                 } else { format!("characters in position {}-{}", at, stop - 1) };
-                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range(128)", self.byte_fault("encode"), self.lang.byte_words["ext.system.bytes.encodings"][2], which));
+                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range({})", self.byte_fault("encode"), self.byte_codec_name(codec), which, top + 1));
             }
+            if codec == Self::CODEC_BYTEWISE { return Ok(text.chars().map(|c| c as u8).collect()); }
         }
         Ok(text.as_bytes().to_vec())
     }
 
-    fn byte_decode(&self, row: &[u8], ascii: bool) -> Res<Value> {
-        let failure = if ascii {
+    /// The complaint about bytes a codec will not read, naming the first
+    /// and the last of them.
+    fn byte_decode_fault(&self, codec: usize, row: &[u8], at: usize, upto: usize, reason: &str) -> String {
+        let place = if upto == at { format!("byte 0x{:02x} in position {}", row[at], at) }
+            else { format!("bytes in position {}-{}", at, upto) };
+        format!("{}'{}' codec can't decode {}: {}", self.byte_fault("decode"), self.byte_codec_name(codec), place, reason)
+    }
+
+    /// Bytes read as text where a character beyond the byte range was
+    /// written out as an escape. Backslashes count: a run of them hides
+    /// the escape unless the run is odd, and then it is the closing
+    /// backslash of the run that opens it.
+    fn byte_unescape(&self, row: &[u8]) -> Res<Value> {
+        let mut told = String::new();
+        let mut at = 0;
+        while at < row.len() {
+            if row[at] != b'\\' { told.push(row[at] as char); at += 1; continue; }
+            let slashes = row[at..].iter().take_while(|b| **b == b'\\').count();
+            let opener = row.get(at + slashes).copied();
+            if slashes % 2 == 0 || !matches!(opener, Some(b'u') | Some(b'U')) {
+                told.extend(std::iter::repeat('\\').take(slashes));
+                at += slashes;
+                continue;
+            }
+            told.extend(std::iter::repeat('\\').take(slashes - 1));
+            let opened = at + slashes - 1;
+            let long = opener == Some(b'U');
+            let asked = if long { 8 } else { 4 };
+            let figures = row[opened + 2..].iter().take(asked).take_while(|b| b.is_ascii_hexdigit()).count();
+            if figures < asked {
+                let shape = if long { "\\UXXXXXXXX" } else { "\\uXXXX" };
+                return Err(self.byte_decode_fault(Self::CODEC_ESCAPES, row, opened, opened + 1 + figures, &format!("truncated {} escape", shape)));
+            }
+            let read = std::str::from_utf8(&row[opened + 2..opened + 2 + asked]).map_err(|_| self.byte_fault("unready"))?;
+            let code = u32::from_str_radix(read, 16).map_err(|_| self.byte_fault("unready"))?;
+            match char::from_u32(code) {
+                Some(letter) => told.push(letter),
+                // Past the last character there is nothing to name; a
+                // code naming one half of a pair is a character this
+                // kernel has no room for, and it owns up instead of
+                // putting something else in its place.
+                None if code > 0x10ffff => return Err(self.byte_decode_fault(Self::CODEC_ESCAPES, row, opened, opened + 1 + asked, "\\Uxxxxxxxx out of range")),
+                None => return Err(self.byte_fault("unready")),
+            }
+            at = opened + 2 + asked;
+        }
+        Ok(Value::text(&told))
+    }
+
+    fn byte_decode(&self, row: &[u8], codec: usize) -> Res<Value> {
+        if codec == Self::CODEC_ESCAPES { return self.byte_unescape(row); }
+        if codec == Self::CODEC_BYTEWISE { return Ok(Value::text(&row.iter().map(|b| *b as char).collect::<String>())); }
+        let failure = if codec == Self::CODEC_SEVEN {
             row.iter().position(|b| !b.is_ascii()).map(|at| (at, 1, "ordinal not in range(128)"))
         } else {
             std::str::from_utf8(row).err().map(|bad| {
@@ -8259,11 +8426,28 @@ impl<'a> Engine<'a> {
             })
         };
         if let Some((at, count, reason)) = failure {
-            let place = if count == 1 { format!("byte 0x{:02x} in position {}", row[at], at) }
-                else { format!("bytes in position {}-{}", at, at + count - 1) };
-            return Err(format!("{}'{}' codec can't decode {}: {}", self.byte_fault("decode"), self.lang.byte_words["ext.system.bytes.encodings"][if ascii { 2 } else { 0 }], place, reason));
+            return Err(self.byte_decode_fault(codec, row, at, at + count - 1, reason));
         }
         Ok(Value::text(std::str::from_utf8(row).map_err(|_| self.byte_fault("unready"))?))
+    }
+
+    /// A row of bytes read back as text, the encoding and then the error
+    /// policy standing after it. Only a row of bytes can be read so:
+    /// text is turned away by name, and every other value by its kind.
+    fn text_from_bytes(&self, args: &[Value]) -> Res<Value> {
+        if args.len() > 3 { return Err(self.lang.to_string_unready[0].clone()); }
+        let words = &self.lang.to_string_undecodable;
+        let part = |at: usize| words.get(at).cloned().unwrap_or_default();
+        let row = match &args[0] {
+            Value::Bytes(row, ..) => row.borrow().clone(),
+            Value::Text(_) => return Err(part(0)),
+            other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
+        };
+        if let Some(policy) = args.get(2) {
+            let Value::Text(policy) = policy else { return Err(self.byte_fault("arguments")); };
+            if policy.as_ref() != self.lang.byte_words["ext.system.bytes.strict"][0] { return Err(self.byte_fault("unready")); }
+        }
+        self.byte_decode(&row, self.byte_codec(args.get(1))?)
     }
 
     fn byte_call(&self, task: u8, args: &[Value]) -> Res<Value> {
@@ -8298,6 +8482,10 @@ impl<'a> Engine<'a> {
         if task == 16 {
             if args.len() != 2 { return Err(bad()); }
             let Value::ByteKind(wanted, _) = &args[1] else { return Err(unready()); };
+            // A thing of a class standing on a bytes kind is of that kind.
+            if let Value::Object(o) = &args[0] {
+                return Ok(Value::Flag(Self::kind_beneath(&o.class).as_deref() == Some(self.byte_kind_word(*wanted))));
+            }
             return Ok(Value::Flag(matches!(&args[0], Value::Bytes(_, actual, _) if wanted == actual)));
         }
         if task == 17 {
@@ -8527,7 +8715,19 @@ impl<'a> Engine<'a> {
                 };
                 Value::text(&writer.field(&args[0], spec, "")?)
             }
-            Builtin::Bytes(task) => return self.byte_call(task, args),
+            // Bytes are made of the numbers they are handed, and a walk
+            // stands for its numbers as plainly as a list does. Gather
+            // the walk into a row first so that a walk backwards over a
+            // byte string can be built straight back into one.
+            Builtin::Bytes(task) => {
+                let gathered = matches!(task, 0 | 1) && args.len() == 1
+                    && !matches!(args[0], Value::Bytes(..) | Value::Array(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                if gathered {
+                    let source = args[0].clone();
+                    if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[Value::array(items)]); }
+                }
+                return self.byte_call(task, args);
+            }
             Builtin::Text(op) => { let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect(); crate::strings::run(op, name, &normalized, self.lang, &sp)? },
             Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
@@ -9367,7 +9567,7 @@ impl<'a> Engine<'a> {
                 }
             }
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
-            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return Err(self.lang.to_string_unready[0].clone()),
+            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
                 self.digits_shown(&args[0])?;
@@ -9480,9 +9680,12 @@ impl<'a> Engine<'a> {
                         Value::Small(_) | Value::Huge(_) => Some(Builtin::ToInt), Value::Real(_) => Some(Builtin::AsReal),
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
-                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict), _ => None,
+                        Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict),
+                        // A routine's own names, read as a view of them,
+                        // are a dictionary as far as the program can tell.
+                        Value::Fields(_) => Some(Builtin::Dict), _ => None,
                     };
-                    if let Some(b) = which { if let Some((word, _)) = self.lang.builtins.iter().find(|(_,v)| **v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
+                    if let Some(b) = which { if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
                 }
                 if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
                 // A trace is of no kind the core knows either; a language
@@ -10849,8 +11052,11 @@ impl Engine<'_> {
                     let mut keys = self.comprehension_items(&args[0])?; keys.reverse();
                     return Ok(self.watched_walk(&args[0], keys));
                 }
+                // A byte string belongs here beside the text: what it
+                // holds are numbers, and a walk backwards hands them over
+                // last to first, exactly the members a walk forwards has.
                 let source = args[0].contents();
-                if !matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_)) { return Err(self.core_fault("core.unready", name)); }
+                if !matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Counted(_) | Value::Map(_) | Value::Bytes(..)) { return Err(self.core_fault("core.unready", name)); }
                 // A counted row is walked backwards as a counted row,
                 // from its last place to its first, without ever being
                 // made into the row it counts.
@@ -11007,7 +11213,11 @@ impl Engine<'_> {
                 if matches!(args[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && self.lang.round_whole_even {
                     let whole = args[0].as_big()?;
                     if digits >= 0 { return Ok(Value::of_big(whole)); }
-                    let unit = BigInt::from(10).pow(u32::try_from(-digits).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?);
+                    // How far the count of places reaches is taken as a size,
+                    // not by turning the count about: the least whole number a
+                    // machine word holds has no opposite within the word, and
+                    // reaching for one would end the run instead of refusing.
+                    let unit = BigInt::from(10).pow(u32::try_from(digits.unsigned_abs()).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_fault("core.unready", name))?);
                     let (mut quotient, remainder) = whole.div_mod_floor(&unit);
                     let doubled = &remainder * 2;
                     if doubled > unit || (doubled == unit && quotient.is_odd()) { quotient += 1; }
@@ -11019,12 +11229,12 @@ impl Engine<'_> {
                 if q.is_zero() { return Err(self.core_fault("core.unready", name)); }
                 if self.lang.shortest_reals && matches!(x, Value::Real(_)) {
                     let scale = BigInt::from(10).pow(places);
-                    let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow((-digits).min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
+                    let (top, bottom) = if digits < 0 { (p.abs(), &q * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32)) } else { (p.abs() * &scale, q.clone()) };
                     let (mut whole, remainder) = top.div_rem(&bottom);
                     if remainder * 2 >= bottom { whole += 1; }
                     if p.is_negative() { whole = -whole; }
                     if args.len() == 1 || matches!(args.get(1), Some(Value::Null)) { return Ok(Value::of_big(whole)); }
-                    let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow((-digits).min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
+                    let (above, beneath) = if digits < 0 { (whole * BigInt::from(10).pow(digits.unsigned_abs().min(100000) as u32), BigInt::from(1)) } else { (whole, scale) };
                     let result = crate::value::as_binary(&above, &beneath);
                     return Ok(crate::value::real_of(if result == 0.0 && p.is_negative() { -0.0 } else { result }, arith::DEFAULT_PLACES));
                 }

@@ -1,0 +1,10 @@
+"b'abc'"
+"bytearray(b'hi')"
+'abc'
+'abc'
+'abc'
+'abc'
+'abc'
+'ÿ'
+'\x80'
+'٣١٤ '

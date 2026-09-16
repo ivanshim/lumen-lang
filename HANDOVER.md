@@ -259,6 +259,24 @@ The measurement before this one, 139 of 327 across 16 files, was taken
 before `doctest`, the library batch and the fixes in §1b. Files that
 reach their own tests have roughly doubled since.
 
+### 1c-bis. The count taken again with a longer patience
+
+Taken at `12fabf1` with the per-file patience raised from four minutes
+to fifteen, because the shorter one was scoring three files that finish
+as though they ran nothing:
+
+    stack8       380 passing of 1,381 methods across 38 files, 12 run nothing
+    microcode7   333 passing of 1,239 methods across 37 files, 13 run nothing
+
+Two of the files that run nothing do so by outlasting even fifteen
+minutes in a debug build: `test_exceptions` and `test_math`. What they
+settle on has to be read from a release run.
+
+The three the shorter patience was losing: `test_dict` finishes in 318
+seconds with 48 of 142, `test_list` in 266 with 27 of 71, `test_long` in
+243 with 25 of 43. Quoting a total taken with the four-minute cap makes
+the number fall while the work rises, which has happened once already.
+
 ### 1d. What each file that runs nothing is now waiting on
 
 Measured again after `doctest`, the library batch, the logical operators,
@@ -300,6 +318,309 @@ have not been chased. `test_exceptions` diverges at its eighth test.
 RectComplex cannot answer to <built-in function complex>` on stack8,
 `Class RectComplex cannot answer to that` on microcode7 -- which is one
 defect wearing two faces.
+
+### 1e. What "this class form cannot run yet" actually covers
+
+Four of the files that run nothing stop with the same sentence, so it
+reads like one defect. It is not: the sentence is raised from seven
+places in `explicit_class` in `kernels/stack8/src/compile.rs`, and the
+class body ends up refused for several unrelated reasons. Each was
+reduced to a few lines and checked against real `python3` on this
+machine. Five separate defects came out of it.
+
+A class body may hold only the member forms the reader knows -- a
+method, a `pass`, a plain `name = value`, an annotated one. Anything
+else falls to a catch-all that refuses the whole class at the point it
+is defined. So all of these, which CPython runs without comment, stop
+the program:
+
+    if True: x = 1                for i in (1, 2, 3): pass
+    import sys                    from math import pi
+    del x                         try: ... except: ...
+    x.append(3)                   print("in body")
+    while False: pass             x += 1
+
+A class written inside a function is refused outright, whatever its
+body, because the reader marks a body unready when it is not the
+outermost piece. `def f(): class A: x = 1` never gets as far as `A`.
+This is the widest of the five: `test_set` has sixteen such classes,
+`test_float` fifteen, `test_cmath` eight, `test_fractions` seven, and
+`test_enumerate` and `test_complex` six each.
+
+The lead worth following first on the class inside a function: the only
+thing that marks it unready is the line that opens `explicit_class`,
+`let mut unready = !self.piece().outermost;`. The rest of the reader
+looks as though it would cope -- each member's value goes into a
+gensym'd slot which the class is then built from by reading those slots,
+and a slot inside a function is an ordinary local. So the cheap first
+experiment is to start `unready` at `false` in a worktree and see what
+actually breaks; the likely answer is somewhere in how a method or the
+class name is bound, since only the outermost bindings have names the
+run can work out while it goes.
+
+A class named with a keyword the header does not carry, `class A(object,
+metaclass=type)`, is refused, and so is one whose bases are spread from
+a sequence, `class A(*bases)`.
+
+A tuple-unpacking assignment in the body, `seq, res = 'abc', [1, 2]`,
+is refused. This one alone stops the whole of `test_enumerate`, whose
+`EnumerateTestCase` opens with exactly that line.
+
+A chained assignment in the body, `x = y = 3`, is worse than a refusal:
+it binds `x` and quietly loses `y`, so the class is built and answers
+wrongly later. A refusal is a defect one can see; this one has to be
+looked for.
+
+Two bases are fine -- `class A(P, Q)` was checked and works -- so
+multiple inheritance is not among these.
+
+### 1f. Two more blockers reduced to a line each
+
+`reversed()` refuses a byte string, and nothing else. Everything else it
+is asked about already agrees with CPython -- a list, a tuple, a string,
+a range, a dict and its keys, values and items were all checked -- so
+the fix is to teach the builtin two more values, not to build anything.
+Reversing a byte string gives a list of integers, `[3, 2, 1]`, the same
+way walking one does.
+
+    list(reversed(b'\x01\x02\x03'))        CPython [3, 2, 1]   ours refuses
+    bytes(reversed(b'\x01\x02\x03'))       CPython b'\x03\x02\x01'
+    list(reversed(bytearray(b'\x01\x02')))  CPython [2, 1]
+
+What `reversed()` says when it genuinely cannot walk a value is a
+separate defect, left alone for now: CPython raises a catchable
+`TypeError: 'int' object is not reversible`, and we raise
+`NotImplementedError: reversed() is not supported for these values`, so
+a program that catches TypeError around it does not catch ours.
+
+This one refusal stops the whole of `test_float`, which reaches
+`LE_DOUBLE_INF = bytes(reversed(BE_DOUBLE_INF))` at line 685 while it is
+still importing and never runs a test.
+
+"This class operation is not supported" means a builtin that cannot be
+subclassed, and the list of which ones is short. Each of these was
+written as `class S(X): pass` and run against real python3:
+
+    subclass fine   int float str list tuple dict set bool object
+                    Exception BaseException
+    refused         bytes bytearray complex frozenset type
+
+`class ComplexSubclass(complex): pass` at line 38 of `test_complex`
+stops that file, and `class X(frozenset)` is the same defect wearing a
+different name. So five builtins are missing from work that already
+covers eleven.
+
+### 1g. Where the second batch stands, and what is left on it
+
+The branch `claude/codebase-familiarization-t6vjhi` carries six verified
+interpreter fixes on top of the merged `12fabf1`, twenty-five commits in
+all. Each was reproduced before it was taken and checked again after, on
+both full kernels, against real `python3`:
+
+  * `reversed()` walks a byte string, and `float.fromhex` stops doubling
+    towards infinity on a zero, which never gets there
+  * a class body binds every name a taking-apart or a chain of signs
+    names, evaluating the right side once and handing it out left to
+    right
+  * four places that took the opposite of a whole number and overflowed
+    the host; in a build with the checks off the first answered one
+    where it should answer zero, so this was a wrong answer waiting as
+    well as a death
+  * `str()` takes an encoding, and four codecs answer to their names
+  * a class may stand on bytes, bytearray, complex, a frozen set or
+    enumerate; and the question of what kind a set is stopped answering
+    `set` or `frozenset` by chance from run to run
+  * a class body may ask a question -- `if`, `elif`, `else` -- before it
+    names a member
+
+Four files that ran nothing now run tests, and one that ran already runs
+more. Measured on stack8 at `eb04787` against `12fabf1`:
+
+    test_builtin       nothing  ->   17 of 143
+    test_complex       nothing  ->   18 of 37
+    test_enumerate     nothing  ->   27 of 105
+    test_float         nothing  ->   17 of 54
+    test_set           nothing  ->  290 of 644
+    test_listcomps    16 of 68  ->   18 of 68
+
+and on microcode7 `test_fractions` goes from nothing to 10 of 50.
+
+The sweep finished. The whole-suite figures at `eb04787`, against the
+same measuring at `12fabf1`:
+
+    stack8       380 of 1,381 across 38 files  ->  752 of 2,364 across 43
+    microcode7   333 of 1,239 across 37 files  ->  719 of 2,272 across 43
+
+Files running nothing fall from twelve to seven on stack8 and from
+thirteen to seven on microcode7. Two of the seven outlast fifteen minutes
+in a debug build rather than refusing anything, so what they settle on
+has to be read from a release run. Nothing measured moved backwards.
+
+WHAT WAS IN THE WAY OF MERGING, AND IS NOT NOW. CI failed on the
+`scratch` job alone -- `build-and-test` and `reference` passed every
+run -- because three scratch programs were answered differently by the
+two kernels, and one fixture cannot record two answers. All three are
+mended, each reduced to a few lines against real `python3` first:
+
+  * `scratch/file-iter/14.py`, the enumerate suite: `test_tuple_reuse`
+    is decorated `@support.cpython_only` and was being RUN, passing on
+    one kernel and failing on the other by accident of allocation. The
+    stand-in for that decorator kept the test; it now steps aside with a
+    reason, as CPython does on any other implementation, and
+    `sys.implementation` exists and says `lumen`. Reference counting and
+    the memory-exhaustion tests step aside with it; the IEEE 754 tests
+    still run, since the floats are the host's binary64.
+  * `scratch/reader-tail/5.py`: `test_no_leakage_to_locals` failed on
+    microcode7, which was the kernel in the wrong. What a call could see
+    left out the names it reads from the scopes around it; each routine
+    now carries those and where they stand.
+  * `scratch/file-builtin/28.py`, the builtins suite, `test_exec`: this
+    one was already there before the two above landed and had gone
+    unnoticed because the file only began running tests in this batch.
+    `del d[k]` inside any function or method failed on stack8 for a dict
+    and a list alike, and worked at module level. Inside a function the
+    shared cell holds the collection at one remove or more (a bond of a
+    bond), and the deletion looked through one wrapping only. It now
+    follows them all.
+
+A fourth, found while reducing the third and fixed on BOTH kernels: a
+module's dictionary reached from inside a function, `del d[k]` with `d`
+global and not declared, was never touched; both kernels made a fresh
+local of that spelling to delete from. Where names close over, the cell
+shared is now the one the read resolved to. Languages whose names do
+not close over are untouched, and PHP's `unset` was checked against real
+php for the local and the global case.
+
+Found and NOT fixed: `del q["a"]` where `q` is not bound anywhere gives
+`TypeError: unsupported operand types` on both kernels where CPython
+raises NameError. Consistent across kernels, so it blocks nothing.
+
+The three affected fixtures record the line both kernels now agree on;
+no program under `scratch/` or `tests/python/` was edited. Skipping the
+CPython-internals tests makes the passing count fall by exactly the
+tests that were passing by accident, which is the right way round.
+
+### 1g-bis. The count once the CPython-internals tests step aside
+
+Measured at 78e9c4d, the commit that makes `cpython_only` skip, against
+the count at eb04787 just before it:
+
+    stack8       752 of 2,364  ->  743 of 2,366   (43 files, 7 run nothing)
+    microcode7   719 of 2,272  ->  706 of 2,274
+
+The fall is the honest one that was promised. Every character that
+changed in every progress line was checked: each is a pass, failure or
+error turning into a skip, or a failure turning into a pass. Nothing
+went from a pass to a failure or an error, and in `test_long`, whose
+collected count grew from 43 to 45, no test fails now that did not fail
+before. The three files that carry the skips are `test_enumerate` (14
+on stack8, 14 on microcode7), `test_syntax` (16 each) and `test_scope`
+(3 each), with one or two in `test_list` and `test_long`.
+
+### 1h. The seventh parked raise, and the one fix that covers the rest
+
+The parked-raise shape turned up a seventh time, and this time it was
+mended where every instance meets rather than at the caller that forgot.
+On stack8 an exception raised inside a comparison dunder escaped every
+`except` around the call whenever the comparison ran inside a called
+function -- a `def` or a `lambda` -- and ended the run; at module level
+the same raise was caught. microcode7 caught all of it. Reduced to:
+
+    def bad(o): raise TypeError("helper")
+    class P:
+        def __lt__(self, o): return bad(o)
+    try:
+        (lambda: P() < "a")()
+    except TypeError:
+        print("caught")        # CPython and microcode7: caught; stack8: the run ended
+
+The comparison path calls the dunder through `special_call`, which
+parks what was raised in `self.carried` and returns words in its place,
+and the comparison path used `?` on the words without taking the value
+back. The try statement (`run_attempt`) now looks for a parked value
+before it reads the words, and shows the arms the value. That covers
+the comparison path and every other caller that forgot, since the
+parked value is by construction the real fault behind the placeholder.
+
+This is what killed `test_fractions` on stack8 at its second test; it
+now reaches `Ran 50 tests` and prints the same progress line as
+microcode7. A second, library-side defect was in front of it: a fraction
+compared with a complex was refused outright; it now answers as CPython
+does. What remains: `Fraction(1, 2) < "a"` raises the library's own
+wording on both kernels where CPython says `'<' not supported between
+instances of 'Fraction' and 'str'` -- consistent across kernels, and
+the CPython wording comes from returning NotImplemented from both sides,
+which the library does not yet do.
+
+### 1i. A class body runs any statement now
+
+Every statement form a class body used to refuse is taken: a statement
+run for its effect, `+=` on a member, `for` and `while` (the loop's
+target is a member, as CPython has it; a loop that runs no pass leaves
+its names unbound), `import` and `from ... import`, `try`/`except` with
+the partial bindings of an arm that raised part-way surviving, `with`,
+and `del`. Checked against real `python3` on both kernels with a probe
+covering each form, a class re-run in a loop starting clean, and
+nothing leaking to module scope.
+
+Two suites that ran nothing reach their tests on both kernels because
+of it: `test_grammar` (75 checks, held by one `from ... import` in a
+class body at line 32) and `test_cmath` (33, held by a bare statement).
+microcode7 read the target of `for j in ():` as the imaginary suffix of
+a number rather than as a name and refused the class; settled with it.
+
+What still refuses a class: a `metaclass=` keyword or `*bases` in the
+header (`test_binop`, twelve checks, waits on `metaclass=ABCMeta`), and
+a class written inside a function, which is on its own branch.
+
+### 1j. Three fixtures CI caught, and a class inside a function
+
+The pull request's first run on CI found three scratch programs whose
+records the class-body work had moved past, none of them caught by the
+progress-line filter because their `.err` held the refusal text and
+not a progress line. `reader-tail/14` exits quietly on both kernels
+and on CPython, so its record is an empty `.out`. `syntax-modern/20`
+now reaches its annotation, which names a class that was never
+defined: CPython ends with `NameError: name 'Missing' is not defined`,
+both kernels with the class-operation refusal, so the record moved to
+the refusal and the gap is noted here. An annotation naming an
+undefined name should raise NameError.
+
+`reader-tail/3` was a real defect: `del abcd[1:2]` inside a test
+method refused on microcode7 with "Cannot take a place out of", since
+the deletion arm took the cell it was handed to be the collection and
+met a mutable standing for the list. The arm now steps through each
+mutable or shared wrapping until the collection is in hand, as the
+stack8 arm already does. Six deletion shapes checked against
+`python3` on both kernels.
+
+A class written inside a function runs on both kernels: each member
+lands in a place of the function's own and the class is formed from
+those places when the definition runs, a method that reaches a name of
+the enclosing function is closed over that frame where the definition
+runs, two closures of one definition are two values, and the qualified
+name lists only the routines opened inside the enclosing class. A
+probe of twelve shapes (closures over enclosing names, a class made
+twice from one definition, `super()` inside such a class, a property
+and a staticmethod, an exception class, `vars()`, a class inside a
+function inside a function) prints the same as CPython on both
+kernels. The branch was written before the class-body statement
+family landed, and the two met in the class reader on both kernels:
+the branch's `reaches_out` and `stands_in_routine` conditions were
+carried onto the `gathering()` and `parts()` accessors the family
+introduced. `class/8` exits quietly on both kernels and on CPython.
+
+The count at d669238, the pull request's head before the deletion fix,
+checked method by method against the sweep at 78e9c4d with no pass
+turning into an error or failure: stack8 810 of 2,524 across 50 files
+with 4 running nothing (was 743 of 2,366), microcode7 755 of 2,382
+with 5 running nothing (was 706 of 2,274). test_grammar and test_cmath
+run for the first time; test_listcomps gains five on each kernel.
+
+CI on 401b7b7 found one more fixture the class-body work had moved
+past, reader-tail/3, whose record was still the refusal though both
+kernels print one progress line; it moves here to the line the
+class-in-function work gives, which both kernels print alike.
 
 ## 2. What is waiting on branches
 

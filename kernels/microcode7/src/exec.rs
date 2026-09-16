@@ -142,13 +142,19 @@ pub struct Suspension {
     /// pairs it held then, so a step may notice the map has grown or
     /// shrunk under the walk.
     overseen: Option<(Rc<RefCell<Value>>, usize)>,
+    /// The routine the body belongs to, where the walk is a routine's
+    /// body and not a row of members already in hand. A step back into
+    /// it stands inside that routine, so it is named while the step
+    /// lasts and anything asking what names are in reach is answered
+    /// about the right one.
+    of: Option<Rc<Routine>>,
 }
 
 impl Suspension {
-    fn body(program: &Routine, frame: Rc<Env>) -> Self {
+    fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: None, ready: None, overseen: None }
+            inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()) }
     }
 }
 
@@ -2301,13 +2307,23 @@ impl<'a> Machine<'a> {
     }
 
     /// The frame and index an array lives in, for writing it in place.
-    fn locate(&self, slot: &Address, frame: &Rc<Env>) -> Result<(Rc<Env>, usize), String> {
+    fn locate(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<(Rc<Env>, usize), String> {
         let f = ascend(frame, slot.up);
         if !matches!(f.cells.borrow()[slot.at], Value::Unset) {
             return Ok((f.clone(), slot.at));
         }
+        // A name that lives only in a dictionary handed over for a text
+        // to run in, as exec is handed one, has no cell of its own to
+        // find, though a read of it finds the dictionary's entry. The
+        // write goes through what that entry holds, or lands in the
+        // dictionary, so the cell the name would have had is answered.
+        let booked = |run: &mut Self, at: usize| matches!(run.booked_read(at, &slot.ident), Some(Ok(_)));
+        if Rc::ptr_eq(f, &self.outermost) && booked(self, slot.at) {
+            return Ok((f.clone(), slot.at));
+        }
         match slot.fallback {
             Some(g) if !matches!(self.outermost.cells.borrow()[g], Value::Unset) => Ok((self.outermost.clone(), g)),
+            Some(g) if booked(self, g) => Ok((self.outermost.clone(), g)),
             // Where a language makes a place on writing into it, a name
             // holding nothing is where the write goes, and the array it
             // needs is made there.
@@ -2372,7 +2388,7 @@ impl<'a> Machine<'a> {
         Value::Generator(Rc::new(RefCell::new(Suspension {
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: Some(members.into_iter()), ready: None, overseen,
+            inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
         })))
     }
 
@@ -2514,7 +2530,13 @@ impl<'a> Machine<'a> {
             return Ok(next);
         }
         let row = self.row;
+        // The body picks up where it left off, so while it runs the run
+        // stands in the routine it was written in and not in whichever
+        // one asked for the next value.
+        let named = state.of.clone();
+        if let Some(program) = &named { self.frames_named.push(program.clone()); }
         let outcome = self.unfold(&mut state, sent);
+        if named.is_some() { self.frames_named.pop(); }
         self.row = row;
         // The stop kind raised in the body is the generator's fault,
         // not the end of its walk.
@@ -3038,6 +3060,18 @@ impl<'a> Machine<'a> {
                 // A key that could be no key at all is refused before
                 // the map is taken up for writing, since the key may be
                 // the very map the place is taken out of.
+                // What the cell holds may be the collection wrapped once
+                // or more, a mutable standing for it or another shared
+                // cell, so each wrapping is stepped through until the
+                // collection itself is in hand.
+                let mut cell = cell;
+                loop {
+                    let within = match &*cell.borrow() {
+                        Value::Mutable(inner, _) | Value::Shared(inner) => Some(inner.clone()),
+                        _ => None,
+                    };
+                    match within { Some(inner) => cell = inner, None => break }
+                }
                 let keyless = matches!(&*cell.borrow(), Value::Dict(_)).then(|| self.cannot_key(&at)).flatten();
                 if let Some(words) = keyless { return Err(words.into()); }
                 let mut inside = cell.borrow_mut();
@@ -3260,16 +3294,28 @@ impl<'a> Machine<'a> {
                                         for choice in choices {
                                             // A namespace's binding is a cell; the class is what it holds.
                                             let class = self.value_of(choice, frame)?.settled();
-                                            if !matches!(class, Value::Unset | Value::Blueprint(_)) {
-                                                return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
-                                            }
-                                            if let Value::Blueprint(kind) = class {
-                                                if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
-                                                if let Value::Thing(value) = &raised {
-                                                    fits |= match self.table.has_any("ext.builtin.exceptions") {
-                                                        true => Self::fault_descends(&value.of, &kind),
-                                                        false => value.of.goes_by(&kind.name, self.classes_either_way),
-                                                    };
+                                            // A tuple names the classes within
+                                            // it, an empty one naming none. All
+                                            // of them are weighed before the
+                                            // clause takes anything, so a member
+                                            // that is no class is refused even
+                                            // where an earlier member fits.
+                                            let named = match &class {
+                                                Value::Tuple(members) => members.iter().map(Value::settled).collect(),
+                                                _ => vec![class],
+                                            };
+                                            for class in named {
+                                                if !matches!(class, Value::Unset | Value::Blueprint(_)) {
+                                                    return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
+                                                }
+                                                if let Value::Blueprint(kind) = class {
+                                                    if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
+                                                    if let Value::Thing(value) = &raised {
+                                                        fits |= match self.table.has_any("ext.builtin.exceptions") {
+                                                            true => Self::fault_descends(&value.of, &kind),
+                                                            false => value.of.goes_by(&kind.name, self.classes_either_way),
+                                                        };
+                                                    }
                                                 }
                                             }
                                             if fits { break; }
@@ -3324,6 +3370,12 @@ impl<'a> Machine<'a> {
                         Some(Value::Blueprint(b)) => Some(b),
                         // A native kind the table lets a class stand on.
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
+                        // The byte kinds are values in their own right,
+                        // so each is looked up by the word spelling it.
+                        Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
+                            let word = self.octet_kind_word(changeable).to_owned();
+                            Some(self.native_kind(&word))
+                        }
                         // The property builtin, stood on as a class.
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
@@ -3337,6 +3389,10 @@ impl<'a> Machine<'a> {
                     match given.next() {
                         Some(Value::Blueprint(b)) => answers.push(b),
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
+                        Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
+                            let word = self.octet_kind_word(changeable).to_owned();
+                            let kind = self.native_kind(&word); answers.push(kind);
+                        }
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => { let kind = self.property_blueprint(); answers.push(kind); }
                         _ => return Err(format!("Class {} cannot answer to that", plan.name).into()),
                     }
@@ -4961,8 +5017,12 @@ impl<'a> Machine<'a> {
                 Prim::Total if table.spells("ext.builtin.start", &key) => 1,
                 Prim::AsInt if table.spells("ext.builtin.to_int.base", &key) => 1,
                 Prim::AsText if table.spells("ext.builtin.to_string.object", &key) => 0,
-                Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) || table.spells("ext.builtin.to_string.errors", &key) => {
-                    return Err(self.argument_fault("ext.builtin.to_string.unready", None).into());
+                Prim::AsText if table.spells("ext.builtin.to_string.encoding", &key) => 1,
+                Prim::AsText if table.spells("ext.builtin.to_string.errors", &key) => {
+                    // The error policy may be named on its own, and the
+                    // wide encoding is then the one meant.
+                    if positional.len() == 1 { positional.push(Value::text(&self.octet_codec_name(Self::WIDE))); }
+                    2
                 }
                 _ => return Err(self.builtin_keyword_fault(name).into()),
             };
@@ -5691,10 +5751,16 @@ impl<'a> Machine<'a> {
         Value::Octets { cell: Rc::new(RefCell::new(values)), changeable, lead: lead.into() }
     }
 
+    /// The word the table spells one of the two byte kinds with. Those
+    /// kinds are values in their own right and not intrinsic words, so
+    /// anything that has to work from the word asks for it here.
+    pub(super) fn octet_kind_word(&self, changeable: bool) -> &str {
+        self.table.single(if changeable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" }).unwrap_or("")
+    }
+
     fn octet_type(&self, changeable: bool) -> Value {
-        let label = if changeable { "ext.builtin.bytearray" } else { "ext.builtin.bytes" };
         let parts = self.table.strings("ext.system.bytes.type");
-        Value::OctetKind { changeable, shown: format!("{}{}{}", parts[0], self.table.single(label).unwrap_or(""), parts[1]).into() }
+        Value::OctetKind { changeable, shown: format!("{}{}{}", parts[0], self.octet_kind_word(changeable), parts[1]).into() }
     }
 
     fn octet_whole(&self, value: &Value) -> Result<BigInt, String> {
@@ -5729,40 +5795,122 @@ impl<'a> Machine<'a> {
         }
     }
 
+    // The codecs stand in the encodings label one to an entry. An entry
+    // begins with the name the codec complains under and goes on with
+    // the spellings which reach it, which need not include the first.
+    // Their order is the order this kernel knows them by: the wide
+    // encoding, the seven-bit one, the byte-for-byte one, and the one
+    // that spells a far character as an escape.
+    const WIDE: usize = 0;
+    const SEVEN_BIT: usize = 1;
+    const BYTE_FOR_BYTE: usize = 2;
+    const ESCAPED: usize = 3;
+
     fn octet_encoding(&self, argument: Option<&Value>) -> Result<usize, String> {
         match argument {
-            None => Ok(0),
+            None => Ok(Self::WIDE),
             Some(Value::Text(encoding)) => {
-                let normalized = encoding.to_lowercase().replace('_', "-");
+                let wanted = encoding.to_lowercase().replace('_', "-");
                 let entries = self.table.strings("ext.system.bytes.encodings");
-                entries.iter().enumerate().find_map(|(i, e)| (e == &normalized).then_some(i / 2))
+                entries.iter().position(|entry| entry.split_whitespace().skip(1).any(|name| name == wanted))
                     .ok_or_else(|| self.octet_error("unready"))
             }
             _ => Err(self.octet_error("arguments")),
         }
     }
 
+    /// The proper name of a codec, which is the one its complaints carry.
+    fn octet_codec_name(&self, alphabet: usize) -> String {
+        self.table.strings("ext.system.bytes.encodings").get(alphabet)
+            .and_then(|entry| entry.split_whitespace().next()).unwrap_or("").to_owned()
+    }
+
     fn octets_from_text(&self, text: &str, alphabet: usize) -> Result<Vec<u8>, String> {
-        if alphabet != 0 {
+        if alphabet == Self::ESCAPED {
+            let mut result = Vec::new();
+            for letter in text.chars() {
+                let code = letter as u32;
+                match code {
+                    0..=255 => result.push(code as u8),
+                    256..=65535 => result.extend_from_slice(format!("\\u{code:04x}").as_bytes()),
+                    _ => result.extend_from_slice(format!("\\U{code:08x}").as_bytes()),
+                }
+            }
+            return Ok(result);
+        }
+        if alphabet != Self::WIDE {
+            let ceiling = if alphabet == Self::SEVEN_BIT { 127 } else { 255 };
             let chars = text.chars().collect::<Vec<_>>();
-            if let Some(first) = chars.iter().position(|c| *c as u32 > 127) {
-                let last = chars[first..].iter().position(|c| c.is_ascii()).map_or(chars.len(), |i| first + i);
+            if let Some(first) = chars.iter().position(|c| *c as u32 > ceiling) {
+                let last = chars[first..].iter().position(|c| *c as u32 <= ceiling).map_or(chars.len(), |i| first + i);
                 let location = if last - first > 1 { format!("characters in position {}-{}", first, last - 1) }
                     else {
                         let code = chars[first] as u32;
                         let escape = match code { 0..=255 => format!("\\x{code:02x}"), 256..=65535 => format!("\\u{code:04x}"), _ => format!("\\U{code:08x}") };
                         format!("character '{}' in position {}", escape, first)
                     };
-                let name = &self.table.strings("ext.system.bytes.encodings")[2];
-                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range(128)", self.octet_error("encode"), name, location));
+                let name = self.octet_codec_name(alphabet);
+                return Err(format!("{}'{}' codec can't encode {}: ordinal not in range({})", self.octet_error("encode"), name, location, ceiling + 1));
             }
+            if alphabet == Self::BYTE_FOR_BYTE { return Ok(text.chars().map(|c| c as u8).collect()); }
         }
         Ok(Vec::from(text.as_bytes()))
     }
 
+    /// What is said of bytes a codec cannot read. The places run from the
+    /// first byte at fault to the last, both counted in.
+    fn octet_decode_fault(&self, alphabet: usize, first: usize, last: usize, numbers: &[u8], why: &str) -> String {
+        let subject = match last - first {
+            0 => format!("byte 0x{:02x} in position {}", numbers[first], first),
+            _ => format!("bytes in position {}-{}", first, last),
+        };
+        format!("{}'{}' codec can't decode {}: {}", self.octet_error("decode"), self.octet_codec_name(alphabet), subject, why)
+    }
+
+    /// Bytes read back as text where a far character was written as an
+    /// escape. A run of backslashes hides the escape unless the run is
+    /// odd, and the last backslash of an odd run begins it.
+    fn octets_unescaped(&self, numbers: &[u8]) -> Result<Value, String> {
+        let mut text = String::new();
+        let mut at = 0;
+        while at < numbers.len() {
+            if numbers[at] != b'\\' { text.push(numbers[at] as char); at += 1; continue; }
+            let run = numbers[at..].iter().take_while(|b| **b == b'\\').count();
+            let marker = numbers.get(at + run).copied();
+            if run % 2 == 0 || !matches!(marker, Some(b'u') | Some(b'U')) {
+                for _ in 0..run { text.push('\\'); }
+                at += run;
+                continue;
+            }
+            for _ in 0..run - 1 { text.push('\\'); }
+            let start = at + run - 1;
+            let wide = marker == Some(b'U');
+            let wanted = if wide { 8 } else { 4 };
+            let shape = if wide { "\\UXXXXXXXX" } else { "\\uXXXX" };
+            let figures = numbers[start + 2..].iter().take(wanted).take_while(|b| b.is_ascii_hexdigit()).count();
+            if figures < wanted {
+                return Err(self.octet_decode_fault(Self::ESCAPED, start, start + 1 + figures, numbers, &format!("truncated {shape} escape")));
+            }
+            let spelled = std::str::from_utf8(&numbers[start + 2..start + 2 + wanted]).map_err(|_| self.octet_error("unready"))?;
+            let code = u32::from_str_radix(spelled, 16).map_err(|_| self.octet_error("unready"))?;
+            match char::from_u32(code) {
+                Some(letter) => text.push(letter),
+                // A code above the last character is out of range; one
+                // that names half a pair is a character this kernel
+                // cannot hold, and it says so rather than guess.
+                None if code > 0x10ffff => return Err(self.octet_decode_fault(Self::ESCAPED, start, start + 1 + wanted, numbers, "\\Uxxxxxxxx out of range")),
+                None => return Err(self.octet_error("unready")),
+            }
+            at = start + 2 + wanted;
+        }
+        Ok(Value::text(&text))
+    }
+
     fn octets_to_text(&self, numbers: &[u8], alphabet: usize) -> Result<Value, String> {
+        if alphabet == Self::ESCAPED { return self.octets_unescaped(numbers); }
+        if alphabet == Self::BYTE_FOR_BYTE { return Ok(Value::text(&numbers.iter().map(|b| *b as char).collect::<String>())); }
         let mut fault = None;
-        if alphabet == 1 {
+        if alphabet == Self::SEVEN_BIT {
             for (i, &number) in numbers.iter().enumerate() {
                 if number > 127 { fault = Some((i, i + 1, "ordinal not in range(128)")); break; }
             }
@@ -5776,15 +5924,32 @@ impl<'a> Machine<'a> {
             fault = Some((first, last, why));
         }
         match fault {
-            Some((first, last, why)) => {
-                let subject = match last - first {
-                    1 => format!("byte 0x{:02x} in position {}", numbers[first], first),
-                    _ => format!("bytes in position {}-{}", first, last - 1),
-                };
-                Err(format!("{}'{}' codec can't decode {}: {}", self.octet_error("decode"), self.table.strings("ext.system.bytes.encodings")[alphabet * 2], subject, why))
-            }
+            Some((first, last, why)) => Err(self.octet_decode_fault(alphabet, first, last - 1, numbers, why)),
             None => Ok(Value::text(std::str::from_utf8(numbers).map_err(|_| self.octet_error("unready"))?)),
         }
+    }
+
+    /// Text asked for from a row of bytes, with the encoding named and
+    /// the error policy named after it. Nothing but a row of bytes can
+    /// be read this way; text asked of text is refused outright, as is
+    /// anything else.
+    fn text_decoded(&self, values: &[Value]) -> Result<Value, String> {
+        if values.len() > 3 { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
+        let words = self.table.strings("ext.builtin.to_string.undecodable");
+        let said = |at: usize| words.get(at).cloned().unwrap_or_default();
+        let content = match &values[0] {
+            Value::Octets { cell, .. } => cell.borrow().clone(),
+            Value::Text(_) => return Err(said(0)),
+            other => return Err(format!("{}{}{}", said(1), other.kind_word(), said(2))),
+        };
+        if let Some(policy) = values.get(2) {
+            match policy {
+                Value::Text(word) if self.table.spells("ext.system.bytes.strict", word) => {}
+                Value::Text(_) => return Err(self.octet_error("unready")),
+                _ => return Err(self.octet_error("arguments")),
+            }
+        }
+        self.octets_to_text(&content, self.octet_encoding(values.get(1))?)
     }
 
     fn octet_routine(&self, operation: u8, values: &[Value]) -> Result<Value, String> {
@@ -5876,6 +6041,10 @@ impl<'a> Machine<'a> {
             }
             16 => {
                 let [object, Value::OctetKind { changeable: wanted, .. }] = values else { return Err(refusal()); };
+                // A thing of a blueprint built on a byte kind is of it.
+                if let Value::Thing(t) = object {
+                    return Ok(Value::Flag(Self::native_beneath(&t.of).as_deref() == Some(self.octet_kind_word(*wanted))));
+                }
                 return Ok(Value::Flag(matches!(object, Value::Octets { changeable, .. } if changeable == wanted)));
             }
             17 => {
@@ -6077,8 +6246,18 @@ impl<'a> Machine<'a> {
     }
 
     fn appointed(&self, subject: &Value, index: usize) -> Option<Rc<Routine>> {
+        self.appointed_within(subject, index).map(|(body, _)| body)
+    }
+
+    /// The special method and the frame it runs in. A method handed
+    /// over from its address keeps the frame its class was formed in,
+    /// which a class inside a function needs beneath it to reach any
+    /// name outside its own; one the plan carries runs from the
+    /// outermost, having no other.
+    fn appointed_within(&self, subject: &Value, index: usize) -> Option<(Rc<Routine>, Rc<Env>)> {
         match self.appointment(subject, index) {
-            Some(Value::Routine(body) | Value::Bound(body, _)) => Some(body),
+            Some(Value::Bound(body, frame)) => Some((body, frame)),
+            Some(Value::Routine(body)) => Some((body, self.outermost.clone())),
             _ => None,
         }
     }
@@ -6097,9 +6276,9 @@ impl<'a> Machine<'a> {
         }
         match self.appointment(subject, index) {
             None => Ok(None),
-            Some(Value::Routine(body) | Value::Bound(body, _)) => {
+            Some(Value::Routine(_) | Value::Bound(..)) => {
+                let (body, scope) = self.appointed_within(subject, index).expect("the method just found");
                 let arguments = std::iter::once(subject.clone()).chain(tail.iter().cloned()).collect();
-                let scope = self.outermost.clone();
                 match self.invoke(body, scope, arguments) {
                     Ok(value) => Ok(Some(value)),
                     Err(Escape::Error(message)) => Err(message),
@@ -6139,6 +6318,30 @@ impl<'a> Machine<'a> {
     /// representation, so text keeps its quotes and a map its braces.
     fn collections_read_alike(&self) -> bool {
         self.table.lone("system.collection.render") == Some("representation")
+    }
+
+    /// Whether a thing over this worth puts its own blueprint's name
+    /// before the worth when it is written. A set and a row of bytes
+    /// open to change both do; every other native kind is written as
+    /// the worth by itself.
+    fn worth_leads_with_name(worth: &Value) -> bool {
+        matches!(worth.settled(), Value::Set(_) | Value::Octets { changeable: true, .. })
+    }
+
+    /// A thing over a native worth, written. Where the kind leads with
+    /// its own name the name to lead with is the thing's blueprint, so
+    /// a class built on a set or on a changeable row of bytes is named
+    /// where the builtin would have named itself.
+    fn underlying_words(&mut self, name: &str, worth: &Value, quoted: bool) -> Result<String, String> {
+        if !Self::worth_leads_with_name(worth) { return self.object_words(worth, quoted); }
+        // The worth with nothing leading it: a changeable row of bytes
+        // reads as the fixed row of the same bytes, a set as its
+        // members between braces.
+        let bare = match worth.settled() {
+            Value::Octets { cell, changeable: true, .. } => { let copy = cell.borrow().clone(); self.octets(copy, false) }
+            held => held,
+        };
+        Ok(format!("{name}({})", self.object_words(&bare, true)?))
     }
 
     fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
@@ -6181,7 +6384,7 @@ impl<'a> Machine<'a> {
                 // its blueprint says nothing of how it is shown.
                 if let Some(under) = Self::underlying(subject) {
                     let own = self.appointment(subject, 1).is_some() || (!quoted && self.appointment(subject, 0).is_some());
-                    if !own { return self.object_words(&under, quoted); }
+                    if !own { let name = t.of.name.clone(); return self.underlying_words(&name, &under, quoted); }
                 }
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
@@ -6259,8 +6462,8 @@ impl<'a> Machine<'a> {
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),
             _ => {
-                let routine = self.appointed(source, 16).ok_or_else(|| self.bad_answer())?;
-                match self.invoke(routine, self.outermost.clone(), vec![source.clone()]) {
+                let (routine, scope) = self.appointed_within(source, 16).ok_or_else(|| self.bad_answer())?;
+                match self.invoke(routine, scope, vec![source.clone()]) {
                     Ok(v) => Ok(Some(v)),
                     Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
                     Err(Escape::Error(s)) => Err(s),
@@ -6428,6 +6631,10 @@ impl<'a> Machine<'a> {
             let mut changed = false;
             for operand in operands {
                 match self.underlying_unless(operand, free_at) {
+                    // Where a kind leads with its own name the thing is
+                    // written by its blueprint, so there the worth is
+                    // not allowed to stand in for the thing.
+                    Some(worth) if matches!(operation, Prim::Quoted | Prim::AsText) && Self::worth_leads_with_name(&worth) => settled.push(operand.clone()),
                     Some(worth) => { settled.push(worth); changed = true; }
                     None => settled.push(operand.clone()),
                 }
@@ -7017,6 +7224,19 @@ impl<'a> Machine<'a> {
             return self.prim_values(plain, name, v);
         }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
+        // Building octets asks for the numbers they are to keep. A
+        // cursor gives those numbers up one at a time rather than all at
+        // once, so draw it out into a row first; that is what lets a run
+        // backwards over octets be built straight back into octets.
+        if let Prim::Octets(which @ (0 | 1)) = op {
+            if let [lone] = v {
+                let plain = lone.settled();
+                let already = matches!(plain, Value::Octets { .. } | Value::Vector(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
+                if !already {
+                    if let Ok(numbers) = self.core_collect(&plain) { return self.octet_routine(which, &[Value::Vector(Rc::new(numbers))]); }
+                }
+            }
+        }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
         if v.len() == 2 {
             if let (Value::Octets { cell: x, changeable, .. }, Value::Octets { cell: y, .. }) = (&v[0], &v[1]) {
@@ -8756,7 +8976,7 @@ impl<'a> Machine<'a> {
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),
                     (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
                     (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a,b),
-                    (Value::Bound(a,_), Value::Bound(b,_)) => Rc::ptr_eq(a,b),
+                    (Value::Bound(a,here), Value::Bound(b,there)) => Rc::ptr_eq(a,b) && Rc::ptr_eq(here,there),
                     // Every read of a method ties it afresh: two reads are never one value.
                     (Value::Method(..), Value::Method(..)) => false,
                     (Value::Wrapped(k,a), Value::Wrapped(l,b)) => k==l && Rc::ptr_eq(a,b),
@@ -9229,7 +9449,7 @@ impl<'a> Machine<'a> {
                 }
             }
             Prim::AsText if self.table.single("ext.builtin.to_string.object").is_some() && v.len() != 1 => {
-                if v.is_empty() { Value::text("") } else { return Err(self.argument_fault("ext.builtin.to_string.unready", None)); }
+                if v.is_empty() { Value::text("") } else { return self.text_decoded(&v); }
             }
             Prim::Iterate => {
                 n(1)?;
@@ -9397,11 +9617,14 @@ impl<'a> Machine<'a> {
                         Value::Complex(_) => Some(Prim::ComplexMade),
                         Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
                         Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
+                        // What a routine keeps under its names, seen as
+                        // a view of the entries, is of the dictionary kind.
+                        Value::Attributes(_) => Some(Prim::Dictionary),
                         Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
                         Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
                     };
                     if let Some(operation) = wanted {
-                        if let Some((word,_)) = self.table.prims.iter().find(|(_,p)| **p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
+                        if let Some((_,word)) = self.table.prim_words.iter().find(|(p,_)| *p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
                     }
                 }
                 if let Value::Octets { changeable, .. } = &v[0] { return Ok(self.octet_type(*changeable)); }
@@ -11374,6 +11597,21 @@ impl<'a> Machine<'a> {
                 for (word, held) in program.idents.iter().zip(cells.iter()) {
                     if Self::visible_name(word) && !matches!(held, Value::Unset) { entries.push((Value::text(word), held.clone())); }
                 }
+                drop(cells);
+                // A name the routine reads from the scope around it is in
+                // reach where the call stands, so it belongs here too. It
+                // lives in a frame further out; a name still holding
+                // nothing there is left out, as an unwritten name of the
+                // routine's own is.
+                for slot in &program.reaching {
+                    if !Self::visible_name(&slot.ident) || entries.iter().any(|(word, _)| word.bare() == slot.ident.as_ref()) { continue; }
+                    let held = match ascend(frame, slot.up).cells.borrow().get(slot.at) {
+                        Some(Value::Shared(cell)) => cell.borrow().clone(),
+                        Some(held) => held.clone(),
+                        None => continue,
+                    };
+                    if !matches!(held, Value::Unset) { entries.push((Value::text(&slot.ident), held)); }
+                }
             }
             Rc::new(RefCell::new(Value::Dict(Rc::new(entries))))
         };
@@ -11665,8 +11903,8 @@ impl Machine<'_> {
                     Ok(item)
                 }
                 IteratorKind::Placed(thing, at) => {
-                    let Some(reader) = self.appointed(thing, 11) else { return Ok(None) };
-                    match self.invoke(reader, self.outermost.clone(), vec![thing.clone(), Value::from_big(at.clone())]) {
+                    let Some((reader, scope)) = self.appointed_within(thing, 11) else { return Ok(None) };
+                    match self.invoke(reader, scope, vec![thing.clone(), Value::from_big(at.clone())]) {
                         Ok(item) => { *at += 1; Ok(Some(item)) }
                         Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
                         Err(Escape::Error(complaint)) => Err(complaint),
@@ -12048,7 +12286,10 @@ impl Machine<'_> {
             }
             Backwards => {
                 require(1, 1)?;
-                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_)) { return Err(self.core_complaint("core.unready", name)); }
+                // Octets run backwards as well. A run forwards over them
+                // gives up the numbers they keep rather than any letters,
+                // so running the other way gives up those same numbers.
+                if !matches!(input[0], Value::Vector(_) | Value::Tuple(_) | Value::Text(_) | Value::Progression(_) | Value::Dict(_) | Value::Octets { .. }) { return Err(self.core_complaint("core.unready", name)); }
                 // A progression runs backwards as a progression, last
                 // place first, never gathered into the row it stands for.
                 if let Value::Progression(walk) = &input[0] {
@@ -12220,7 +12461,11 @@ impl Machine<'_> {
                 if self.table.flag("ext.builtin.round.whole.even") && matches!(input[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
                     let number = input[0].as_big()?;
                     if places >= 0 { return Ok(Value::from_big(number)); }
-                    let unit = BigInt::from(10).pow(u32::try_from(-places).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?);
+                    // The count of places is asked for its size rather than
+                    // turned about, because the very least whole number a
+                    // machine holds cannot be turned about and the asking
+                    // would stop the run where a refusal is wanted.
+                    let unit = BigInt::from(10).pow(u32::try_from(places.unsigned_abs()).ok().filter(|n| *n <= 100000).ok_or_else(|| self.core_complaint("core.unready", name))?);
                     let (mut quotient, remainder) = number.div_mod_floor(&unit);
                     let twice = &remainder * 2;
                     if twice > unit || (twice == unit && quotient.is_odd()) { quotient += 1; }

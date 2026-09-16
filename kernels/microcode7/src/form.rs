@@ -709,5 +709,12 @@ pub struct Routine {
     /// it carried away with it, in the order the names were written.
     /// Empty for every routine written out under a name.
     pub carried: Vec<usize>,
+    /// The names the body reads from the scopes around it, and where
+    /// each of them stands. The body reaches those bindings through the
+    /// frames it was made in and not through its own, so they would
+    /// otherwise be nowhere to be found: a call asked what names it can
+    /// see must name them alongside its own, because standing where it
+    /// stands they are every bit as much in reach.
+    pub reaching: Vec<Address>,
     pub body: Form,
 }
