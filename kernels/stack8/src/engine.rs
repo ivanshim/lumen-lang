@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Instance, Reach, Sort, Value, Wording, Generator, CursorState, CursorSource};
+use crate::value::{Descriptor, Class, Ending, Instance, Phase, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -21,6 +21,9 @@ use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 enum Passage {
     Along(usize),
     Leaves { to: usize, cycle: Option<usize> },
+    /// The body gave way at a yield; where it stands is kept with the
+    /// walk, and nothing beyond this point runs until it steps back in.
+    Suspended,
 }
 
 pub struct Engine<'a> {
@@ -60,6 +63,12 @@ pub struct Engine<'a> {
     registry: crate::compile::Registry,
     data: Vec<Value>,
     caught: Vec<Value>,
+    /// How many of the held faults belong to whoever asked a suspended
+    /// body for its next value. A body's own held faults stand above
+    /// them, so that it sees its own first and the caller's behind, and
+    /// so that what it puts away while it sleeps is found again at the
+    /// same remove however deep the caller stood.
+    held_base: usize,
     memo: HashMap<String, Value>,
     core_ids: HashMap<String, usize>,
     /// The arguments of a builtin call, one buffer reused across calls.
@@ -251,7 +260,7 @@ enum Chooser {
 
 impl<'a> Engine<'a> {
     fn exception_classes(names: &[String]) -> HashMap<String, Value> {
-        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37)];
+        let parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0)];
         let mut classes: Vec<Rc<Class>> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let mut fields = Vec::new();
@@ -295,6 +304,13 @@ impl<'a> Engine<'a> {
         }
         if self.stands_on(&class, 12) {
             if let Some(name) = &self.lang.absent_object_member { fields.push((name.clone(), Value::Null)); }
+        }
+        // The exhaustion carries what a generator returned, which is the
+        // first of the arguments it was made with.
+        if self.stop_class(&class) {
+            if let Some(name) = &self.lang.stop_value_member {
+                fields.push((name.clone(), args.first().cloned().unwrap_or(Value::Null)));
+            }
         }
         if self.stands_on(&class, 20) {
             let numbered = args.len() >= 2;
@@ -605,6 +621,42 @@ impl<'a> Engine<'a> {
         self.as_fault(&words).map_or_else(|| Fault::Note(words), Fault::Thrown)
     }
 
+    /// The exhaustion a walk that is over raises: what the body returned
+    /// stands as the value it was made with, and where it returned
+    /// nothing the plain words serve.
+    fn stop_of(&mut self, held: &Rc<RefCell<Generator>>) -> Fault {
+        let words = self.lang.yield_exhausted.first().cloned().unwrap_or_default();
+        let returned = match held.try_borrow() { Ok(state) => state.returned.clone(), Err(_) => Value::Null };
+        if matches!(returned, Value::Null) { return Fault::Note(words); }
+        let named = self.lang.special_stop.first().cloned();
+        match named.and_then(|name| self.native_exceptions.get(&name).cloned()) {
+            Some(Value::Class(class)) => Fault::Thrown(self.exception_instance(class, vec![returned], Value::Null)),
+            _ => Fault::Note(words),
+        }
+    }
+
+    /// What a throw hands a walk: a class is made into one of its own,
+    /// and a class given with a value of that class raises the value.
+    fn thrown_into(&mut self, mut args: Vec<Value>) -> Flow<Value> {
+        let given = match args.len() {
+            1 => args.remove(0),
+            _ => match args.remove(1) {
+                Value::Null => args.remove(0),
+                held @ Value::Object(_) => held,
+                other => other,
+            },
+        };
+        // What is no exception at all is refused by its kind, which is
+        // not quite the refusal a raise of the same thing meets.
+        match self.prepare_raised(given.clone()) {
+            Err(Fault::Note(words)) => match self.lang.yield_throw_invalid.first() {
+                Some(before) => Err(format!("{before}{}", given.core_kind()).into()),
+                None => Err(Fault::Note(words)),
+            },
+            other => other,
+        }
+    }
+
     fn exception_has_methods(class: &Class) -> bool {
         !class.methods.is_empty() || class.base.as_ref().map_or(false, |parent| Self::exception_has_methods(parent))
     }
@@ -656,6 +708,7 @@ impl<'a> Engine<'a> {
             world,
             data: Vec::new(),
             caught: Vec::new(),
+            held_base: 0,
             memo: HashMap::new(),
             core_ids: HashMap::new(),
             buffer: Vec::new(),
@@ -2383,25 +2436,42 @@ impl<'a> Engine<'a> {
 
     /// Each arm runs in the same frame. A leap beyond its span is an
     /// outward return or loop step, and the last part runs before it goes.
-    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt) -> Flow<Passage> {
+    ///
+    /// A suspended body may stand inside the try, so `at` says where the
+    /// try is written among the words, and a walk stepping back in says
+    /// which of its parts it gave way in.
+    fn run_attempt(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, mut suspended: Option<&mut Generator>) -> Flow<Passage> {
         if self.lang.catch_group_unsupported.is_some() && plan.clauses.iter().any(|arm| arm.grouped) {
             return Err(self.lang.catch_group_unsupported.as_deref().unwrap_or("Exception groups are not supported").into());
         }
-        let depth = self.data.len();
-        let active = self.caught.len();
-        // A special method the body ran may have raised, and what it
-        // raised is parked while words stand in for it on the way out.
-        // The words are not the fault; the parked value is, and it is
-        // the one the arms are shown, so that a comparison or a walk
-        // that raised inside a called function is caught by the try
-        // around the call as it is by one around the comparison itself.
-        let ending = match self.run_span(program, frame, instrs, plan.body) {
-            Err(Fault::Note(words)) => match self.carried.take() {
-                Some(fled) => Err(fled),
-                None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
-            },
-            other => other,
+        // A body that gave way inside this try left word of the part it
+        // stood in; the try is taken up there rather than at its head,
+        // and with the depths it stood at then rather than those now.
+        let taking = match suspended.as_deref_mut() {
+            Some(kept) if kept.resume.last().map_or(false, |step| step.at == at) => kept.resume.pop(),
+            _ => None,
         };
+        let depth = taking.as_ref().map_or_else(|| self.data.len(), |step| step.floor);
+        let active = taking.as_ref().map_or_else(|| self.caught.len(), |step| self.held_base + step.held);
+        let ending = match taking.map_or(Phase::Body, |step| step.phase) {
+            Phase::Body => {
+                // A special method the body ran may have raised, and what it
+                // raised is parked while words stand in for it on the way out.
+                // The words are not the fault; the parked value is, and it is
+                // the one the arms are shown, so that a comparison or a walk
+                // that raised inside a called function is caught by the try
+                // around the call as it is by one around the comparison itself.
+                let ran = self.run_portion(program, frame, instrs, plan.body, suspended.as_deref_mut());
+                if matches!(ran, Ok(Passage::Suspended)) {
+                    return self.gave_way(suspended, at, depth, active, Phase::Body);
+                }
+                let ending = match ran {
+                    Err(Fault::Note(words)) => match self.carried.take() {
+                        Some(fled) => Err(fled),
+                        None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+                    },
+                    other => other,
+                };
         if let Some(cell) = &plan.context {
             let object = self.load_cell(cell, frame)?;
             if !matches!(object, Value::Object(_)) {
@@ -2436,77 +2506,53 @@ impl<'a> Engine<'a> {
                 other => other,
             });
         }
-        let mut ending = match ending {
-            Ok(Passage::Along(at)) if at == plan.body.1 => match plan.otherwise {
-                Some(span) => self.run_span(program, frame, instrs, span).map(|end| match end {
-                    Passage::Along(at) if at == span.1 => Passage::Along(plan.after),
-                    other => other,
-                }),
-                None => Ok(Passage::Along(plan.after)),
-            },
-            Err(Fault::Thrown(raised)) if plan.clauses.iter().any(|arm| arm.grouped) => {
-                self.data.truncate(depth);
-                self.caught.push(raised.clone());
-                let handled = self.grouped_attempt(program, frame, instrs, plan, raised);
-                self.caught.truncate(active);
-                handled
-            }
-            Err(Fault::Thrown(raised)) => {
-                self.data.truncate(depth);
-                self.caught.push(raised.clone());
-                let handled = (|| {
-                    for arm in &plan.clauses {
-                        let mut takes = arm.bare;
-                        for span in &arm.kinds {
-                            self.run_span(program, frame, instrs, *span)?;
-                            // A module's own binding stands in a cell;
-                            // the class is what the cell holds.
-                            let kind = self.drop_top()?.contents();
-                            // A tuple stands for the classes it holds, and an
-                            // empty one for none of them. Every member is
-                            // looked at before the clause takes anything, so a
-                            // member that is no class is refused however early
-                            // another member of the tuple fits.
-                            let kinds = match kind {
-                                Value::Tuple(members) => members.iter().map(Value::contents).collect(),
-                                lone => vec![lone],
-                            };
-                            for kind in kinds {
-                                match kind {
-                                    Value::Blank => {},
-                                    Value::Class(class) => {
-                                        if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
-                                        if let Value::Object(object) = &raised {
-                                            takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
-                                                else { Self::exception_beneath(&object.class, &class) };
-                                        }
-                                    }
-                                    _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
-                                }
+                match ending {
+                    Ok(Passage::Along(mark)) if mark == plan.body.1 => match plan.otherwise {
+                        Some(span) => {
+                            let ran = self.run_portion(program, frame, instrs, span, suspended.as_deref_mut());
+                            if matches!(ran, Ok(Passage::Suspended)) {
+                                return self.gave_way(suspended, at, depth, active, Phase::Else);
                             }
-                            if takes { break; }
+                            ran.map(|end| match end {
+                                Passage::Along(mark) if mark == span.1 => Passage::Along(plan.after),
+                                other => other,
+                            })
                         }
-                        if !takes { continue; }
-                        self.under = None;
-                        self.entering = None;
-                        if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
-                        let outcome = self.run_span(program, frame, instrs, arm.body);
-                        // A fault the clause itself met is raised while the
-                        // value it took is still held, and so has it as context.
-                        let outcome = self.raised_of_note(outcome);
-                        if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
-                        return outcome.map(|end| match end {
-                            Passage::Along(at) if at == arm.body.1 => Passage::Along(plan.after),
-                            other => other,
-                        });
+                        None => Ok(Passage::Along(plan.after)),
+                    },
+                    Err(Fault::Thrown(raised)) if plan.clauses.iter().any(|arm| arm.grouped) => {
+                        self.data.truncate(depth);
+                        self.caught.push(raised.clone());
+                        let handled = self.grouped_attempt(program, frame, instrs, plan, raised);
+                        self.caught.truncate(active);
+                        handled
                     }
-                    Err(Fault::Thrown(raised))
-                })();
-                self.caught.truncate(active);
-                handled
+                    Err(Fault::Thrown(raised)) => {
+                        self.data.truncate(depth);
+                        self.caught.push(raised.clone());
+                        self.attempt_clauses(program, frame, instrs, plan, at, suspended.as_deref_mut(), raised, None, depth, active)
+                    }
+                    other => other,
+                }
             }
-            other => other,
+            Phase::Else => {
+                let span = plan.otherwise.expect("the part run when nothing was raised");
+                let ran = self.run_portion(program, frame, instrs, span, suspended.as_deref_mut());
+                if matches!(ran, Ok(Passage::Suspended)) {
+                    return self.gave_way(suspended, at, depth, active, Phase::Else);
+                }
+                ran.map(|end| match end {
+                    Passage::Along(mark) if mark == span.1 => Passage::Along(plan.after),
+                    other => other,
+                })
+            }
+            Phase::Arm(index, raised) => self.attempt_clauses(program, frame, instrs, plan, at, suspended.as_deref_mut(), raised, Some(index), depth, active),
+            Phase::Last(left, saved) => {
+                let ending = Self::as_flow(left);
+                return self.attempt_last(program, frame, instrs, plan, at, suspended, ending, depth, active, Some(saved));
+            }
         };
+        let mut ending = ending;
         if !self.lang.exceptions.is_empty() {
             ending = match ending {
                 Err(Fault::Note(words)) => match self.as_fault(&words) {
@@ -2515,24 +2561,141 @@ impl<'a> Engine<'a> {
                 other => other,
             };
         }
-        if let Some(last) = plan.last {
-            if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
-            let saved = self.data.len();
-            let finished = self.run_span(program, frame, instrs, last);
-            let finished = self.raised_of_note(finished);
-            self.caught.truncate(active);
-            match finished {
-                Ok(Passage::Along(at)) if at == last.1 => self.data.truncate(saved),
-                Ok(end @ Passage::Leaves { cycle: None, .. }) => {
-                    let returned = self.drop_top()?;
-                    self.data.truncate(depth);
-                    self.data.push(returned);
-                    ending = Ok(end);
+        if matches!(ending, Ok(Passage::Suspended)) { return ending; }
+        self.attempt_last(program, frame, instrs, plan, at, suspended, ending, depth, active, None)
+    }
+
+    /// Word of where a body gave way, kept with the walk so that
+    /// stepping back in finds the same watch standing.
+    fn gave_way(&self, suspended: Option<&mut Generator>, at: usize, floor: usize, held: usize, phase: Phase) -> Flow<Passage> {
+        let held = held.saturating_sub(self.held_base);
+        if let Some(kept) = suspended { kept.resume.push(Step { at, floor, held, phase }); }
+        Ok(Passage::Suspended)
+    }
+
+    /// What a try had come to, put away so that a body giving way in the
+    /// last part may carry it, and taken out again on the way back in.
+    fn as_left(ending: Flow<Passage>) -> Ending {
+        match ending {
+            Ok(Passage::Along(mark)) => Ending::Along(mark),
+            Ok(Passage::Leaves { to, cycle }) => Ending::Leaves(to, cycle),
+            Ok(Passage::Suspended) => Ending::Finished,
+            Err(Fault::Thrown(value)) => Ending::Thrown(value),
+            Err(Fault::Note(words)) => Ending::Note(words),
+            Err(Fault::Stopped(words)) => Ending::Stopped(words),
+            Err(Fault::Finished) => Ending::Finished,
+        }
+    }
+
+    fn as_flow(left: Ending) -> Flow<Passage> {
+        match left {
+            Ending::Along(mark) => Ok(Passage::Along(mark)),
+            Ending::Leaves(to, cycle) => Ok(Passage::Leaves { to, cycle }),
+            Ending::Thrown(value) => Err(Fault::Thrown(value)),
+            Ending::Note(words) => Err(Fault::Note(words)),
+            Ending::Stopped(words) => Err(Fault::Stopped(words)),
+            Ending::Finished => Err(Fault::Finished),
+        }
+    }
+
+    /// The clauses are shown what the body raised until one takes it;
+    /// what none takes is raised again. A clause whose body gave way is
+    /// taken up at that body, its class already weighed.
+    fn attempt_clauses(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, suspended: Option<&mut Generator>, raised: Value, resumed: Option<usize>, depth: usize, active: usize) -> Flow<Passage> {
+        let handled = self.attempt_taking(program, frame, instrs, plan, at, suspended, raised, resumed, depth, active);
+        // What the walk is still holding stays held while it sleeps.
+        if !matches!(handled, Ok(Passage::Suspended)) { self.caught.truncate(active); }
+        handled
+    }
+
+    fn attempt_taking(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, mut suspended: Option<&mut Generator>, raised: Value, resumed: Option<usize>, depth: usize, active: usize) -> Flow<Passage> {
+        if let Some(index) = resumed {
+            let arm = &plan.clauses[index];
+            return self.attempt_arm(program, frame, instrs, plan, at, suspended, arm, index, raised, depth, active);
+        }
+        for (index, arm) in plan.clauses.iter().enumerate() {
+            let mut takes = arm.bare;
+            for span in &arm.kinds {
+                self.run_span(program, frame, instrs, *span)?;
+                // A module's own binding stands in a cell;
+                // the class is what the cell holds.
+                let kind = self.drop_top()?.contents();
+                // A tuple stands for the classes it holds, and an
+                // empty one for none of them. Every member is
+                // looked at before the clause takes anything, so a
+                // member that is no class is refused however early
+                // another member of the tuple fits.
+                let kinds = match kind {
+                    Value::Tuple(members) => members.iter().map(Value::contents).collect(),
+                    lone => vec![lone],
+                };
+                for kind in kinds {
+                    match kind {
+                        Value::Blank => {},
+                        Value::Class(class) => {
+                            if !self.lang.exceptions.is_empty() && !self.exception_class(&class) { return Err(self.lang.catch_invalid.clone().unwrap_or_default().into()); }
+                            if let Value::Object(object) = &raised {
+                                takes |= if self.lang.exceptions.is_empty() { object.class.named(&class.name, self.lang.classes_folded) }
+                                    else { Self::exception_beneath(&object.class, &class) };
+                            }
+                        }
+                        _ => return Err(self.lang.catch_invalid.as_deref().unwrap_or("A catch needs a class").into()),
+                    }
                 }
-                other => {
-                    self.data.truncate(depth);
-                    ending = other;
-                }
+                if takes { break; }
+            }
+            if !takes { continue; }
+            self.under = None;
+            self.entering = None;
+            if let Some(slot) = &arm.held { self.store_cell(slot, frame, raised.clone())?; }
+            return self.attempt_arm(program, frame, instrs, plan, at, suspended.as_deref_mut(), arm, index, raised, depth, active);
+        }
+        Err(Fault::Thrown(raised))
+    }
+
+    fn attempt_arm(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, mut suspended: Option<&mut Generator>, arm: &crate::code::Taking, index: usize, raised: Value, depth: usize, active: usize) -> Flow<Passage> {
+        let outcome = self.run_portion(program, frame, instrs, arm.body, suspended.as_deref_mut());
+        if matches!(outcome, Ok(Passage::Suspended)) {
+            return self.gave_way(suspended, at, depth, active, Phase::Arm(index, raised));
+        }
+        // A fault the clause itself met is raised while the
+        // value it took is still held, and so has it as context.
+        let outcome = self.raised_of_note(outcome);
+        if let Some(slot) = &arm.held { self.put_cell(slot, frame, Value::Blank); }
+        outcome.map(|end| match end {
+            Passage::Along(mark) if mark == arm.body.1 => Passage::Along(plan.after),
+            other => other,
+        })
+    }
+
+    /// The last part, which runs whichever way the body left, and which
+    /// may itself give way; what the try had come to waits with it.
+    fn attempt_last(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], plan: &crate::code::Attempt, at: usize, mut suspended: Option<&mut Generator>, mut ending: Flow<Passage>, depth: usize, active: usize, taken_up: Option<usize>) -> Flow<Passage> {
+        let Some(last) = plan.last else { return ending };
+        let saved = match taken_up {
+            Some(mark) => mark,
+            None => {
+                if let Err(Fault::Thrown(raised)) = &ending { self.caught.push(raised.clone()); }
+                self.data.len()
+            }
+        };
+        let finished = self.run_portion(program, frame, instrs, last, suspended.as_deref_mut());
+        if matches!(finished, Ok(Passage::Suspended)) {
+            return self.gave_way(suspended, at, depth, active, Phase::Last(Self::as_left(ending), saved));
+        }
+        let finished = self.raised_of_note(finished);
+        self.caught.truncate(active);
+        match finished {
+            Ok(Passage::Along(mark)) if mark == last.1 => self.data.truncate(saved),
+            Ok(end @ Passage::Leaves { cycle: None, .. }) => {
+                let returned = self.drop_top()?;
+                self.data.truncate(depth);
+                self.data.push(returned);
+                ending = Ok(end);
+            }
+            other => {
+                self.data.truncate(depth);
+                ending = other;
             }
         }
         ending
@@ -2614,15 +2777,64 @@ impl<'a> Engine<'a> {
         Err(Fault::Thrown(self.make_group(base, Value::text(""), afresh)?))
     }
 
-    fn close_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
+    /// Everything the walk was keeping is let go and it hands out
+    /// nothing more.
+    fn shut_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
         let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-        if let Some(Value::Generator(inner)) = state.delegate.take() { self.close_generator(&inner)?; }
+        if let Some(Value::Generator(inner)) = state.delegate.take() { self.shut_generator(&inner)?; }
         state.closed = true;
         state.current = None;
         state.frame.clear();
         state.stack.clear();
         state.items.clear();
+        state.resume.clear();
+        state.held.clear();
+        state.hurled = None;
         Ok(())
+    }
+
+    /// The class raised at a suspension when the walk is ended.
+    fn exit_value(&mut self) -> Option<Value> {
+        let name = self.lang.yield_exit.first().cloned()?;
+        let Some(Value::Class(class)) = self.native_exceptions.get(&name).cloned() else { return None };
+        Some(self.exception_instance(class, Vec::new(), Value::Null))
+    }
+
+    fn is_exit(&self, value: &Value) -> bool {
+        let Value::Object(object) = value else { return false };
+        self.lang.yield_exit.iter().any(|name| object.class.named(name, false))
+    }
+
+    /// Ending a walk raises the ending class where its body left off, so
+    /// that last parts run and a clause may take it. A body that takes
+    /// it and hands out another value is refused; one that lets it by,
+    /// or returns, ends quietly, and what it returned is given back.
+    fn close_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<Value> {
+        let sleeping = {
+            let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
+            state.started && !state.closed && state.program.is_some()
+        };
+        let exit = self.exit_value().filter(|_| sleeping);
+        let Some(exit) = exit else {
+            self.shut_generator(held)?;
+            return Ok(Value::Null);
+        };
+        match self.step_generator(held, Value::Null, Some(exit)) {
+            Ok(Some(_)) => {
+                self.shut_generator(held)?;
+                Err(self.lang.yield_close_ignored.first().cloned().unwrap_or_default().into())
+            }
+            Ok(None) => {
+                let returned = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.returned.clone();
+                self.shut_generator(held)?;
+                Ok(returned)
+            }
+            Err(Fault::Thrown(value)) if self.is_exit(&value) || matches!(&value, Value::Object(o) if self.stop_class(&o.class)) => {
+                self.shut_generator(held)?;
+                Ok(Value::Null)
+            }
+            Err(other) => { self.shut_generator(held)?; Err(other) }
+        }
     }
 
     fn iterator(&mut self, source: Value) -> Flow<Value> {
@@ -2632,7 +2844,46 @@ impl<'a> Engine<'a> {
     }
 
     fn resume_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value) -> Flow<Option<Value>> {
+        self.step_generator(held, sent, None)
+    }
+
+    /// A step back into a suspended body, either handing it a value or
+    /// raising one where it left off. A body never begun and one already
+    /// over take nothing in: what is thrown in is raised on the spot.
+    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>) -> Flow<Option<Value>> {
+        // A body waiting on a delegated walk is not where the throw
+        // lands: the walk it waits on is shown the value first, and only
+        // what comes back out of that reaches the body itself.
+        if let Some(value) = hurled.clone() {
+            let inner = {
+                let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
+                match (&state.delegate, state.started && !state.closed) {
+                    (Some(Value::Generator(inner)), true) => Some(inner.clone()),
+                    _ => None,
+                }
+            };
+            if let Some(inner) = inner {
+                let stepped = self.step_generator(&inner, Value::Null, Some(value));
+                let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+                match stepped {
+                    Ok(Some(item)) => return Ok(Some(item)),
+                    Ok(None) => { hurled = None; }
+                    Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
+                    Err(other) => { state.delegate = None; return Err(other); }
+                }
+            }
+        }
         let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+        if let Some(value) = hurled {
+            if kept.closed || !kept.started || kept.program.is_none() {
+                kept.closed = true;
+                kept.returned = Value::Null;
+                kept.resume.clear();
+                kept.held.clear();
+                return Err(Fault::Thrown(value));
+            }
+            kept.hurled = Some(value);
+        }
         if kept.closed { kept.returned = Value::Null; return Ok(None); }
         if !kept.started && !matches!(sent, Value::Null) {
             return Err(self.lang.yield_unstarted[0].clone().into());
@@ -2651,8 +2902,17 @@ impl<'a> Engine<'a> {
             return Ok(item);
         };
         let outer = std::mem::replace(&mut self.data, std::mem::take(&mut kept.stack));
+        // The faults the body itself is handling stand above the
+        // caller's, so that it sees its own first and the caller's behind
+        // them, as a body called from a clause does.
+        let outer_base = std::mem::replace(&mut self.held_base, self.caught.len());
+        self.caught.append(&mut kept.held);
         let mut locals = std::mem::take(&mut kept.frame);
-        if kept.waiting { self.data.push(sent.clone()); kept.waiting = false; }
+        if kept.waiting {
+            if kept.hurled.is_none() { self.data.push(sent.clone()); }
+            kept.waiting = false;
+        }
+        kept.resuming = true;
         kept.sent = sent;
         let source = self.source.clone();
         let line = self.line;
@@ -2671,11 +2931,17 @@ impl<'a> Engine<'a> {
         self.line = line;
         kept.frame = locals;
         kept.stack = std::mem::replace(&mut self.data, outer);
+        kept.held = self.caught.split_off(self.held_base);
+        self.held_base = outer_base;
+        kept.resuming = false;
+        kept.hurled = None;
         if kept.handed.is_none() || result.is_err() {
             kept.closed = true;
             kept.returned = if result.is_err() { Value::Null } else { kept.stack.pop().unwrap_or(Value::Null) };
             kept.stack.clear();
             kept.frame.clear();
+            kept.resume.clear();
+            kept.held.clear();
         }
         result?;
         Ok(kept.handed.take())
@@ -2686,7 +2952,26 @@ impl<'a> Engine<'a> {
     }
 
     fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), mut suspended: Option<&mut Generator>) -> Flow<Passage> {
-        let mut pc = suspended.as_ref().map_or(span.0, |g| g.pc);
+        // A walk stepping back in makes its way to where it left off: to
+        // each try it stood inside in turn, and at the innermost of them
+        // to the word after the yield. What was thrown in is raised
+        // there, so that the tries around it are shown it.
+        let mut pc = span.0;
+        let mut hurled = None;
+        if let Some(kept) = suspended.as_deref_mut() {
+            if kept.resuming {
+                match kept.resume.last() {
+                    Some(step) => pc = step.at,
+                    None => { pc = kept.pc; kept.resuming = false; hurled = kept.hurled.take(); }
+                }
+            }
+        }
+        if let Some(value) = hurled {
+            // Raised where the body left off, so what the body itself
+            // was handling stands behind it.
+            self.chain_context(&value);
+            return Err(Fault::Thrown(value));
+        }
         let mut counted = 0u32;
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
@@ -2790,7 +3075,7 @@ impl<'a> Engine<'a> {
                             }
                         }
                     }
-                    return Ok(Passage::Along(pc));
+                    return Ok(Passage::Suspended);
                 }
                 Instr::Act(op, argc) => {
                     // Text read while the run goes is read where it
@@ -2838,10 +3123,14 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Attempt(plan) => {
-                    if suspended.is_some() && instrs[plan.body.0..plan.after].iter().any(|i| matches!(i, Instr::Act(Action::Suspend | Action::Delegate, _))) {
+                    // A gathered clause cannot yet keep the pieces of a
+                    // group it has parted while a body sleeps.
+                    if suspended.is_some() && plan.clauses.iter().any(|arm| arm.grouped)
+                        && instrs[plan.body.0..plan.after].iter().any(|i| matches!(i, Instr::Act(Action::Suspend | Action::Delegate, _))) {
                         return Err(self.lang.yield_unsupported[0].clone().into());
                     }
-                    match self.run_attempt(program, frame, instrs, plan)? {
+                    match self.run_attempt(program, frame, instrs, plan, pc, suspended.as_deref_mut())? {
+                        Passage::Suspended => return Ok(Passage::Suspended),
                         Passage::Along(at) => pc = at,
                         end @ Passage::Leaves { to, cycle } => {
                             if !cycle.map_or(false, |i| i >= span.0 && i < span.1) { return Ok(end); }
@@ -3561,6 +3850,23 @@ impl<'a> Engine<'a> {
             }
             if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
                 return Ok(Value::Flag(self.special_truth(&answer)? != matches!(op, Action::Lacks)));
+            }
+            // A thing that says nothing of membership but says how it
+            // is walked is searched by walking it, and the walk stops
+            // at the first member equal to the one sought.
+            if matches!(b, Value::Object(_)) && (self.special_value(b, 15).is_some() || self.indexed_walk(b).is_some()) {
+                let walk = self.core_iterator(b)?;
+                let mut found = false;
+                while let Some(item) = self.core_step(&walk)? {
+                    // A member is the one sought where it is the very
+                    // same value, before anything is asked of it; where
+                    // it is another, the member is asked first whether
+                    // it equals the one sought, as a member of a row is.
+                    if Self::member_matches(&item, a) { found = true; break; }
+                    let alike = self.special_dyad(&Action::Eq, &item, a)?;
+                    if self.special_truth(&alike)? { found = true; break; }
+                }
+                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
             }
         }
         if let (Action::At, Value::Map(entries)) = (op, a) {
@@ -4565,6 +4871,9 @@ impl<'a> Engine<'a> {
                         found
                     }
                     Value::Set(set) => set.borrow().items(),
+                    // A thing of the program's own is taken apart into
+                    // the members its own walk hands over.
+                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => self.special_items(&source)?,
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
@@ -4856,6 +5165,11 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
                     members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
+                    // The values arrive in the order the body wrote
+                    // them, the methods last of all; the namespace the
+                    // class shows names them in the order the body
+                    // bound them instead.
+                    members.sort_by_key(|(named,_)|plan.member_order.iter().position(|o|o==named).unwrap_or(usize::MAX));
                     let mut bases=base.into_iter().collect::<Vec<_>>();bases.extend(answers);
                     let result=self.form_class(plan.name.clone(),bases,members)?;
                     self.data.push(result);return Ok(());
@@ -5228,12 +5542,18 @@ impl<'a> Engine<'a> {
                 let subject = args.remove(0);
                 if let Value::Generator(held) = subject {
                     let result = if Lang::spells(&self.lang.yield_close, name) && args.is_empty() {
-                        self.close_generator(&held)?;
-                        Value::Null
+                        self.close_generator(&held)?
                     } else if Lang::spells(&self.lang.yield_send, name) && args.len() == 1 {
-                        self.resume_generator(&held, args.remove(0))?.ok_or_else(|| self.lang.yield_exhausted[0].clone())?
-                    } else if Lang::spells(&self.lang.yield_throw, name) {
-                        return Err(self.lang.yield_throw_unavailable[0].clone().into());
+                        match self.resume_generator(&held, args.remove(0))? {
+                            Some(item) => item,
+                            None => return Err(self.stop_of(&held)),
+                        }
+                    } else if Lang::spells(&self.lang.yield_throw, name) && (1..=3).contains(&args.len()) {
+                        let value = self.thrown_into(args)?;
+                        match self.step_generator(&held, Value::Null, Some(value))? {
+                            Some(item) => item,
+                            None => return Err(self.stop_of(&held)),
+                        }
                     } else {
                         return Err(self.lang.yield_unsupported[0].clone().into());
                     };
@@ -7607,6 +7927,12 @@ impl<'a> Engine<'a> {
 
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Some(worth) = self.worth_free_of(value, &[15]) { return self.comprehension_items(&worth); }
+        // A thing of the program's own that says how it is walked, by a
+        // walk method or by reading its places, has the members that
+        // walk hands over, the same ones a loop over it would see.
+        if matches!(value, Value::Object(_)) && (self.special_value(value, 15).is_some() || self.indexed_walk(value).is_some()) {
+            return self.special_items(value);
+        }
         if let Value::Class(class) = value {
             if let Some(yielded) = self.class_walked(class)? { return self.comprehension_items(&yielded); }
         }
@@ -10615,11 +10941,45 @@ impl Engine<'_> {
     fn core_iterator(&mut self, source: &Value) -> Res<Value> {
         if matches!(source, Value::Cursor(_) | Value::Generator(_)) { return Ok(source.clone()); }
         if let Value::Counted(row) = source { return Ok(Self::core_cursor(CursorSource::Counted(row.clone(), BigInt::from(0)))); }
+        // A thing of the program's own is walked the way a loop walks
+        // it: by the walk it hands over, or by its places where it
+        // hands over none. The walk is kept as it stands rather than
+        // gathered, so the builtins built upon it ask for a member only
+        // when one is wanted.
+        if matches!(source, Value::Object(_) | Value::Walk(_)) {
+            if let Value::Walk(_) = source { return Ok(Self::core_cursor(CursorSource::Handed(source.clone()))); }
+            if let Some(handed) = self.special_call(source, 15, Vec::new())? {
+                // What a thing hands over is a walk or it is nothing:
+                // one that cannot be asked for a next member is refused
+                // where the walk is asked for, not at its first step.
+                return match handed {
+                    Value::Cursor(_) | Value::Generator(_) => Ok(handed),
+                    Value::Walk(_) => Ok(Self::core_cursor(CursorSource::Handed(handed))),
+                    other if self.special_method(&other, 16).is_some() => Ok(Self::core_cursor(CursorSource::Handed(other))),
+                    _ => Err(self.special_fault()),
+                };
+            }
+            if let Some(places) = self.indexed_walk(source) { return Ok(places); }
+        }
         Ok(Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0)))
     }
 
     fn core_step(&mut self, walk: &Value) -> Res<Option<Value>> {
-        if let Value::Generator(state) = walk { return self.resume_generator(state, Value::Null).map_err(|f| f.told(&self.wording())); }
+        if let Value::Generator(state) = walk {
+            // What the body raised is parked while words stand in for it
+            // on the way out, so the arms round the walk see the value
+            // itself rather than a reading of its words.
+            return match self.resume_generator(state, Value::Null) {
+                Ok(item) => Ok(item),
+                Err(Fault::Note(words)) => Err(words),
+                Err(Fault::Thrown(value)) => {
+                    let words = Fault::Thrown(value.clone()).told(&self.wording());
+                    self.carried = Some(Fault::Thrown(value));
+                    Err(words)
+                }
+                Err(other) => Err(other.told(&self.wording())),
+            };
+        }
         let Value::Cursor(cell) = walk else { return Err(self.core_fault("core.not_iterator", &walk.core_kind())); };
         // A callable asked for a member may itself ask this same cursor
         // for members before it answers, so it is asked with the cursor
@@ -10676,8 +11036,13 @@ impl Engine<'_> {
             CursorSource::Indexed(thing, place) => match self.special_call(thing, 11, vec![Value::of_big(place.clone())]) {
                 Ok(Some(item)) => { *place += 1; Ok(Some(item)) }
                 Ok(None) => Ok(None),
-                Err(words) => if self.places_over() { Ok(None) } else { Err(words) },
+                Err(words) => if self.places_over(&words) { Ok(None) } else { Err(words) },
             },
+            // A thing of the program's own is asked for its next member
+            // the way a loop asks it, so a walk taken from it hands out
+            // one member at a time and asks for no more than it is
+            // asked for.
+            CursorSource::Handed(thing) => self.special_step(thing),
             CursorSource::Numbered(inner, count) => {
                 let Some(value) = self.core_step(inner)? else { return Ok(None); };
                 let numbered = Value::Tuple(Rc::new(vec![Value::of_big(count.clone()), value]));
@@ -10749,12 +11114,15 @@ impl Engine<'_> {
     }
 
     /// Whether the fault carried out of reading a place says the places
-    /// are over: the index fault, or the one that ends a walk.
-    fn places_over(&mut self) -> bool {
+    /// are over: the index fault, or the one that ends a walk. A fault
+    /// the kernel raises for itself is said as words alone and carries
+    /// no value, so those words are read for the class they stand for.
+    fn places_over(&mut self, told: &str) -> bool {
         let over = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o)))
             if self.lang.fault_index.as_deref().map_or(false, |name| o.class.named(name, false)) || self.lang.special_stop.iter().any(|name| o.class.named(name, false)));
-        if over { self.carried = None; }
-        over
+        if over { self.carried = None; return true; }
+        self.carried.is_none() && matches!(self.class_for(told), Some(class)
+            if self.lang.fault_index.as_deref() == Some(class.as_str()) || self.lang.special_stop.contains(&class))
     }
 
     /// The complaint for zip sources of unequal length: the number of
@@ -11042,7 +11410,18 @@ impl Engine<'_> {
             }
             Builtin::Next => {
                 arity(1, 2)?;
-                self.core_step(&args[0])?.or_else(|| args.get(1).cloned()).ok_or_else(|| self.core_fault("core.exhausted", ""))?
+                match self.core_step(&args[0])?.or_else(|| args.get(1).cloned()) {
+                    Some(item) => item,
+                    None => {
+                        // What the body returned is carried on the
+                        // exhaustion, parked behind the words for it.
+                        if let Value::Generator(state) = &args[0] {
+                            let state = state.clone();
+                            if let fault @ Fault::Thrown(_) = self.stop_of(&state) { self.carried = Some(fault); }
+                        }
+                        return Err(self.core_fault("core.exhausted", ""));
+                    }
+                }
             }
             Builtin::Reversed => {
                 arity(1, 1)?;

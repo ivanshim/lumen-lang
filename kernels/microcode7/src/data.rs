@@ -172,6 +172,9 @@ pub enum IteratorKind {
     Placed(Value, BigInt),
     /// A callable summoned for each member until it answers the sentinel.
     Summoned { work: Value, stop: Value },
+    /// A thing of the program's own, asked for each member the way a
+    /// loop asks it.
+    Handed(Value),
     Count(Value, BigInt),
     /// Inputs walked abreast, mapped where a mapper is given, and made
     /// to end together where exactness is demanded.
@@ -352,8 +355,12 @@ impl Value {
         if let Value::Window(owner, portion) = self {
             let mut items=Vec::new();
             if let Value::Dict(entries)=owner.settled() {
+                // A window upon the pairs shows each of them as a
+                // tuple, which is what it is: a pair written between
+                // round marks, of the kind a pair may be a key by, and
+                // not a row that only reads like one.
                 for (key,value) in entries.iter() {
-                    items.push(if *portion=='k' {key.clone()} else if *portion=='v' {value.clone()} else {Value::Row(Rc::new(vec![key.clone(),value.clone()]))});
+                    items.push(if *portion=='k' {key.clone()} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![key.clone(),value.clone()]))});
                 }
             }
             return Value::Vector(Rc::new(items));
@@ -617,7 +624,9 @@ impl Value {
             (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
-            (Value::Arguments(one), Value::Arguments(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
+            // The arguments a fault was made with are a tuple in their
+            // own right, and weigh the same as one written out.
+            (Value::Arguments(one) | Value::Tuple(one), Value::Arguments(two) | Value::Tuple(two)) => one.len() == two.len() && one.iter().zip(two.iter()).all(|(a, b)| a.equals(b)),
             (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => x.borrow().as_slice() == y.borrow().as_slice(),
             (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
             (Value::Channel(left), Value::Channel(right)) => left == right,
@@ -636,7 +645,7 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => a == b,
             (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Nil, Value::Nil) | (Value::Ellipsis, Value::Ellipsis) => true,
-            (Value::Tuple(a), Value::Tuple(b)) | (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
+            (Value::Vector(a), Value::Vector(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Dict(a), Value::Dict(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|((j, x), (k, y))| j.equals(k) && x.equals(y))
             }

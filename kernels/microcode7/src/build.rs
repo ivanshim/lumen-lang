@@ -36,6 +36,10 @@ struct ClassParts {
     methods: Vec<(String, Rc<Routine>)>,
     attributes: Vec<String>,
     held: Vec<Form>,
+    /// Every name the body has bound so far, each standing where the
+    /// body bound it first and the methods among the rest. This alone
+    /// settles what the namespace of the finished class shows.
+    ranking: Vec<String>,
     annotated_names: Vec<(Value, Value)>,
     uncertain: Vec<String>,
     arms: usize,
@@ -2493,12 +2497,23 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// A name taking its stand in the namespace of the class. A body
+    /// that binds one name twice leaves it where it first stood, as a
+    /// second write to a map leaves a key where it was; a body that
+    /// takes a name away loses that stand, and binding the name once
+    /// more puts it behind all the others.
+    fn member_ranked(&mut self, word: &str) {
+        let parts = self.parts();
+        if parts.ranking.iter().all(|old| old != word) { parts.ranking.push(word.to_string()); }
+    }
+
     /// A member entered under its name, in the place given, and made
     /// known by that name to the rest of the body. One entered from
     /// within an arm is noted as a member whose place may stay unwritten,
     /// and it displaces any method of that name, since the arm decides
     /// which of the two the class ends up with.
     fn member_noted(&mut self, word: &str, place: Address) {
+        self.member_ranked(word);
         let parts = self.parts();
         if let Some(at) = parts.attributes.iter().position(|old| old == word) {
             parts.attributes.remove(at);
@@ -2627,6 +2642,7 @@ impl<'a> Builder<'a> {
                 true => self.member_noted(&method_name, slot),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
+                    self.member_ranked(&method_name);
                     self.parts().methods.push((method_name, body));
                 }
             }
@@ -2820,6 +2836,7 @@ impl<'a> Builder<'a> {
                 parts.attributes.remove(at);
                 parts.held.remove(at);
             }
+            parts.ranking.retain(|old| old != &word);
             parts.attributes.push(word.clone());
             parts.held.push(Form::Read(place));
             if !parts.uncertain.iter().any(|n| n == &word) { parts.uncertain.push(word); }
@@ -3029,14 +3046,15 @@ impl<'a> Builder<'a> {
         }
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.under_way.push(ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
-            annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot });
-        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
+            ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot });
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         // What the class says about itself is text standing alone at the
         // head of the body, kept under the word the table gives
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
             let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+            self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
         }
@@ -3057,7 +3075,7 @@ impl<'a> Builder<'a> {
         self.class_bindings.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let ClassParts { methods, mut attributes, mut held, annotated_names, uncertain, cannot, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, .. } = self.under_way.pop().expect("the class body just read");
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -3065,6 +3083,7 @@ impl<'a> Builder<'a> {
         // What the body annotated, carried by the class under the table's
         // word; a body that annotated nothing leaves the class without it.
         if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
+            if ranking.iter().all(|old| old != word) { ranking.push(word.clone()); }
             attributes.push(word.clone());
             held.push(constant(Value::Dict(Rc::new(annotated_names))));
         }
@@ -3095,6 +3114,7 @@ impl<'a> Builder<'a> {
         let plan = Plan {
             name: named.clone(), answers: other_parents.len(), field_names: vec![], field_reach: vec![],
             shared_names: attributes, constant_names: vec![], methods, extends: parent.is_some(),
+            ranking,
         };
         let declaration = Form::Class { plan: Rc::new(plan), values };
         if self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len()) {
@@ -3204,7 +3224,7 @@ impl<'a> Builder<'a> {
         let field_names = names(fields, &mut values);
         let shared_names = names(shared, &mut values);
         let constant_names = names(constants, &mut values);
-        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: under.is_some() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: under.is_some(), ranking: vec![] };
         let made = Form::Class { plan: Rc::new(plan), values };
         let bound = self.class_binding(&name);
         let slot = self.global_address(&bound);
@@ -3364,10 +3384,11 @@ impl<'a> Builder<'a> {
                 let held = r.read(member);
                 items.push(prim_call(Prim::Onto, vec![thing, constant(Value::text(&bare)), held]));
             }
-            let body = if explicit && table.blocks == Blocks::Indented {
-                r.skip_lead_word();
-                if r.on_stmt_end() || r.look().shape == Shape::Open { r.body()? } else { r.stmt()? }
-            } else { r.body()? };
+            // A body on the line of its own name is read the way any
+            // body on the line of its head is read, so a method that
+            // joins its statements with the mark that ends a statement
+            // holds every one of them and not the first alone.
+            let body = r.body()?;
             items.push(body);
             if explicit && table.blocks == Blocks::Indented { items.push(constant(Value::Nil)); }
             Ok(sequence(items))

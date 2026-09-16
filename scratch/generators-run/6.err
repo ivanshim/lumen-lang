@@ -1,1 +1,1 @@
-PythonError: NotImplementedError: generator throw is not supported
+PythonError: TypeError: exceptions must be classes or instances deriving from BaseException, not str
