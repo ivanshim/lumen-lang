@@ -89,6 +89,9 @@ pub struct Builder<'a> {
     within: Option<(String, Option<String>)>,
     receiver: Option<String>,
     class_bindings: Vec<(usize, HashMap<String, Address>)>,
+    /// The class bodies under way, innermost last: the parts each has
+    /// gathered of its class so far.
+    under_way: Vec<ClassParts>,
     /// Which parameters of each program take a name's own cell instead
     /// of a copy, read from the tokens before anything is built.
     shared_args: HashMap<String, Vec<bool>>,
@@ -313,7 +316,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         layers.push(Layer { comprehension: false, borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -953,6 +956,14 @@ impl<'a> Builder<'a> {
     /// The binding a write reaches: the nearest owner; a function or the
     /// top level makes the name if it has none, a block makes its own.
     fn address_to_write(&mut self, name: &str) -> Address {
+        // A name a class body knows is written into the place the body
+        // keeps it in, as it is read out of there: the loops, imports
+        // and handlers of a body bind members by ordinary writes.
+        if let Some((depth, names)) = self.class_bindings.last() {
+            if *depth == self.layers.len() {
+                if let Some(slot) = names.get(name) { return slot.clone(); }
+            }
+        }
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
         if self.table.flag("ext.stmt.function.closes_over") && !name.starts_with('#') {
@@ -1007,6 +1018,27 @@ impl<'a> Builder<'a> {
         self.gensyms += 1;
         let name = format!("#{}{}", what, self.gensyms);
         self.address_to_write(&name)
+    }
+
+    /// Whether the statements being read belong to a class body itself,
+    /// not to a method within it nor to the program around it.
+    fn in_class_body(&self) -> bool {
+        self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len())
+    }
+
+    /// The parts gathered so far of the class whose body is being read.
+    fn parts(&mut self) -> &mut ClassParts {
+        self.under_way.last_mut().expect("a class body under way")
+    }
+
+    /// A name a statement of a class body is about to write becomes a
+    /// member of the class: the body's place for it is settled ahead of
+    /// the write, so the write lands there. Anywhere else, and for the
+    /// places the builder makes for itself, this does nothing.
+    fn claim(&mut self, word: &str) {
+        if !self.in_class_body() || word.starts_with('#') { return; }
+        let place = self.member_address(word, "attribute");
+        self.member_noted(word, place);
     }
 
     /// The name of an array being written into, addressed as the write
@@ -1251,6 +1283,10 @@ impl<'a> Builder<'a> {
             prefix.push(self.body()?);
             return Ok(sequence(prefix));
         }
+        // The block of a loop or a watched statement that stands in a
+        // class body names members of the class, and is read the way
+        // the body around it is read.
+        if self.in_class_body() { return self.class_limb(); }
         // A loop with nothing to do may be written with the mark that
         // ends a statement standing where its block would: the mark is
         // the whole body, and nothing runs each pass.
@@ -1706,6 +1742,7 @@ impl<'a> Builder<'a> {
                 let worth = if self.table.flag("ext.stmt.import.value") {
                     prim_call(Prim::BringModule, vec![constant(Value::text(if taking_names { &path } else { &original })), constant(if taking_names { Value::text(&original) } else { Value::Nil }), constant(Value::Flag(!taking_names && !alias))])
                 } else { constant(Value::Nil) };
+                self.claim(&local);
                 writes.push(self.write(&local, worth));
                 if !self.on_any("syntax.call.separator") {
                     break;
@@ -1939,6 +1976,12 @@ impl<'a> Builder<'a> {
         }
         let token = self.look().clone();
         self.unsupported_place = false;
+        // A bare word bound here is a member where the binding stands
+        // in a class body; a place within something binds no word.
+        let next = self.glance(1).clone();
+        let within = table.spells("op.pipe", &next.lexeme)
+            || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.lexeme)));
+        if token.shape == Shape::Bare && !within { self.claim(&token.lexeme); }
         let target = self.deletion_place()?;
         if self.unsupported_place {
             return Ok(vec![prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.binding.unrun").unwrap_or_default()))])]);
@@ -2145,6 +2188,9 @@ impl<'a> Builder<'a> {
     /// A watched arm written beside its colon ends at the line end;
     /// one written below it follows the ordinary indentation reading.
     fn watched_body(&mut self) -> Res<Form> {
+        // Standing in a class body, the arm names members and is read
+        // the way the body around it is read.
+        if self.in_class_body() { return self.class_limb(); }
         if self.table.blocks != Blocks::Indented || !self.on_any("block.intro") {
             return self.body();
         }
@@ -2203,6 +2249,7 @@ impl<'a> Builder<'a> {
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
                     let binding = self.need_word("after the caught value's binding word")?;
+                    self.claim(&binding);
                     Some(self.address_to_write(&binding))
                 } else { None };
                 choices = Some(selectors);
@@ -2220,6 +2267,13 @@ impl<'a> Builder<'a> {
                 self.need_sign(&close, "after the class caught")?;
             }
             let body = if bare_clauses { self.watched_body()? } else { self.body()? };
+            // A class body lets the caught value's name go when the
+            // clause is through with it, as the language this follows
+            // does, and so keeps no member under that name.
+            let body = match (&held, self.in_class_body()) {
+                (Some(place), true) => sequence(vec![body, Form::Forget(place.clone())]),
+                _ => body,
+            };
             clauses.push(Clause { classes, choices, grouped, takes_all, held, body });
             self.skip_line_ends();
         }
@@ -2432,7 +2486,8 @@ impl<'a> Builder<'a> {
     /// within an arm is noted as a member whose place may stay unwritten,
     /// and it displaces any method of that name, since the arm decides
     /// which of the two the class ends up with.
-    fn member_noted(&mut self, parts: &mut ClassParts, word: &str, place: Address) {
+    fn member_noted(&mut self, word: &str, place: Address) {
+        let parts = self.parts();
         if let Some(at) = parts.attributes.iter().position(|old| old == word) {
             parts.attributes.remove(at);
             parts.held.remove(at);
@@ -2449,14 +2504,14 @@ impl<'a> Builder<'a> {
     /// One arm of a conditional in a class body, read the way the body
     /// around it is read. An arm may stand on the line of its own head,
     /// as any block may.
-    fn class_limb(&mut self, parts: &mut ClassParts) -> Res<Form> {
+    fn class_limb(&mut self) -> Res<Form> {
         let head_mark = self.on_any("block.intro");
         self.skip_lead_word();
         let mut items = Vec::new();
         if head_mark && self.table.flag("ext.block.lone_statement") && !self.on_stmt_end()
             && !matches!(self.look().shape, Shape::Open | Shape::Close | Shape::Finish) {
             loop {
-                let gone_past = self.class_item(parts, &mut items)?;
+                let gone_past = self.class_item(&mut items)?;
                 if gone_past { break; }
                 if !(self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme)) { break; }
                 self.advance();
@@ -2469,7 +2524,7 @@ impl<'a> Builder<'a> {
         self.advance();
         self.skip_line_ends();
         while self.look().shape != Shape::Close && !self.exhausted() {
-            self.class_item(parts, &mut items)?;
+            self.class_item(&mut items)?;
             self.skip_line_ends();
         }
         if self.look().shape != Shape::Close { return Err("Expected the end of a class body".to_string()); }
@@ -2483,13 +2538,13 @@ impl<'a> Builder<'a> {
     /// place no arm reached holds nothing and the class is given no
     /// member for it, since a name a conditional never bound is no
     /// member of the class in the language this follows.
-    fn class_choice(&mut self, parts: &mut ClassParts) -> Res<Form> {
+    fn class_choice(&mut self) -> Res<Form> {
         let table = self.table;
         self.advance();
         let test = self.expr(0)?;
-        parts.arms += 1;
-        let taken = self.class_limb(parts);
-        parts.arms -= 1;
+        self.parts().arms += 1;
+        let taken = self.class_limb();
+        self.parts().arms -= 1;
         let taken = taken?;
         // A further arm may follow the ends of lines.
         let mut ahead = 0;
@@ -2505,24 +2560,24 @@ impl<'a> Builder<'a> {
         }
         self.pos += ahead;
         if remaining { self.advance(); }
-        parts.arms += 1;
+        self.parts().arms += 1;
         let untaken = match further || self.key("stmt.if") {
-            true => self.class_choice(parts),
-            false => self.class_limb(parts),
+            true => self.class_choice(),
+            false => self.class_limb(),
         };
-        parts.arms -= 1;
+        self.parts().arms -= 1;
         Ok(self.choose(test, taken, untaken?))
     }
 
     /// One member of a class body. True where the member has already
     /// gone past whatever follows it, so the walk leaves that alone.
-    fn class_item(&mut self, parts: &mut ClassParts, setup: &mut Vec<Form>) -> Res<bool> {
+    fn class_item(&mut self, setup: &mut Vec<Form>) -> Res<bool> {
         let table = self.table;
         if !table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
             let (word, address) = self.member_adornments(setup)?;
-            parts.cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
-            parts.methods.retain(|(n, _)| n != &word);
-            self.member_noted(parts, &word, address);
+            self.parts().cannot |= table.single("ext.stmt.class.constructor") == Some(word.as_str());
+            self.parts().methods.retain(|(n, _)| n != &word);
+            self.member_noted(&word, address);
             self.skip_line_ends();
             return Ok(true);
         }
@@ -2532,15 +2587,15 @@ impl<'a> Builder<'a> {
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
             self.skip_line_ends();
         }
-        if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {parts.cannot=true;}
+        if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
             self.advance();
             let method_name = self.need_word("as the method name")?;
             let body = self.method(&method_name)?;
-            parts.methods.retain(|(old, _)| old != &method_name);
-            if let Some(at) = parts.attributes.iter().position(|old| old == &method_name) {
-                parts.attributes.remove(at);
-                parts.held.remove(at);
+            self.parts().methods.retain(|(old, _)| old != &method_name);
+            if let Some(at) = self.parts().attributes.iter().position(|old| old == &method_name) {
+                self.parts().attributes.remove(at);
+                self.parts().held.remove(at);
             }
             let slot = self.member_address(&method_name, "method_body");
             let decorated=!wrappers.is_empty();
@@ -2550,21 +2605,31 @@ impl<'a> Builder<'a> {
             // A method an arm of a conditional writes belongs among the
             // members the class is handed, not among the methods it
             // always has: the arm holding it may never run.
-            match decorated || parts.arms > 0 {
-                true => self.member_noted(parts, &method_name, slot),
+            match decorated || self.parts().arms > 0 {
+                true => self.member_noted(&method_name, slot),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
-                    parts.methods.push((method_name, body));
+                    self.parts().methods.push((method_name, body));
                 }
             }
         } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
             self.advance();
         } else if table.blocks == Blocks::Indented && self.key("stmt.if") {
-            let chosen = self.class_choice(parts)?;
+            let chosen = self.class_choice()?;
             setup.push(chosen);
+        } else if table.blocks == Blocks::Indented && (self.key("stmt.for") || self.key("stmt.while")
+            || self.key("ext.stmt.try") || self.key("ext.stmt.with")) {
+            let block = self.class_block()?;
+            setup.push(block);
+        } else if table.blocks == Blocks::Indented && (self.key("ext.stmt.import") || self.key("ext.stmt.import.from")) {
+            let brought = self.class_import()?;
+            setup.push(brought);
+        } else if table.blocks == Blocks::Indented && self.key("ext.stmt.del") {
+            let removal = self.class_removal()?;
+            setup.push(removal);
         } else if let Some(kept) = self.taken_apart_members(setup)? {
             for (word, place) in kept {
-                self.member_noted(parts, &word, place);
+                self.member_noted(&word, place);
             }
         } else {
             let member = self.look().lexeme.clone();
@@ -2587,24 +2652,230 @@ impl<'a> Builder<'a> {
                 // statement of the body, not an annotated member.
                 self.pos += 2;
                 self.put_by_annotation(&["stmt.assign"])?;
-                parts.annotated_names.push((Value::text(&member), Value::Nil));
+                self.parts().annotated_names.push((Value::text(&member), Value::Nil));
                 if self.on_assign() {
                     self.advance();
                     let value = self.comma_value()?;
                     Some((member, value))
                 } else { None }
+            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+                && self.glance(1).shape == Shape::Sign && table.compound.contains_key(&self.glance(1).lexeme) {
+                // `x += 1`: x is read as the body reads it, out of the
+                // class's place where the body has bound it and out of
+                // the scope around the class where it has not, and what
+                // the working makes is a member either way, since the
+                // language this follows looks x up just so and keeps
+                // the answer in the class.
+                let word = self.advance().lexeme;
+                let sign = self.advance().lexeme;
+                let op = self.compound_sign(&sign).expect("a compound sign");
+                let current = self.read(&word);
+                let added = if table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? };
+                Some((word, self.kept_after(prim_call(op, vec![current, added]))))
             } else {
-                let _read = self.stmt()?;
-                parts.cannot = true;
+                // Whatever else stands here. A statement binding no
+                // name -- a call made for its effect, a write into a
+                // place within a member, a raise, an assertion, a break
+                // or a continue in a loop of the body -- runs as it
+                // would anywhere and reads the members as
+                // the body does; one whose bindings this walk cannot
+                // follow yet is read the same way and the class refused.
+                let word = self.look().clone();
+                let harmless = match word.shape == Shape::Bare && table.keywords.contains(&word.lexeme) {
+                    true => ["ext.stmt.throw", "ext.stmt.assert", "stmt.break", "stmt.continue"].iter().any(|label| table.spells(label, &word.lexeme)),
+                    false => !self.writes_a_name(self.pos),
+                };
+                setup.push(self.stmt()?);
+                if !harmless { self.parts().cannot = true; }
                 None
             };
             if let Some((word, value)) = value {
                 let place = self.member_address(&word, "attribute");
                 setup.push(Form::Write(place.clone(), Box::new(value)));
-                self.member_noted(parts, &word, place);
+                self.member_noted(&word, place);
             }
         }
         Ok(false)
+    }
+
+    /// A loop, a watched statement or a context in a class body. What
+    /// their blocks bind are members, as are the loop's own variable,
+    /// which the language this follows leaves in the class when the
+    /// loop is done, and the context's name. The blocks are read the
+    /// way the body around them is read, and each name written in them
+    /// gets the body's place for it as it is written, so the write
+    /// lands in the class and the member holds what the last pass
+    /// wrote. A loop may run no times and a watched block may stop
+    /// part way, so everything they name is a member the class may
+    /// find unwritten; what a block bound before stopping stays bound,
+    /// as it does in the language this follows. A loop target that is
+    /// not made of words -- a place within something -- binds no
+    /// member, and is refused.
+    fn class_block(&mut self) -> Res<Form> {
+        if self.key("stmt.for") {
+            let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "stmt.for.in");
+            let mut words = Vec::new();
+            let of_words = cuts.first().map_or(false, |&at| self.target_words(self.pos + 1..at, &mut words));
+            if !of_words {
+                let read = self.stmt()?;
+                self.parts().cannot = true;
+                return Ok(read);
+            }
+        }
+        self.parts().arms += 1;
+        let looped = self.stmt();
+        self.parts().arms -= 1;
+        looped
+    }
+
+    /// An import in a class body. Each name it binds is a member, the
+    /// module or what was taken out of it standing under the name it
+    /// was bound to, and nothing of it reaches the scope around the
+    /// class. What a star brings out of a module is unknown until the
+    /// module is read, so that form stays refused.
+    fn class_import(&mut self) -> Res<Form> {
+        let table = self.table;
+        let starred = (self.pos..self.tokens.len())
+            .map(|at| &self.tokens[at])
+            .take_while(|word| !matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close))
+            .any(|word| word.shape == Shape::Sign && table.spells("op.mul", &word.lexeme));
+        let brought = self.stmt()?;
+        if starred { self.parts().cannot = true; }
+        Ok(brought)
+    }
+
+    /// `del x` in a class body takes the member out again. Its place is
+    /// emptied and the word noted as one the class may find unwritten,
+    /// so the class built keeps no member under it; bound afterwards,
+    /// it is a member once more. A word the body never bound is no
+    /// member to take out: the language this follows stops there
+    /// instead of reaching past the class, and the form is refused
+    /// here instead of reaching past it. A place within a member --
+    /// `del x[0]`, `del x.y` -- is worked as it is anywhere.
+    fn class_removal(&mut self) -> Res<Form> {
+        let table = self.table;
+        let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "syntax.call.separator");
+        let mut depth: Vec<String> = Vec::new();
+        let mut end = self.tokens.len();
+        for at in self.pos + 1..self.tokens.len() {
+            let word = &self.tokens[at];
+            if depth.is_empty() && (matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
+                || (word.shape == Shape::Sign && table.separates(&word.lexeme))) { end = at; break; }
+            if word.shape != Shape::Sign { continue; }
+            if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
+            for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                    break;
+                }
+            }
+        }
+        let mut spans = Vec::new();
+        let mut left = self.pos + 1;
+        for right in cuts.into_iter().chain(std::iter::once(end)) {
+            if left < right { spans.push(left..right); }
+            left = right + 1;
+        }
+        let of_a_word = |span: &std::ops::Range<usize>| span.len() == 1
+            && self.tokens[span.start].shape == Shape::Bare && !table.keywords.contains(&self.tokens[span.start].lexeme);
+        let words = spans.iter().filter(|span| of_a_word(span)).count();
+        if words == 0 { return self.stmt(); }
+        if words < spans.len() {
+            let read = self.stmt()?;
+            self.parts().cannot = true;
+            return Ok(read);
+        }
+        self.advance();
+        let mut steps = Vec::new();
+        for span in spans {
+            let word = self.tokens[span.start].lexeme.clone();
+            let known = self.class_bindings.last().and_then(|(_, names)| names.get(&word)).cloned();
+            let Some(place) = known else {
+                self.parts().cannot = true;
+                self.pos = end;
+                return Ok(constant(Value::Nil));
+            };
+            steps.push(Form::Forget(place.clone()));
+            let parts = self.parts();
+            parts.methods.retain(|(old, _)| old != &word);
+            if let Some(at) = parts.attributes.iter().position(|old| old == &word) {
+                parts.attributes.remove(at);
+                parts.held.remove(at);
+            }
+            parts.attributes.push(word.clone());
+            parts.held.push(Form::Read(place));
+            if !parts.uncertain.iter().any(|n| n == &word) { parts.uncertain.push(word); }
+        }
+        self.pos = end;
+        Ok(sequence(steps))
+    }
+
+    /// The working a compound sign asks for, as the write of a name
+    /// does it: on sets where the language has them, on bytes where
+    /// bytes are what is written, and asked of the place itself first
+    /// where the special list reaches the in-place methods.
+    fn compound_sign(&self, sign: &str) -> Option<Prim> {
+        let table = self.table;
+        let op = *table.compound.get(sign)?;
+        let op = match table.flag("ext.syntax.set") {
+            true => match op { Prim::BitsBoth => Prim::SetAssign(1), Prim::Minus => Prim::SetAssign(2), Prim::BitsEither => Prim::SetAssign(0), Prim::BitsOne => Prim::SetAssign(3), p => p },
+            false => op,
+        };
+        let op = match table.has_any("ext.builtin.bytes") && matches!(op, Prim::Plus | Prim::Times) {
+            true => Prim::OctetAssign(op == Prim::Times),
+            false => op,
+        };
+        Some(table.landing_place(op).map_or(op, Prim::Landing))
+    }
+
+    /// Whether the statement starting here binds a name of the scope it
+    /// stands in: by a sign binding within an expression, or by a bare
+    /// name ahead of a writing sign. A name with a member mark, a
+    /// bracket or a call after it is a place within something, as is
+    /// the name after a member mark, and a write there binds nothing.
+    fn writes_a_name(&self, start: usize) -> bool {
+        let table = self.table;
+        let mut depth: Vec<String> = Vec::new();
+        let mut sign_at = None;
+        let mut end = self.tokens.len();
+        for at in start..self.tokens.len() {
+            let word = &self.tokens[at];
+            if depth.is_empty() && (matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
+                || (word.shape == Shape::Sign && table.separates(&word.lexeme))) { end = at; break; }
+            if word.shape == Shape::Sign && table.spells("ext.op.assign.expression", &word.lexeme) { return true; }
+            if depth.is_empty() && sign_at.is_none() && word.shape == Shape::Sign
+                && (table.spells("stmt.assign", &word.lexeme) || table.compound.contains_key(&word.lexeme)) { sign_at = Some(at); }
+            if word.shape != Shape::Sign { continue; }
+            if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
+            for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                    break;
+                }
+            }
+        }
+        let Some(sign_at) = sign_at else { return false; };
+        // Bare names at the outer level of the target, before the sign.
+        depth.clear();
+        for at in start..sign_at.min(end) {
+            let word = &self.tokens[at];
+            let after_mark = at > start && table.spells("op.pipe", &self.tokens[at - 1].lexeme);
+            if depth.is_empty() && word.shape == Shape::Bare && !table.keywords.contains(&word.lexeme) && !after_mark {
+                let next = &self.tokens[at + 1];
+                let within = table.spells("op.pipe", &next.lexeme)
+                    || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.lexeme)));
+                if !within { return true; }
+            }
+            if word.shape != Shape::Sign { continue; }
+            if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
+            for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                    break;
+                }
+            }
+        }
+        false
     }
 
     fn class_not_ready(&self) -> Form {
@@ -2735,22 +3006,22 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
         }
         self.class_bindings.push((self.layers.len(), HashMap::new()));
-        let mut parts = ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
-            annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot };
-        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {parts.attributes.push(word.to_string());parts.held.push(constant(Value::text(&full_name)));}
+        self.under_way.push(ClassParts { methods: Vec::new(), attributes: Vec::new(), held: Vec::new(),
+            annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot });
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         // What the class says about itself is text standing alone at the
         // head of the body, kept under the word the table gives
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
             let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
-            parts.attributes.push(word.to_string());
-            parts.held.push(constant(said.unwrap_or(Value::Nil)));
+            self.parts().attributes.push(word.to_string());
+            self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
         }
         let before_body = setup.len();
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
-            if self.class_item(&mut parts, &mut setup)? { continue; }
+            if self.class_item(&mut setup)? { continue; }
             if on_one_line {
                 while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
                     self.advance();
@@ -2763,7 +3034,7 @@ impl<'a> Builder<'a> {
         }
         self.class_bindings.pop();
         self.within = previous;
-        let ClassParts { methods, mut attributes, mut held, annotated_names, uncertain, cannot, .. } = parts;
+        let ClassParts { methods, mut attributes, mut held, annotated_names, uncertain, cannot, .. } = self.under_way.pop().expect("the class body just read");
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -3336,6 +3607,10 @@ impl<'a> Builder<'a> {
                     let write = if r.table.single("ext.op.tuple").is_some() && r.table.single("ext.stmt.unpack").is_some() {
                         let ends = r.divided_at(began, r.tokens.len(), "stmt.for.in");
                         let end = *ends.first().ok_or_else(|| "Expected loop target".to_string())?;
+                        let mut words = Vec::new();
+                        if r.target_words(began..end, &mut words) {
+                            for word in words { r.claim(&word); }
+                        }
                         r.distribute(began..end, &item)?
                     } else {
                         r.pos = began;
@@ -3944,6 +4219,7 @@ impl<'a> Builder<'a> {
             let start = self.expr(0)?;
             if table.flag("ext.stmt.loop.else") && self.on_any("syntax.call.close") {
                 self.advance();
+                self.claim(&var);
                 self.address_to_write(&var);
                 return self.count_loop(&var, constant(Value::Small(0)), start, |r| r.body());
             }
@@ -3967,6 +4243,7 @@ impl<'a> Builder<'a> {
                     Some(_) => prim_call(Prim::Iterated, vec![start]),
                     None => start,
                 };
+                self.claim(&var);
                 self.address_to_write(&var);
                 return self.walk(source, None, var, None, place);
             }
@@ -3974,6 +4251,7 @@ impl<'a> Builder<'a> {
             let end = self.expr(tier + 1)?;
             (start, end)
         };
+        self.claim(&var);
         self.address_to_write(&var);
         self.count_loop(&var, start, end, |r| r.body())
     }
