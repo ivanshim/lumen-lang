@@ -3284,16 +3284,28 @@ impl<'a> Machine<'a> {
                                         for choice in choices {
                                             // A namespace's binding is a cell; the class is what it holds.
                                             let class = self.value_of(choice, frame)?.settled();
-                                            if !matches!(class, Value::Unset | Value::Blueprint(_)) {
-                                                return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
-                                            }
-                                            if let Value::Blueprint(kind) = class {
-                                                if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
-                                                if let Value::Thing(value) = &raised {
-                                                    fits |= match self.table.has_any("ext.builtin.exceptions") {
-                                                        true => Self::fault_descends(&value.of, &kind),
-                                                        false => value.of.goes_by(&kind.name, self.classes_either_way),
-                                                    };
+                                            // A tuple names the classes within
+                                            // it, an empty one naming none. All
+                                            // of them are weighed before the
+                                            // clause takes anything, so a member
+                                            // that is no class is refused even
+                                            // where an earlier member fits.
+                                            let named = match &class {
+                                                Value::Tuple(members) => members.iter().map(Value::settled).collect(),
+                                                _ => vec![class],
+                                            };
+                                            for class in named {
+                                                if !matches!(class, Value::Unset | Value::Blueprint(_)) {
+                                                    return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
+                                                }
+                                                if let Value::Blueprint(kind) = class {
+                                                    if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
+                                                    if let Value::Thing(value) = &raised {
+                                                        fits |= match self.table.has_any("ext.builtin.exceptions") {
+                                                            true => Self::fault_descends(&value.of, &kind),
+                                                            false => value.of.goes_by(&kind.name, self.classes_either_way),
+                                                        };
+                                                    }
                                                 }
                                             }
                                             if fits { break; }
