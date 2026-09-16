@@ -796,10 +796,15 @@ only. The extension labels so far, all from PHP:
   into it. `ext.stmt.yield.unstarted` refuses a value before the first
   yield; `ext.stmt.yield.busy` refuses a second asking while one runs.
   `ext.stmt.yield.unsupported` refuses a form whose pending work cannot
-  yet be kept; `ext.stmt.yield.throw.unavailable` refuses raising into
-  a suspended body. A watched body containing a yield cannot yet keep
-  its pending clauses, and stops before that body begins. Enclosing
-  function cells and starred yield values likewise remain owed.
+  yet be kept; enclosing function cells and starred yield values remain
+  owed. A yield may stand in a watched body, in a clause that takes what
+  it raised and in its last part, the watch being kept with the suspended
+  body and set up again when it goes on. `ext.stmt.yield.throw.invalid` opens the
+  refusal of a thing raised into a suspension that is no exception at
+  all, and the kind of that thing closes it. `ext.stmt.yield.exit` names the
+  class raised at the suspension when the walk is ended, and
+  `ext.stmt.yield.close.ignored` the complaint for a body that takes that
+  class and hands out another value.
   `ext.builtin.next`, `ext.builtin.iter` and `ext.builtin.tuple` name the
   calls that ask for one item (with an optional answer at the end), make
   a walk, and gather its items into a tuple.
@@ -3044,7 +3049,9 @@ only. The extension labels so far, all from PHP:
   members for an operating-system fault's number and its words, filled
   in when it is made with two arguments or more; `.os.message` holds the
   words written before the number and between it and the words when such
-  a fault is shown.
+  a fault is shown. `.value` is the member on which an exhaustion carries
+  what a generator returned, which is the first of its arguments where it
+  was given any.
 - `ext.builtin.exceptions.group.message` and `.group.members`: the
   message and the tuple of members an exception group holds. A group is
   made from a text and a non-empty sequence of exceptions, or refused
@@ -4035,7 +4042,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.enumerate` | - | - | `enumerate` | - | - | - | - | - | - | - |
 | `ext.builtin.eval` | - | - | `eval` | - | `eval` | - | - | - | - | - |
 | `ext.builtin.eval.place` | - | - | - | - | `(` `) : eval()'d code` | - | - | - | - | - |
-| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions` | - | - | `BaseException` `Exception` `ArithmeticError` `ZeroDivisionError` `OverflowError` `LookupError` `IndexError` `KeyError` `TypeError` `ValueError` `NameError` `UnboundLocalError` `AttributeError` `RuntimeError` `NotImplementedError` `StopIteration` `AssertionError` `SystemExit` `KeyboardInterrupt` `ImportError` `OSError` `RecursionError` `UnicodeError` `EOFError` `Warning` `UserWarning` `DeprecationWarning` `SyntaxWarning` `RuntimeWarning` `FutureWarning` `PendingDeprecationWarning` `ImportWarning` `UnicodeWarning` `BytesWarning` `ResourceWarning` `EncodingWarning` `SyntaxError` `BaseExceptionGroup` `ExceptionGroup` `GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.args` | - | - | `args` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.cause` | - | - | `__cause__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.context` | - | - | `__context__` | - | - | - | - | - | - | - |
@@ -4058,6 +4065,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unready` | - | - | `NotImplementedError: this exception operation cannot run yet` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.value` | - | - | `value` | - | - | - | - | - | - | - |
 | `ext.builtin.exec` | - | - | `exec` | - | - | - | - | - | - | - |
 | `ext.builtin.exit` | - | - | `__finish` | - | `exit` `die` | - | - | - | - | - |
 | `ext.builtin.file.exists` | - | - | `__file_exists` | - | `file_exists` | - | - | - | - | - |
@@ -4794,13 +4802,15 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield` | - | - | `yield` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.busy` | - | - | `ValueError: generator already executing` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.close` | - | - | `close` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.close.ignored` | - | - | `RuntimeError: generator ignored GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.escaped` | - | - | `RuntimeError: generator raised StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.exit` | - | - | `GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.throw` | - | - | `throw` | - | - | - | - | - | - | - |
-| `ext.stmt.yield.throw.unavailable` | - | - | `NotImplementedError: generator throw is not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.throw.invalid` | - | - | `TypeError: exceptions must be classes or instances deriving from BaseException, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unrun` | - | - | `Generators cannot be run` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unstarted` | - | - | `TypeError: cannot send a non-None value to a just-started generator` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.unsupported` | - | - | `NotImplementedError: suspension in this form is not supported` | - | - | - | - | - | - | - |

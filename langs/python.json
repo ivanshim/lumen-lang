@@ -733,7 +733,8 @@
     "EncodingWarning",
     "SyntaxError",
     "BaseExceptionGroup",
-    "ExceptionGroup"
+    "ExceptionGroup",
+    "GeneratorExit"
   ],
   "ext.builtin.exceptions.args": [
     "args"
@@ -804,6 +805,9 @@
   ],
   "ext.builtin.exceptions.unready": [
     "NotImplementedError: this exception operation cannot run yet"
+  ],
+  "ext.builtin.exceptions.value": [
+    "value"
   ],
   "ext.builtin.filter": [
     "filter"
@@ -2750,11 +2754,17 @@
   "ext.stmt.yield.close": [
     "close"
   ],
+  "ext.stmt.yield.close.ignored": [
+    "RuntimeError: generator ignored GeneratorExit"
+  ],
   "ext.stmt.yield.escaped": [
     "RuntimeError: generator raised StopIteration"
   ],
   "ext.stmt.yield.exhausted": [
     "StopIteration"
+  ],
+  "ext.stmt.yield.exit": [
+    "GeneratorExit"
   ],
   "ext.stmt.yield.from": [
     "from"
@@ -2766,8 +2776,8 @@
   "ext.stmt.yield.throw": [
     "throw"
   ],
-  "ext.stmt.yield.throw.unavailable": [
-    "NotImplementedError: generator throw is not supported"
+  "ext.stmt.yield.throw.invalid": [
+    "TypeError: exceptions must be classes or instances deriving from BaseException, not "
   ],
   "ext.stmt.yield.unrun": [
     "Generators cannot be run"
