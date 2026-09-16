@@ -125,6 +125,35 @@ enum Owed {
     From,
     Finish,
     Truth(Prim, Form),
+    /// A try whose body is under way: what may take what the body
+    /// raises, how deep the found values stood when it began and how
+    /// many faults were held then.
+    Warding(Rc<Warded>, usize, usize),
+    /// The same try once nothing more can take anything: its last part
+    /// runs whichever way the body goes.
+    Lastly(Rc<Warded>, usize, usize),
+    /// What the try came to, put back once the last part has run.
+    Restore(Box<Result<Value, Escape>>, usize),
+    /// Let go of a held fault, and of the place a clause held it in.
+    Unhold(usize, Option<Address>),
+    /// Nothing more is owed: the body is over.
+    Stop,
+}
+
+/// The parts of a try a suspended body stands inside.
+#[derive(Debug)]
+struct Warded {
+    context: Option<Address>,
+    clauses: Vec<Clause>,
+    last: Option<Form>,
+    otherwise: Option<Form>,
+}
+
+/// What one step of the owed work came to.
+enum Stepped {
+    Going,
+    Handed(Value),
+    Over,
 }
 
 pub struct Suspension {
@@ -148,13 +177,17 @@ pub struct Suspension {
     /// lasts and anything asking what names are in reach is answered
     /// about the right one.
     of: Option<Rc<Routine>>,
+    /// The faults the body itself is handling, kept while it sleeps so
+    /// that what is raised next stands behind them.
+    holding: Vec<Value>,
 }
 
 impl Suspension {
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
         Self { frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
-            inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()) }
+            inner: None, members: None, ready: None, overseen: None, of: Some(program.clone()),
+            holding: Vec::new() }
     }
 }
 
@@ -207,6 +240,10 @@ pub struct Machine<'a> {
     /// was raised on.
     row: u32,
     holding_fault: Vec<Value>,
+    /// How many of the held faults belong to whoever asked a sleeping
+    /// body for its next value, so that what the body puts away while it
+    /// sleeps is found again at the same remove.
+    holding_below: usize,
     /// Whether a member is being read only to learn if it is there.
     asking_presence: bool,
     raised_on: u32,
@@ -367,7 +404,7 @@ impl<'a> Machine<'a> {
         let mut chain: Vec<Rc<Blueprint>> = Vec::new();
         for (number, word) in table.strings("ext.builtin.exceptions").iter().enumerate() {
             let parent = match number {
-                0 => None, 1 | 17 | 18 | 37 => Some(0), 3 | 4 => Some(2),
+                0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
                 22 => Some(9), 25..=35 => Some(24), 38 => Some(37), _ => Some(1),
             };
@@ -421,6 +458,13 @@ impl<'a> Machine<'a> {
         let names_absent = self.stands_under(&kind, 10) || self.stands_under(&kind, 12);
         if names_absent { if let Some(key) = self.table.single("ext.builtin.exceptions.name") { holds.push((key.to_string(), Value::Nil)); } }
         if self.stands_under(&kind, 12) { if let Some(key) = self.table.single("ext.builtin.exceptions.object") { holds.push((key.to_string(), Value::Nil)); } }
+        // The exhaustion carries what a generator returned, which is
+        // the first of the arguments it was made with.
+        if self.is_stop_kind(&kind) {
+            if let Some(key) = self.table.single("ext.builtin.exceptions.value") {
+                holds.push((key.to_string(), row.first().cloned().unwrap_or(Value::Nil)));
+            }
+        }
         if self.stands_under(&kind, 20) {
             let numbered = row.len() >= 2;
             for (at, key) in self.table.strings("ext.builtin.exceptions.os").iter().enumerate() {
@@ -785,6 +829,7 @@ impl<'a> Machine<'a> {
             made: 0,
             row: 0,
             holding_fault: Vec::new(),
+            holding_below: 0,
             asking_presence: false,
             raised_on: 0,
             allowed: 0,
@@ -2386,6 +2431,7 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         Value::Generator(Rc::new(RefCell::new(Suspension {
+            holding: Vec::new(),
             frame: self.outermost.clone(), owed: Vec::new(), found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: Some(members.into_iter()), ready: None, overseen, of: None,
@@ -2506,12 +2552,131 @@ impl<'a> Machine<'a> {
         state.ready = None;
         state.owed.clear();
         state.found.clear();
+        state.holding.clear();
         state.members = None;
         Ok(())
     }
 
+    /// The exhaustion a walk that is over raises: what the body returned
+    /// stands as the value it was made with, and where it returned
+    /// nothing the plain words serve.
+    fn exhausted_of(&mut self, generator: &Rc<RefCell<Suspension>>) -> Escape {
+        let words = self.generator_words("exhausted");
+        let result = match generator.try_borrow() { Ok(state) => state.result.clone(), Err(_) => Value::Nil };
+        if matches!(result, Value::Nil) { return Escape::Error(words); }
+        let named = self.table.single("ext.stmt.class.special.stop").map(str::to_owned);
+        match named.and_then(|word| self.fault_kinds.get(&word).cloned()) {
+            Some(Value::Blueprint(kind)) => Escape::Thrown(self.make_fault(kind, vec![result], Value::Nil)),
+            _ => Escape::Error(words),
+        }
+    }
+
+    /// What a throw hands a walk: a kind is made into one of its own,
+    /// and a kind given with a value of that kind raises the value.
+    fn thrown_into(&mut self, mut values: Vec<Value>, frame: &Rc<Env>) -> Res {
+        let given = match values.len() {
+            1 => values.remove(0),
+            _ => match values.remove(1) {
+                Value::Nil => values.remove(0),
+                held @ Value::Thing(_) => held,
+                other => other,
+            },
+        };
+        // What is no exception at all is refused by its kind, which is
+        // not quite the refusal a raise of the same thing meets.
+        match self.raise_class(given.clone(), frame) {
+            Err(Escape::Error(words)) => match self.table.single("ext.stmt.yield.throw.invalid") {
+                Some(before) => Err(format!("{before}{}", given.kind_word()).into()),
+                None => Err(Escape::Error(words)),
+            },
+            other => other,
+        }
+    }
+
+    /// The kind raised at a suspension when a walk is ended.
+    fn exit_value(&mut self) -> Option<Value> {
+        let word = self.table.single("ext.stmt.yield.exit")?.to_owned();
+        let Some(Value::Blueprint(kind)) = self.fault_kinds.get(&word).cloned() else { return None };
+        Some(self.make_fault(kind, Vec::new(), Value::Nil))
+    }
+
+    fn is_exit(&self, value: &Value) -> bool {
+        let Value::Thing(thing) = value else { return false };
+        self.table.single("ext.stmt.yield.exit").map_or(false, |word| thing.of.goes_by(word, false))
+    }
+
+    /// Ending a walk raises the ending kind where its body left off, so
+    /// that last parts run and a clause may take it. A body that takes
+    /// it and hands out another value is refused; one that lets it by,
+    /// or returns, ends quietly, and what it returned is given back.
+    fn shut_generator(&mut self, generator: &Rc<RefCell<Suspension>>) -> Res {
+        let sleeping = {
+            let state = generator.try_borrow().map_err(|_| self.generator_words("busy"))?;
+            state.begun && !state.ended && state.of.is_some()
+        };
+        let Some(exit) = self.exit_value().filter(|_| sleeping) else {
+            self.end_generator(generator)?;
+            return Ok(Value::Nil);
+        };
+        match self.step_into(generator, Value::Nil, Some(exit)) {
+            Ok(Some(_)) => {
+                self.end_generator(generator)?;
+                Err(self.generator_words("close.ignored").into())
+            }
+            Ok(None) => {
+                let result = generator.try_borrow().map_err(|_| self.generator_words("busy"))?.result.clone();
+                self.end_generator(generator)?;
+                Ok(result)
+            }
+            Err(Escape::Thrown(value)) if self.is_exit(&value) || matches!(&value, Value::Thing(thing) if self.is_stop_kind(&thing.of)) => {
+                self.end_generator(generator)?;
+                Ok(Value::Nil)
+            }
+            Err(other) => { self.end_generator(generator)?; Err(other) }
+        }
+    }
+
     fn resume(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value) -> Res<Option<Value>> {
+        self.step_into(generator, sent, None)
+    }
+
+    /// A step back into a sleeping body, either handing it a value or
+    /// raising one where it left off. A body never begun and one already
+    /// over take nothing in: what is thrown at them is raised on the spot.
+    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>) -> Res<Option<Value>> {
+        // A body waiting on a delegated walk is not where the throw
+        // lands: the walk it waits on is shown the value first, and only
+        // what comes back out of that reaches the body itself.
+        if let Some(value) = hurled.clone() {
+            let inner = {
+                let state = generator.try_borrow().map_err(|_| self.generator_words("busy"))?;
+                match (&state.inner, state.begun && !state.ended) {
+                    (Some(Value::Generator(inner)), true) => Some(inner.clone()),
+                    _ => None,
+                }
+            };
+            if let Some(inner) = inner {
+                let stepped = self.step_into(&inner, Value::Nil, Some(value));
+                let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
+                match stepped {
+                    Ok(Some(item)) => return Ok(Some(item)),
+                    Ok(None) => { hurled = None; }
+                    Err(Escape::Thrown(raised)) => { state.inner = None; hurled = Some(raised); }
+                    Err(other) => { state.inner = None; return Err(other); }
+                }
+            }
+        }
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
+        if let Some(value) = hurled.clone() {
+            if state.ended || !state.begun || state.of.is_none() {
+                state.ended = true;
+                state.result = Value::Nil;
+                state.owed.clear();
+                state.found.clear();
+                state.holding.clear();
+                return Err(Escape::Thrown(value));
+            }
+        }
         if state.ended { state.result = Value::Nil; return Ok(None); }
         if !state.begun && !matches!(sent, Value::Nil) { return Err(self.generator_words("unstarted").into()); }
         state.begun = true;
@@ -2535,7 +2700,16 @@ impl<'a> Machine<'a> {
         // one asked for the next value.
         let named = state.of.clone();
         if let Some(program) = &named { self.frames_named.push(program.clone()); }
-        let outcome = self.unfold(&mut state, sent);
+        // The faults the body itself is handling stand above the
+        // caller's, so that it sees its own first and the caller's
+        // behind them, as a body called from a clause does.
+        let held_below = std::mem::replace(&mut self.holding_below, self.holding_fault.len());
+        let mut mine = std::mem::take(&mut state.holding);
+        self.holding_fault.append(&mut mine);
+        let outcome = self.unfold(&mut state, sent, hurled);
+        let mark = self.holding_below.min(self.holding_fault.len());
+        state.holding = self.holding_fault.split_off(mark);
+        self.holding_below = held_below;
         if named.is_some() { self.frames_named.pop(); }
         self.row = row;
         // The stop kind raised in the body is the generator's fault,
@@ -2549,6 +2723,7 @@ impl<'a> Machine<'a> {
             state.ended = true;
             state.owed.clear();
             state.found.clear();
+            state.holding.clear();
         }
         outcome
     }
@@ -2565,13 +2740,13 @@ impl<'a> Machine<'a> {
         self.as_raised(&said).map_or(Escape::Error(said), Escape::Thrown)
     }
 
-    fn unfold(&mut self, state: &mut Suspension, mut sent: Value) -> Res<Option<Value>> {
-        if state.receiving {
-            state.receiving = false;
-            state.found.push(sent.clone());
-        }
+    /// One step of the owed work. The body is carried forward a piece at
+    /// a time so that a watch standing round a suspension is kept with
+    /// the body rather than on the machine's own stack.
+    fn unfold_step(&mut self, state: &mut Suspension, sent: &mut Value) -> Res<Stepped> {
+        let Some(work) = state.owed.pop() else { return Ok(Stepped::Over) };
         let frame = state.frame.clone();
-        while let Some(work) = state.owed.pop() {
+        {
             match work {
                 Owed::Find(node) => match node {
                     Form::OnLine(row, body) => { self.row = row; state.owed.push(Owed::Find(*body)); }
@@ -2597,11 +2772,7 @@ impl<'a> Machine<'a> {
                     }
                     Form::Apply(Callee::Prim(Prim::Leave | Prim::Resume, _), _) => {
                         let continuing = matches!(node, Form::Apply(Callee::Prim(Prim::Resume, _), _));
-                        let at = state.owed.iter().rposition(|w| matches!(w, Owed::Turn(..))).ok_or_else(|| self.generator_words("unsupported"))?;
-                        let Owed::Turn(_, floor) = &state.owed[at] else { unreachable!() };
-                        state.found.truncate(*floor);
-                        if continuing { state.owed.truncate(at + 1); state.found.push(Value::Nil); }
-                        else { state.owed.truncate(at); state.found.push(Value::Nil); }
+                        return Err(if continuing { Escape::Resume(0) } else { Escape::Leave(0) });
                     }
                     Form::Apply(Callee::Prim(Prim::Choose, _), mut arms) => {
                         let no = arms.pop().expect("else arm");
@@ -2627,6 +2798,29 @@ impl<'a> Machine<'a> {
                     Form::Dyad { op, name, a, b } => {
                         let form = |input| match input { Input::Form(f) => *f, Input::Address(a) => Form::Read(a), Input::Const(v) => Form::Const(v) };
                         state.owed.push(Owed::Find(Form::Apply(Callee::Prim(op, name), vec![form(a), form(b)])));
+                    }
+                    Form::Attempt { context, body, clauses, last, otherwise } => {
+                        // A try with no suspension anywhere inside it, and
+                        // a gathered clause, are left to the plain
+                        // reckoning; the rest is taken on piece by piece.
+                        let plain = clauses.iter().any(|clause| clause.grouped)
+                            || !(suspension_within(&body) || clauses.iter().any(|clause| suspension_within(&clause.body))
+                                || last.as_deref().map_or(false, suspension_within)
+                                || otherwise.as_deref().map_or(false, suspension_within));
+                        if plain {
+                            let whole = Form::Attempt { context, body, clauses, last, otherwise };
+                            state.found.push(self.value_of(&whole, &frame)?);
+                        } else {
+                            let plan = Rc::new(Warded { context, clauses, last: last.map(|form| *form), otherwise: otherwise.map(|form| *form) });
+                            let floor = state.found.len();
+                            // Counted from the caller's own held faults,
+                            // since a later step back in may stand at
+                            // another depth altogether.
+                            let held = self.holding_fault.len() - self.holding_below;
+                            state.owed.push(Owed::Lastly(plan.clone(), floor, held));
+                            state.owed.push(Owed::Warding(plan, floor, held));
+                            state.owed.push(Owed::Find(*body));
+                        }
                     }
                     other => {
                         if suspension_within(&other) { return Err(self.generator_words("unsupported").into()); }
@@ -2683,26 +2877,237 @@ impl<'a> Machine<'a> {
                 }
                 Owed::HandOut => {
                     state.receiving = true;
-                    return Ok(Some(state.found.pop().unwrap_or(Value::Nil)));
+                    return Ok(Stepped::Handed(state.found.pop().unwrap_or(Value::Nil)));
                 }
                 Owed::From => {
                     if state.inner.is_none() {
                         let source = state.found.pop().unwrap_or(Value::Nil);
                         state.inner = Some(self.make_iterator(source)?);
-                        sent = Value::Nil;
+                        *sent = Value::Nil;
                     }
                     let Some(Value::Generator(inner)) = state.inner.clone() else { unreachable!() };
-                    if let Some(item) = self.resume(&inner, std::mem::replace(&mut sent, Value::Nil))? {
+                    if let Some(item) = self.resume(&inner, std::mem::replace(sent, Value::Nil))? {
                         state.owed.push(Owed::From);
-                        return Ok(Some(item));
+                        return Ok(Stepped::Handed(item));
                     }
                     state.found.push(inner.borrow().result.clone());
                     state.inner = None;
                 }
-                Owed::Finish => { state.result = state.found.pop().unwrap_or(Value::Nil); return Ok(None); }
+                Owed::Finish => {
+                    state.result = state.found.pop().unwrap_or(Value::Nil);
+                    // A return leaves by way of every last part still
+                    // owed, innermost first, before the body is over.
+                    let mut parts = Vec::new();
+                    while let Some(owed) = state.owed.pop() {
+                        if let Owed::Lastly(plan, _, held) = owed {
+                            self.holding_fault.truncate(self.holding_below + held);
+                            if let Some(last) = plan.last.clone() { parts.push(last); }
+                        }
+                    }
+                    if parts.is_empty() { return Ok(Stepped::Over); }
+                    state.found.clear();
+                    state.owed.push(Owed::Stop);
+                    for last in parts.into_iter().rev() {
+                        state.owed.push(Owed::Drop);
+                        state.owed.push(Owed::Find(last));
+                    }
+                }
+                Owed::Stop => return Ok(Stepped::Over),
+                Owed::Warding(plan, floor, held) => {
+                    // Nothing was raised: a manager is told the body is
+                    // done with, and an else part runs in the body's place.
+                    if let Some(address) = &plan.context {
+                        self.leaving(&frame, address, None)?;
+                    } else if let Some(otherwise) = plan.otherwise.clone() {
+                        state.owed.push(Owed::Find(otherwise));
+                        state.owed.push(Owed::Drop);
+                    }
+                    let _ = (floor, held);
+                }
+                Owed::Lastly(plan, floor, held) => {
+                    let value = state.found.pop().unwrap_or(Value::Nil);
+                    self.holding_fault.truncate(self.holding_below + held);
+                    match plan.last.clone() {
+                        Some(last) => {
+                            state.owed.push(Owed::Restore(Box::new(Ok(value)), floor));
+                            state.owed.push(Owed::Find(last));
+                        }
+                        None => { state.found.truncate(floor); state.found.push(value); }
+                    }
+                }
+                Owed::Restore(left, floor) => {
+                    state.found.truncate(floor);
+                    match *left {
+                        Ok(value) => state.found.push(value),
+                        Err(escape) => return Err(escape),
+                    }
+                }
+                Owed::Unhold(held, place) => {
+                    self.holding_fault.truncate(self.holding_below + held);
+                    if let Some(place) = place { self.store(&place, &frame, Value::Unset)?; }
+                }
+            }
+        }
+        Ok(Stepped::Going)
+    }
+
+    /// What a body raises is shown to the tries it stands inside, from
+    /// the innermost outwards: a clause that takes it runs in its place,
+    /// and every last part passed on the way runs before the value goes
+    /// any further. What nothing takes leaves the body.
+    fn unwind(&mut self, state: &mut Suspension, escape: Escape) -> Res<()> {
+        let mut escape = escape;
+        if matches!(escape, Escape::Stopped(_) | Escape::Done) { return Err(escape); }
+        let frame = state.frame.clone();
+        loop {
+            let Some(owed) = state.owed.pop() else {
+                return Err(match escape {
+                    Escape::Leave(_) | Escape::Resume(_) => Escape::Error(self.generator_words("unsupported")),
+                    other => other,
+                });
+            };
+            match owed {
+                Owed::Turn(cycle, floor) if matches!(escape, Escape::Leave(_) | Escape::Resume(_)) => {
+                    state.found.truncate(floor);
+                    if matches!(escape, Escape::Resume(_)) { state.owed.push(Owed::Turn(cycle, floor)); }
+                    state.found.push(Value::Nil);
+                    return Ok(());
+                }
+                Owed::Lastly(plan, floor, held) => {
+                    let Some(last) = plan.last.clone() else { continue };
+                    state.found.truncate(floor);
+                    self.holding_fault.truncate(self.holding_below + held);
+                    if let Escape::Thrown(value) = &escape { self.holding_fault.push(value.clone()); }
+                    state.owed.push(Owed::Unhold(held, None));
+                    state.owed.push(Owed::Restore(Box::new(Err(escape)), floor));
+                    state.owed.push(Owed::Find(last));
+                    return Ok(());
+                }
+                Owed::Warding(plan, floor, held) => {
+                    state.found.truncate(floor);
+                    // Words stand in for a value raised where the run
+                    // could only read; here, where a clause may take it,
+                    // is where the value itself is wanted.
+                    escape = match escape {
+                        Escape::Error(_) if self.got_away.is_some() => self.got_away.take().expect("what got away"),
+                        Escape::Error(told) if self.table.has_any("ext.builtin.exceptions") => match self.as_raised(&told) {
+                            Some(value) => Escape::Thrown(value),
+                            None => Escape::Error(told),
+                        },
+                        other => other,
+                    };
+                    let Escape::Thrown(raised) = &escape else { continue };
+                    let raised = raised.clone();
+                    if let Some(address) = &plan.context {
+                        match self.leaving(&frame, address, Some(&raised)) {
+                            Ok(true) => { state.found.push(Value::Nil); return Ok(()); }
+                            Ok(false) => continue,
+                            Err(met) => { escape = met; continue; }
+                        }
+                    }
+                    self.holding_fault.truncate(self.holding_below + held);
+                    self.holding_fault.push(raised.clone());
+                    match self.taking_clause(&plan, &raised, &frame) {
+                        Ok(Some((body, place, clears))) => {
+                            self.under = None;
+                            self.entering = None;
+                            if let Some(place) = &place { self.store(place, &frame, raised.clone())?; }
+                            state.owed.push(Owed::Unhold(held, place.filter(|_| clears)));
+                            state.owed.push(Owed::Find(body));
+                            return Ok(());
+                        }
+                        Ok(None) => { self.holding_fault.truncate(self.holding_below + held); continue; }
+                        Err(met) => { self.holding_fault.truncate(self.holding_below + held); escape = met; continue; }
+                    }
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    /// The manager of a watched body is told the body is done with. It
+    /// answers whether a value raised there is to be let go.
+    fn leaving(&mut self, frame: &Rc<Env>, address: &Address, raised: Option<&Value>) -> Result<bool, Escape> {
+        let manager = self.fetch(address, frame)?;
+        if !matches!(&manager, Value::Thing(_)) { return Ok(false); }
+        let unready = self.table.single("ext.stmt.class.special.unready").unwrap_or_default().to_owned();
+        let arguments = match raised {
+            None => vec![Value::Nil; 3],
+            Some(value @ Value::Thing(thing)) => vec![Value::Blueprint(thing.of.clone()), value.clone(), Value::Backtrace(Rc::from(unready.as_str()))],
+            Some(_) => return Err(unready.into()),
+        };
+        let preceding = self.holding_fault.len();
+        if let Some(value) = raised { self.holding_fault.push(value.clone()); }
+        let asked = self.ask_special(&manager, 34, &arguments).map_err(|told| self.got_away.take().unwrap_or(Escape::Error(told)));
+        let asked = self.raised_if_error(asked);
+        self.holding_fault.truncate(preceding);
+        let answer = asked?.ok_or_else(|| self.bad_answer())?;
+        Ok(raised.is_some() && self.object_truth(&answer)?)
+    }
+
+    /// The clause that takes what was raised, with the place it is to be
+    /// held in while that clause runs.
+    fn taking_clause(&mut self, plan: &Warded, raised: &Value, frame: &Rc<Env>) -> Result<Option<(Form, Option<Address>, bool)>, Escape> {
+        for clause in &plan.clauses {
+            let accepts = match &clause.choices {
+                None => match raised {
+                    Value::Thing(value) => clause.classes.iter().any(|name| value.of.goes_by(name, self.classes_either_way)),
+                    _ => false,
+                },
+                Some(choices) => {
+                    let mut fits = clause.takes_all;
+                    for choice in choices {
+                        let class = self.value_of(choice, frame)?.settled();
+                        let named = match &class {
+                            Value::Tuple(members) => members.iter().map(Value::settled).collect(),
+                            _ => vec![class],
+                        };
+                        for class in named {
+                            if !matches!(class, Value::Unset | Value::Blueprint(_)) {
+                                return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or("A catch needs a class").to_string().into());
+                            }
+                            if let Value::Blueprint(kind) = class {
+                                if self.table.has_any("ext.builtin.exceptions") && !self.is_fault_kind(&kind) { return Err(self.table.single("ext.stmt.catch.invalid").unwrap_or_default().to_string().into()); }
+                                if let Value::Thing(value) = raised {
+                                    fits |= match self.table.has_any("ext.builtin.exceptions") {
+                                        true => Self::fault_descends(&value.of, &kind),
+                                        false => value.of.goes_by(&kind.name, self.classes_either_way),
+                                    };
+                                }
+                            }
+                        }
+                        if fits { break; }
+                    }
+                    fits
+                }
+            };
+            if accepts {
+                return Ok(Some((clause.body.clone(), clause.held.clone(), clause.choices.is_some())));
             }
         }
         Ok(None)
+    }
+
+    fn unfold(&mut self, state: &mut Suspension, mut sent: Value, hurled: Option<Value>) -> Res<Option<Value>> {
+        let taking = state.receiving;
+        state.receiving = false;
+        match hurled {
+            Some(value) => {
+                // Raised where the body left off, so what the body
+                // itself was handling stands behind it.
+                self.keep_context(&value);
+                self.unwind(state, Escape::Thrown(value))?;
+            }
+            None => if taking { state.found.push(sent.clone()); },
+        }
+        loop {
+            match self.unfold_step(state, &mut sent) {
+                Ok(Stepped::Going) => {}
+                Ok(Stepped::Handed(item)) => return Ok(Some(item)),
+                Ok(Stepped::Over) => return Ok(None),
+                Err(met) => self.unwind(state, met)?,
+            }
+        }
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
@@ -3731,14 +4136,22 @@ impl<'a> Machine<'a> {
                     let called = values.remove(0).bare();
                     if let Value::Generator(generator) = subject {
                         if self.table.spells("ext.stmt.yield.close", &called) && values.is_empty() {
-                            self.end_generator(&generator)?;
-                            return Ok(Value::Nil);
+                            return self.shut_generator(&generator);
                         }
                         if self.table.spells("ext.stmt.yield.send", &called) && values.len() == 1 {
-                            return self.resume(&generator, values.remove(0))?.ok_or_else(|| self.generator_words("exhausted").into());
+                            return match self.resume(&generator, values.remove(0))? {
+                                Some(item) => Ok(item),
+                                None => Err(self.exhausted_of(&generator)),
+                            };
                         }
-                        let fault = if self.table.spells("ext.stmt.yield.throw", &called) { "throw.unavailable" } else { "unsupported" };
-                        return Err(self.generator_words(fault).into());
+                        if self.table.spells("ext.stmt.yield.throw", &called) && (1..=3).contains(&values.len()) {
+                            let value = self.thrown_into(values, frame)?;
+                            return match self.step_into(&generator, Value::Nil, Some(value))? {
+                                Some(item) => Ok(item),
+                                None => Err(self.exhausted_of(&generator)),
+                            };
+                        }
+                        return Err(self.generator_words("unsupported").into());
                     }
                     if self.table.spells("ext.text.format", &called) {
                         if let Value::Text(pattern) = &subject {
@@ -9382,9 +9795,28 @@ impl<'a> Machine<'a> {
             Prim::Following => {
                 if !(1..=2).contains(&v.len()) { return Err(self.generator_words("unsupported")); }
                 let Value::Generator(state) = &v[0] else { return Err(self.table.single("ext.syntax.collection.unwalkable").unwrap_or_default().into()); };
-                match self.resume(state, Value::Nil).map_err(|fault| self.suspension_fault(fault))? {
+                // What the body raised, and what it returned, are parked
+                // while words stand in for them on the way out, so a
+                // clause round the walk sees the value itself.
+                let stepped = match self.resume(state, Value::Nil) {
+                    Ok(item) => item,
+                    Err(Escape::Thrown(value)) => {
+                        let words = self.suspension_fault(Escape::Thrown(value.clone()));
+                        self.got_away = Some(Escape::Thrown(value));
+                        return Err(words);
+                    }
+                    Err(other) => return Err(self.suspension_fault(other)),
+                };
+                match stepped {
                     Some(item) => item,
-                    None => v.get(1).cloned().ok_or_else(|| self.generator_words("exhausted"))?,
+                    None => match v.get(1) {
+                        Some(default) => default.clone(),
+                        None => {
+                            let state = state.clone();
+                            if let escape @ Escape::Thrown(_) = self.exhausted_of(&state) { self.got_away = Some(escape); }
+                            return Err(self.generator_words("exhausted"));
+                        }
+                    },
                 }
             }
             Prim::Tupled => {
@@ -11923,7 +12355,20 @@ impl Machine<'_> {
     }
 
     fn next_value(&mut self, iterator: &Value) -> Result<Option<Value>, String> {
-        if let Value::Generator(frame) = iterator { return self.resume(frame, Value::Nil).map_err(|fault| self.suspension_fault(fault)); }
+        if let Value::Generator(frame) = iterator {
+            // What the body raised is parked while words stand in for it
+            // on the way out, so a clause round the walk sees the value
+            // itself rather than a reading of its words.
+            return match self.resume(frame, Value::Nil) {
+                Ok(item) => Ok(item),
+                Err(Escape::Thrown(value)) => {
+                    let words = self.suspension_fault(Escape::Thrown(value.clone()));
+                    self.got_away = Some(Escape::Thrown(value));
+                    Err(words)
+                }
+                Err(other) => Err(self.suspension_fault(other)),
+            };
+        }
         let Value::Iterator(cell) = iterator else { return Err(self.core_complaint("core.not_iterator", &iterator.kind_word())); };
         // A summoned callable may reach back into this very iterator
         // before it answers, so the iterator is not marked busy while it
@@ -12362,7 +12807,18 @@ impl Machine<'_> {
             }
             NextItem => {
                 require(1, 2)?;
-                self.next_value(&input[0])?.or_else(|| input.get(1).cloned()).ok_or_else(|| self.core_complaint("core.exhausted", ""))
+                match self.next_value(&input[0])?.or_else(|| input.get(1).cloned()) {
+                    Some(item) => Ok(item),
+                    None => {
+                        // What the body returned is carried on the
+                        // exhaustion, parked behind the words for it.
+                        if let Value::Generator(state) = &input[0] {
+                            let state = state.clone();
+                            if let escape @ Escape::Thrown(_) = self.exhausted_of(&state) { self.got_away = Some(escape); }
+                        }
+                        Err(self.core_complaint("core.exhausted", ""))
+                    }
+                }
             }
             Backwards => {
                 require(1, 1)?;

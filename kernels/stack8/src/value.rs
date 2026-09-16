@@ -150,6 +150,42 @@ impl Counted {
     }
 }
 
+/// Where a suspended body stood inside a try: which part of the try was
+/// running, so that stepping back in sets the same watch up again.
+#[derive(Debug, Clone)]
+pub enum Phase {
+    Body,
+    /// The clause at that place, holding the value it took.
+    Arm(usize, Value),
+    Else,
+    /// The last part, with what the try had already come to and how deep
+    /// the stack stood before the part began.
+    Last(Ending, usize),
+}
+
+/// What a try had come to before its last part ran, kept apart from the
+/// engine's own faults so that a suspended body may carry it.
+#[derive(Debug, Clone)]
+pub enum Ending {
+    Along(usize),
+    Leaves(usize, Option<usize>),
+    Thrown(Value),
+    Note(String),
+    Stopped(String),
+    Finished,
+}
+
+/// One try a suspended body stands inside: where the try is written
+/// among the words, how deep the stack and the held faults stood when it
+/// began, and which of its parts was running.
+#[derive(Debug, Clone)]
+pub struct Step {
+    pub at: usize,
+    pub floor: usize,
+    pub held: usize,
+    pub phase: Phase,
+}
+
 /// A walk keeps its own cells and the part of the stack still wanted.
 #[derive(Debug)]
 pub struct Generator {
@@ -169,13 +205,23 @@ pub struct Generator {
     /// The cell of a map the walk hands the items of, with the size the
     /// map had when the walk began, so a step may see it has changed.
     pub watched: Option<(Rc<RefCell<Value>>, usize)>,
+    /// The tries the suspension stands inside, innermost first, and
+    /// whether the body is on its way back to where it left off.
+    pub resume: Vec<Step>,
+    pub resuming: bool,
+    /// The faults the body itself is handling, kept while it sleeps so
+    /// that what is raised next stands behind them.
+    pub held: Vec<Value>,
+    /// A value to raise where the body left off, rather than hand in.
+    pub hurled: Option<Value>,
 }
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
         Self { program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, waiting: false, handed: None, returned: Value::Null,
-            delegate: None, sent: Value::Null, current: None, watched: None }
+            delegate: None, sent: Value::Null, current: None, watched: None,
+            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None }
     }
 }
 
