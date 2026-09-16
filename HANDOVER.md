@@ -610,6 +610,18 @@ the branch's `reaches_out` and `stands_in_routine` conditions were
 carried onto the `gathering()` and `parts()` accessors the family
 introduced. `class/8` exits quietly on both kernels and on CPython.
 
+The count at d669238, the pull request's head before the deletion fix,
+checked method by method against the sweep at 78e9c4d with no pass
+turning into an error or failure: stack8 810 of 2,524 across 50 files
+with 4 running nothing (was 743 of 2,366), microcode7 755 of 2,382
+with 5 running nothing (was 706 of 2,274). test_grammar and test_cmath
+run for the first time; test_listcomps gains five on each kernel.
+
+CI on 401b7b7 found one more fixture the class-body work had moved
+past, reader-tail/3, whose record was still the refusal though both
+kernels print one progress line; it moves here to the line the
+class-in-function work gives, which both kernels print alike.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
