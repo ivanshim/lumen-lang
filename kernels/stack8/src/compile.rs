@@ -6931,7 +6931,11 @@ impl<'a> Compiler<'a> {
     fn footing_cell(&mut self, read: &[Instr], from: usize) -> Res<()> {
         match read {
             [Instr::Read(slot)] if !slot.moving => {
-                let shared = self.cell_to_write(&slot.ident.to_string());
+                // Where names close over, the place read is the place
+                // meant: a module name reached from inside a function is
+                // that module name, not a fresh local of the same
+                // spelling, so the read's own cell is the one shared.
+                let shared = if self.lang.closes_over { slot.clone() } else { self.cell_to_write(&slot.ident.to_string()) };
                 self.put(Instr::Bond(shared));
             }
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {

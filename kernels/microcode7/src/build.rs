@@ -6359,7 +6359,11 @@ impl<'a> Builder<'a> {
     fn cell_of(&mut self, form: Form) -> Res<Form> {
         Ok(match form {
             Form::Read(slot) => {
-                let shared = self.address_to_write(&slot.ident.to_string());
+                // A name that closes over is shared where it was read: a
+                // module name met inside a function names the module's
+                // binding, and a fresh local spelt the same would hold
+                // nothing and be nothing to take a place out of.
+                let shared = if self.table.flag("ext.stmt.function.closes_over") { slot } else { self.address_to_write(&slot.ident.to_string()) };
                 Form::Share(shared)
             }
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
