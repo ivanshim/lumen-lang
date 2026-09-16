@@ -3545,6 +3545,23 @@ impl<'a> Engine<'a> {
             if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
                 return Ok(Value::Flag(self.special_truth(&answer)? != matches!(op, Action::Lacks)));
             }
+            // A thing that says nothing of membership but says how it
+            // is walked is searched by walking it, and the walk stops
+            // at the first member equal to the one sought.
+            if matches!(b, Value::Object(_)) && (self.special_value(b, 15).is_some() || self.indexed_walk(b).is_some()) {
+                let walk = self.core_iterator(b)?;
+                let mut found = false;
+                while let Some(item) = self.core_step(&walk)? {
+                    // A member is the one sought where it is the very
+                    // same value, before anything is asked of it; where
+                    // it is another, the member is asked first whether
+                    // it equals the one sought, as a member of a row is.
+                    if Self::member_matches(&item, a) { found = true; break; }
+                    let alike = self.special_dyad(&Action::Eq, &item, a)?;
+                    if self.special_truth(&alike)? { found = true; break; }
+                }
+                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+            }
         }
         if let (Action::At, Value::Map(entries)) = (op, a) {
             let wanted = self.special_key(b)?;
@@ -4548,6 +4565,9 @@ impl<'a> Engine<'a> {
                         found
                     }
                     Value::Set(set) => set.borrow().items(),
+                    // A thing of the program's own is taken apart into
+                    // the members its own walk hands over.
+                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => self.special_items(&source)?,
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
@@ -7590,6 +7610,12 @@ impl<'a> Engine<'a> {
 
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Some(worth) = self.worth_free_of(value, &[15]) { return self.comprehension_items(&worth); }
+        // A thing of the program's own that says how it is walked, by a
+        // walk method or by reading its places, has the members that
+        // walk hands over, the same ones a loop over it would see.
+        if matches!(value, Value::Object(_)) && (self.special_value(value, 15).is_some() || self.indexed_walk(value).is_some()) {
+            return self.special_items(value);
+        }
         if let Value::Class(class) = value {
             if let Some(yielded) = self.class_walked(class)? { return self.comprehension_items(&yielded); }
         }
@@ -10656,7 +10682,7 @@ impl Engine<'_> {
             CursorSource::Indexed(thing, place) => match self.special_call(thing, 11, vec![Value::of_big(place.clone())]) {
                 Ok(Some(item)) => { *place += 1; Ok(Some(item)) }
                 Ok(None) => Ok(None),
-                Err(words) => if self.places_over() { Ok(None) } else { Err(words) },
+                Err(words) => if self.places_over(&words) { Ok(None) } else { Err(words) },
             },
             CursorSource::Numbered(inner, count) => {
                 let Some(value) = self.core_step(inner)? else { return Ok(None); };
@@ -10729,12 +10755,15 @@ impl Engine<'_> {
     }
 
     /// Whether the fault carried out of reading a place says the places
-    /// are over: the index fault, or the one that ends a walk.
-    fn places_over(&mut self) -> bool {
+    /// are over: the index fault, or the one that ends a walk. A fault
+    /// the kernel raises for itself is said as words alone and carries
+    /// no value, so those words are read for the class they stand for.
+    fn places_over(&mut self, told: &str) -> bool {
         let over = matches!(&self.carried, Some(Fault::Thrown(Value::Object(o)))
             if self.lang.fault_index.as_deref().map_or(false, |name| o.class.named(name, false)) || self.lang.special_stop.iter().any(|name| o.class.named(name, false)));
-        if over { self.carried = None; }
-        over
+        if over { self.carried = None; return true; }
+        self.carried.is_none() && matches!(self.class_for(told), Some(class)
+            if self.lang.fault_index.as_deref() == Some(class.as_str()) || self.lang.special_stop.contains(&class))
     }
 
     /// The complaint for zip sources of unequal length: the number of

@@ -6755,6 +6755,28 @@ impl<'a> Machine<'a> {
                 let found = self.ask_special(haystack, 14, std::slice::from_ref(needle))?.unwrap();
                 Value::Flag(self.object_truth(&found)? != (operation == Prim::Absent))
             }
+            // A thing that says nothing of membership but says how it is
+            // walked is searched by walking it, and the walk stops at
+            // the first member equal to the one sought.
+            (Prim::Contains | Prim::Absent, [needle, haystack @ Value::Thing(_)])
+                if self.appointment(haystack, 15).is_some() || self.placed_walk(haystack).is_some() => {
+                let walk = self.iterated_value(haystack)?;
+                let mut found = false;
+                while let Some(item) = self.next_value(&walk)? {
+                    // A member is the one sought where it is the very
+                    // same value, before anything is asked of it; where
+                    // it is another, the member is asked first whether
+                    // it equals the one sought, as a member of a row is.
+                    let alike = if item.one_place(needle) { true } else {
+                        match self.user_operation(Prim::Eq, &[item.clone(), needle.clone()])? {
+                            Some(said) => self.object_truth(&said)?,
+                            None => contained_equal(&item, needle),
+                        }
+                    };
+                    if alike { found = true; break; }
+                }
+                Value::Flag(found != (operation == Prim::Absent))
+            }
             (Prim::At, [Value::Attributes(t), Value::Text(key)]) => {
                 t.holds.borrow().iter().find(|(n, _)| n == key.as_ref()).map(|(_, value)| value.clone()).ok_or_else(|| self.bad_answer())?
             }
@@ -7454,6 +7476,9 @@ impl<'a> Machine<'a> {
                         taken
                     }
                     Value::Set(set) => set.borrow().values(),
+                    // A thing of the program's own is taken apart into
+                    // the members its own walk hands over.
+                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => self.object_members(&v[0])?,
                     Value::Tuple(items) | Value::Row(items) => items.to_vec(),
                     Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
@@ -10417,6 +10442,12 @@ impl<'a> Machine<'a> {
 
     fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Some(under) = self.underlying_unless(source, &[15]) { return self.gathered_members(&under); }
+        // A thing of the program's own that says how it is walked, by a
+        // walk method or by reading its places, has the members that
+        // walk hands over, the same ones a loop over it would see.
+        if matches!(source, Value::Thing(_)) && (self.appointment(source, 15).is_some() || self.placed_walk(source).is_some()) {
+            return self.object_members(source);
+        }
         if let Value::Blueprint(kind) = source {
             if let Some(yielded) = self.blueprint_walk(&kind.clone())? { return self.gathered_members(&yielded); }
         }
@@ -11872,7 +11903,7 @@ impl Machine<'_> {
                     match self.invoke(reader, self.outermost.clone(), vec![thing.clone(), Value::from_big(at.clone())]) {
                         Ok(item) => { *at += 1; Ok(Some(item)) }
                         Err(Escape::Thrown(Value::Thing(thrown))) if self.ends_places(&thrown) => Ok(None),
-                        Err(Escape::Error(complaint)) => Err(complaint),
+                        Err(Escape::Error(complaint)) => if self.places_spent(&complaint) { Ok(None) } else { Err(complaint) },
                         Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
                     }
                 }
@@ -11946,6 +11977,17 @@ impl Machine<'_> {
     fn ends_places(&self, thrown: &Thing) -> bool {
         self.table.single("ext.system.fault.class.index").map_or(false, |name| thrown.of.goes_by(name, false))
             || self.table.strings("ext.stmt.class.special.stop").iter().any(|name| thrown.of.goes_by(name, false))
+    }
+
+    /// The same question of a fault the kernel words for itself, which
+    /// is said as words alone and throws no thing: the words are read
+    /// for the class they stand under.
+    fn places_spent(&self, told: &str) -> bool {
+        match self.class_of_fault(told) {
+            Some(class) => self.table.single("ext.system.fault.class.index") == Some(class.as_str())
+                || self.table.strings("ext.stmt.class.special.stop").iter().any(|name| *name == class),
+            None => false,
+        }
     }
 
     /// zip's complaint of unequal sources: which one, then the close
