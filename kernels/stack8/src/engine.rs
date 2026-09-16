@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Instance, Reach, Sort, Value, Wording, Generator, CursorState, CursorSource};
+use crate::value::{Descriptor, Class, Instance, Reach, Sort, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -25,6 +25,8 @@ enum Passage {
 
 pub struct Engine<'a> {
     class_root: Option<Rc<Class>>,
+    /// The class every metaclass stands on, made once when one is asked for.
+    class_maker: Option<Rc<Class>>,
     /// The class of properties, once a program has asked for one.
     property_class: Option<Rc<Class>>,
     /// The classes standing for builtin kinds, one for each word asked for.
@@ -650,7 +652,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
+            class_root: None, class_maker: None, property_class: None, kind_classes: Vec::new(), function_members: Vec::new(),
             native_exceptions,
             lang,
             world,
@@ -4822,6 +4824,10 @@ impl<'a> Engine<'a> {
                     true => match given.next() {
                         Some(Value::Class(c)) => Some(c),
                         Some(Value::Native(Builtin::Bool, _)) if self.lang.bool_base.is_some() => return Err(self.lang.bool_base.clone().unwrap_or_default().into()),
+                        // The kind builtin, stood on: what is being made
+                        // is a metaclass, and the things it makes are
+                        // classes.
+                        Some(Value::Native(Builtin::SortOf, _)) if self.fuller_classes() => Some(self.metaclass_root()),
                         // A builtin kind the definition lets a class stand on.
                         Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => Some(self.kind_class(&word)),
                         // The bytes kinds are values of their own, and
@@ -4840,6 +4846,7 @@ impl<'a> Engine<'a> {
                 for _ in 0..plan.answers {
                     match given.next() {
                         Some(Value::Class(c)) => answers.push(c),
+                        Some(Value::Native(Builtin::SortOf, _)) if self.fuller_classes() => { let maker = self.metaclass_root(); answers.push(maker); }
                         Some(Value::Native(_, word)) if Lang::spells(&self.lang.builtin_bases, &word) => { let kind = self.kind_class(&word); answers.push(kind); }
                         Some(Value::ByteKind(mutable, _)) if Lang::spells(&self.lang.builtin_bases, self.byte_kind_word(mutable)) => {
                             let word = self.byte_kind_word(mutable).to_string();
@@ -10604,7 +10611,7 @@ impl Engine<'_> {
         matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
-    fn core_fault(&self, label: &str, piece: &str) -> String {
+    pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
         self.lang.core_words.get(label).map_or_else(String::new, |words| Self::named_fault(words, piece))
     }
 

@@ -182,6 +182,8 @@ pub struct Machine<'a> {
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
     property_kind: Option<Rc<Blueprint>>,
+    /// The blueprint every metaclass is built on, made when first asked for.
+    builder_kind: Option<Rc<Blueprint>>,
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
@@ -769,7 +771,7 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             code_kind: None,
-            ancestor: None, property_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -3368,6 +3370,10 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
+                        // The kind primitive, built on: what is being
+                        // made is a metaclass, and the things it makes
+                        // are classes rather than objects.
+                        Some(Value::Intrinsic(word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => Some(self.builder_blueprint()),
                         // A native kind the table lets a class stand on.
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
                         // The byte kinds are values in their own right,
@@ -3388,6 +3394,7 @@ impl<'a> Machine<'a> {
                 for _ in 0..plan.answers {
                     match given.next() {
                         Some(Value::Blueprint(b)) => answers.push(b),
+                        Some(Value::Intrinsic(word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
                         Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
                             let word = self.octet_kind_word(changeable).to_owned();
@@ -5157,7 +5164,7 @@ impl<'a> Machine<'a> {
 
     /// Gather the positional things apart from the named ones, retaining
     /// every keyword until the call has checked for repeated names.
-    fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+    pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
@@ -11837,7 +11844,7 @@ impl Machine<'_> {
         matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
-    fn core_complaint(&self, key: &str, middle: &str) -> String {
+    pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
         let label = format!("ext.builtin.{}", key);
         let words = self.table.strings(&label);
         match words { [] => String::new(), [one] => one.clone(), [head, tail, ..] => format!("{head}{middle}{tail}") }

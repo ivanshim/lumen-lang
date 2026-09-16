@@ -31,6 +31,50 @@ impl<'a> Machine<'a> {
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
+    /// The blueprint every metaclass is built on: the kind primitive
+    /// read as a class. A class built on it makes classes where an
+    /// ordinary one makes things.
+    pub(super) fn builder_blueprint(&mut self)->Rc<Blueprint> {
+        if let Some(b)=&self.builder_kind{return b.clone();}
+        let root=self.common_ancestor();
+        let title=self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map(|(w,_)|w.to_string()).unwrap_or_default();
+        let kind=Rc::new(Blueprint {presentation:Some(format!("<class '{title}'>")),name:title,
+            parents:vec![root.clone()],ancestry:vec![root.clone()],under:Some(root),answers:Vec::new(),fields:Vec::new(),
+            reaches:Vec::new(),methods:Vec::new(),constants:Vec::new(),shared:RefCell::new(Vec::new())});
+        self.builder_kind=Some(kind.clone());
+        kind
+    }
+    fn builds_classes(&self,b:&Rc<Blueprint>)->bool {self.builder_kind.as_ref().map_or(false,|k|Rc::ptr_eq(k,b))}
+    /// The metaclass named for a blueprint when it was built.
+    fn named_builder(b:&Blueprint)->Option<Rc<Blueprint>> {
+        match b.constants.iter().find(|(k,_)|k=="\0metaclass").map(|(_,v)|v) {
+            Some(Value::Blueprint(m))=>Some(m.clone()),
+            _=>None,
+        }
+    }
+    /// That metaclass through the whole line: a class is built by the
+    /// metaclass of the nearest forebear that named one.
+    pub(super) fn builder_over(b:&Blueprint)->Option<Rc<Blueprint>> {
+        std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(Self::named_builder)
+    }
+    /// Which metaclass builds a class: the one its header named, else the
+    /// one its forebears were built by, and of two the deeper.
+    fn builder_for(&mut self,asked:Option<Value>,parents:&[Rc<Blueprint>])->Result<Option<Rc<Blueprint>>,Escape> {
+        let named=match asked.map(|v|v.settled()) {
+            None=>None,
+            // The kind primitive names the plainest builder there is,
+            // which is no metaclass of its own; so does its blueprint.
+            Some(Value::Intrinsic(word)) if self.table.prims.get(word.as_ref())==Some(&Prim::SortOf)=>None,
+            Some(Value::Blueprint(b)) if self.builds_classes(&b)=>None,
+            Some(Value::Blueprint(b))=>Some(b),
+            Some(other)=>return Err(self.core_complaint("core.uncallable",&other.kind_word()).into()),
+        };
+        let handed_down=parents.iter().find_map(|p|Self::builder_over(p));
+        Ok(match (named,handed_down) {
+            (Some(a),Some(b))=>Some(if b.ancestry.iter().any(|c|Rc::ptr_eq(c,&a)){b}else{a}),
+            (a,b)=>a.or(b),
+        })
+    }
     /// The native worth a thing keeps, as it is kept: a row or a map
     /// stays in its cell, so that what is done to it through the thing
     /// is done to what the thing holds.
@@ -65,6 +109,11 @@ impl<'a> Machine<'a> {
         // class: each goes by its name to the forebears' subclass hook.
         let (handed,mut entries):(Vec<_>,Vec<_>)=entries.into_iter().partition(|(k,_)|k.starts_with("\0handed:"));
         let handed:Vec<Value>=handed.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k["\0handed:".len()..]),v)))).collect();
+        // The metaclass the header named is no entry either: it says
+        // what builds the class.
+        let mut asked=None;
+        entries.retain(|(k,v)|if k=="\0metaclass"{asked=Some(v.clone());false}else{true});
+        let builder=self.builder_for(asked,&parents)?;
         // A place only an arm of a conditional writes to may stay
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
@@ -98,7 +147,8 @@ impl<'a> Machine<'a> {
         let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:parents.first().cloned(),parents,ancestry:ranks,answers:vec![],fields:vec![],reaches:vec![],
-            methods:vec![],constants:vec![],shared:RefCell::new(entries)});
+            methods:vec![],constants:builder.map(|m|vec![("\0metaclass".to_owned(),Value::Blueprint(m))]).unwrap_or_default(),
+            shared:RefCell::new(entries)});
         self.name_slots(&class)?;
         // Every entry whose blueprint wants its name is given it now, the
         // class standing, and before the forebears hear of it.
@@ -378,7 +428,20 @@ impl<'a> Machine<'a> {
             _=>Err(self.class_unready()),
         }
     }
+    /// Making a thing of a class. A class built by a metaclass is called
+    /// through that metaclass's own call, which says what comes of it.
     pub(super) fn construct_ordered(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        if let Some(builder)=Self::builder_over(&class) {
+            if let Some(f)=self.inherited_entry(&builder,self.detail("call")) {
+                let mut values=vec![Value::Blueprint(class)];values.extend(given);
+                return self.apply_class_member(f,values);
+            }
+        }
+        self.construct_plainly(class,given)
+    }
+    /// The making itself, as the kind primitive does it: the class
+    /// allocates a thing and constructs it.
+    pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         let native=Self::native_beneath(&class);
         let created=match (self.inherited_entry(&class,self.detail("allocate")),&native) {
             (Some(allocator),_)=>{let mut args=vec![Value::Blueprint(class.clone())];args.extend(given.clone());self.apply_class_member(allocator,args)?},
@@ -484,6 +547,12 @@ impl<'a> Machine<'a> {
                 let result=Value::Tuple(Rc::new(all));return Ok(if key==self.detail("order"){Self::wrap(0,vec![result])}else{result});
             }
             if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            // A class reads what the metaclass that built it holds as
+            // well, each entry bound to the class itself, as a thing's
+            // method is bound to the thing.
+            if let Some(builder)=Self::builder_over(b) {
+                if let Some(found)=self.inherited_entry(&builder,key){return self.member_binding(found,Some(value.clone()),builder);}
+            }
             // The formatting every blueprint has from the root: a thing
             // and a specification, answered as the format builtin would.
             if self.table.strings("ext.stmt.class.special").get(72).map_or(false,|word|word==key){return Ok(Self::wrap(59,Vec::new()));}
@@ -662,9 +731,12 @@ impl<'a> Machine<'a> {
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let values: Vec<Value> = values.iter().map(Value::settled).collect();
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.of.clone()));}}
-        // A class is of the kind that makes classes: the kind primitive
-        // itself, under whatever word the table spells it by.
-        if values.len()==1 {if let Value::Blueprint(_)=&values[0]{return Ok(self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map_or(Value::Nil,|(word,_)|Value::Intrinsic(Rc::from(word.as_str()))));}}
+        // A class is of the kind that built it: the metaclass named for
+        // it or for a class it is built on, and otherwise the kind
+        // primitive itself, under whatever word the table spells it by.
+        if values.len()==1 {if let Value::Blueprint(b)=&values[0]{
+            if let Some(builder)=Self::builder_over(b){return Ok(Value::Blueprint(builder));}
+            return Ok(self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map_or(Value::Nil,|(word,_)|Value::Intrinsic(Rc::from(word.as_str()))));}}
         if let [Value::Text(title),sequence,Value::Dict(entries)]=values.as_slice(){
             let bases=match sequence{Value::Vector(v)|Value::Tuple(v)=>v,_=>return Err(self.class_unready())};
             let mut parents=Vec::new();for c in bases.iter(){if let Value::Blueprint(b)=c{parents.push(b.clone());}else{return Err(self.class_unready());}}
@@ -765,10 +837,36 @@ impl<'a> Machine<'a> {
         Err(self.class_unready())
     }
     pub(super) fn next_ancestor_call(&mut self,receiver:Value,declared:&str,key:&str,mut args:Vec<Value>)->Res {
-        let class=match &receiver{Value::Thing(t)=>&t.of,Value::Blueprint(b)=>b,_=>return Err(self.class_unready())};
-        let chain=std::iter::once(class).chain(class.ancestry.iter()).collect::<Vec<_>>();
-        let start=chain.iter().position(|b|b.name==declared||Self::own_entry(b,self.detail("qualified")).map_or(false,|v|v.bare()==declared)).ok_or_else(||self.class_unready())?;
+        let class=match &receiver{Value::Thing(t)=>t.of.clone(),Value::Blueprint(b)=>b.clone(),_=>return Err(self.class_unready())};
+        let named_here=|a:&Self,b:&Rc<Blueprint>|b.name==declared||Self::own_entry(b,a.detail("qualified")).map_or(false,|v|v.bare()==declared);
+        let mut chain=std::iter::once(class.clone()).chain(class.ancestry.iter().cloned()).collect::<Vec<_>>();
+        let mut start=chain.iter().position(|b|named_here(self,b));
+        // A method of a metaclass is written in the metaclass, so the
+        // forebears it reaches past are the metaclass's own, not those
+        // of the class it was handed.
+        if start.is_none() {
+            if let Some(builder)=Self::builder_over(&class) {
+                chain=std::iter::once(builder.clone()).chain(builder.ancestry.iter().cloned()).collect();
+                start=chain.iter().position(|b|named_here(self,b));
+            }
+        }
+        let start=start.ok_or_else(||self.class_unready())?;
         for b in &chain[start+1..]{
+            // The blueprint every metaclass is built on: it makes a
+            // thing of the class handed to it, as the kind primitive
+            // plainly would.
+            if self.builds_classes(b) {
+                if key==self.detail("call") {
+                    let Value::Blueprint(made)=&receiver else{return Err(self.class_unready())};
+                    // What was spread is opened first, so a class taking
+                    // nothing is not handed an empty spread.
+                    let (positional,named)=self.open_arguments(args)?;
+                    let mut values=positional;
+                    values.extend(named.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k),v)))));
+                    return self.construct_plainly(made.clone(),values);
+                }
+                continue;
+            }
             // The native kind a blueprint stands on makes the thing, takes
             // its constructing in silence, and answers the kind's methods
             // through the worth the thing keeps.

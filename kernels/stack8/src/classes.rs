@@ -29,6 +29,53 @@ impl<'a> Engine<'a> {
         self.kind_classes.push((word.to_string(), c.clone()));
         c
     }
+    /// The class every metaclass stands on: the kind builtin read as a
+    /// class. A class standing on it is a metaclass, and the things it
+    /// makes are classes rather than objects.
+    pub(super) fn metaclass_root(&mut self) -> Rc<Class> {
+        if let Some(c) = &self.class_maker { return c.clone(); }
+        let root = self.root_class();
+        let name = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::SortOf).map_or(String::new(), |(w, _)| w.clone());
+        let c = Rc::new(Class { outline: Some(format!("<class '{name}'>")), name,
+            direct: vec![root.clone()], lineage: vec![root.clone()], base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
+            methods: vec![], constants: vec![], shared: RefCell::new(vec![]) });
+        self.class_maker = Some(c.clone());
+        c
+    }
+    fn is_metaclass_root(&self, c: &Rc<Class>) -> bool {
+        self.class_maker.as_ref().map_or(false, |m| Rc::ptr_eq(m, c))
+    }
+    /// The metaclass a class was made by, where its header named one.
+    fn own_maker(c: &Class) -> Option<Rc<Class>> {
+        match c.constants.iter().find(|(n, _)| n == MAKER_MEMBER).map(|(_, v)| v) {
+            Some(Value::Class(m)) => Some(m.clone()),
+            _ => None,
+        }
+    }
+    /// That metaclass, through the class's whole line: a class is made by
+    /// the metaclass of the nearest forebear that named one.
+    pub(super) fn maker_beneath(c: &Class) -> Option<Rc<Class>> {
+        std::iter::once(c).chain(c.lineage.iter().map(Rc::as_ref)).find_map(Self::own_maker)
+    }
+    /// The metaclass that will make a class: the one its header named,
+    /// else the one its forebears were made by. Where both speak, the
+    /// one standing on the other is taken, as the deeper answer.
+    fn maker_in_force(&mut self, asked: Option<Value>, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
+        let named = match asked.map(|v| v.contents()) {
+            None => None,
+            // The kind builtin names the plainest maker there is, which
+            // is no metaclass of its own; so does the class it stands for.
+            Some(Value::Native(Builtin::SortOf, _)) => None,
+            Some(Value::Class(c)) if self.is_metaclass_root(&c) => None,
+            Some(Value::Class(c)) => Some(c),
+            Some(other) => return Err(self.core_fault("core.uncallable", &other.core_kind()).into()),
+        };
+        let inherited = bases.iter().find_map(|b| Self::maker_beneath(b));
+        Ok(match (named, inherited) {
+            (Some(a), Some(b)) => Some(if b.lineage.iter().any(|c| Rc::ptr_eq(c, &a)) { b } else { a }),
+            (a, b) => a.or(b),
+        })
+    }
     /// The builtin kind a class itself stands for, if it is one.
     fn own_kind(c: &Class) -> Option<String> {
         c.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v.plain())
@@ -74,6 +121,11 @@ impl<'a> Engine<'a> {
             Some(word) => { carried.push(Value::Tie(Rc::new((Value::text(word), v.clone())))); false }
             None => true,
         });
+        // The metaclass the header named is no member either: it says
+        // what makes the class.
+        let mut asked = None;
+        members.retain(|(n, v)| if n == MAKER_MEMBER { asked = Some(v.clone()); false } else { true });
+        let maker = self.maker_in_force(asked, &bases)?;
         // A place only an arm of a conditional writes to may never have
         // been written. Nothing stands there, and the class keeps no
         // member for it: a name a conditional never bound is no member.
@@ -102,7 +154,8 @@ impl<'a> Engine<'a> {
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: bases.first().cloned(), direct: bases, lineage, answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![], shared: RefCell::new(members) });
+            methods: vec![], constants: maker.map(|m| vec![(MAKER_MEMBER.to_string(), Value::Class(m))]).unwrap_or_default(),
+            shared: RefCell::new(members) });
         self.furnish_slots(&c)?;
         // Each member that asks to be told its name is told it, once the
         // class stands, before any forebear hears of the new class.
@@ -383,7 +436,21 @@ impl<'a> Engine<'a> {
             _ => Err(self.class_refusal()),
         }
     }
+    /// Making a thing of a class. A class made by a metaclass is called
+    /// through that metaclass's own call, which decides what comes of it.
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if let Some(maker) = Self::maker_beneath(&c) {
+            if let Some(f) = self.class_value(&maker, self.class_word("call")) {
+                let mut given = vec![Value::Class(c)];
+                given.extend(args);
+                return self.class_apply(f, given);
+            }
+        }
+        self.class_construct(c, args)
+    }
+    /// The making itself, as the kind builtin does it: the class
+    /// allocates a thing and constructs it.
+    pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         let allocation = self.class_value(&c,self.class_word("allocate"));
         let kind = Self::kind_beneath(&c);
         let object = if let Some(f) = allocation {
@@ -486,6 +553,12 @@ impl<'a> Engine<'a> {
                     return Ok(if name==self.class_word("order") {Self::adapter(0,vec![tuple])} else {tuple});
                 }
                 if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                // A class also reads what the metaclass that made it
+                // holds, each member bound to the class itself, the way
+                // a thing's method is bound to the thing.
+                if let Some(maker)=Self::maker_beneath(c) {
+                    if let Some(v)=self.class_value(&maker,name) { return self.bind_class_value(v,Some(subject.clone()),maker); }
+                }
                 // The formatting every class has from the root: a thing
                 // and a specification, answered as the format builtin would.
                 if self.lang.class_special.get(72).map_or(false,|word|word==name) {return Ok(Self::adapter(19,vec![]));}
@@ -676,9 +749,13 @@ impl<'a> Engine<'a> {
         let args: Vec<Value> = args.iter().map(Value::contents).collect();
         match args.as_slice() {
             [Value::Object(o)]=>Ok(Value::Class(o.class.clone())),
-            // A class is of the kind that makes classes, which is the
-            // kind builtin itself, under whatever word spells it.
-            [Value::Class(_)]=>Ok(self.lang.builtins.iter().find(|(_,b)|**b==crate::code::Builtin::SortOf).map_or(Value::Null,|(word,_)|Value::Native(crate::code::Builtin::SortOf,std::rc::Rc::from(word.as_str())))),
+            // A class is of the kind that made it: the metaclass named
+            // for it or for a class it stands on, and otherwise the kind
+            // builtin itself, under whatever word spells it.
+            [Value::Class(c)]=>Ok(match Self::maker_beneath(c) {
+                Some(maker)=>Value::Class(maker),
+                None=>self.lang.builtins.iter().find(|(_,b)|**b==crate::code::Builtin::SortOf).map_or(Value::Null,|(word,_)|Value::Native(crate::code::Builtin::SortOf,std::rc::Rc::from(word.as_str()))),
+            }),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){if let Value::Class(c)=b{parents.push(c.clone());}else{return Err(self.class_refusal());}}
                 let mut own=vec![];for (k,v) in members.iter(){if let Value::Text(n)=k{own.push((n.to_string(),v.clone()));}else{return Err(self.class_refusal());}}
@@ -755,9 +832,32 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn class_super(&mut self,subject:Value,owner:&str,name:&str,args:Vec<Value>)->Flow<Value> {
         let receiver=match &subject{Value::Object(o)=>o.class.clone(),Value::Class(c)=>c.clone(),_=>return Err(self.class_refusal())};
+        let owned=|a:&Self,c:&Rc<Class>|c.name==owner || Self::own_class_value(c,a.class_word("qualified")).map_or(false,|v|v.plain()==owner);
         let mut sequence=vec![receiver.clone()];sequence.extend(receiver.lineage.iter().cloned());
-        let at=sequence.iter().position(|c|c.name==owner || Self::own_class_value(c,self.class_word("qualified")).map_or(false,|v|v.plain()==owner)).ok_or_else(||self.class_refusal())?;
+        let mut at=sequence.iter().position(|c|owned(self,c));
+        // A method of a metaclass is written in the metaclass, not in the
+        // class it was given, so its forebears are the metaclass's own.
+        if at.is_none() {
+            if let Some(maker)=Self::maker_beneath(&receiver) {
+                sequence=vec![maker.clone()];sequence.extend(maker.lineage.iter().cloned());
+                at=sequence.iter().position(|c|owned(self,c));
+            }
+        }
+        let at=at.ok_or_else(||self.class_refusal())?;
         for c in sequence.iter().skip(at+1) {
+            // The class every metaclass stands on: it makes a thing of
+            // the class it is given, as the kind builtin plainly would.
+            if self.is_metaclass_root(c) {
+                if name==self.class_word("call") {
+                    let Value::Class(made)=&subject else{return Err(self.class_refusal())};
+                    // What was spread is opened first, so that a class
+                    // taking nothing is not handed an empty spread.
+                    let opened=self.call_items(args)?.into_iter()
+                        .map(|(key,v)|match key{Some(k)=>Value::Tie(Rc::new((Value::text(&k),v))),None=>v}).collect();
+                    return self.class_construct(made.clone(),opened);
+                }
+                continue;
+            }
             // The kind a class stands on makes the thing, takes its
             // constructing in silence, and answers its kind's methods
             // through the worth the thing keeps.

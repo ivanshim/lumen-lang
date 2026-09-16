@@ -2989,16 +2989,24 @@ impl<'a> Builder<'a> {
                 let keyword = self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).lexeme);
                 // A keyword in the header goes, under a name no program
                 // can spell, to the forebears' subclass hook; a table
-                // without such a hook cannot run the form, nor can any
-                // table run the keyword that names a metaclass.
+                // without such a hook cannot run the form.
                 let mut handed = None;
+                // The keyword that names a metaclass says what builds
+                // the class, and is handed over under a name of its own.
+                let mut builder = false;
                 if keyword {
                     let word = self.advance().lexeme;
                     self.advance();
-                    if table.has_any("ext.stmt.class.detail.subclass") && !table.spells("ext.stmt.class.metaclass", &word) { handed = Some(word); } else { cannot = true; }
+                    if table.spells("ext.stmt.class.metaclass", &word) { builder = true; }
+                    else if table.has_any("ext.stmt.class.detail.subclass") { handed = Some(word); }
+                    else { cannot = true; }
                 }
                 let value = self.expr(0)?;
-                if let Some(word) = handed {
+                if builder {
+                    let slot = self.gensym("metaclass");
+                    setup.push(Form::Write(slot.clone(), Box::new(value)));
+                    handed_words.push(("\0metaclass".to_owned(), Form::Read(slot)));
+                } else if let Some(word) = handed {
                     let slot = self.gensym("handed");
                     setup.push(Form::Write(slot.clone(), Box::new(value)));
                     handed_words.push((format!("\0handed:{word}"), Form::Read(slot)));
