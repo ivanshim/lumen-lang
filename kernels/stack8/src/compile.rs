@@ -166,6 +166,9 @@ pub struct Compiler<'a> {
     /// The class being read, and what it stands on: what `self` and
     /// `parent` mean inside a method.
     within: Option<(String, Option<String>)>,
+    /// How many pieces were open when that class was entered, so that
+    /// a qualified name lists only the routines opened inside it.
+    class_depth: usize,
     method_self: Option<String>,
     class_names: Vec<(usize, HashMap<String, String>)>,
     /// Which parameters of each program take a name's own cell rather
@@ -338,7 +341,7 @@ fn compile_pass(
         }
         gives_back.extend(table.gives_back.iter().cloned());
     }
-    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { annotation_target: None, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), method_self: None, yield_operand: false, writing_place: false, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), declared_at: 0, carrying: Vec::new(), within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -970,14 +973,24 @@ impl<'a> Compiler<'a> {
     /// A program assembled in its own unit. A function keeps a result
     /// slot: null at first, each expression statement's value after, and
     /// its value is left on the stack at the end.
+    /// The name a routine or class goes by in full: the class it is
+    /// written in, then each routine opened since that class was
+    /// entered, each marked as the holder of locals, then its own name.
+    fn qualified(&self, name: &str) -> String {
+        let local = self.lang.class_details.get("locals").and_then(|v| v.first()).cloned().unwrap_or_default();
+        let mut full = self.within.as_ref().map_or(String::new(), |(n, _)| format!("{n}."));
+        for piece in self.pieces.iter().skip(self.class_depth).filter(|p| !p.outermost) {
+            full.push_str(&format!("{}.{local}.", piece.ident));
+        }
+        full.push_str(name);
+        full
+    }
+
     fn routine(&mut self, name: &str, formals: Vec<String>, least: usize, returns_value: bool, body: impl FnOnce(&mut Self) -> Res<()>) -> Res<Rc<Routine>> {
         let source = self.pos;
         let first_body = self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).next();
         let doc = first_body.filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.clone());
-        let local = self.lang.class_details.get("locals").and_then(|v|v.first()).cloned().unwrap_or_default();
-        let mut qualified = self.within.as_ref().map_or(String::new(),|(n,_)|format!("{n}."));
-        for p in self.pieces.iter().filter(|p|!p.outermost) {qualified.push_str(&format!("{}.{local}.",p.ident));}
-        qualified.push_str(name);
+        let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is put aside while
@@ -3721,10 +3734,15 @@ impl<'a> Compiler<'a> {
             let wrapped=!decorators.is_empty();
             for place in decorators.into_iter().rev() {self.read(&place);self.act(Action::Invoke(Rc::from("")),2);}
             self.write(&slot);
+            // A method that reaches a name of the function the class is
+            // written in is closed over that function's frame where the
+            // definition runs, and only the value in its place is so
+            // closed: the routine as assembled here knows no frame.
+            let reaches_out = !method.enclosing.is_empty();
             // A method an arm of a conditional defines is a member like
             // any other: the class cannot carry it among the methods it
             // always has, since the arm may not run.
-            match wrapped || held.arms > 0 {
+            match wrapped || held.arms > 0 || reaches_out {
                 true => self.member_kept(held, &named, &slot),
                 false => {
                     self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
@@ -3799,7 +3817,10 @@ impl<'a> Compiler<'a> {
         // The keywords a header carries, each kept for the parent's
         // subclass hook under a name no program can spell.
         let mut carried_words: Vec<(String, String)> = Vec::new();
-        let mut unready = !self.piece().outermost;
+        // A class inside a function is read like any other: each member
+        // lands in a place of the function's own, and the class is
+        // formed from those places when the definition runs.
+        let mut unready = false;
         if let Some(open) = lang.bases_open.clone().filter(|s| self.at_symbol(s)) {
             self.want_sign(&open, "before the bases")?;
             let close = lang.bases_close.clone().ok_or("Class bases need a closing mark")?;
@@ -3835,8 +3856,9 @@ impl<'a> Compiler<'a> {
             }
             self.want_sign(&close, "after the bases")?;
         }
+        let qualification = self.qualified(&name);
         let outer = self.within.replace((name.clone(), base.clone()));
-        let qualification=outer.as_ref().map_or_else(||name.clone(),|(n,_)|format!("{n}.{name}"));
+        let outer_depth = std::mem::replace(&mut self.class_depth, self.pieces.len());
         if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
         self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
@@ -3881,6 +3903,7 @@ impl<'a> Compiler<'a> {
         let ClassBody { methods, mut shared, annotated, uncertain, unready, .. } = held;
         self.class_names.pop();
         self.within = outer;
+        self.class_depth = outer_depth;
         if unready {
             self.piece().instrs.truncate(body_at);
             self.class_cannot_run();

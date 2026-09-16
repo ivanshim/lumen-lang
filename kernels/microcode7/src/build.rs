@@ -164,6 +164,9 @@ pub struct Builder<'a> {
     /// The routines being built, the innermost last, so a word standing
     /// for the one a piece is written in knows which that is.
     naming: Vec<String>,
+    /// How many of those were being named when the class now being read
+    /// was entered: a full name goes on from there.
+    named_before: usize,
     /// Whether each routine being built gives back a cell and not a
     /// copy, the innermost last, so what it answers with is made a cell
     /// where it should be.
@@ -313,7 +316,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         layers.push(Layer { comprehension: false, borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
-    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         reading_yield: false, place_depth: 0,
         source_before: None,
@@ -1072,17 +1075,26 @@ impl<'a> Builder<'a> {
         Form::Write(slot, Box::new(value))
     }
 
+    /// The full name of a routine or class: the class around it, then
+    /// each routine entered since that class was, with the word for
+    /// what it holds locally after each, and its own name last.
+    fn full_name_of(&self, name: &str) -> String {
+        let local = self.table.single("ext.stmt.class.detail.locals").unwrap_or("");
+        let mut path = self.within.as_ref().map(|(c, _)| format!("{c}.")).unwrap_or_default();
+        for outer in self.naming.iter().skip(self.named_before) {
+            path.push_str(outer); path.push('.'); path.push_str(local); path.push('.');
+        }
+        path.push_str(name);
+        path
+    }
+
     /// A program value: its body reduced in a scope of its own.
     fn routine(&mut self, name: &str, holds: Holds, catches: Traps, params: Vec<String>, least: usize, body: impl FnOnce(&mut Self) -> Res<Form>) -> Res<Form> {
         let began = self.pos;
         let mut start = self.pos;
         while self.tokens.get(start).map_or(false, |t| matches!(t.shape, Shape::Open | Shape::LineEnd) || self.table.spells("block.intro", &t.lexeme)) { start += 1; }
         let doc = self.tokens.get(start).filter(|t| t.shape == Shape::Quote).map(|t| t.lexeme.to_owned());
-        let mut path=self.within.as_ref().map(|(c,_)|format!("{c}.")).unwrap_or_default();
-        let local=self.table.single("ext.stmt.class.detail.locals").unwrap_or("");
-        for outer in &self.naming {path.push_str(outer);path.push('.');path.push_str(local);path.push('.');}
-        path.push_str(name);
-        let qualification=path;
+        let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
         // What the routine around this one carries is set aside while
@@ -2547,10 +2559,16 @@ impl<'a> Builder<'a> {
             let mut expression=constant(Value::Routine(body.clone()));
             while let Some(address)=wrappers.pop(){expression=Form::Apply(Callee::Code(Box::new(Form::Read(address))),vec![expression]);}
             setup.push(Form::Write(slot.clone(),Box::new(expression)));
+            // A method of a class standing in a function climbs through
+            // that function's frame to reach every name outside its own,
+            // the module's included. The write of its address binds it to
+            // that frame as the statement runs; the plan's copy is bound
+            // to nothing, so the method is handed over from its address.
+            let stands_in_routine = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
             // A method an arm of a conditional writes belongs among the
             // members the class is handed, not among the methods it
             // always has: the arm holding it may never run.
-            match decorated || parts.arms > 0 {
+            match decorated || parts.arms > 0 || stands_in_routine {
                 true => self.member_noted(parts, &method_name, slot),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot);
@@ -2686,7 +2704,10 @@ impl<'a> Builder<'a> {
         let mut parent = None;
         let mut other_parents = Vec::new();
         let mut handed_words: Vec<(String, Form)> = Vec::new();
-        let mut cannot = self.layers.iter().filter(|s| s.holds == Holds::Every).count() > 1;
+        // A class standing in a function is built the way any class is:
+        // its members are written to addresses in the function's own
+        // frame, and the class gathers them when the statement runs.
+        let mut cannot = false;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
             self.advance();
             let end = table.single("ext.stmt.class.bases.close").ok_or("The bases need a closing mark")?;
@@ -2723,8 +2744,9 @@ impl<'a> Builder<'a> {
             }
             self.need_sign(end, "after the bases")?;
         }
+        let full_name = self.full_name_of(&named);
         let previous = self.within.replace((named.clone(), parent.as_ref().map(|s| s.ident.to_string())));
-        let full_name=previous.as_ref().map_or(named.clone(),|(n,_)|format!("{n}.{named}"));
+        let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
         if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
         self.need_intro()?;
         let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
@@ -2763,6 +2785,7 @@ impl<'a> Builder<'a> {
         }
         self.class_bindings.pop();
         self.within = previous;
+        self.named_before = named_outside;
         let ClassParts { methods, mut attributes, mut held, annotated_names, uncertain, cannot, .. } = parts;
         if cannot {
             setup.truncate(before_body);
