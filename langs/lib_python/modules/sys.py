@@ -3,6 +3,19 @@ argv = __program_namespace()['__program_argv']
 maxsize = 9223372036854775807
 version_info = (3, 14, 0, 'final', 0)
 platform = 'linux'
+# Which Python this is. A test that reaches for the internals of the
+# reference implementation asks the name here first, and the honest
+# answer -- not cpython -- is what lets such a test step aside instead
+# of measuring this kernel against machinery it does not have.
+class _Implementation:
+    name = 'lumen'
+    version = (0, 2, 0, 'final', 0)
+    hexversion = 0x000200f0
+    # Nothing is written beside a module as compiled code, and a name
+    # of None is how a Python says exactly that.
+    cache_tag = None
+
+implementation = _Implementation()
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
