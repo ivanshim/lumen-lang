@@ -4148,8 +4148,19 @@ impl<'a> Engine<'a> {
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
                 };
-                let nested = match &*cell.borrow() { Value::Collection(held, _) => Some(held.clone()), _ => None };
-                let cell = nested.unwrap_or(cell);
+                // The cell may hold the collection at one remove or more:
+                // a name inside a function is shared as a binding, and
+                // what that binding holds may itself be a shared cell, so
+                // the collection is reached by following each in turn
+                // until one holds the collection and not another cell.
+                let mut cell = cell;
+                loop {
+                    let deeper = match &*cell.borrow() {
+                        Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
+                        _ => None,
+                    };
+                    match deeper { Some(held) => cell = held, None => break }
+                }
                 // A key that cannot key a map is refused before the map is
                 // taken up for writing, since the key may be the map itself.
                 if matches!(&*cell.borrow(), Value::Map(_)) {
