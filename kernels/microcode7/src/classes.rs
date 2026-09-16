@@ -114,6 +114,53 @@ impl<'a> Machine<'a> {
         let mut asked=None;
         entries.retain(|(k,v)|if k=="\0metaclass"{asked=Some(v.clone());false}else{true});
         let builder=self.builder_for(asked,&parents)?;
+        // A metaclass with a building of its own builds the class: it is
+        // handed itself, the name, the parents and the body's namespace
+        // as a map it may write into, and answers with the class.
+        if let Some(m)=builder.clone() {
+            if let Some(f)=self.inherited_entry(&m,self.detail("allocate")) {
+                let listed=Value::Tuple(Rc::new(parents.iter().cloned().map(Value::Blueprint).collect()));
+                let pairs:Vec<(Value,Value)>=entries.iter().filter(|(_,v)|!matches!(v,Value::Unset))
+                    .map(|(k,v)|(Value::text(k),v.clone())).collect();
+                let namespace=Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs)))),true);
+                let mut given=vec![Value::Blueprint(m.clone()),Value::text(&title),listed.clone(),namespace.clone()];
+                given.extend(handed.iter().cloned());
+                let built=self.apply_class_member(f,given)?;
+                // The metaclass is then told of what it has built.
+                if let Some(begun)=self.table.single("ext.stmt.class.constructor").and_then(|w|self.inherited_entry(&m,w)) {
+                    let bound=self.member_binding(begun,Some(built.clone()),m)?;
+                    let mut told=vec![Value::text(&title),listed,namespace];
+                    told.extend(handed);
+                    self.apply_class_member(bound,told)?;
+                }
+                return Ok(built);
+            }
+        }
+        self.assemble_class(title,parents,entries,builder,handed)
+    }
+    /// A class laid out from what the kind primitive is given: the
+    /// metaclass to remember, the name, the parents and the namespace,
+    /// any further keyword being kept for a forebear's subclass hook.
+    pub(super) fn class_of_parts(&mut self,values:Vec<Value>)->Res {
+        let (plain,named)=self.open_arguments(values)?;
+        if plain.len()<4 {return Err(self.class_unready());}
+        let by=match &plain[0]{Value::Blueprint(m) if !self.builds_classes(m)=>Some(m.clone()),_=>None};
+        let name=plain[1].bare();
+        let mut ancestors=Vec::new();
+        let (Value::Tuple(listed)|Value::Vector(listed))=plain[2].settled() else{return Err(self.class_unready())};
+        for p in listed.iter(){let Value::Blueprint(a)=p else{return Err(self.class_unready())};ancestors.push(a.clone());}
+        if ancestors.is_empty(){ancestors.push(self.common_ancestor());}
+        let Value::Dict(pairs)=plain[3].settled() else{return Err(self.class_unready())};
+        let body=pairs.iter().map(|(k,v)|(k.bare(),v.clone())).collect();
+        let keywords=named.into_iter().map(|(k,v)|Value::Couple(Rc::new((Value::text(&k),v)))).collect();
+        self.assemble_class(name,ancestors,body,by,keywords)
+    }
+    /// The class itself, laid out from its name, its parents, its
+    /// entries and the metaclass it is to remember. This is the building
+    /// the kind primitive does, which a metaclass reaches through its
+    /// forebears once it has made a namespace of its own.
+    pub(super) fn assemble_class(&mut self,title:String,parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>,
+        builder:Option<Rc<Blueprint>>,handed:Vec<Value>)->Res {
         // A place only an arm of a conditional writes to may stay
         // unwritten. Nothing stands in it, and the class is given no
         // entry for it: a name a conditional never bound is no member.
@@ -443,7 +490,14 @@ impl<'a> Machine<'a> {
     /// allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         let native=Self::native_beneath(&class);
-        let created=match (self.inherited_entry(&class,self.detail("allocate")),&native) {
+        let allocator=self.inherited_entry(&class,self.detail("allocate"));
+        // A metaclass called outright builds a class, the way the kind
+        // primitive does, from a name, parents and a namespace.
+        if allocator.is_none() && class.ancestry.iter().any(|b|self.builds_classes(b)) {
+            let mut values=vec![Value::Blueprint(class.clone())];values.extend(given);
+            return self.class_of_parts(values);
+        }
+        let created=match (allocator,&native) {
             (Some(allocator),_)=>{let mut args=vec![Value::Blueprint(class.clone())];args.extend(given.clone());self.apply_class_member(allocator,args)?},
             (None,Some(word))=>self.thing_over_native(class.clone(),word,given.clone())?,
             (None,None)=>{self.made+=1;Value::Thing(Rc::new(Thing{of:class.clone(),holds:RefCell::new(Vec::new()),turn:self.made}))},
@@ -852,10 +906,14 @@ impl<'a> Machine<'a> {
         }
         let start=start.ok_or_else(||self.class_unready())?;
         for b in &chain[start+1..]{
-            // The blueprint every metaclass is built on: it makes a
-            // thing of the class handed to it, as the kind primitive
-            // plainly would.
+            // The blueprint every metaclass is built on: it lays a
+            // class out and makes a thing of one, as the kind primitive
+            // plainly does.
             if self.builds_classes(b) {
+                // The kind primitive's own building: a name, the
+                // parents and a namespace become a class, remembering
+                // the metaclass handed to it as the one that built it.
+                if key==self.detail("allocate") {return self.class_of_parts(args);}
                 if key==self.detail("call") {
                     let Value::Blueprint(made)=&receiver else{return Err(self.class_unready())};
                     // What was spread is opened first, so a class taking

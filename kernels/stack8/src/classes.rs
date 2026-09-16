@@ -126,6 +126,55 @@ impl<'a> Engine<'a> {
         let mut asked = None;
         members.retain(|(n, v)| if n == MAKER_MEMBER { asked = Some(v.clone()); false } else { true });
         let maker = self.maker_in_force(asked, &bases)?;
+        // A metaclass with a making of its own makes the class: it is
+        // handed itself, the name, the bases and the body's namespace as
+        // a map it may write into, and what it answers is the class.
+        if let Some(m) = maker.clone() {
+            if let Some(f) = self.class_value(&m, self.class_word("allocate")) {
+                let listed = Value::Tuple(Rc::new(bases.iter().cloned().map(Value::Class).collect()));
+                let pairs: Vec<(Value, Value)> = members.iter().filter(|(_, v)| !matches!(v, Value::Blank))
+                    .map(|(n, v)| (Value::text(n), v.clone())).collect();
+                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs)))), true);
+                let mut given = vec![Value::Class(m.clone()), Value::text(&name), listed.clone(), namespace.clone()];
+                given.extend(carried.iter().cloned());
+                let made = self.class_apply(f, given)?;
+                // The metaclass is then told of what it has made.
+                if let Some(begun) = self.lang.constructor.as_deref().and_then(|n| self.class_value(&m, n)) {
+                    let bound = self.bind_class_value(begun, Some(made.clone()), m)?;
+                    let mut told = vec![Value::text(&name), listed, namespace];
+                    told.extend(carried);
+                    self.class_apply(bound, told)?;
+                }
+                return Ok(made);
+            }
+        }
+        self.forge_class(name, bases, members, maker, carried)
+    }
+    /// A class laid out from what the kind builtin is given: the
+    /// metaclass to remember, the name, the bases and the namespace,
+    /// with any further keyword kept for a forebear's subclass hook.
+    pub(super) fn class_from_parts(&mut self, args: Vec<Value>) -> Flow<Value> {
+        let (mut plain, mut named) = (Vec::new(), Vec::new());
+        for (key, v) in self.call_items(args)? {
+            match key { Some(k) => named.push(Value::Tie(Rc::new((Value::text(&k), v)))), None => plain.push(v) }
+        }
+        if plain.len() < 4 { return Err(self.class_refusal()); }
+        let by = match &plain[0] { Value::Class(m) if !self.is_metaclass_root(m) => Some(m.clone()), _ => None };
+        let title = plain[1].plain();
+        let mut parents = Vec::new();
+        let (Value::Tuple(listed) | Value::Array(listed)) = plain[2].contents() else { return Err(self.class_refusal()) };
+        for b in listed.iter() { let Value::Class(p) = b else { return Err(self.class_refusal()) }; parents.push(p.clone()); }
+        if parents.is_empty() { parents.push(self.root_class()); }
+        let Value::Map(entries) = plain[3].contents() else { return Err(self.class_refusal()) };
+        let members = entries.iter().map(|(k, v)| (k.plain(), v.clone())).collect();
+        self.forge_class(title, parents, members, by, named)
+    }
+    /// The class itself, laid out from its name, its bases, its members
+    /// and the metaclass it is to remember. This is the making the kind
+    /// builtin does, and what a metaclass reaches for through its
+    /// forebears when it has made a namespace of its own.
+    pub(super) fn forge_class(&mut self, name: String, bases: Vec<Rc<Class>>, mut members: Vec<(String, Value)>,
+        maker: Option<Rc<Class>>, carried: Vec<Value>) -> Flow<Value> {
         // A place only an arm of a conditional writes to may never have
         // been written. Nothing stands there, and the class keeps no
         // member for it: a name a conditional never bound is no member.
@@ -452,6 +501,13 @@ impl<'a> Engine<'a> {
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         let allocation = self.class_value(&c,self.class_word("allocate"));
+        // A metaclass called outright makes a class, the way the kind
+        // builtin does, from a name, bases and a namespace.
+        if allocation.is_none() && c.lineage.iter().any(|b| self.is_metaclass_root(b)) {
+            let mut given = vec![Value::Class(c.clone())];
+            given.extend(args);
+            return self.class_from_parts(given);
+        }
         let kind = Self::kind_beneath(&c);
         let object = if let Some(f) = allocation {
             let mut given = vec![Value::Class(c.clone())]; given.extend(args.clone());
@@ -845,9 +901,13 @@ impl<'a> Engine<'a> {
         }
         let at=at.ok_or_else(||self.class_refusal())?;
         for c in sequence.iter().skip(at+1) {
-            // The class every metaclass stands on: it makes a thing of
-            // the class it is given, as the kind builtin plainly would.
+            // The class every metaclass stands on: it lays a class out
+            // and makes a thing of one, as the kind builtin plainly does.
             if self.is_metaclass_root(c) {
+                // The kind builtin's own making: a name, the bases and
+                // a namespace become a class, remembering the metaclass
+                // it was handed as the one that made it.
+                if name==self.class_word("allocate") { return self.class_from_parts(args); }
                 if name==self.class_word("call") {
                     let Value::Class(made)=&subject else{return Err(self.class_refusal())};
                     // What was spread is opened first, so that a class
