@@ -172,6 +172,9 @@ pub enum IteratorKind {
     Placed(Value, BigInt),
     /// A callable summoned for each member until it answers the sentinel.
     Summoned { work: Value, stop: Value },
+    /// A thing of the program's own, asked for each member the way a
+    /// loop asks it.
+    Handed(Value),
     Count(Value, BigInt),
     /// Inputs walked abreast, mapped where a mapper is given, and made
     /// to end together where exactness is demanded.
@@ -352,8 +355,12 @@ impl Value {
         if let Value::Window(owner, portion) = self {
             let mut items=Vec::new();
             if let Value::Dict(entries)=owner.settled() {
+                // A window upon the pairs shows each of them as a
+                // tuple, which is what it is: a pair written between
+                // round marks, of the kind a pair may be a key by, and
+                // not a row that only reads like one.
                 for (key,value) in entries.iter() {
-                    items.push(if *portion=='k' {key.clone()} else if *portion=='v' {value.clone()} else {Value::Row(Rc::new(vec![key.clone(),value.clone()]))});
+                    items.push(if *portion=='k' {key.clone()} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![key.clone(),value.clone()]))});
                 }
             }
             return Value::Vector(Rc::new(items));
