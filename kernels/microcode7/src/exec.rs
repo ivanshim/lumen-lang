@@ -9583,6 +9583,9 @@ impl<'a> Machine<'a> {
                         Value::Complex(_) => Some(Prim::ComplexMade),
                         Value::Text(_) => Some(Prim::AsText), Value::Flag(_) => Some(Prim::Truthful),
                         Value::Vector(_) => Some(Prim::Listed), Value::Dict(_) => Some(Prim::Dictionary),
+                        // What a routine keeps under its names, seen as
+                        // a view of the entries, is of the dictionary kind.
+                        Value::Attributes(_) => Some(Prim::Dictionary),
                         Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
                         Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
                     };
