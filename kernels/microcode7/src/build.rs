@@ -1049,8 +1049,25 @@ impl<'a> Builder<'a> {
     /// scope it is written in, and every later reading of it must find
     /// the same cell.
     fn read_to_write(&mut self, name: &str) -> Form {
-        let slot = self.address_to_write(name);
+        let slot = self.address_to_rewrite(name);
         Form::Read(slot)
+    }
+
+    /// The binding an array written into stands in. Where names close
+    /// over, a write through a place binds nothing: the array is the
+    /// one the name already stands for -- the function's own, an
+    /// enclosing function's, or the module's -- and never a fresh local
+    /// spelt the same, which is the footing `del a[k]` reads it on too.
+    fn address_to_rewrite(&mut self, name: &str) -> Address {
+        if !self.table.flag("ext.stmt.function.closes_over") {
+            return self.address_to_write(name);
+        }
+        if let Some((depth, names)) = self.class_bindings.last() {
+            if *depth == self.layers.len() {
+                if let Some(slot) = names.get(name) { return slot.clone(); }
+            }
+        }
+        self.address_to_read(name)
     }
 
     fn read(&mut self, name: &str) -> Form {
@@ -5611,7 +5628,8 @@ impl<'a> Builder<'a> {
                     steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
                 }
                 let back = self.read(&in_cells[0]);
-                steps.push(self.write(&name, back));
+                let home = self.address_to_rewrite(&name);
+                steps.push(Form::Write(home, Box::new(back)));
                 if gives_back {
                     steps.push(self.read(&holding));
                 }
