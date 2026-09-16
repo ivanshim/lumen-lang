@@ -4466,12 +4466,10 @@ impl<'a> Compiler<'a> {
                 a.act(Action::Plant(Rc::from(bare.as_str())), 2);
                 a.discard();
             }
-            if a.lang.explicit_this && a.lang.blocks == Blocks::Indented {
-                a.skip_intro();
-                if !a.on_sep() && a.look().shape != Shape::Open {
-                    return a.stmt();
-                }
-            }
+            // A body written on the line of its own name is read here
+            // as any body is: a method that joins its statements with
+            // the mark that ends a statement holds all of them, not
+            // only the first.
             a.body()
         });
         self.method_self = previous;
