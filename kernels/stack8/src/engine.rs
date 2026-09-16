@@ -2389,8 +2389,17 @@ impl<'a> Engine<'a> {
         }
         let depth = self.data.len();
         let active = self.caught.len();
+        // A special method the body ran may have raised, and what it
+        // raised is parked while words stand in for it on the way out.
+        // The words are not the fault; the parked value is, and it is
+        // the one the arms are shown, so that a comparison or a walk
+        // that raised inside a called function is caught by the try
+        // around the call as it is by one around the comparison itself.
         let ending = match self.run_span(program, frame, instrs, plan.body) {
-            Err(Fault::Note(words)) => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+            Err(Fault::Note(words)) => match self.carried.take() {
+                Some(fled) => Err(fled),
+                None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+            },
             other => other,
         };
         if let Some(cell) = &plan.context {
