@@ -647,6 +647,41 @@ panics on `del a["k"]` when `__delitem__` is a class-body method
 (index out of bounds at compile.rs:619) where microcode7 refuses the
 form; `self.d.__setitem__(k, v)` by name is unsupported.
 
+### 1l. Batch 4: four branches folded into #490
+
+Folded after each was checked against python3 on both kernels with
+probes of my own beside the agent's: a method written on the line of
+its own name (nine shapes); a class namespace in the order the body
+bound it (test_class's three definition-order tests pass on both);
+the sequence protocol (an object with only `__getitem__` walked until
+IndexError, enumerate, zip and map taking any user iterable lazily,
+and on microcode7 the pairs of `dict.items()` and `as_integer_ratio`
+being tuples at last, plus `__contains__ = None` blocking the fallback
+to iteration); and generators that suspend inside try, except, finally
+and with, take `throw()` and `close()`, and carry their return value
+on StopIteration (test_generators nine to twenty-four on each kernel,
+test_enumerate thirty more on each).
+
+Five scratch records move with it, each to a line both kernels print
+alike with no method regressing: file-builtin/28, file-iter/12, 13
+and 14, reader-tail/4. Every yield-bearing, dict, iterator, generator
+and class scratch program (134) was run on the combined tree under
+CI's own rule; the Python and PHP example sweeps pass (one example,
+sieve.py, timed out under load and agrees on every kernel when run
+alone).
+
+Gaps this round records: neither kernel finalises a generator that
+nothing refers to, so a `finally` around a suspended yield in an
+abandoned generator never runs (generators-run/8 records that line);
+a blocked or missing membership says the generic "special method
+returned an invalid value" where CPython says `'X' object is not a
+container` and `argument of type 'X' is not iterable` (test_contains
+asserts the latter text); `close()` follows CPython 3.13 in handing
+back what the body returned, which the local python3 3.11 does not
+do, so no probe covers it; `*args` packs into a list rather than a
+tuple; `it.__next__()` on a native iterator is an undefined variable
+(an agent is on it).
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
