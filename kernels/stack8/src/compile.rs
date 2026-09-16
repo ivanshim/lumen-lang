@@ -3829,6 +3829,8 @@ impl<'a> Compiler<'a> {
             self.class_block()?;
         } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.import_words) || self.on_keyword(&lang.import_from_words)) {
             self.class_import()?;
+        } else if lang.blocks == Blocks::Indented && self.on_keyword(&lang.del_words) {
+            self.class_removal()?;
         } else if let Some(bound) = self.class_bindings()? {
             for (named, place) in bound {
                 self.member_kept(&named, &place);
@@ -3915,6 +3917,53 @@ impl<'a> Compiler<'a> {
         }
         self.stmt()?;
         if starred { self.gathering().unready = true; }
+        Ok(())
+    }
+
+    /// `del x` in a class body takes the member back out. Its place is
+    /// emptied and the name noted as one the class may find unwritten,
+    /// so that the class formed keeps no member of that name; bound
+    /// again afterwards, it is a member again. A name the body never
+    /// bound is no member to take out: the language this follows stops
+    /// there rather than reaching past the class, and the form is
+    /// refused rather than reaching past it here. A place within a
+    /// member -- `del x[0]`, `del x.y` -- is worked as it is anywhere.
+    fn class_removal(&mut self) -> Res<()> {
+        let lang = self.lang;
+        let comma: Vec<String> = lang.calling.as_ref().and_then(|c| c.between.clone()).into_iter().collect();
+        let (commas, end) = self.outer_marks(self.pos + 1, self.tokens.len(), &comma);
+        let mut spans = Vec::new();
+        let mut left = self.pos + 1;
+        for right in commas.into_iter().chain(std::iter::once(end)) {
+            if left < right { spans.push((left, right)); }
+            left = right + 1;
+        }
+        let bare = |from: usize, to: usize| to == from + 1
+            && self.tokens[from].shape == Shape::Instr && !lang.keywords.contains(&self.tokens[from].lexeme);
+        let names = spans.iter().filter(|&&(from, to)| bare(from, to)).count();
+        if names == 0 { return self.stmt(); }
+        if names < spans.len() {
+            self.stmt()?;
+            self.gathering().unready = true;
+            return Ok(());
+        }
+        self.take();
+        for (from, _) in spans {
+            let name = self.tokens[from].lexeme.clone();
+            let Some(place) = self.member_of(&name) else {
+                self.gathering().unready = true;
+                self.pos = end;
+                return Ok(());
+            };
+            let cell = self.cell_to_write(&place);
+            self.put(Instr::Forget(cell));
+            let held = self.gathering();
+            held.methods.retain(|(old, _)| old != &name);
+            held.shared.retain(|(old, _)| old != &name);
+            held.shared.push((name.clone(), place));
+            if !held.uncertain.iter().any(|n| n == &name) { held.uncertain.push(name); }
+        }
+        self.pos = end;
         Ok(())
     }
 

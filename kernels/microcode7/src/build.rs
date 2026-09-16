@@ -2624,6 +2624,9 @@ impl<'a> Builder<'a> {
         } else if table.blocks == Blocks::Indented && (self.key("ext.stmt.import") || self.key("ext.stmt.import.from")) {
             let brought = self.class_import()?;
             setup.push(brought);
+        } else if table.blocks == Blocks::Indented && self.key("ext.stmt.del") {
+            let removal = self.class_removal()?;
+            setup.push(removal);
         } else if let Some(kept) = self.taken_apart_members(setup)? {
             for (word, place) in kept {
                 self.member_noted(&word, place);
@@ -2739,6 +2742,72 @@ impl<'a> Builder<'a> {
         let brought = self.stmt()?;
         if starred { self.parts().cannot = true; }
         Ok(brought)
+    }
+
+    /// `del x` in a class body takes the member out again. Its place is
+    /// emptied and the word noted as one the class may find unwritten,
+    /// so the class built keeps no member under it; bound afterwards,
+    /// it is a member once more. A word the body never bound is no
+    /// member to take out: the language this follows stops there
+    /// instead of reaching past the class, and the form is refused
+    /// here instead of reaching past it. A place within a member --
+    /// `del x[0]`, `del x.y` -- is worked as it is anywhere.
+    fn class_removal(&mut self) -> Res<Form> {
+        let table = self.table;
+        let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "syntax.call.separator");
+        let mut depth: Vec<String> = Vec::new();
+        let mut end = self.tokens.len();
+        for at in self.pos + 1..self.tokens.len() {
+            let word = &self.tokens[at];
+            if depth.is_empty() && (matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
+                || (word.shape == Shape::Sign && table.separates(&word.lexeme))) { end = at; break; }
+            if word.shape != Shape::Sign { continue; }
+            if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
+            for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                    break;
+                }
+            }
+        }
+        let mut spans = Vec::new();
+        let mut left = self.pos + 1;
+        for right in cuts.into_iter().chain(std::iter::once(end)) {
+            if left < right { spans.push(left..right); }
+            left = right + 1;
+        }
+        let of_a_word = |span: &std::ops::Range<usize>| span.len() == 1
+            && self.tokens[span.start].shape == Shape::Bare && !table.keywords.contains(&self.tokens[span.start].lexeme);
+        let words = spans.iter().filter(|span| of_a_word(span)).count();
+        if words == 0 { return self.stmt(); }
+        if words < spans.len() {
+            let read = self.stmt()?;
+            self.parts().cannot = true;
+            return Ok(read);
+        }
+        self.advance();
+        let mut steps = Vec::new();
+        for span in spans {
+            let word = self.tokens[span.start].lexeme.clone();
+            let known = self.class_bindings.last().and_then(|(_, names)| names.get(&word)).cloned();
+            let Some(place) = known else {
+                self.parts().cannot = true;
+                self.pos = end;
+                return Ok(constant(Value::Nil));
+            };
+            steps.push(Form::Forget(place.clone()));
+            let parts = self.parts();
+            parts.methods.retain(|(old, _)| old != &word);
+            if let Some(at) = parts.attributes.iter().position(|old| old == &word) {
+                parts.attributes.remove(at);
+                parts.held.remove(at);
+            }
+            parts.attributes.push(word.clone());
+            parts.held.push(Form::Read(place));
+            if !parts.uncertain.iter().any(|n| n == &word) { parts.uncertain.push(word); }
+        }
+        self.pos = end;
+        Ok(sequence(steps))
     }
 
     /// The working a compound sign asks for, as the write of a name
