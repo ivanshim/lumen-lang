@@ -3782,11 +3782,88 @@ impl<'a> Compiler<'a> {
                 self.write(&slot);
                 self.member_kept(held, &named, &slot);
             }
+        } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
+            && self.look_ahead(1).shape == Shape::Sign && lang.compound.contains_key(&self.look_ahead(1).lexeme) {
+            self.class_compound(held)?;
         } else {
-            self.stmt()?;
-            held.unready = true;
+            self.class_plain(held)?;
         }
         Ok(false)
+    }
+
+    /// `x += 1` in a class body. What x holds is read as the body reads
+    /// any name: from the class's own place where the body has bound x,
+    /// and from the scope around the class where it has not. What the
+    /// working comes to is a member of the class either way, as it is
+    /// in the language this follows, which looks x up the same way and
+    /// keeps the answer in the class.
+    fn class_compound(&mut self, held: &mut ClassBody) -> Res<()> {
+        let named = self.take().lexeme;
+        let sign = self.take().lexeme;
+        let op = self.compound_of(&sign).expect("a compound sign");
+        self.read(&named);
+        self.addend()?;
+        self.compound_act(op);
+        let place = self.member_place(&named, "attribute");
+        self.write(&place);
+        self.member_kept(held, &named, &place);
+        Ok(())
+    }
+
+    /// Any other statement of a class body. One that binds no name --
+    /// a call made for what it does, a write into a place within a
+    /// member, a raise or an assertion -- is read as it is read
+    /// anywhere, and the members it names it reads as the body reads
+    /// them. A statement whose bindings the walk cannot yet follow is
+    /// read the same way and the class refused, as before.
+    fn class_plain(&mut self, held: &mut ClassBody) -> Res<()> {
+        let lang = self.lang;
+        let begin = self.pos;
+        let word = self.look().clone();
+        let harmless = match word.shape == Shape::Instr && lang.keywords.contains(&word.lexeme) {
+            true => [&lang.throw_words, &lang.assert_words].iter().any(|words| Lang::spells(words, &word.lexeme)),
+            false => !self.binds_within(begin),
+        };
+        self.stmt()?;
+        if !harmless { held.unready = true; }
+        Ok(())
+    }
+
+    /// Whether the statement beginning here binds a name of the scope
+    /// it stands in: by a sign that binds within an expression, or by
+    /// a bare name standing before the sign of a write. A name followed
+    /// by a member mark, a bracket or a call names a place within
+    /// something, as does the name after a member mark, and writing
+    /// there binds nothing.
+    fn binds_within(&self, begin: usize) -> bool {
+        let lang = self.lang;
+        let signs: Vec<String> = lang.assign_words.iter().cloned().chain(lang.compound.keys().cloned()).collect();
+        let (writes, _) = self.outer_marks(begin, self.tokens.len(), &signs);
+        let target = writes.first().copied().unwrap_or(begin);
+        let mut deep = 0usize;
+        for at in begin..self.tokens.len() {
+            let word = &self.tokens[at];
+            if deep == 0 && (matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close)
+                || (word.shape == Shape::Sign && lang.ends_stmt(&word.lexeme))) { break; }
+            match word.shape {
+                Shape::Sign if Lang::spells(&lang.expression_assign, &word.lexeme) => return true,
+                Shape::Sign => {
+                    for pair in [&lang.grouping, &lang.array_brackets, &lang.map_brackets].into_iter().flatten() {
+                        if pair.open == word.lexeme { deep += 1; } else if pair.close == word.lexeme { deep = deep.saturating_sub(1); }
+                    }
+                }
+                Shape::Instr if deep == 0 && at < target && !lang.keywords.contains(&word.lexeme)
+                    && !(at > begin && Lang::spells(&lang.pipe_words, &self.tokens[at - 1].lexeme)) => {
+                    let next = &self.tokens[at + 1];
+                    let within = Lang::spells(&lang.pipe_words, &next.lexeme)
+                        || [&lang.grouping, &lang.array_brackets, &lang.index_brackets].into_iter().flatten()
+                            .any(|pair| next.shape == Shape::Sign && pair.open == next.lexeme);
+                    if !within { return true; }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn explicit_class(&mut self) -> Res<bool> {
@@ -5216,10 +5293,10 @@ impl<'a> Compiler<'a> {
     /// Turn the load of a target, already assembled from `from`, into a
     /// store of what follows the assignment sign.
     fn assignment(&mut self, from: usize, keep: Option<&str>) -> Res<()> {
-        let compound = self.lang.compound.get(&self.look().lexeme).filter(|_| self.look().shape == Shape::Sign).cloned();
-        let compound = compound.map(|op| if self.lang.set_literals {
-            match op { Action::BitEither => Action::SetWrite(0), Action::BitBoth => Action::SetWrite(1), Action::Sub => Action::SetWrite(2), Action::BitOne => Action::SetWrite(3), other => other }
-        } else { op });
+        let compound = match self.look().shape == Shape::Sign {
+            true => self.compound_of(&self.look().lexeme),
+            false => None,
+        };
         let assign = self.take().lexeme;
         let words = self.lang.scope_unready.first().cloned();
         if matches!(&self.piece().instrs[from..],
@@ -5231,6 +5308,16 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         self.store_into(from, keep, compound, &assign)
+    }
+
+    /// The working a compound sign asks for. A language with set
+    /// literals writes the workings on sets with the same signs.
+    fn compound_of(&self, sign: &str) -> Option<Action> {
+        let op = self.lang.compound.get(sign).cloned()?;
+        Some(match self.lang.set_literals {
+            true => match op { Action::BitEither => Action::SetWrite(0), Action::BitBoth => Action::SetWrite(1), Action::Sub => Action::SetWrite(2), Action::BitOne => Action::SetWrite(3), other => other },
+            false => op,
+        })
     }
 
     /// The newer compound forms keep a real's point; a plain working

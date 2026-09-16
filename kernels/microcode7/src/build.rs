@@ -2593,9 +2593,34 @@ impl<'a> Builder<'a> {
                     let value = self.comma_value()?;
                     Some((member, value))
                 } else { None }
+            } else if self.look().shape == Shape::Bare && !table.keywords.contains(&self.look().lexeme)
+                && self.glance(1).shape == Shape::Sign && table.compound.contains_key(&self.glance(1).lexeme) {
+                // `x += 1`: x is read as the body reads it, out of the
+                // class's place where the body has bound it and out of
+                // the scope around the class where it has not, and what
+                // the working makes is a member either way, since the
+                // language this follows looks x up just so and keeps
+                // the answer in the class.
+                let word = self.advance().lexeme;
+                let sign = self.advance().lexeme;
+                let op = self.compound_sign(&sign).expect("a compound sign");
+                let current = self.read(&word);
+                let added = if table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? };
+                Some((word, self.kept_after(prim_call(op, vec![current, added]))))
             } else {
-                let _read = self.stmt()?;
-                parts.cannot = true;
+                // Whatever else stands here. A statement binding no
+                // name -- a call made for its effect, a write into a
+                // place within a member, a raise or an assertion --
+                // runs as it would anywhere and reads the members as
+                // the body does; one whose bindings this walk cannot
+                // follow yet is read the same way and the class refused.
+                let word = self.look().clone();
+                let harmless = match word.shape == Shape::Bare && table.keywords.contains(&word.lexeme) {
+                    true => table.spells("ext.stmt.throw", &word.lexeme) || table.spells("ext.stmt.assert", &word.lexeme),
+                    false => !self.writes_a_name(self.pos),
+                };
+                setup.push(self.stmt()?);
+                if !harmless { parts.cannot = true; }
                 None
             };
             if let Some((word, value)) = value {
@@ -2605,6 +2630,74 @@ impl<'a> Builder<'a> {
             }
         }
         Ok(false)
+    }
+
+    /// The working a compound sign asks for, as the write of a name
+    /// does it: on sets where the language has them, on bytes where
+    /// bytes are what is written, and asked of the place itself first
+    /// where the special list reaches the in-place methods.
+    fn compound_sign(&self, sign: &str) -> Option<Prim> {
+        let table = self.table;
+        let op = *table.compound.get(sign)?;
+        let op = match table.flag("ext.syntax.set") {
+            true => match op { Prim::BitsBoth => Prim::SetAssign(1), Prim::Minus => Prim::SetAssign(2), Prim::BitsEither => Prim::SetAssign(0), Prim::BitsOne => Prim::SetAssign(3), p => p },
+            false => op,
+        };
+        let op = match table.has_any("ext.builtin.bytes") && matches!(op, Prim::Plus | Prim::Times) {
+            true => Prim::OctetAssign(op == Prim::Times),
+            false => op,
+        };
+        Some(table.landing_place(op).map_or(op, Prim::Landing))
+    }
+
+    /// Whether the statement starting here binds a name of the scope it
+    /// stands in: by a sign binding within an expression, or by a bare
+    /// name ahead of a writing sign. A name with a member mark, a
+    /// bracket or a call after it is a place within something, as is
+    /// the name after a member mark, and a write there binds nothing.
+    fn writes_a_name(&self, start: usize) -> bool {
+        let table = self.table;
+        let mut depth: Vec<String> = Vec::new();
+        let mut sign_at = None;
+        let mut end = self.tokens.len();
+        for at in start..self.tokens.len() {
+            let word = &self.tokens[at];
+            if depth.is_empty() && (matches!(word.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
+                || (word.shape == Shape::Sign && table.separates(&word.lexeme))) { end = at; break; }
+            if word.shape == Shape::Sign && table.spells("ext.op.assign.expression", &word.lexeme) { return true; }
+            if depth.is_empty() && sign_at.is_none() && word.shape == Shape::Sign
+                && (table.spells("stmt.assign", &word.lexeme) || table.compound.contains_key(&word.lexeme)) { sign_at = Some(at); }
+            if word.shape != Shape::Sign { continue; }
+            if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
+            for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                    break;
+                }
+            }
+        }
+        let Some(sign_at) = sign_at else { return false; };
+        // Bare names at the outer level of the target, before the sign.
+        depth.clear();
+        for at in start..sign_at.min(end) {
+            let word = &self.tokens[at];
+            let after_mark = at > start && table.spells("op.pipe", &self.tokens[at - 1].lexeme);
+            if depth.is_empty() && word.shape == Shape::Bare && !table.keywords.contains(&word.lexeme) && !after_mark {
+                let next = &self.tokens[at + 1];
+                let within = table.spells("op.pipe", &next.lexeme)
+                    || (next.shape == Shape::Sign && ["syntax.group.open", "syntax.array.open", "syntax.call.open"].iter().any(|label| table.spells(label, &next.lexeme)));
+                if !within { return true; }
+            }
+            if word.shape != Shape::Sign { continue; }
+            if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
+            for family in ["syntax.group", "syntax.array", "syntax.map"] {
+                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                    break;
+                }
+            }
+        }
+        false
     }
 
     fn class_not_ready(&self) -> Form {
