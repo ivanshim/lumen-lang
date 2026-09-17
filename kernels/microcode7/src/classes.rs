@@ -427,6 +427,9 @@ impl<'a> Machine<'a> {
         match f {
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
+            // A method tied to a value of a native kind, reached as a
+            // value of its own and then called.
+            Value::Member(receiver,operation)=>self.value_member(&receiver,&operation,values,Vec::new()),
             Value::Method(code,thing)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
             // A thing called stands on its own call member, which may
             // be a thing again. Reaching through one makes no frame, so
@@ -449,6 +452,20 @@ impl<'a> Machine<'a> {
                         self.thing_over_native(c,&word,values)
                     }
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
+                    // An entry a native kind carries, standing loose:
+                    // the first value handed to it is the one it works
+                    // upon, the rest being what the entry itself takes.
+                    60 if !values.is_empty()=>{
+                        // The value comes in as the cell that holds
+                        // it, so a member that writes writes into the
+                        // very one the caller named.
+                        let subject=values.remove(0).keep(false);
+                        let entry=kept[1].bare();
+                        match self.attribute(&subject,&entry) {
+                            Some(bound)=>self.apply_class_member(bound,values),
+                            None=>Err(self.absent_attribute(&subject,&entry)),
+                        }
+                    }
                     4|8=>self.apply_class_member(kept[0].clone(),values),
                     // The root's formatting of a thing to a specification.
                     59 if values.len()==2=>{
@@ -633,6 +650,10 @@ impl<'a> Machine<'a> {
                     return Ok(if listed {Self::wrap(0,vec![line])} else {line});
                 }
             }
+            // Everything a value of the kind answers to the kind itself
+            // carries, standing loose: the value worked upon is the
+            // first the entry is handed when it is called.
+            if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
         }
         if let Value::Blueprint(b)=&value {
             if key==self.detail("name"){return Ok(Value::text(&b.name));}

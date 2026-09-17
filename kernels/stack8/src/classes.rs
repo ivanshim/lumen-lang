@@ -416,10 +416,13 @@ impl<'a> Engine<'a> {
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
         Self::own_class_value(c,name).or_else(|| c.lineage.iter().find_map(|b| Self::own_class_value(b,name)))
     }
-    fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
+    pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
+            // A method bound to a value of a builtin kind, reached as a
+            // value in its own right and then called.
+            Value::ValueMethod(bound) => Ok(self.value_method(&bound.0,&bound.1,args,Vec::new())?),
             Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
@@ -444,6 +447,17 @@ impl<'a> Engine<'a> {
                     self.thing_of_kind(c, &word, args)
                 }
                 3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
+                // A member a builtin kind carries, standing loose: the
+                // first value it is called with is the one it works
+                // upon, and the rest are what the member itself takes.
+                29 if !args.is_empty() => {
+                    let subject = args.remove(0);
+                    let member = w.1[1].plain();
+                    match self.builtin_member(&subject,&member)? {
+                        Some(bound) => self.class_apply(bound,args),
+                        None => Err(self.missing_member(&subject,&member)),
+                    }
+                }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
                 13 if args.len() == 1 => {
                     let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
@@ -627,6 +641,10 @@ impl<'a> Engine<'a> {
                     let line=Value::Tuple(Rc::new(vec![Value::Class(kind),Value::Class(root)]));
                     return Ok(if listed {Self::adapter(0,vec![line])} else {line});
                 }
+                // Whatever a value of the kind answers to is carried by
+                // the kind itself, standing loose: the value it works
+                // upon is the first it is called with.
+                if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }

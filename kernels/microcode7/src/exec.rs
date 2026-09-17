@@ -5235,7 +5235,22 @@ impl<'a> Machine<'a> {
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
+    /// What a native kind carries under a name, asked of the kind's own
+    /// word rather than of a value of it. Such an entry stands loose:
+    /// the value it works upon is the first it is handed when it is
+    /// called, as an unbound method is handed one. Nothing where the
+    /// word names no native kind, or where that kind carries nothing
+    /// under the name.
+    pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
+        let Value::Intrinsic(word) = value else { return None };
+        if !self.table.spells("ext.stmt.class.builtin", word) { return None; }
+        let stand_in = self.kind_stand_in(word)?;
+        if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
+        Some(Value::Wrapped(60, Rc::new(vec![Value::text(word), Value::text(name)])))
+    }
+
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
+        if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
         let names = self.table.strings("ext.stmt.class.special");
         if let Value::Span(bounds) = value {
             return self.span_bound_named(name).map(|i| bounds[i].clone());
@@ -5645,7 +5660,7 @@ impl<'a> Machine<'a> {
         Err(Escape::Thrown(gathered))
     }
 
-    fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+    pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         // One more member set on the end of a list, in the place the
         // list already occupies. This comes first of all: further down
         // the contents are read out into a worth of their own, and a
@@ -9120,6 +9135,8 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(c) => (Some(c), false),
                     _ => (None, false),
                 };
+                // What a value of a native kind answers to is carried by the kind as well.
+                if self.carried_by_kind(&v[0], &word).is_some() { return Ok(Value::Flag(true)); }
                 let native = matches!(v[0], Value::Text(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
                 Value::Flag(native || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
