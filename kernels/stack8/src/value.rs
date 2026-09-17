@@ -550,6 +550,16 @@ impl Value {
                 return Ok(format!("beyond{}", if number.p.is_negative() { "-" } else { "+" }));
             }
         }
+        // A span of numbers is keyed by the places it names: how many
+        // there are, where they begin and how far apart they stand, so
+        // that two spans naming the same places are one key. A span of
+        // one place has no stride to it, and an empty one no start.
+        if let Value::Counted(span) = self {
+            let length = span.length();
+            if length.is_zero() { return Ok("span0".into()); }
+            if length.is_one() { return Ok(format!("span1/{}", span.start)); }
+            return Ok(format!("span{}/{}/{}", length, span.start, span.step));
+        }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);

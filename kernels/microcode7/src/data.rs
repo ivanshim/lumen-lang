@@ -422,6 +422,16 @@ impl Value {
             Value::Dict(_) => Err("dict"),
             Value::Set(_) => Err("set"),
             Value::Text(word) => Ok(format!("text:{word}")),
+            // A progression is addressed by the places it names: their
+            // count, where they begin and how far apart they stand, so
+            // that two naming the same places share one address. One of
+            // a single place has no stride, an empty one no start.
+            Value::Progression(sequence) => {
+                let count = sequence.count();
+                if count.is_zero() { return Ok("walk:0".to_owned()); }
+                if count.is_one() { return Ok(format!("walk:1:{}", sequence.first)); }
+                Ok(format!("walk:{}:{}:{}", count, sequence.first, sequence.stride))
+            }
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
