@@ -2199,7 +2199,9 @@ impl<'a> Engine<'a> {
                 None => return Err(Self::named_fault(&self.lang.call_unknown, &name).into()),
             }
         }
-        if let Some(i) = rest { frame[i] = Value::array(tail); }
+        // What a gathering place takes is a tuple, as the language has
+        // it: the spare worths stand together and cannot be changed.
+        if let Some(i) = rest { frame[i] = Value::Tuple(Rc::new(tail)); }
         if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords)); }
         for (i, value) in frame.iter().enumerate() {
             if matches!(value, Value::Blank) && !program.carried.contains(&i) {
