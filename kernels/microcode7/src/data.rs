@@ -256,11 +256,24 @@ pub struct SetStore {
     pub entries: Vec<(String, Value)>,
     pub keys: std::collections::HashSet<String>,
     pub spelling: String,
+    /// Whether nothing may alter this store. The kind the set is of is
+    /// kept here, beside the entries, so that whoever holds the store
+    /// knows the kind without going back to the table for the word.
+    pub sealed: bool,
 }
 
 impl SetStore {
-    pub fn new(spelling: &str) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into() }
+    pub fn new(spelling: &str, sealed: bool) -> SetStore {
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed }
+    }
+
+    /// The address the whole store takes where a set or a map holds it:
+    /// the addresses of its entries, ordered, so that two stores of the
+    /// same entries take the one address however either was gathered.
+    pub fn whole_address(&self) -> String {
+        let mut places: Vec<&str> = self.entries.iter().map(|(address, _)| address.as_str()).collect();
+        places.sort_unstable();
+        format!("sealed:{places:?}")
     }
 
     pub fn put(&mut self, address: String, item: Value) {
@@ -281,7 +294,7 @@ impl SetStore {
     }
 
     pub fn merge(&self, rhs: &SetStore, rule: u8) -> SetStore {
-        let mut answer = SetStore::new(&self.spelling);
+        let mut answer = SetStore::new(&self.spelling, self.sealed);
         for (key, item) in self.entries.iter().chain(rhs.entries.iter()) {
             let left = self.keys.contains(key);
             let right = rhs.keys.contains(key);
@@ -291,12 +304,17 @@ impl SetStore {
         answer
     }
 
+    /// The store written out. An empty one names its kind with nothing
+    /// between its brackets; a sealed one names its kind before the
+    /// braces, since no writing in a program stands for such a set and
+    /// braces alone would read as the kind that may be altered.
     pub fn written(&self, item_text: impl Fn(&Value) -> String) -> String {
         match self.entries.len() {
             0 => self.spelling.clone() + "()",
             _ => {
                 let words = self.entries.iter().map(|(_, item)| item_text(item)).collect::<Vec<_>>();
-                "{".to_owned() + &words.join(", ") + "}"
+                let inner = "{".to_owned() + &words.join(", ") + "}";
+                if self.sealed { self.spelling.clone() + "(" + &inner + ")" } else { inner }
             }
         }
     }
@@ -414,6 +432,19 @@ impl Value {
         }
     }
 
+    /// Whether a value is a set nothing may alter, read through the
+    /// cells that may stand between a name and the set itself. A set
+    /// held open whilst its entries are read answers as one that may
+    /// be altered, nothing being askable of it at such a moment.
+    pub fn set_sealed(&self) -> bool {
+        match self {
+            Value::Set(store) => store.try_borrow().map_or(false, |held| held.sealed),
+            Value::SetCursor { source, .. } => source.try_borrow().map_or(false, |held| held.sealed),
+            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().set_sealed(),
+            _ => false,
+        }
+    }
+
     pub fn hash_address(&self) -> Result<String, &'static str> {
         match self {
             Value::Tuple(items) | Value::Row(items) => {
@@ -423,7 +454,12 @@ impl Value {
             Value::Shared(slot) | Value::Mutable(slot, _) => slot.borrow().hash_address(),
             Value::Vector(_) => Err("list"),
             Value::Dict(_) => Err("dict"),
-            Value::Set(_) => Err("set"),
+            // A sealed set is addressed by what it holds; one that may
+            // be altered has no address at all.
+            Value::Set(store) => match store.try_borrow() {
+                Ok(held) if held.sealed => Ok(held.whole_address()),
+                _ => Err("set"),
+            },
             Value::Text(word) => Ok(format!("text:{word}")),
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so

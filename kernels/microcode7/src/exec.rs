@@ -2645,15 +2645,18 @@ impl<'a> Machine<'a> {
         Ok(kept)
     }
 
-    /// The words refusing a key no map can hold, naming the kind of what
-    /// was offered: a list, a dict or a set, at any depth inside a tuple.
-    /// Nothing where the key will do, or the table has no such words.
+    /// The words refusing a key no map can hold, naming the kind of
+    /// what was offered: a list, a dict or a set that may be altered,
+    /// at any depth inside a tuple. A sealed set keys a map as its own
+    /// entries let it, so it is no offence. Nothing where the key will
+    /// do, or the table has no such words.
     fn cannot_key(&self, key: &Value) -> Option<String> {
         let words = self.table.strings("ext.syntax.map.unhashable");
         let [head, tail] = words else { return None };
         fn culprit(value: &Value) -> Option<String> {
             match value {
                 Value::Mutable(cell, _) | Value::Shared(cell) => culprit(&cell.borrow()),
+                Value::Set(_) if value.set_sealed() => None,
                 Value::Vector(_) | Value::Dict(_) | Value::Set(_) => Some(value.kind_word()),
                 Value::Tuple(items) | Value::Row(items) => items.iter().find_map(culprit),
                 _ => None,
@@ -4966,7 +4969,7 @@ impl<'a> Machine<'a> {
             Prim::Listed => Value::Vector(Rc::new(Vec::new())),
             Prim::Tupling => Value::Tuple(Rc::new(Vec::new())),
             Prim::Dictionary => Value::Dict(Rc::new(Vec::new())),
-            Prim::Uniques => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
+            kind @ (Prim::Uniques | Prim::Unchanging) => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word, *kind == Prim::Unchanging)))),
             Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
             _ => return None,
         })
@@ -4994,7 +4997,7 @@ impl<'a> Machine<'a> {
                 // text nor how it shows is a method of it, and of the
                 // bytes primitives only those a run of bytes answers to.
                 Prim::Textual(work) => mark == 's' && !matches!(work, crate::text::Work::LENGTH | crate::text::Work::REPR),
-                Prim::SetCall(1..=17) => mark == 'e',
+                Prim::SetCall(code @ 1..=17) => mark == 'e' || mark == 'E' && !Self::set_alters(code),
                 Prim::Octets(3 | 4 | 6..=13) => "bB".contains(mark),
                 _ => false,
             };
@@ -5027,7 +5030,7 @@ impl<'a> Machine<'a> {
             Value::Vector(_) => 'l',
             Value::Tuple(_) | Value::Row(_) => 't',
             Value::Dict(_) => 'd',
-            Value::Set(_) => 'e',
+            Value::Set(ref store) => if store.try_borrow().map_or(false, |held| held.sealed) { 'E' } else { 'e' },
             Value::Progression(_) => 'p',
             _ => return None,
         })
@@ -5044,17 +5047,24 @@ impl<'a> Machine<'a> {
     fn mark_answers(mark: char, at: usize) -> bool {
         let counts = "nrqc".contains(mark);
         let lined = "sbBltp".contains(mark);
-        let holds = lined || "de".contains(mark);
+        let holds = lined || "deE".contains(mark);
         let joins = "sbBlt".contains(mark);
+        // Both set kinds answer for the workings a set is written with;
+        // only the alterable one answers for a write through them, and
+        // only the sealed one for a hash of its own.
+        let uniques = "eE".contains(mark);
         // A walk and a window both stand for something else, which is
         // what reads and compares, so neither answers for itself.
         let alone = !"wWV".contains(mark);
         match at {
             0..=7 => alone,
             8 => alone && !"ldeB".contains(mark),
+            // A sealed set has a hash of its own; the eighth place
+            // above leaves the alterable set out and lets this stand.
+
             9 => counts,
             10 => holds || "WV".contains(mark),
-            11 => holds && mark != 'e',
+            11 => holds && !uniques,
             // A run of bytes is written into place by place, but no
             // kernel here takes a place out of one, by sign or by name.
             12 => "ldB".contains(mark),
@@ -5063,7 +5073,7 @@ impl<'a> Machine<'a> {
             15 => holds || "wWV".contains(mark),
             16 => mark == 'w',
             18 | 20 | 28 => counts || joins,
-            19 => counts || mark == 'e',
+            19 => counts || uniques,
             21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => counts,
             22 | 30 | 60 | 61 => counts && mark != 'c',
             23 | 31 => counts && mark != 'c' || "sbB".contains(mark),
@@ -5071,10 +5081,17 @@ impl<'a> Machine<'a> {
             47 | 49 => mark == 'l',
             48 | 57 | 59 => mark == 'e',
             58 => "ed".contains(mark),
-            64 | 66 | 69 | 71 => "ne".contains(mark),
-            65 | 70 => "ned".contains(mark),
+            64 | 66 | 69 | 71 => mark == 'n' || uniques,
+            65 | 70 => "nd".contains(mark) || uniques,
             _ => false,
         }
+    }
+
+    /// Whether a numbered set working alters the set it is handed. A
+    /// sealed set answers to none of these: the words name no member of
+    /// it whatever, as the reference has it.
+    fn set_alters(code: u8) -> bool {
+        matches!(code, 1..=5 | 7 | 15..=17)
     }
 
     /// Whether a working of the kind marked first takes a value of the
@@ -5090,6 +5107,9 @@ impl<'a> Machine<'a> {
             'q' => "nrq".contains(other),
             'c' => "nrc".contains(other),
             'b' | 'B' => "bB".contains(other),
+            // Either set kind works with either, so that a set and a
+            // sealed one meet under the one sign.
+            'e' | 'E' => "eE".contains(other),
             _ => mark == other,
         }
     }
@@ -5276,8 +5296,14 @@ impl<'a> Machine<'a> {
         // before are members of one: making bytes out of text belongs
         // to text, and making a row out of a number or out of written
         // hexadecimal belongs to no row at all.
-        if matches!((value.settled(), self.table.prims.get(name)),
-            (Value::Set(_), Some(Prim::SetCall(1..=17))) | (Value::Octets { .. }, Some(Prim::Octets(3 | 6..=13)))) {
+        // A sealed set holds no altering working of its own, so no
+        // member of that name is to be found upon it.
+        let setted = match self.table.prims.get(name) {
+            Some(Prim::SetCall(code @ 1..=17)) => matches!(value.settled(), Value::Set(_)) && !(Self::set_alters(*code) && value.set_sealed()),
+            _ => false,
+        };
+        if setted || matches!((value.settled(), self.table.prims.get(name)),
+            (Value::Octets { .. }, Some(Prim::Octets(3 | 6..=13)))) {
             return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()])));
         }
         let class = match value {
@@ -5763,7 +5789,8 @@ impl<'a> Machine<'a> {
             }
         }
         if matches!(receiver.settled(), Value::Set(_)) {
-            let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None };
+            let code = match name { "remove" => Some(2), "pop" => Some(4), "clear" => Some(5), "copy" => Some(6), "update" => Some(7), _ => None }
+                .filter(|code| !(Self::set_alters(*code) && receiver.set_sealed()));
             if let Some(code) = code {
                 if !keywords.is_empty() { return Err(self.set_complaint("arguments", "").into()); }
                 let mut values = vec![receiver.settled()]; values.extend(arguments);
@@ -8310,8 +8337,10 @@ impl<'a> Machine<'a> {
                 let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
                 // Two of one kind may still order themselves, as sets and
                 // rows do; two of different kinds, or of a kind without any
-                // order, cannot.
-                let orderless = left.kind_word() != right.kind_word() || matches!(left, Value::Nil | Value::Dict(_));
+                // order, cannot. The two set kinds count as one kind
+                // here, either holding entries the other may hold too.
+                let paired = matches!((&left, &right), (Value::Set(_), Value::Set(_)));
+                let orderless = left.kind_word() != right.kind_word() && !paired || matches!(left, Value::Nil | Value::Dict(_));
                 if orderless && !(counts(&left) && counts(&right)) && !texts && !matches!((&left, &right), (Value::Thing(_), _) | (_, Value::Thing(_))) && math::below(&left, &right).is_none() {
                     let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
                     return Err(format!("{before}{sign}{between}{}{and}{}{after}", left.kind_word(), right.kind_word()));
@@ -8677,7 +8706,11 @@ impl<'a> Machine<'a> {
                 let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
                 let answer = self.prim(ordinary, name, v)?;
                 match (&v[0], &answer) {
-                    (Value::Set(place), Value::Set(updated)) => {
+                    // Nothing is written through a sealed set: the plain
+                    // working stands and what it made is handed back, so
+                    // that the name takes the new set, the reference
+                    // finding no altering member of that name either.
+                    (Value::Set(place), Value::Set(updated)) if !v[0].set_sealed() => {
                         place.replace(updated.borrow().clone());
                         v[0].clone()
                     }
@@ -10669,7 +10702,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
                 else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -10932,7 +10965,7 @@ impl<'a> Machine<'a> {
                         // What a routine keeps under its names, seen as
                         // a view of the entries, is of the dictionary kind.
                         Value::Attributes(_) => Some(Prim::Dictionary),
-                        Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
+                        Value::Set(_) => Some(if v[0].set_sealed() { Prim::Unchanging } else { Prim::Uniques }), Value::Tuple(_) => Some(Prim::Tupling),
                         Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
                     };
                     if let Some(operation) = wanted {
@@ -11364,7 +11397,7 @@ impl<'a> Machine<'a> {
         let celled = |wanted: fn(&Value) -> bool| matches!(&worth, Value::Mutable(cell, _) if wanted(&cell.borrow()));
         let rows = celled(|held| matches!(held, Value::Vector(_)));
         let pairs = celled(|held| matches!(held, Value::Dict(_)));
-        let uniques = matches!(worth, Value::Set(_));
+        let uniques = matches!(worth, Value::Set(_)) && !worth.set_sealed();
         let writes = match plain {
             Prim::OctetAssign(_) => rows && self.works_sequences(),
             Prim::SetAssign(0) => uniques || pairs && self.table.flag("ext.op.bit.or.maps"),
@@ -11742,7 +11775,7 @@ impl<'a> Machine<'a> {
     }
 
     fn gather_set(&mut self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
-        let gathered = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""))));
+        let gathered = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""), false)));
         if let Some(source) = source {
             for item in self.gathered_members(source)? { self.set_include(&gathered, item)?; }
         }
@@ -13309,7 +13342,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -13758,14 +13791,17 @@ impl Machine<'_> {
                 let found = self.identities.iter().position(|old| *old == stamp).unwrap_or_else(|| { self.identities.push(stamp); self.identities.len()-1 });
                 Ok(Value::Small(found as i64 + 1))
             }
-            Tupling | Uniques => {
+            Tupling | Uniques | Unchanging => {
                 require(0, 1)?;
                 let entries = match input.first() { Some(v) => self.core_collect(v)?, None => Vec::new() };
                 if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
                 // A thing among the entries goes in as the set literal puts
                 // it in, under its own hash and its own equality; any other
-                // entry with no hash is refused.
-                let store = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""))));
+                // entry with no hash is refused. The sealed kind is
+                // gathered the very same way and differs only in kind.
+                let sealed = op == Unchanging;
+                let tag = if sealed { "ext.builtin.frozenset" } else { "ext.builtin.set" };
+                let store = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single(tag).unwrap_or(""), sealed)));
                 for entry in entries {
                     // An entry of a native kind with no hash of its own is
                     // refused by its kind, as the table has it.

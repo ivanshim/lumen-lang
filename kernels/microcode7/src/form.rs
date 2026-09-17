@@ -87,6 +87,8 @@ pub enum Prim {
     BindValueMethod,
     SortedValues,
     Belongs, Tupling, Uniques, Ordered, Backwards, Numbered, Zipped, Mapped, Filtered, EveryTrue, Least, Greatest, Magnitude, Rounded, QuotRem, Powered, Hexadecimal, Octal, Binary, Quoted, Truthful, CallableValue, IdentityOf, Hashed, NextItem, HasAttribute, GetMember, SetMember, DropMember, MembersOf,
+    /// The maker of a set nothing may alter: a kind apart from Uniques.
+    Unchanging,
     SetCall(u8),
     /// Gather the parts naming a span within brackets.
     SliceBounds,

@@ -337,11 +337,16 @@ pub struct Members {
     pub row: Vec<String>,
     pub held: std::collections::HashMap<String, Value>,
     pub word: String,
+    /// Whether these are the members of a set that cannot be changed.
+    /// The kind a set is of stands here, beside the members themselves,
+    /// so that whoever holds the members knows which kind they are of
+    /// without asking the definition for the word again.
+    pub fixed: bool,
 }
 
 impl Members {
-    pub fn empty(word: String) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::new(), word }
+    pub fn empty(word: String, fixed: bool) -> Self {
+        Self { row: Vec::new(), held: std::collections::HashMap::new(), word, fixed }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
@@ -369,7 +374,7 @@ impl Members {
     }
 
     pub fn combine(&self, other: &Self, how: u8) -> Self {
-        let mut result = Self::empty(self.word.clone());
+        let mut result = Self::empty(self.word.clone(), self.fixed);
         for key in &self.row {
             let shared = other.held.contains_key(key);
             if how == 0 || (how == 1 && shared) || (how >= 2 && !shared) {
@@ -384,9 +389,26 @@ impl Members {
         result
     }
 
+    /// The members written out. An empty set names its kind and shows
+    /// nothing between braces at all; a set that cannot be changed
+    /// names its kind before the braces, since nothing written in the
+    /// program stands for one and the braces alone would read as the
+    /// changeable kind.
     pub fn show(&self, shown: impl Fn(&Value) -> String) -> String {
         if self.row.is_empty() { return format!("{}()", self.word); }
-        format!("{{{}}}", self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", "))
+        let apart = self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", ");
+        if self.fixed { return format!("{}({{{}}})", self.word, apart); }
+        format!("{{{apart}}}")
+    }
+
+    /// The address the whole of these members takes where a set or a
+    /// map holds them: the addresses of the members themselves, put in
+    /// order so that two sets of the same members share the one
+    /// address however either was gathered.
+    pub fn address(&self) -> String {
+        let mut places = self.row.clone();
+        places.sort();
+        format!("frozen:{places:?}")
     }
 }
 
@@ -536,6 +558,18 @@ impl Value {
         text
     }
 
+    /// Whether a value is a set that cannot be changed, read through
+    /// whatever cells stand between a name and the set itself. A set
+    /// held whilst its members are being read answers as a changeable
+    /// one, since nothing may ask it anything at such a moment.
+    pub fn set_fixed(&self) -> bool {
+        match self {
+            Value::Set(members) | Value::SetWalk(members, _) => members.try_borrow().map_or(false, |held| held.fixed),
+            Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => cell.borrow().set_fixed(),
+            _ => false,
+        }
+    }
+
     pub fn member_key(&self) -> Result<String, &'static str> {
         if let Value::Tuple(items) = self {
             let keys = items.iter().map(Value::member_key).collect::<Result<Vec<_>, _>>()?;
@@ -575,7 +609,12 @@ impl Value {
             Value::Ellipsis => Ok("dots".into()),
             Value::Array(_) => Err("list"),
             Value::Map(_) => Err("dict"),
-            Value::Set(_) => Err("set"),
+            // A set that cannot be changed is addressed by what it
+            // holds; a changeable one has no address at all.
+            Value::Set(members) => match members.try_borrow() {
+                Ok(held) if held.fixed => Ok(held.address()),
+                _ => Err("set"),
+            },
             Value::Bond(cell) => cell.borrow().member_key(),
             _ => Err(""),
         }

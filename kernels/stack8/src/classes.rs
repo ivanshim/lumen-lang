@@ -879,7 +879,7 @@ impl<'a> Engine<'a> {
     /// much a refusal there as a number would be.
     pub(super) fn kind_builtin(op:&Builtin)->bool {
         matches!(op,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::SortOf|Builtin::List|Builtin::Dict
-            |Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Span
+            |Builtin::Tuple|Builtin::Set|Builtin::Frozen|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Span
             |Builtin::Enumerate|Builtin::Zip|Builtin::Map|Builtin::Filter|Builtin::Reversed|Builtin::MakeSlice
             |Builtin::ClassTool(9..=11))
     }
@@ -913,7 +913,8 @@ impl<'a> Engine<'a> {
             Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
             Builtin::Dict=>matches!(value,Value::Map(_)),
             Builtin::Tuple=>matches!(value,Value::Tuple(_)),
-            Builtin::Set=>matches!(value,Value::Set(_)),
+            Builtin::Set=>matches!(value,Value::Set(_))&&!value.set_fixed(),
+            Builtin::Frozen=>value.set_fixed(),
             Builtin::Bool=>matches!(value,Value::Flag(_)),
             Builtin::Complex=>matches!(value,Value::Complex(_)),
             Builtin::Span=>matches!(value,Value::Counted(_)),

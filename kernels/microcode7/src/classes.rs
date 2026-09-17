@@ -883,7 +883,7 @@ impl<'a> Machine<'a> {
     /// refusal there as a number is.
     pub(super) fn names_a_kind(op:&Prim)->bool {
         matches!(op,Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::SortOf|Prim::Listed|Prim::Dictionary
-            |Prim::Tupling|Prim::Uniques|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1)|Prim::Span
+            |Prim::Tupling|Prim::Uniques|Prim::Unchanging|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1)|Prim::Span
             |Prim::Numbered|Prim::Zipped|Prim::Mapped|Prim::Filtered|Prim::Backwards|Prim::SpanOf
             |Prim::ClassWork(9..=11))
     }
@@ -916,7 +916,8 @@ impl<'a> Machine<'a> {
             Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(_)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
             Prim::Dictionary=>matches!(value,Value::Dict(_)),
             Prim::Tupling=>matches!(value,Value::Tuple(_)),
-            Prim::Uniques=>matches!(value,Value::Set(_)),
+            Prim::Uniques=>matches!(value,Value::Set(_))&&!value.set_sealed(),
+            Prim::Unchanging=>value.set_sealed(),
             Prim::Truthful=>matches!(value,Value::Flag(_)),
             Prim::ComplexMade=>matches!(value,Value::Complex(_)),
             Prim::Span=>matches!(value,Value::Progression(_)),
