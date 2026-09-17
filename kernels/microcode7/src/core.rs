@@ -26,6 +26,8 @@ impl Value {
             Self::Text(_) => "str", Self::Vector(_) => "list", Self::Flag(_) => "bool",
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
             Self::Nil => "NoneType", Self::Progression(_) => "range",
+            Self::Octets { changeable, .. } => if *changeable { "bytearray" } else { "bytes" },
+            Self::Generator(_) => "generator",
             // An iterator takes the name CPython gives what it walks.
             Self::Iterator(cell) => return cell.try_borrow().map_or("iterator", |state| match &state.kind {
                 IteratorKind::Living(..) => "list_iterator",

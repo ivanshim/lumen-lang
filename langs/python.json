@@ -881,11 +881,26 @@
     "AttributeError: object has no attribute '",
     "'"
   ],
+  "ext.builtin.member.absent.class": [
+    "AttributeError: type object '",
+    "' has no attribute '",
+    "'"
+  ],
+  "ext.builtin.member.absent.module": [
+    "AttributeError: module '",
+    "' has no attribute '",
+    "'"
+  ],
   "ext.builtin.member.get": [
     "getattr"
   ],
   "ext.builtin.member.set": [
     "setattr"
+  ],
+  "ext.builtin.member.unwritable": [
+    "AttributeError: '",
+    "' object has no attribute '",
+    "' and no __dict__ for setting new attributes"
   ],
   "ext.builtin.method.append": [
     "append"
@@ -924,7 +939,9 @@
     "TypeError: invalid method arguments"
   ],
   "ext.builtin.method.error.attribute": [
-    "AttributeError: value has no such method"
+    "AttributeError: '",
+    "' object has no attribute '",
+    "'"
   ],
   "ext.builtin.method.error.bytes": [
     "NotImplementedError: bytes are not available"
@@ -1922,6 +1939,7 @@
   ],
   "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
+  "ext.op.arithmetic.strict": true,
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="
@@ -3048,6 +3066,9 @@
   ],
   "ext.text.format.brace.open": [
     "ValueError: expected '}' before end of string"
+  ],
+  "ext.text.format.brace.single": [
+    "ValueError: Single '{' encountered in format string"
   ],
   "ext.text.format.character": [
     "OverflowError: %c arg not in range(0x110000)"

@@ -1145,6 +1145,19 @@ only. The extension labels so far, all from PHP:
   one in arithmetic, numeric comparison and conversion to a real.
   Identity keeps the kinds apart, and bit operations keep their own
   rule for two flags.
+- `ext.op.arithmetic.strict`: a switch holding arithmetic to the kinds
+  it has a meaning for. With it on, text takes part in arithmetic only
+  where it joins with text, stands repeated a whole number of times, or
+  is given values to write into it, and nothing at all takes no part
+  whatever; text is no longer read for the number it might spell when a
+  number is wanted, and nothing no longer counts as nought. A joining
+  whose left side is a sequence is refused in `ext.op.sequence.concat`'s
+  words, which name that side's kind twice; every other refusal is told
+  in `ext.stmt.class.binary.amiss`'s, which name the sign and both
+  kinds, and a compound write names the sign in its compound spelling.
+  Repetition and writing into text keep their own refusals, which name
+  what they were handed. With the switch off a kernel reads both as it
+  always did.
 - Python keeps the shared arithmetic at this stage: `//` truncates toward
   zero and `%` is `a - b * (a // b)`. Thus `-17 // 5` is `-3` and
   `-17 % 5` is `-2`, unlike CPython's `-4` and `3`. The shared library's
@@ -2017,9 +2030,14 @@ only. The extension labels so far, all from PHP:
   hexadecimal real and for one too large to hold.
 - `ext.builtin.method.error.arguments`, `.attribute`, `.separator`,
   `.substring`, `.pop`, `.index`, `.remove`, `.list_index` and `.fill`:
-  lists holding the complaints for bad arguments, an absent method, an
+  lists holding the complaints for bad arguments, an absent member, an
   empty separator, an absent substring, an empty pop, an out-of-bounds
   pop, an absent member to remove or seek, and a bad fill character.
+  `.attribute` holds three pieces: the name of the value's kind stands
+  between the first two and the member's name between the last two, so
+  that the complaint names both. It is said wherever a value of a
+  builtin kind is asked for a member its kind does not give it, by a
+  method call, by a member read, or by the member-reading builtin.
   `.key` precedes the missing key. `.format`, `.missing` and `.mixed`
   give the complaints for malformed fields, missing positional fields,
   and mixing automatic with explicit numbering. `.unready`, `.bytes`,
@@ -3195,6 +3213,18 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.module.helper.amiss`: the complaint for unsuitable
   arguments to namespace and class-making helpers. `ext.builtin.member.absent`
   holds two pieces surrounding an attribute name which lookup cannot find.
+  `ext.builtin.member.unwritable` holds three pieces shaped as
+  `ext.builtin.method.error.attribute` is, and stands in its place when
+  such a member is written or taken away rather than read: a value of a
+  builtin kind, and a thing whose class names the members it holds, keep
+  no namespace of their own to put a new member in.
+  `ext.builtin.member.absent.class` and `ext.builtin.member.absent.module`
+  hold three pieces each, shaped the same way, and stand in that label's
+  place where the member was sought on a kind or on a module rather than
+  on a value: a kind's own name, or the name a module was read in under,
+  stands between the first two pieces, since neither is named by the
+  kind it is of. They are said wherever such a member is read, written,
+  taken away, or asked after by the member-reading builtins.
 
 - `ext.builtin.class.derive`: a builtin making a fresh class from a name,
   one parent class and a map of shared members. The new class inherits
@@ -3440,9 +3470,14 @@ only. The extension labels so far, all from PHP:
 - `ext.text.format.numbered.auto` and `.numbered.manual`: what is said of
   changing from manual to automatic field numbering, or the other way.
   `ext.text.format.index` encloses a missing positional index;
-  `ext.text.format.key` encloses a missing map or keyword name.
-- `ext.text.format.brace.open` and `.brace.close`: complaints for an
-  unfinished field or a lone closing brace. `ext.text.format.conversion`
+  `ext.text.format.key` encloses a missing map or keyword name. Where the
+  language names its exceptions, the absent name is carried by the fault
+  itself, as a lookup on a map carries it, and these words stand only
+  where it names none.
+- `ext.text.format.brace.open`, `.brace.single` and `.brace.close`:
+  complaints for a field left unfinished, for an opening brace that is
+  the last letter of the text, and for a lone closing brace.
+  `ext.text.format.conversion`
   precedes an unknown conversion letter. `ext.text.format.recursion` says
   that nested specifications have gone deeper than two levels.
 - `ext.op.rem.format.few`, `.many` and `.mapping`: complaints for too few
@@ -4136,8 +4171,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.math.floating` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.max` | - | - | `max` | - | - | - | - | - | - | - |
 | `ext.builtin.member.absent` | - | - | `AttributeError: object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.member.absent.class` | - | - | `AttributeError: type object '` `' has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.builtin.member.absent.module` | - | - | `AttributeError: module '` `' has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.member.get` | - | - | `getattr` | - | - | - | - | - | - | - |
 | `ext.builtin.member.set` | - | - | `setattr` | - | - | - | - | - | - | - |
+| `ext.builtin.member.unwritable` | - | - | `AttributeError: '` `' object has no attribute '` `' and no __dict__ for setting new attributes` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__truediv__` | - | - | `int.__truediv__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
@@ -4154,7 +4192,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.encode` | - | - | `encode` | - | - | - | - | - | - | - |
 | `ext.builtin.method.endswith` | - | - | `endswith` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.arguments` | - | - | `TypeError: invalid method arguments` | - | - | - | - | - | - | - |
-| `ext.builtin.method.error.attribute` | - | - | `AttributeError: value has no such method` | - | - | - | - | - | - | - |
+| `ext.builtin.method.error.attribute` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.bytes` | - | - | `NotImplementedError: bytes are not available` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.fill` | - | - | `TypeError: The fill character must be exactly one character long` | - | - | - | - | - | - | - |
 | `ext.builtin.method.error.format` | - | - | `ValueError: invalid format string` | - | - | - | - | - | - | - |
@@ -4501,6 +4539,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.literal.unimplemented` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.strict` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
@@ -4989,6 +5028,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.alternate.string` | - | - | `ValueError: Alternate form (#) not allowed in string format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.close` | - | - | `ValueError: Single '}' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.open` | - | - | `ValueError: expected '}' before end of string` | - | - | - | - | - | - | - |
+| `ext.text.format.brace.single` | - | - | `ValueError: Single '{' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.character` | - | - | `OverflowError: %c arg not in range(0x110000)` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |

@@ -1,4 +1,4 @@
 new
 init
-AttributeError: 'C' object has no attribute 'z'
+AttributeError: 'C' object has no attribute 'z' and no __dict__ for setting new attributes
 2 2

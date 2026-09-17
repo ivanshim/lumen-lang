@@ -136,6 +136,11 @@ pub struct Engine<'a> {
     /// The same for a piece the program silenced outright: nothing at
     /// all is said of it, not even what is said of how it is written.
     muted: std::cell::Cell<usize>,
+    /// How many compound writes are working out their plain dyad here.
+    /// A complaint raised under one names the sign in its compound
+    /// spelling, which is how the program wrote it. Counted, since one
+    /// such write may reach another.
+    landing: std::cell::Cell<usize>,
     /// The class each call is running inside, innermost last: what a
     /// class keeps to itself is reached from there and nowhere else.
     inside: Vec<Option<Rc<str>>>,
@@ -792,6 +797,7 @@ impl<'a> Engine<'a> {
             ceiling: std::cell::Cell::new(0),
             hushed: std::cell::Cell::new(0),
             muted: std::cell::Cell::new(0),
+            landing: std::cell::Cell::new(0),
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
@@ -3729,28 +3735,6 @@ impl<'a> Engine<'a> {
         })
     }
 
-    /// Whether a value of that family answers a method of that working.
-    /// The workings are the ones the definition gives names to, and each
-    /// belongs to the kinds whose values the kernel runs it for.
-    fn family_works(family: Kindred, working: &str) -> bool {
-        let text = matches!(family, Kindred::Text);
-        let number = matches!(family, Kindred::Whole | Kindred::Real);
-        match working {
-            "append" | "extend" | "insert" | "remove" | "sort" | "reverse" => matches!(family, Kindred::Row),
-            "index" | "count" => matches!(family, Kindred::Row | Kindred::Tuple) || text,
-            "pop" | "copy" | "clear" => matches!(family, Kindred::Row | Kindred::Map),
-            "get" | "keys" | "values" | "items" | "setdefault" | "update" | "popitem" | "fromkeys" => matches!(family, Kindred::Map),
-            "upper" | "lower" | "strip" | "lstrip" | "rstrip" | "split" | "rsplit" | "join" | "replace" => text,
-            "startswith" | "endswith" | "find" | "rfind" | "format" | "encode" => text,
-            "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper" => text,
-            "title" | "capitalize" | "center" | "ljust" | "rjust" | "zfill" => text,
-            "bit_length" | "bit_count" | "numerator" | "denominator" => matches!(family, Kindred::Whole),
-            "real" | "imag" | "conjugate" | "is_integer" | "as_integer_ratio" => number,
-            "hex" | "fromhex" => matches!(family, Kindred::Real),
-            _ => false,
-        }
-    }
-
     /// The members a value of a builtin kind answers to by name: the
     /// special names its family answers, and the methods of its kind,
     /// each spelled as the definition spells it. A spelling that names
@@ -3760,7 +3744,7 @@ impl<'a> Engine<'a> {
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         for (spelling, working) in self.lang.value_methods.iter() {
-            if Self::family_works(family, working) { names.push(spelling.clone()); }
+            if crate::methods::answered(sample, working) { names.push(spelling.clone()); }
         }
         // Text, a run of bytes and a set answer further methods through
         // builtins of their own, each found by the label it stands under.
@@ -3775,6 +3759,127 @@ impl<'a> Engine<'a> {
         names.sort();
         names.dedup();
         names
+    }
+
+    /// The words for a member something has not got: what the thing
+    /// sought upon is called stands between the first two and the
+    /// member's name between the last two. Nothing at all where the
+    /// language words no such complaint.
+    fn member_said(words: &Option<(String, String, String)>, called: &str, name: &str) -> String {
+        match words {
+            Some((before, between, after)) => format!("{before}{called}{between}{name}{after}"),
+            None => String::new(),
+        }
+    }
+
+    /// The name a module read in goes by, where this value is that very
+    /// module and nothing else.
+    fn module_holding(&self, value: &Value) -> Option<String> {
+        let Value::Object(o) = value else { return None };
+        self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
+    }
+
+    /// The word a value goes by as a kind: a class its own name, a
+    /// builtin kind the word that spells it. Nothing where the value
+    /// does not stand for a kind at all.
+    fn kind_word_of(&self, value: &Value) -> Option<String> {
+        match value {
+            Value::Class(c) => Some(c.name.clone()),
+            Value::SortOf(sort) => Some(Value::sort_called(*sort).to_string()),
+            Value::ByteKind(mutable, _) => Some(self.byte_kind_word(*mutable).to_string()),
+            Value::Native(b, word) if Self::kind_builtin(b) => Some(word.to_string()),
+            other => self.kind_spelled(other).map(|word| word.to_string()),
+        }
+    }
+
+    /// The complaint for a member sought on a module or on a kind, both
+    /// of which CPython words by their own name rather than by the kind
+    /// they are of. Nothing for anything else, and nothing where the
+    /// language words no such complaint.
+    pub(super) fn member_named_amiss(&self, value: &Value, name: &str) -> String {
+        let held = value.contents();
+        if let Some(path) = self.module_holding(&held) { return Self::member_said(&self.lang.member_absent_module, &path, name); }
+        match self.kind_word_of(&held) {
+            Some(word) => Self::member_said(&self.lang.member_absent_class, &word, name),
+            None => String::new(),
+        }
+    }
+
+    /// The complaint for a member read on a value of a builtin kind
+    /// that answers to no such name.
+    pub(super) fn member_amiss(&self, value: &Value, name: &str) -> String {
+        let told = self.member_named_amiss(value, name);
+        if !told.is_empty() { return told; }
+        Self::member_said(&self.lang.member_amiss, &value.contents().core_kind(), name)
+    }
+
+    /// The complaint for a member written on such a value, or taken
+    /// away from it: it keeps no namespace of its own to hold one.
+    pub(super) fn member_unwritable(&self, value: &Value, name: &str) -> String {
+        let words = if self.lang.member_unwritable.is_some() { &self.lang.member_unwritable } else { &self.lang.member_amiss };
+        Self::member_said(words, &value.contents().core_kind(), name)
+    }
+
+    /// How the definition spells a value's method, so that a complaint
+    /// names the member the way a program writes it.
+    fn spelled_member(&self, operation: &str) -> String {
+        if self.lang.value_methods.get(operation).map_or(false, |op| op == operation) { return operation.to_string(); }
+        let mut words: Vec<&String> = self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == operation).map(|(word, _)| word).collect();
+        words.sort();
+        words.first().map_or_else(|| operation.to_string(), |word| (*word).clone())
+    }
+
+    /// A value's method bound to the value, as reading the member of it
+    /// gives the method: a number keeps its parts as members, so those
+    /// are read rather than left standing as something to call.
+    pub(super) fn bound_value_method(&mut self, target: Value, operation: &str) -> Res<Value> {
+        let numeric = matches!(target.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) | Value::Complex(_));
+        if numeric && matches!(operation, "numerator" | "denominator" | "real" | "imag") {
+            return match target.contents() {
+                Value::Complex(z) => Ok(crate::complex::real(if operation == "real" { z.real } else { z.imag })),
+                _ => self.value_method(&target, operation, Vec::new(), Vec::new()),
+            };
+        }
+        Ok(Value::ValueMethod(Rc::new((target, operation.to_string()))))
+    }
+
+    /// The member a value of a builtin kind answers to by name: the
+    /// method bound to it, or the part it keeps under that name.
+    /// Nothing where the kind has no such member. The value stands
+    /// behind the method as it was handed over, cell and all, so that
+    /// a method which writes into the value writes into the very one.
+    fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        let held = value.contents();
+        if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
+        if self.native_special(&held, name) { return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), name.to_string()))))); }
+        if let Value::Complex(z) = &held {
+            if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { return Ok(Some(crate::complex::real(z.real))); }
+            if Lang::spells(&self.lang.complex_words["ext.builtin.complex.imag"], name) { return Ok(Some(crate::complex::real(z.imag))); }
+        }
+        if let Value::Counted(row) = &held {
+            if let Some(at) = self.range_member_named(name) {
+                return Ok(Some(Value::of_big(match at { 0 => row.start.clone(), 1 => row.stop.clone(), _ => row.step.clone() })));
+            }
+        }
+        if let Value::Slice(bounds) = &held {
+            if let Some(at) = self.slice_bound_named(name) { return Ok(Some(bounds[at].clone())); }
+        }
+        // A set and a row of bytes answer some of their methods through
+        // builtins that take the receiver first, so the member bound to
+        // the value is the word itself with the value behind it. Only
+        // the bytes builtins a row of bytes stands before count: the one
+        // that makes bytes out of text belongs to text, and the ones
+        // that make a row from a number or from written hexadecimal
+        // belong to no row at all.
+        let bound_builtin = match (&held, self.lang.builtins.get(name)) {
+            (Value::Set(_), Some(word)) if word.set_method() => true,
+            (Value::Bytes(..), Some(Builtin::Bytes(3 | 6..=13))) => true,
+            _ => false,
+        };
+        if bound_builtin { return Ok(Some(Value::Adapter(Rc::new((3, vec![Value::text(name), held]))))); }
+        let Some(operation) = self.lang.value_methods.get(name).cloned() else { return Ok(None) };
+        if !crate::methods::answered(&held, &operation) { return Ok(None); }
+        self.bound_value_method(value.clone().held(false), &operation).map(Some)
     }
 
     /// The family a builtin value belongs to, read through whatever
@@ -4210,10 +4315,47 @@ impl<'a> Engine<'a> {
         match value { Value::Object(o) => o.class.name.clone(), other => other.core_kind() }
     }
 
-    /// The sign the language writes a dyadic action with.
+    /// The sign the language writes a dyadic action with. Under a
+    /// compound write the sign named is the compound one the program
+    /// wrote, and not the plain working it falls back to.
     fn sign_of(&self, op: &Action) -> String {
         let wanted = std::mem::discriminant(op);
+        if self.landing.get() > 0 {
+            let mut spellings: Vec<&String> = self.lang.compound.iter()
+                .filter(|(_, act)| std::mem::discriminant(*act) == wanted).map(|(sign, _)| sign).collect();
+            spellings.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            if let Some(sign) = spellings.first() { return (*sign).clone(); }
+        }
         self.lang.dyadic.iter().find(|(_, spelled)| std::mem::discriminant(&spelled.action) == wanted).map(|(sign, _)| sign.clone()).unwrap_or_default()
+    }
+
+    /// The words refusing a working whose operands are of kinds it has
+    /// no meaning for, where the definition holds arithmetic to its
+    /// kinds; nothing at all for a working it answers for. Text joins
+    /// only with text, and nothing takes no part in arithmetic: neither
+    /// is read for the number it might stand for. Repetition and
+    /// writing into text are text's own workings and keep their own
+    /// refusals, which name what they were handed rather than both
+    /// sides. Octets are left as they were until their own words are
+    /// settled.
+    fn unworkable_kinds(&self, op: &Action, a: &Value, b: &Value) -> Option<String> {
+        if !self.lang.strict_arithmetic { return None; }
+        if !matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power) { return None; }
+        if matches!(a, Value::Bytes(..)) || matches!(b, Value::Bytes(..)) { return None; }
+        let texted = |v: &Value| matches!(v, Value::Text(_));
+        let amiss = if texted(a) || texted(b) {
+            let text_own = matches!(op, Action::Mul) || (matches!(op, Action::Mod) && texted(a));
+            !text_own && !(matches!(op, Action::Add) && texted(a) && texted(b))
+        } else {
+            matches!(a, Value::Null) || matches!(b, Value::Null)
+        };
+        if !amiss { return None; }
+        Some(match (op, a) {
+            // Only a sequence can be joined to, and the words for that
+            // name its kind on both sides of what it was handed.
+            (Action::Add, Value::Text(_) | Value::Array(_) | Value::Tuple(_)) => self.sequence_concat_fault(a, b),
+            _ => self.operands_complaint(&self.sign_of(op), a, b),
+        })
     }
 
     /// The words for a dyad neither operand's methods would take, its
@@ -4360,6 +4502,20 @@ impl<'a> Engine<'a> {
         if let Value::Fields(o) = b {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, a, &Value::Map(Rc::new(entries)));
+        }
+        // Text on the left of the remainder sign fills its own marks,
+        // which is what the left side's own method does in the
+        // language: the thing on the right is shown by its words and is
+        // not asked for a turned-about answer. The one thing that is
+        // asked is one standing on text itself, whose class comes below
+        // the left side's own and whose turned-about method the
+        // language therefore puts first.
+        if let (Action::Mod, Value::Text(pattern), true) = (op, a, self.lang.rem_formats_text) {
+            let below = matches!(Self::worth_of(b).map(|worth| worth.contents()), Some(Value::Text(_)));
+            if !(below && self.special_method(b, 31).is_some()) {
+                let pattern = pattern.clone();
+                return Ok(Value::text(&self.rem_filled(&pattern, b)?));
+            }
         }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
@@ -4925,13 +5081,7 @@ impl<'a> Engine<'a> {
             Action::KeepPoint => self.drop_top()?.with_point(true),
             Action::BindValueMethod(operation) => {
                 let target = self.drop_top()?.held(false);
-                // A number's parts are read as members of it, not called.
-                if matches!(operation.as_ref(), "numerator" | "denominator" | "real" | "imag") && matches!(target.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) | Value::Complex(_)) {
-                    match target.contents() {
-                        Value::Complex(z) => crate::complex::real(if operation.as_ref() == "real" { z.real } else { z.imag }),
-                        _ => self.value_method(&target, operation, Vec::new(), Vec::new())?,
-                    }
-                } else { Value::ValueMethod(Rc::new((target, operation.to_string()))) }
+                self.bound_value_method(target, operation)?
             }
             Action::Not => {
                 let held = self.drop_top()?;
@@ -5313,6 +5463,22 @@ impl<'a> Engine<'a> {
                 };
                 Value::Descriptor(Rc::new(descriptor))
             }
+            // A member call the receiver's kind does not answer to: a
+            // routine of that name takes the receiver first, as a pipe,
+            // and where nothing is bound by the name the value simply
+            // has no such member.
+            Action::InvokeMember(name) => {
+                let told = match self.data.last() {
+                    Some(Value::Blank) => {
+                        let under = self.data.len().saturating_sub(argc);
+                        self.member_amiss(self.data.get(under).unwrap_or(&Value::Null), name)
+                    }
+                    _ => String::new(),
+                };
+                if told.is_empty() { return self.perform(&Action::Invoke(name.clone()), argc); }
+                self.drop_many(argc)?;
+                return Err(told.into());
+            }
             Action::Invoke(name) => {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top);
@@ -5693,7 +5859,12 @@ impl<'a> Engine<'a> {
                     None => {
                         self.data.push(held);
                         self.data.push(by);
-                        return self.perform(inner, 2);
+                        // A complaint from here names the sign the way
+                        // the program wrote it, compound and all.
+                        self.landing.set(self.landing.get() + 1);
+                        let worked = self.perform(inner, 2);
+                        self.landing.set(self.landing.get() - 1);
+                        return worked;
                     }
                 }
             }
@@ -5925,8 +6096,12 @@ impl<'a> Engine<'a> {
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
                 Value::SortOf(sort) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(Value::sort_called(sort)),
-                Value::Text(_) if Lang::spells(&self.lang.format_method, name) => {
-                    return Err(self.lang.fmt_text_format_unready.first().cloned().unwrap_or_default().into());
+                // The member that fills a template is handed over bound
+                // to the text it was read from, as the other members of
+                // a text are, and fills the template when it is called.
+                Value::Text(subject) if Lang::spells(&self.lang.format_method, name) => {
+                    let operation = self.lang.value_methods.get(name.as_ref()).cloned().unwrap_or_else(|| name.to_string());
+                    Value::ValueMethod(Rc::new((Value::Text(subject), operation)))
                 }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -5991,14 +6166,26 @@ impl<'a> Engine<'a> {
                         }
                         None => {
                             self.absent_member = Some((name.to_string(), Value::Object(o.clone())));
+                            // A module names itself and the member it
+                            // has not got, where the language words it.
+                            let told = self.member_named_amiss(&Value::Object(o.clone()), name);
+                            if !told.is_empty() { return Err(told.into()); }
                             return Err(format!("Undefined property: {}::${}", o.class.name, name).into());
                         }
                     }
                 }
                 Value::Routine(_) | Value::Method(..) if !self.lang.scope_unready.is_empty() => return Err(self.lang.scope_unready[0].clone().into()),
-                v => {
-                    self.absent_member = Some((name.to_string(), v.clone()));
-                    return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into());
+                // A value of a builtin kind hands over the member its
+                // kind gives it, and otherwise names its kind and the
+                // member it has not got, where the language words that.
+                v => match self.builtin_member(&v, name)? {
+                    Some(member) => member,
+                    None => {
+                        self.absent_member = Some((name.to_string(), v.clone()));
+                        let told = self.member_amiss(&v, name);
+                        if !told.is_empty() { return Err(told.into()); }
+                        return Err(format!("Cannot read property '{}' of {}", name, v.plain()).into());
+                    }
                 }
             },
             // The property becomes a cell the object and the name that
@@ -6203,9 +6390,10 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Text(text) = &subject {
                     if Lang::spells(&self.lang.format_method, name) {
+                        let text = text.clone();
                         let args = self.call_items(args)?;
-                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                        self.data.push(Value::text(&writer.template(text, &args)?));
+                        let filled = self.filled_template(&text, &args)?;
+                        self.data.push(Value::text(&filled));
                         return Ok(());
                     }
                 }
@@ -6852,11 +7040,42 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// A template filled by the method a text is asked for. The writer
+    /// keeps the grammar of the fields; a thing of the program's own
+    /// takes the road a formatted string's field takes, so that the two
+    /// ways of writing a field say the same words.
+    fn filled_template(&mut self, text: &str, args: &[(Option<String>, Value)]) -> Res<String> {
+        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+        let mut offered = |value: &Value, spec: &str, conversion: &str| -> Res<Option<String>> {
+            let thing = value.contents();
+            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
+            if conversion.is_empty() { return self.special_format(&thing, spec).map(Some); }
+            let said = Value::text(&self.special_text(&thing, conversion != "s")?);
+            let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+            inner.field(&said, spec, "").map(Some)
+        };
+        writer.template(text, args, &mut offered)
+    }
+
+    /// Text on the left of the remainder sign, filled mark by mark. A
+    /// thing of the program's own gives the marks that show a value its
+    /// own words, as its show and its representation.
+    fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
+        if self.lang.format_builtin.is_empty() { return self.rem_text(template, arguments); }
+        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+        let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
+            let thing = value.contents();
+            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
+            self.special_text(&thing, code != 's').map(Some)
+        };
+        writer.percent(template, arguments, &mut offered)
+    }
+
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         if !self.lang.format_builtin.is_empty() {
-            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments);
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None));
         }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
@@ -7166,7 +7385,11 @@ impl<'a> Engine<'a> {
                         row.extend(items(b));
                         Value::Tuple(Rc::new(row))
                     }
-                    _ => return Err(self.sequence_concat_fault(a, b)),
+                    // Only a sequence can be joined to; where the
+                    // left side is none, both kinds are named instead,
+                    // as a working neither side answers for.
+                    _ if matches!(a, Value::Array(_) | Value::Tuple(_) | Value::Text(_)) => return Err(self.sequence_concat_fault(a, b)),
+                    _ => return Err(self.operands_complaint(&self.sign_of(op), a, b)),
                 };
                 Ok(Some(joined))
             }
@@ -7294,6 +7517,12 @@ impl<'a> Engine<'a> {
                 return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], a.core_kind(), words[2], b.core_kind(), words[3]));
             }
         }
+        // Where a language holds arithmetic to the kinds it means
+        // something for, a working over kinds it means nothing for is
+        // refused here, before text is read for a number it might spell
+        // or nothing is counted as nought. A value held in a cell is
+        // asked about again once the cell is opened below.
+        if let Some(told) = self.unworkable_kinds(op, a, b) { return Err(told); }
         // A view of a map's keys or pairs meets a set, or another view,
         // as a set does under the set signs; elsewhere it stands for
         // its items.
@@ -9119,7 +9348,8 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(receiver.contents(), Value::Set(_)) {
-            let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None };
+            let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None }
+                .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()));
             if let Some(method) = method {
                 if !named.is_empty() { return Err(self.set_said(".arguments", "")); }
                 let mut given = vec![receiver.contents()]; given.extend(args);
@@ -9139,6 +9369,18 @@ impl<'a> Engine<'a> {
         }
         let mut used = std::collections::HashSet::new();
         if named.iter().any(|(key,_)| !used.insert(key)) { return Err(self.lang.method_errors["arguments"].clone()); }
+
+        // A text asked to fill a template goes to the writer wherever
+        // the language has one, whether the method was named on the
+        // text where it stands or taken from it and called later. The
+        // two ways then say the same words and reach the same methods.
+        if operation == "format" && !self.lang.format_builtin.is_empty() {
+            if let Value::Text(text) = receiver.contents() {
+                let items = args.into_iter().map(|value| (None, value))
+                    .chain(named.into_iter().map(|(key, value)| (Some(key), value))).collect::<Vec<_>>();
+                return self.filled_template(&text, &items).map(|filled| Value::text(&filled));
+            }
+        }
 
         let named = if matches!(operation, "split" | "rsplit") {
             named.into_iter().map(|(key,value)| {
@@ -9170,7 +9412,8 @@ impl<'a> Engine<'a> {
             if meddled { return Err(format!("\0{}", self.lang.sort_modified[0])); }
             return Ok(Value::Null);
         }
-        crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone())
+        crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone(),
+            &|value, op| self.member_amiss(value, &self.spelled_member(op)))
     }
 
     fn order_values(&mut self, source: &Value, named: &[(String, Value)]) -> Res<Vec<Value>> {
@@ -9728,7 +9971,7 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice | Builtin::Identity | Builtin::ValueMethod) { for value in args.iter_mut() { *value = value.contents(); } }
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice | Builtin::Identity | Builtin::ValueMethod | Builtin::GetAttr) { for value in args.iter_mut() { *value = value.contents(); } }
         if let Some(answer) = self.special_builtin(builtin, args)? { return Ok(answer); }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
@@ -9745,8 +9988,8 @@ impl<'a> Engine<'a> {
             // int.__truediv__) is called on its first argument, as the
             // method would be on a value of that class.
             Builtin::ValueMethod => {
-                let Some((_, operation)) = name.rsplit_once('.') else { return Err(self.lang.method_errors["attribute"].clone()) };
                 if args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+                let Some((_, operation)) = name.rsplit_once('.') else { return Err(self.member_amiss(&args[0], name)) };
                 let receiver = args.remove(0);
                 let rest = std::mem::take(args);
                 return self.value_method(&receiver, operation, rest, Vec::new());
@@ -10887,6 +11130,14 @@ impl<'a> Engine<'a> {
                 if self.lang.sequence_values {
                     if let Value::Array(items) = &target {
                         let counted = match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(t) => Some(i64::from(*t)), _ => None };
+                        // A key of another kind names no place in a row,
+                        // and a row written at one stays a row: the
+                        // write is refused by both kinds, as the reading
+                        // of such a key is, rather than turning the row
+                        // into a map whose keys are its places.
+                        if counted.is_none() && !matches!(&at, Value::Slice(_)) {
+                            return Err(self.sequence_subscript_fault(&target, &at));
+                        }
                         if let Some(counted) = counted {
                             let place = if counted < 0 { counted + items.len() as i64 } else { counted };
                             if place < 0 || place as usize >= items.len() { return Err(self.sequence_written_fault(&target)); }
@@ -11970,6 +12221,10 @@ impl Engine<'_> {
         // cell is opened.
         let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
         let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.1.clone()), _ => None };
+        // A member read by name is bound to the value as it stands, so
+        // that a method which writes into the value is handed the very
+        // one: the value is kept before its cell is opened.
+        let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
         if !matches!(b, Builtin::Identity | Builtin::Reversed) { for value in &mut args { *value = value.contents(); } }
         if named.is_empty() {
@@ -12356,9 +12611,23 @@ impl Engine<'_> {
                 arity(if b == Builtin::Vars { 1 } else { 2 }, if matches!(b, Builtin::SetAttr | Builtin::GetAttr) { 3 } else if b == Builtin::Vars { 1 } else { 2 })?;
                 if b != Builtin::Vars && !matches!(args[1], Value::Text(_)) { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); }
                 let Value::Object(o) = &args[0] else {
-                    if b == Builtin::HasAttr { return Ok(Value::Flag(false)); }
-                    if b == Builtin::GetAttr && args.len() == 3 { return Ok(args[2].clone()); }
-                    return Err(self.core_fault(if b == Builtin::Vars { "core.vars" } else { "core.unready" }, if b == Builtin::Vars { "" } else { name }));
+                    // A value of a builtin kind answers the members its
+                    // kind gives it and keeps no namespace of its own,
+                    // so nothing may be written into it or taken out.
+                    if b == Builtin::Vars { return Err(self.core_fault("core.vars", "")); }
+                    let word = args[1].plain();
+                    if matches!(b, Builtin::SetAttr | Builtin::DelAttr) {
+                        let told = self.member_unwritable(&args[0], &word);
+                        if told.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                        return Err(told);
+                    }
+                    let found = self.builtin_member(standing.as_ref().unwrap_or(&args[0]), &word)?;
+                    if b == Builtin::HasAttr { return Ok(Value::Flag(found.is_some())); }
+                    if let Some(member) = found { return Ok(member); }
+                    if args.len() == 3 { return Ok(args[2].clone()); }
+                    let told = self.member_amiss(&args[0], &word);
+                    if told.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                    return Err(told);
                 };
                 if b == Builtin::Vars { return Err(self.core_fault("core.unready", name)); }
                 let Value::Text(attr) = &args[1] else { return Err(self.core_fault("core.attribute.name", &args[1].core_kind())); };
