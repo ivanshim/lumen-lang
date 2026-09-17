@@ -3750,6 +3750,25 @@ impl<'a> Machine<'a> {
                         let retained = items.iter().enumerate().filter(|(j, _)| *j != position as usize).map(|(_, v)| v.clone()).collect();
                         Value::Vector(Rc::new(retained))
                     }
+                    // A changeable row of bytes parts with a place, or
+                    // with a run of them, where it stands; a fixed row
+                    // parts with none and is named in the words for a
+                    // sequence that cannot be shortened.
+                    Value::Octets { cell, changeable, lead } => {
+                        let row = Value::Octets { cell: cell.clone(), changeable: *changeable, lead: lead.clone() };
+                        if !*changeable { return Err(self.deletion_refused(&row).into()); }
+                        let mut numbers = cell.borrow_mut();
+                        match &at {
+                            Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
+                                let (_, picked, _) = self.span_selection(bounds, numbers.len())?;
+                                let kept = numbers.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, n)| *n).collect();
+                                *numbers = kept;
+                            }
+                            key => { let place = self.octet_at(key, numbers.len(), true)?; numbers.remove(place); }
+                        }
+                        drop(numbers);
+                        row
+                    }
                     Value::Vector(items) | Value::Tuple(items) => {
                         let i = as_index(&at)?;
                         Value::Dict(Rc::new(
@@ -4598,7 +4617,7 @@ impl<'a> Machine<'a> {
                         if !changeable { return Err(self.octet_error("immutable").into()); }
                         let byte = self.octet_item(&value)?;
                         if let Some(index) = key {
-                            let index = self.octet_at(&index, cell.borrow().len())?;
+                            let index = self.octet_at(&index, cell.borrow().len(), changeable)?;
                             cell.borrow_mut()[index] = byte;
                         } else { cell.borrow_mut().push(byte); }
                         return Ok(Value::Nil);
@@ -5210,12 +5229,18 @@ impl<'a> Machine<'a> {
                 return Some(Value::Member(Rc::new(value.clone()), operation));
             }
         }
-        // Of the bytes primitives only those a row of bytes stands
-        // before are members of one: making bytes out of text belongs
-        // to text, and making a row out of a number or out of written
-        // hexadecimal belongs to no row at all.
-        if matches!((value.settled(), self.table.prims.get(name)),
-            (Value::Set(_), Some(Prim::SetCall(1..=17))) | (Value::Octets { .. }, Some(Prim::Octets(3 | 6..=13)))) {
+        // A row of bytes answers to the methods its kind keeps, whose
+        // words are the ones text goes by, each of them being a text
+        // working read byte by byte.
+        if matches!(value.settled(), Value::Octets { .. }) {
+            if let Some(working) = self.octet_member(name) {
+                return Some(Value::Member(Rc::new(value.clone()), working.to_string()));
+            }
+        }
+        // A set answers some of its methods with primitives that take
+        // the receiver first, so the member is the word itself with the
+        // set standing behind it.
+        if matches!((value.settled(), self.table.prims.get(name)), (Value::Set(_), Some(Prim::SetCall(1..=17)))) {
             return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()])));
         }
         let class = match value {
@@ -5669,7 +5694,7 @@ impl<'a> Machine<'a> {
             if name == "append" && arguments.len() == 1 && keywords.is_empty() { cell.borrow_mut().push(self.octet_item(&arguments[0])?); return Ok(Value::Nil); }
         }
         if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_)) {
-            let operation = match name { "encode"=>Some(2), "decode"=>Some(3), "hex"=>Some(4), "upper"=>Some(6), "lower"=>Some(7), "split"=>Some(8), "join"=>Some(9), "startswith"=>Some(10), "replace"=>Some(11), "strip"=>Some(12), "find"=>Some(13), _=>None };
+            let operation = if name == "encode" { Some(2) } else { self.octet_member(name).and_then(Self::octet_operation) };
             if let Some(operation) = operation {
                 if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
                 let mut values = vec![actual]; values.extend(arguments);
@@ -6828,6 +6853,148 @@ impl<'a> Machine<'a> {
         self.table.single(&format!("ext.system.bytes.{reason}")).unwrap_or("").to_owned()
     }
 
+    /// The workings a row of bytes answers to by name, each beside the
+    /// bytes primitive that carries it out. They are text's workings
+    /// read byte by byte and go by text's words; making bytes out of
+    /// text belongs to text alone and stands nowhere in this table.
+    const OCTET_MEMBERS: &'static [(&'static str, u8)] = &[
+        ("capitalize", 34), ("center", 29), ("count", 18), ("decode", 3), ("endswith", 22),
+        ("expandtabs", 33), ("find", 13), ("fromhex", 50), ("hex", 4), ("index", 19),
+        ("isalnum", 41), ("isalpha", 42), ("isascii", 43), ("isdigit", 44), ("islower", 45),
+        ("isspace", 46), ("istitle", 47), ("isupper", 48), ("join", 9), ("ljust", 30),
+        ("lower", 7), ("lstrip", 24), ("maketrans", 51), ("partition", 26), ("removeprefix", 37),
+        ("removesuffix", 38), ("replace", 11), ("rfind", 20), ("rindex", 21), ("rjust", 31),
+        ("rpartition", 27), ("rsplit", 23), ("rstrip", 25), ("split", 8), ("splitlines", 28),
+        ("startswith", 10), ("strip", 12), ("swapcase", 36), ("title", 35), ("translate", 39),
+        ("upper", 6), ("zfill", 32),
+    ];
+
+    /// The working a row of bytes answers to under this spelling, where
+    /// the table spells one for it. The words are sought in the bytes
+    /// family, then among text's, whose words a row of bytes shares,
+    /// and last among the value methods. A word written with its kind
+    /// ahead of it answers by its bare tail as well, which is the name
+    /// a row of bytes keeps the method under.
+    pub(super) fn octet_member(&self, spelling: &str) -> Option<&'static str> {
+        let carries = |label: String| self.table.loose_strings(&label).iter()
+            .any(|word| word == spelling || word.rsplit('.').next() == Some(spelling));
+        let among = self.value_method_named(spelling);
+        Self::OCTET_MEMBERS.iter().map(|(word, _)| *word).find(|word| {
+            carries(format!("ext.builtin.bytes.{word}")) || carries(format!("ext.builtin.text.{word}"))
+                || among.as_deref() == Some(*word)
+        })
+    }
+
+    /// The primitive that carries out a working of that name.
+    fn octet_operation(word: &str) -> Option<u8> {
+        Self::OCTET_MEMBERS.iter().find(|(named, _)| *named == word).map(|(_, code)| *code)
+    }
+
+    /// The refusal of a key of a kind a row of bytes cannot be read at.
+    /// CPython words this apart from every other sequence's: the fixed
+    /// kind is spoken of in the singular and the changeable one by its
+    /// own name, and the key's kind closes the words.
+    fn octet_key_refused(&self, changeable: bool, key: &Value) -> String {
+        let pieces = self.table.strings("ext.system.bytes.subscript");
+        format!("{}{}", pieces.get(usize::from(changeable)).map_or("", String::as_str), key.kind_word())
+    }
+
+    /// The refusal of a joining onto a row of bytes: what was handed to
+    /// it is named, and then the row's own kind.
+    fn octet_joining_refused(&self, left: &Value, right: &Value) -> String {
+        let pieces = self.table.strings("ext.system.bytes.concat");
+        let at = |i: usize| pieces.get(i).map_or("", String::as_str);
+        format!("{}{}{}{}", at(0), right.kind_word(), at(1), left.kind_word())
+    }
+
+    /// The bytes that written hexadecimal stands for: two figures to a
+    /// byte, with blanks allowed to stand between them.
+    fn octets_from_hex(&self, spelling: &str) -> Result<Vec<u8>, String> {
+        let mut waiting: Option<(u8, usize)> = None;
+        let mut content = Vec::new();
+        for (position, ch) in spelling.chars().enumerate() {
+            if waiting.is_none() && (ch.is_ascii_whitespace() || ch == '\x0b') { continue; }
+            let figure = ch.to_digit(16).filter(|_| ch.is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), position))? as u8;
+            match waiting.take() {
+                Some((high, _)) => content.push(high * 16 + figure),
+                None => waiting = Some((figure, position)),
+            }
+        }
+        if waiting.is_some() { return Err(format!("{}{}", self.octet_error("hex"), spelling.chars().count())); }
+        Ok(content)
+    }
+
+    /// The row spelled out in hexadecimal. A mark may be set between
+    /// the bytes every so many of them: counted back from the end where
+    /// the number stands above nought, forward from the start where it
+    /// stands below, and nowhere at all where it is nought.
+    fn octets_in_hex(&self, content: &[u8], arguments: &[Value]) -> Result<Value, String> {
+        let (mark, every) = match arguments.first() {
+            None => (String::new(), 0i64),
+            Some(Value::Text(between)) => {
+                if between.chars().count() != 1 { return Err(self.octet_error("arguments")); }
+                let every = match arguments.get(1) { None => 1, Some(n) => self.octet_whole(n)?.to_i64().unwrap_or(1) };
+                (between.to_string(), every)
+            }
+            _ => return Err(self.octet_error("arguments")),
+        };
+        let run = every.unsigned_abs() as usize;
+        let mut spelled = String::with_capacity(content.len() * 2);
+        for (position, number) in content.iter().enumerate() {
+            let parts = position > 0 && run > 0
+                && if every > 0 { (content.len() - position) % run == 0 } else { position % run == 0 };
+            if parts { spelled.push_str(&mark); }
+            spelled.push_str(&format!("{number:02x}"));
+        }
+        Ok(Value::text(&spelled))
+    }
+
+    /// A table of two hundred and fifty six bytes: each stands for
+    /// itself save the ones the first row names, which stand for the
+    /// bytes standing in the same places of the second.
+    fn octet_mapping(&self, from: &[u8], onto: &[u8]) -> Result<Value, String> {
+        if from.len() != onto.len() { return Err(self.octet_error("arguments")); }
+        let mut mapping: Vec<u8> = (0..=u8::MAX).collect();
+        for (place, byte) in from.iter().zip(onto.iter()) { mapping[usize::from(*place)] = *byte; }
+        Ok(self.octets(mapping, false))
+    }
+
+    /// Whether every byte of the row answers to a question about the
+    /// seven-bit letters, and whether the row is cased one way alone.
+    /// None of these holds of an empty row save the one asking whether
+    /// the whole row is seven-bit, which an empty row satisfies.
+    fn octets_all(&self, content: &[u8], question: u8) -> bool {
+        let one_case = |upper: bool| {
+            let named = |n: &u8| if upper { n.is_ascii_uppercase() } else { n.is_ascii_lowercase() };
+            let other = |n: &u8| if upper { n.is_ascii_lowercase() } else { n.is_ascii_uppercase() };
+            content.iter().any(named) && !content.iter().any(other)
+        };
+        match question {
+            43 => content.iter().all(u8::is_ascii),
+            45 => one_case(false),
+            48 => one_case(true),
+            // Titled: a letter opening a word stands upper and one
+            // within a word stands lower, and a row of no letters at
+            // all is titled by nothing.
+            47 => {
+                let mut inside = false;
+                let mut letters = 0;
+                for number in content {
+                    if !number.is_ascii_alphabetic() { inside = false; continue; }
+                    letters += 1;
+                    if number.is_ascii_uppercase() == inside { return false; }
+                    inside = true;
+                }
+                letters > 0
+            }
+            _ if content.is_empty() => false,
+            41 => content.iter().all(u8::is_ascii_alphanumeric),
+            42 => content.iter().all(u8::is_ascii_alphabetic),
+            44 => content.iter().all(u8::is_ascii_digit),
+            _ => content.iter().all(|n| n.is_ascii_whitespace() || *n == 11),
+        }
+    }
+
     fn octets(&self, values: Vec<u8>, changeable: bool) -> Value {
         let lead = self.table.strings("ext.system.bytes.repr")[if changeable { 1 } else { 0 }].clone();
         Value::Octets { cell: Rc::new(RefCell::new(values)), changeable, lead: lead.into() }
@@ -6868,7 +7035,8 @@ impl<'a> Machine<'a> {
         Err(self.octet_error("arguments"))
     }
 
-    fn octet_at(&self, index: &Value, length: usize) -> Result<usize, String> {
+    fn octet_at(&self, index: &Value, length: usize, changeable: bool) -> Result<usize, String> {
+        if !matches!(index.kind(), Some(Kind::Whole | Kind::Truth)) { return Err(self.octet_key_refused(changeable, index)); }
         let raw = self.octet_whole(index)?;
         let adjusted = if raw < BigInt::zero() { raw + length } else { raw };
         match adjusted.to_usize() {
@@ -7034,6 +7202,247 @@ impl<'a> Machine<'a> {
         self.octets_to_text(&content, self.octet_encoding(values.get(1))?)
     }
 
+    /// The workings a row of bytes shares with text: looking through
+    /// it, cutting it, padding it, asking what its bytes are, and
+    /// mapping one byte onto another. Each counts in bytes and holds
+    /// only the seven-bit letters to be letters, as CPython does. The
+    /// content has been taken out of its cell already, and `changeable`
+    /// settles which of the two kinds comes back out.
+    fn octets_textual(&self, operation: u8, content: &[u8], changeable: bool, arguments: &[Value]) -> Result<Value, String> {
+        let wrong = || self.octet_error("arguments");
+        let refusal = || self.octet_error("unready");
+        let built = |made: Vec<u8>| self.octets(made, changeable);
+        let given = |at: usize| arguments.get(at).filter(|v| !matches!(v, Value::Nil));
+        // What is looked for may be written as one byte's number as
+        // readily as a row of bytes.
+        let looked_for = |value: &Value| -> Result<Vec<u8>, String> {
+            match value.kind() {
+                Some(Kind::Whole | Kind::Truth) => Ok(vec![self.octet_item(value)?]),
+                _ => self.octet_contents(value, false),
+            }
+        };
+        let counted = |value: &Value| -> Result<i64, String> { Ok(self.octet_whole(value)?.to_i64().unwrap_or(i64::MAX)) };
+        // Where a search opens and where it closes: a place below
+        // nought counts back from the end, and both are held inside.
+        let inside = |number: i64| -> usize {
+            let offset = if number < 0 { number.saturating_add(content.len() as i64) } else { number };
+            offset.clamp(0, content.len() as i64) as usize
+        };
+        let bounds = |first: Option<&Value>, second: Option<&Value>| -> Result<(usize, usize), String> {
+            let opens = match first { Some(v) => inside(counted(v)?), None => 0 };
+            let closes = match second { Some(v) => inside(counted(v)?), None => content.len() };
+            Ok((opens, closes.max(opens)))
+        };
+        let scan = |haystack: &[u8], part: &[u8], backward: bool| -> Option<usize> {
+            let last = haystack.len().checked_sub(part.len())?;
+            let places = 0..=last;
+            if backward { places.rev().find(|&i| haystack[i..].starts_with(part)) }
+            else { places.into_iter().find(|&i| haystack[i..].starts_with(part)) }
+        };
+        let blank = |n: &u8| n.is_ascii_whitespace() || *n == 11;
+        match operation {
+            41..=48 if arguments.is_empty() => Ok(Value::Flag(self.octets_all(content, operation))),
+            // Whether the row opens with, or closes with, any of the
+            // parts named, between the bounds handed over.
+            10 | 22 if (1..=3).contains(&arguments.len()) => {
+                let (opens, closes) = bounds(given(1), given(2))?;
+                let middle = &content[opens..closes];
+                let each = match &arguments[0] { Value::Tuple(row) => row.as_ref().clone(), only => vec![only.clone()] };
+                for one in each {
+                    let end = self.octet_contents(&one, false)?;
+                    let held = if operation == 10 { middle.starts_with(&end) } else { middle.ends_with(&end) };
+                    if held { return Ok(Value::Flag(true)); }
+                }
+                Ok(Value::Flag(false))
+            }
+            // Where a part stands in the row, looked for from either
+            // end, and how many times over it stands there. The two
+            // that give no place below nought refuse instead.
+            13 | 18 | 19 | 20 | 21 if (1..=3).contains(&arguments.len()) => {
+                let part = looked_for(&arguments[0])?;
+                let (opens, closes) = bounds(given(1), given(2))?;
+                let middle = &content[opens..closes];
+                if operation == 18 {
+                    if part.is_empty() { return Ok(Value::Small(middle.len() as i64 + 1)); }
+                    let mut tally = 0i64;
+                    let mut cursor = 0usize;
+                    while let Some(step) = scan(&middle[cursor..], &part, false) {
+                        tally += 1;
+                        cursor += step + part.len();
+                    }
+                    return Ok(Value::Small(tally));
+                }
+                match scan(middle, &part, matches!(operation, 20 | 21)) {
+                    Some(place) => Ok(Value::Small((place + opens) as i64)),
+                    None if matches!(operation, 19 | 21) => Err(self.octet_error("missing")),
+                    None => Ok(Value::Small(-1)),
+                }
+            }
+            // Cut apart from the right, the pieces given back standing
+            // in the order they stood in the row.
+            23 if arguments.len() <= 2 => {
+                let ceiling = match given(1) {
+                    Some(v) => { let asked = counted(v)?; if asked < 0 { usize::MAX } else { asked as usize } }
+                    None => usize::MAX,
+                };
+                let mut pieces: Vec<Vec<u8>> = Vec::new();
+                let mut left = content;
+                match given(0) {
+                    Some(value) => {
+                        let separator = self.octet_contents(value, false)?;
+                        if separator.is_empty() { return Err(self.octet_error("separator")); }
+                        while pieces.len() < ceiling {
+                            let Some(place) = scan(left, &separator, true) else { break };
+                            pieces.push(left[place + separator.len()..].to_vec());
+                            left = &left[..place];
+                        }
+                        pieces.push(left.to_vec());
+                    }
+                    None => loop {
+                        while left.last().map_or(false, blank) { left = &left[..left.len() - 1]; }
+                        if left.is_empty() { break; }
+                        if pieces.len() == ceiling { pieces.push(left.to_vec()); break; }
+                        let edge = left.iter().rposition(blank).map_or(0, |i| i + 1);
+                        pieces.push(left[edge..].to_vec());
+                        left = &left[..edge];
+                    },
+                }
+                pieces.reverse();
+                Ok(Value::Vector(Rc::new(pieces.into_iter().map(built).collect())))
+            }
+            // The blank, or a set of bytes chosen instead, taken off
+            // one end of the row.
+            24 | 25 if arguments.len() <= 1 => {
+                let away = match given(0) { Some(v) => self.octet_contents(v, false)?, None => vec![32, 9, 10, 13, 11, 12] };
+                let mut left = content;
+                if operation == 24 { while left.first().map_or(false, |n| away.contains(n)) { left = &left[1..]; } }
+                else { while left.last().map_or(false, |n| away.contains(n)) { left = &left[..left.len() - 1]; } }
+                Ok(built(left.to_vec()))
+            }
+            // The row cut in three about the first or the last standing
+            // of a part, with the part itself in the middle.
+            26 | 27 if arguments.len() == 1 => {
+                let separator = self.octet_contents(&arguments[0], false)?;
+                if separator.is_empty() { return Err(self.octet_error("separator")); }
+                let empty = Vec::new();
+                let cut = match scan(content, &separator, operation == 27) {
+                    Some(place) => [content[..place].to_vec(), separator.clone(), content[place + separator.len()..].to_vec()],
+                    None if operation == 27 => [empty.clone(), empty, content.to_vec()],
+                    None => [content.to_vec(), empty.clone(), empty],
+                };
+                Ok(Value::Tuple(Rc::new(cut.into_iter().map(built).collect())))
+            }
+            // The lines of the row. A line closes at a line feed, at a
+            // return, or at a return and a feed together, and nowhere
+            // else at all.
+            28 if arguments.len() <= 1 => {
+                let holding = !matches!(arguments.first(), None | Some(Value::Nil) | Some(Value::Flag(false)) | Some(Value::Small(0)));
+                let mut lines = Vec::new();
+                let mut opened = 0usize;
+                let mut cursor = 0usize;
+                while cursor < content.len() {
+                    if !matches!(content[cursor], 10 | 13) { cursor += 1; continue; }
+                    let mut closed = cursor + 1;
+                    if content[cursor] == 13 && content.get(closed) == Some(&10) { closed += 1; }
+                    lines.push(content[opened..if holding { closed } else { cursor }].to_vec());
+                    cursor = closed;
+                    opened = closed;
+                }
+                if opened < content.len() { lines.push(content[opened..].to_vec()); }
+                Ok(Value::Vector(Rc::new(lines.into_iter().map(built).collect())))
+            }
+            // Filled out to a width with a byte of choice, or with
+            // noughts written behind whatever sign leads the figures.
+            29 | 30 | 31 | 32 if (1..=if operation == 32 { 1 } else { 2 }).contains(&arguments.len()) => {
+                let width = counted(&arguments[0])?.max(0) as usize;
+                if width > 1_000_000 { return Err(refusal()); }
+                let spare = width.saturating_sub(content.len());
+                if operation == 32 {
+                    let lead = usize::from(matches!(content.first(), Some(b'+' | b'-')));
+                    let mut filled = content[..lead].to_vec();
+                    filled.resize(lead + spare, b'0');
+                    filled.extend_from_slice(&content[lead..]);
+                    return Ok(built(filled));
+                }
+                let padding = match arguments.get(1) {
+                    Some(v) => { let asked = self.octet_contents(v, false)?; if asked.len() != 1 { return Err(wrong()); } asked[0] }
+                    None => b' ',
+                };
+                let ahead = match operation { 31 => spare, 29 => spare / 2 + (spare % 2) * (width % 2), _ => 0 };
+                let mut filled = vec![padding; ahead];
+                filled.extend_from_slice(content);
+                filled.resize(width.max(content.len()), padding);
+                Ok(built(filled))
+            }
+            // Every tab opened to the next stop, counted from the last
+            // line break in the row.
+            33 if arguments.len() <= 1 => {
+                let stop = match given(0) { Some(v) => counted(v)?.max(0) as usize, None => 8 };
+                let mut opened = Vec::new();
+                let mut column = 0usize;
+                for number in content {
+                    if *number == 9 {
+                        let spare = if stop == 0 { 0 } else { stop - column % stop };
+                        opened.resize(opened.len() + spare, b' ');
+                        column += spare;
+                        continue;
+                    }
+                    opened.push(*number);
+                    column = if matches!(number, 10 | 13) { 0 } else { column + 1 };
+                }
+                Ok(built(opened))
+            }
+            // The letters cased afresh: the leading one by itself, the
+            // leading one of every word, or every one turned about.
+            34 | 35 | 36 if arguments.is_empty() => {
+                let mut inside = false;
+                let mut recased = Vec::with_capacity(content.len());
+                for (place, number) in content.iter().enumerate() {
+                    recased.push(match operation {
+                        34 if place > 0 => number.to_ascii_lowercase(),
+                        34 => number.to_ascii_uppercase(),
+                        35 if inside => number.to_ascii_lowercase(),
+                        35 => number.to_ascii_uppercase(),
+                        _ if number.is_ascii_uppercase() => number.to_ascii_lowercase(),
+                        _ => number.to_ascii_uppercase(),
+                    });
+                    inside = number.is_ascii_alphabetic();
+                }
+                Ok(built(recased))
+            }
+            // A part dropped from one end, where it stands there.
+            37 | 38 if arguments.len() == 1 => {
+                let end = self.octet_contents(&arguments[0], false)?;
+                let kept = if operation == 37 { content.strip_prefix(end.as_slice()) } else { content.strip_suffix(end.as_slice()) };
+                Ok(built(kept.unwrap_or(content).to_vec()))
+            }
+            // Every byte read through a table of two hundred and fifty
+            // six, with the ones named for dropping left out first.
+            39 if (1..=2).contains(&arguments.len()) => {
+                let mapping = match &arguments[0] {
+                    Value::Nil => None,
+                    value => { let table = self.octet_contents(value, false)?; if table.len() != 256 { return Err(wrong()); } Some(table) }
+                };
+                let away = match arguments.get(1) { Some(v) => self.octet_contents(v, false)?, None => Vec::new() };
+                let mut turned = Vec::with_capacity(content.len());
+                for number in content.iter().filter(|n| !away.contains(n)) {
+                    turned.push(match &mapping { Some(table) => table[usize::from(*number)], None => *number });
+                }
+                Ok(built(turned))
+            }
+            51 if arguments.len() == 2 => {
+                let from = self.octet_contents(&arguments[0], false)?;
+                let onto = self.octet_contents(&arguments[1], false)?;
+                self.octet_mapping(&from, &onto)
+            }
+            50 if arguments.len() == 1 => {
+                let Value::Text(spelling) = &arguments[0] else { return Err(wrong()) };
+                Ok(built(self.octets_from_hex(spelling)?))
+            }
+            _ => Err(refusal()),
+        }
+    }
+
     fn octet_routine(&self, operation: u8, values: &[Value]) -> Result<Value, String> {
         let normalized: Vec<Value> = values.iter().map(Value::settled).collect();
         let values = normalized.as_slice();
@@ -7080,18 +7489,16 @@ impl<'a> Machine<'a> {
                 let content = self.octets_from_text(source, self.octet_encoding(values.get(1))?)?;
                 return Ok(self.octets(content, false));
             }
-            5 => {
+            // Written hexadecimal read into a row of the kind asked
+            // for, and the mapping table: both are asked of the kinds
+            // themselves and take no row of bytes ahead of them.
+            5 | 49 => {
                 let [Value::Text(source)] = values else { return Err(wrong()); };
-                let mut pending = None;
-                let mut content = Vec::new();
-                for (position, ch) in source.chars().enumerate() {
-                    if pending.is_none() && (ch.is_ascii_whitespace() || ch == '\x0b') { continue; }
-                    let digit = ch.to_digit(16).filter(|_| ch.is_ascii()).ok_or_else(|| format!("{}{}", self.octet_error("hex"), position))? as u8;
-                    if let Some((high, _)) = pending.take() { content.push(high * 16 + digit); }
-                    else { pending = Some((digit, position)); }
-                }
-                if pending.is_some() { return Err(format!("{}{}", self.octet_error("hex"), source.chars().count())); }
-                return Ok(self.octets(content, false));
+                return Ok(self.octets(self.octets_from_hex(source)?, operation == 49));
+            }
+            40 => {
+                let [from, onto] = values else { return Err(wrong()); };
+                return self.octet_mapping(&self.octet_contents(from, false)?, &self.octet_contents(onto, false)?);
             }
             14 | 15 => {
                 let maximum = if operation == 14 { 3 } else { 2 };
@@ -7143,11 +7550,7 @@ impl<'a> Machine<'a> {
         let result;
         match operation {
             3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
-            4 if args.is_empty() => {
-                let mut text = String::with_capacity(content.len() * 2);
-                for n in content { text.push_str(&format!("{n:02x}")); }
-                return Ok(Value::text(&text));
-            }
+            4 if args.len() <= 2 => return self.octets_in_hex(&content, args),
             6 | 7 if args.is_empty() => {
                 result = if operation == 6 { content.to_ascii_uppercase() } else { content.to_ascii_lowercase() };
             }
@@ -7182,12 +7585,6 @@ impl<'a> Machine<'a> {
                 let pieces = items.iter().map(|item| self.octet_contents(item, false)).collect::<Result<Vec<_>, _>>()?;
                 result = pieces.join(content.as_slice());
             }
-            10 | 13 if args.len() == 1 => {
-                let part = self.octet_contents(&args[0], false)?;
-                let location = seek(&content, &part);
-                return Ok(if operation == 13 { Value::Small(location.map_or(-1, |i| i as i64)) }
-                    else { Value::Flag(location == Some(0)) });
-            }
             11 if (2..=3).contains(&args.len()) => {
                 let old = self.octet_contents(&args[0], false)?;
                 let new = self.octet_contents(&args[1], false)?;
@@ -7215,7 +7612,9 @@ impl<'a> Machine<'a> {
                 while remaining.last().map_or(false, |n| set.contains(n)) { remaining = &remaining[..remaining.len() - 1]; }
                 result = remaining.to_vec();
             }
-            _ => return Err(refusal()),
+            // Whatever else a row of bytes answers to it shares with
+            // text, and every one of those is worked over the bytes.
+            _ => return self.octets_textual(operation, &content, *changeable, args),
         }
         Ok(self.octets(result, *changeable))
     }
@@ -7749,7 +8148,17 @@ impl<'a> Machine<'a> {
             }
             if changed && !settled.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) {
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
-                return Ok(Some(self.prim(operation, &word, &settled)?));
+                let outcome = self.prim(operation, &word, &settled);
+                // A thing built on a native kind is named by its own
+                // blueprint where the refusal names the kinds it was
+                // handed, and not by the worth standing beneath it.
+                if let (Err(told), [one, other], [x, y]) = (&outcome, operands, settled.as_slice()) {
+                    let sign = self.sign_named(operation);
+                    if *told == self.operands_refused(&sign, x, y) {
+                        return Err(self.operands_refused(&sign, one, other).into());
+                    }
+                }
+                return Ok(Some(outcome?));
             }
         }
         let value = match (operation, operands) {
@@ -8418,6 +8827,12 @@ impl<'a> Machine<'a> {
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
             }
+            // A row of bytes joined to what is no row of bytes has its
+            // own words, which are asked for before the rest of these
+            // are refused for want of a wording.
+            if has_octets && op == Prim::Plus {
+                if let Some(words) = self.kinds_refused(op, v) { return Err(words); }
+            }
             if has_octets && matches!(op, Prim::Plus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Mod | Prim::Join) {
                 return Err(self.octet_error("unready"));
             }
@@ -9035,7 +9450,9 @@ impl<'a> Machine<'a> {
                     _ => (None, false),
                 };
                 let native = matches!(v[0], Value::Text(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
-                Value::Flag(native || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                // A row of bytes answers to the methods its kind keeps.
+                let of_octets = matches!(v[0].settled(), Value::Octets { .. }) && self.octet_member(&word).is_some();
+                Value::Flag(native || of_octets || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -9290,7 +9707,7 @@ impl<'a> Machine<'a> {
                 match &v[0] {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
-                        let index = self.octet_at(&v[1], cell.borrow().len())?;
+                        let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
                         let byte = self.octet_item(&v[2])?;
                         cell.borrow_mut()[index] = byte;
                         v[0].clone()
@@ -11059,19 +11476,31 @@ impl<'a> Machine<'a> {
     /// number of times, or is given values to write into it; nothing
     /// takes no part whatever. Neither is read here for a number it
     /// might stand for. Repeating and writing into text keep the
-    /// refusals of their own, which name what they were handed, and
-    /// octets keep theirs until their wording is settled.
+    /// refusals of their own, which name what they were handed. A row
+    /// of bytes joins to another row of bytes and to nothing else, and
+    /// a map takes no part in arithmetic whatever.
     fn kinds_refused(&self, op: Prim, v: &[Value]) -> Option<String> {
         if !self.table.flag("ext.op.arithmetic.strict") { return None; }
         if !matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power) { return None; }
         let [left, right] = v else { return None };
-        if [left, right].iter().any(|item| matches!(item, Value::Octets { .. })) { return None; }
         let worded = |item: &Value| matches!(item, Value::Text(_));
+        let of_bytes = |item: &Value| matches!(item, Value::Octets { .. });
+        // Bytes hold refusals of their own for all but a joining, and
+        // two rows of bytes join as they will.
+        if of_bytes(left) || of_bytes(right) {
+            if op != Prim::Plus || of_bytes(left) && of_bytes(right) { return None; }
+            // A row of bytes on the left names in its own words what was
+            // handed to it; text or a row on the left names both kinds
+            // in the words for a sequence joined to what is none.
+            if of_bytes(left) { return Some(self.octet_joining_refused(left, right)); }
+            if matches!(left, Value::Text(_) | Value::Vector(_) | Value::Tuple(_)) { return Some(self.joining_refused(left, right)); }
+            return Some(self.operands_refused(&self.sign_named(op), left, right));
+        }
         let amiss = if worded(left) || worded(right) {
             let text_alone = op == Prim::Times || (op == Prim::Mod && worded(left));
             !text_alone && !(op == Prim::Plus && worded(left) && worded(right))
         } else {
-            matches!(left, Value::Nil) || matches!(right, Value::Nil)
+            matches!(left, Value::Nil) || matches!(right, Value::Nil) || matches!(left, Value::Dict(_)) || matches!(right, Value::Dict(_))
         };
         if !amiss { return None; }
         Some(match (op, left) {
@@ -11434,7 +11863,7 @@ impl<'a> Machine<'a> {
                     let (_, chosen, _) = self.span_selection(bounds, numbers.len())?;
                     Ok(self.octets(chosen.iter().map(|&i| numbers[i]).collect(), *changeable))
                 }
-                index => Ok(Value::Small(i64::from(numbers[self.octet_at(index, numbers.len())?]))),
+                index => Ok(Value::Small(i64::from(numbers[self.octet_at(index, numbers.len(), *changeable)?]))),
             };
         }
         if self.table.flag("ext.op.index.text.negative") && !matches!(at,Value::Span(_)) {

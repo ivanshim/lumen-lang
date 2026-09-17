@@ -693,10 +693,17 @@ impl<'a> Engine<'a> {
                         }
                         return Ok(Value::ValueMethod(Rc::new((worth,op))));
                     }
-                    // A set and a row of bytes answer some of their
-                    // methods through builtins that take the receiver
-                    // first, so reading one binds it to the worth.
-                    if matches!(self.lang.builtins.get(name),Some(b) if b.set_method()||matches!(b,Builtin::Bytes(2..=15))) {
+                    // A row of bytes answers to the methods its kind
+                    // keeps, which the worth beneath the thing works.
+                    if matches!(worth.contents(),Value::Bytes(..)) {
+                        if let Some(working)=self.byte_member(name) {
+                            return Ok(Value::ValueMethod(Rc::new((worth,working.to_string()))));
+                        }
+                    }
+                    // A set answers some of its methods through builtins
+                    // that take the receiver first, so reading one binds
+                    // it to the worth.
+                    if matches!(self.lang.builtins.get(name),Some(b) if b.set_method()) {
                         return Ok(Self::adapter(3,vec![Value::text(name),worth]));
                     }
                 }
