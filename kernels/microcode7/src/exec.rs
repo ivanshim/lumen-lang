@@ -5195,6 +5195,9 @@ impl<'a> Machine<'a> {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
             if let Value::Intrinsic(word) = value { return Some(Value::text(word)); }
             if let Value::KindOf(kind) = value { return Some(Value::text(Value::word_for_kind(*kind))); }
+            // Either octet kind is a worth of its own rather than an
+            // intrinsic word, so it answers for its name here.
+            if let Value::OctetKind { changeable, .. } = value { return Some(Value::text(self.octet_kind_word(*changeable))); }
         }
         if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
             return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
@@ -5439,7 +5442,7 @@ impl<'a> Machine<'a> {
 
     /// The name a namespace was read in under, where this value is that
     /// very namespace and nothing else.
-    fn namespace_holding(&self, value: &Value) -> Option<String> {
+    pub(super) fn namespace_holding(&self, value: &Value) -> Option<String> {
         let Value::Thing(thing) = value else { return None };
         self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing))).map(|(path, _)| path.clone())
     }
@@ -9026,7 +9029,7 @@ impl<'a> Machine<'a> {
                 let word = v[1].bare();
                 // A kind value and an intrinsic are each named, where the
                 // table has a member for a name.
-                if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(_)) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
+                if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(_) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
                 if let Value::Intrinsic(kind) = &v[0] {
                     let lined = word == self.detail("mro") || word == self.detail("order");
@@ -10824,6 +10827,10 @@ impl<'a> Machine<'a> {
             Prim::SortOf => {
                 n(1)?;
                 if self.table.has_any("ext.builtin.isinstance") {
+                    // Anything standing for a kind is itself of the kind
+                    // primitive's kind, whichever kind it stands for.
+                    if self.stands_for_a_kind(&v[0]) { return Ok(self.kind_builder_word()); }
+                    if self.namespace_holding(&v[0]).is_some() { return Ok(self.kind_named_after(&v[0])); }
                     if let Value::Thing(t) = &v[0] { return Ok(Value::Blueprint(t.of.clone())); }
                     let wanted = match &v[0] {
                         Value::Complex(_) => Some(Prim::ComplexMade),
@@ -10833,7 +10840,11 @@ impl<'a> Machine<'a> {
                         // a view of the entries, is of the dictionary kind.
                         Value::Attributes(_) => Some(Prim::Dictionary),
                         Value::Set(_) => Some(Prim::Uniques), Value::Tuple(_) => Some(Prim::Tupling),
-                        Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal), _ => None,
+                        Value::Small(_) | Value::Huge(_) => Some(Prim::AsInt), Value::Frac(_) => Some(Prim::AsReal),
+                        // A progression and a span of bounds are kinds
+                        // the table spells, so each answers with the
+                        // intrinsic word that builds one.
+                        Value::Progression(_) => Some(Prim::Span), Value::Span(_) => Some(Prim::SpanOf), _ => None,
                     };
                     if let Some(operation) = wanted {
                         if let Some((_,word)) = self.table.prim_words.iter().find(|(p,_)| *p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
@@ -10855,6 +10866,11 @@ impl<'a> Machine<'a> {
                     return Ok(Value::text(word));
                 }
                 let Some(sort) = v[0].kind() else {
+                    // Every other kind a program can hold is of no kind
+                    // the core knows. A table that asks after kinds at
+                    // all is answered with a blueprint named for it
+                    // rather than refused outright.
+                    if self.table.has_any("ext.builtin.isinstance") { return Ok(self.kind_named_after(&v[0])); }
                     return Err(format!("{}(): unknown value type", name));
                 };
                 // Where a language says a kind in words, the word it
@@ -13178,7 +13194,22 @@ impl Machine<'_> {
     }
 
     fn cursor_value(kind: IteratorKind) -> Value {
-        Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false })))
+        Value::Iterator(Rc::new(RefCell::new(IteratorState { kind, peek: None, done: false, walks: None })))
+    }
+
+    /// The word the reference gives a walk of a thing, for the walks a
+    /// gathered row cannot tell apart by itself. Nothing where the walk
+    /// already says what it goes through.
+    fn walk_named(source: &Value) -> Option<Rc<str>> {
+        let word = match &source.settled() {
+            Value::Vector(_) => "list_iterator",
+            Value::Tuple(_) | Value::Row(_) => "tuple_iterator",
+            Value::Text(text) => if text.is_ascii() { "str_ascii_iterator" } else { "str_iterator" },
+            Value::Set(_) => "set_iterator",
+            Value::Octets { changeable, .. } => if *changeable { "bytearray_iterator" } else { "bytes_iterator" },
+            _ => return None,
+        };
+        Some(Rc::from(word))
     }
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
@@ -13214,7 +13245,9 @@ impl Machine<'_> {
             }
             _ => {
                 let entries = self.core_collect(source)?;
-                Ok(Self::cursor_value(IteratorKind::Stored(entries.into_iter().collect())))
+                let walk = Self::cursor_value(IteratorKind::Stored(entries.into_iter().collect()));
+                if let (Value::Iterator(state), Some(word)) = (&walk, Self::walk_named(source)) { state.borrow_mut().walks = Some(word); }
+                Ok(walk)
             }
         }
     }

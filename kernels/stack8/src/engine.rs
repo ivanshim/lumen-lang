@@ -3714,7 +3714,7 @@ impl<'a> Engine<'a> {
 
     /// The name a module read in goes by, where this value is that very
     /// module and nothing else.
-    fn module_holding(&self, value: &Value) -> Option<String> {
+    pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
         self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
     }
@@ -5983,7 +5983,7 @@ impl<'a> Engine<'a> {
                         || name.as_ref() == self.class_word("mro") || name.as_ref() == self.class_word("order"));
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
-                let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
+                let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
                 Value::Flag(kind_named || kind_maker || text_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
@@ -6027,6 +6027,9 @@ impl<'a> Engine<'a> {
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
                 Value::SortOf(sort) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(Value::sort_called(sort)),
+                // Either bytes kind stands as a value of its own rather
+                // than as a builtin word, so it answers for its name here.
+                Value::ByteKind(mutable, _) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(self.byte_kind_word(mutable)),
                 // The member that fills a template is handed over bound
                 // to the text it was read from, as the other members of
                 // a text are, and fills the template when it is called.
@@ -10822,6 +10825,10 @@ impl<'a> Engine<'a> {
             Builtin::SortOf => {
                 arity(1)?;
                 if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
+                    // A value that stands for a kind is itself of the
+                    // kind builtin's kind, whatever kind it stands for.
+                    if self.stands_for_kind(&args[0]) { return Ok(self.kind_maker_word()); }
+                    if self.module_holding(&args[0]).is_some() { return Ok(self.named_kind(&args[0])); }
                     if let Value::Object(o) = &args[0] { return Ok(Value::Class(o.class.clone())); }
                     let which = match &args[0] {
                         Value::Complex(_) => Some(Builtin::Complex),
@@ -10829,6 +10836,10 @@ impl<'a> Engine<'a> {
                         Value::Text(_) => Some(Builtin::ToText), Value::Flag(_) => Some(Builtin::Bool),
                         Value::Array(_) => Some(Builtin::List), Value::Tuple(_) => Some(Builtin::Tuple),
                         Value::Set(_) => Some(Builtin::Set), Value::Map(_) => Some(Builtin::Dict),
+                        // A counted row and a span of bounds are kinds
+                        // the definition spells, so each answers with
+                        // the builtin word that makes one.
+                        Value::Counted(_) => Some(Builtin::Span), Value::Slice(_) => Some(Builtin::MakeSlice),
                         // A routine's own names, read as a view of them,
                         // are a dictionary as far as the program can tell.
                         Value::Fields(_) => Some(Builtin::Dict), _ => None,
@@ -10851,6 +10862,11 @@ impl<'a> Engine<'a> {
                     return Ok(Value::text(word));
                 }
                 let Some(kind) = args[0].sort() else {
+                    // Every other kind a program can hold is of no kind
+                    // the core knows, and a definition that asks after
+                    // kinds at all is answered with a class named for
+                    // it rather than refused.
+                    if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                     return Err(format!("{}(): unknown value type", name));
                 };
                 // Some languages say a kind in words rather than hand
@@ -11765,7 +11781,21 @@ impl Engine<'_> {
     }
 
     fn core_cursor(source: CursorSource) -> Value {
-        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false })))
+        Value::Cursor(Rc::new(RefCell::new(CursorState { source, pending: None, finished: false, busy: false, walked: None })))
+    }
+
+    /// The word the reference gives a walk of a thing, where gathering
+    /// the members loses which kind of thing they were gathered from.
+    /// Nothing where the walk already says what it walks.
+    fn walk_called(source: &Value) -> Option<Rc<str>> {
+        Some(Rc::from(match &source.contents() {
+            Value::Array(_) | Value::Words(..) => "list_iterator",
+            Value::Tuple(_) => "tuple_iterator",
+            Value::Text(s) => if s.is_ascii() { "str_ascii_iterator" } else { "str_iterator" },
+            Value::Set(_) => "set_iterator",
+            Value::Bytes(_, mutable, _) => if *mutable { "bytearray_iterator" } else { "bytes_iterator" },
+            _ => return None,
+        }))
     }
 
     fn core_iterator(&mut self, source: &Value) -> Res<Value> {
@@ -11791,7 +11821,9 @@ impl Engine<'_> {
             }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
-        Ok(Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0)))
+        let walk = Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0));
+        if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
+        Ok(walk)
     }
 
     fn core_step(&mut self, walk: &Value) -> Res<Option<Value>> {

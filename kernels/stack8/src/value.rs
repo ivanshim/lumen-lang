@@ -232,6 +232,10 @@ pub struct CursorState {
     pub pending: Option<Value>,
     pub finished: bool,
     pub busy: bool,
+    /// The word the reference gives a walk of the very thing this one
+    /// was made from. A walk gathered into a row of members has lost
+    /// what it was gathered from, and this keeps that much of it.
+    pub walked: Option<Rc<str>>,
 }
 
 #[derive(Debug, Clone)]

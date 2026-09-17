@@ -835,13 +835,22 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let values: Vec<Value> = values.iter().map(Value::settled).collect();
+        // A namespace read in is a thing like any other, but the
+        // reference knows it by the one word every namespace shares and
+        // not by the name that namespace goes by.
+        if values.len()==1 && self.namespace_holding(&values[0]).is_some() {return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 {if let Value::Thing(t)=&values[0]{return Ok(Value::Blueprint(t.of.clone()));}}
+        // A routine and a method are of kinds the table does not name,
+        // so each takes the word the reference gives its kind; an
+        // intrinsic word read as a class is of the kind builder's kind.
+        if let [value @ (Value::Routine(_)|Value::Bound(..)|Value::Method(..))]=values.as_slice(){return Ok(self.kind_named_after(&value.clone()));}
+        if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
         // primitive itself, under whatever word the table spells it by.
         if values.len()==1 {if let Value::Blueprint(b)=&values[0]{
             if let Some(builder)=Self::builder_over(b){return Ok(Value::Blueprint(builder));}
-            return Ok(self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf).map_or(Value::Nil,|(word,_)|Value::Intrinsic(Rc::from(word.as_str()))));}}
+            return Ok(self.kind_builder_word());}}
         if let [Value::Text(title),sequence,Value::Dict(entries)]=values.as_slice(){
             let bases=match sequence{Value::Vector(v)|Value::Tuple(v)=>v,_=>return Err(self.class_unready())};
             let mut parents=Vec::new();for c in bases.iter(){if let Value::Blueprint(b)=c{parents.push(b.clone());}else{return Err(self.class_unready());}}
@@ -880,6 +889,29 @@ impl<'a> Machine<'a> {
         let Value::Wrapped(8,parts)=value else{return None};
         let Value::Text(word)=&parts[0] else{return None};
         self.table.prims.get(word.as_ref()).filter(|op|Self::names_a_kind(op)).map(|_|word.clone())
+    }
+    /// Whether a value stands for a kind rather than being one of a
+    /// kind: a blueprint, an intrinsic word naming a kind, one of the
+    /// two octet kinds, or the worth a plain kind is told by. Each of
+    /// these is itself of the kind primitive's kind.
+    pub(super) fn stands_for_a_kind(&self,value:&Value)->bool{
+        matches!(value,Value::Blueprint(_)|Value::OctetKind{..}|Value::KindOf(_))
+            ||matches!(value,Value::Intrinsic(word) if self.table.prims.get(word.as_ref()).is_some_and(Self::names_a_kind))
+            ||self.kind_spelling(value).is_some()
+    }
+    /// The kind primitive read as a worth: what the kind of a kind is.
+    pub(super) fn kind_builder_word(&self)->Value{
+        match self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf) {
+            Some((word,_))=>Value::Intrinsic(Rc::from(word.as_str())),
+            None=>Value::Nil,
+        }
+    }
+    /// The blueprint standing for a kind the table has no word of its
+    /// own for, named as the reference names that kind. It is built
+    /// once and kept, so two askings answer with the very same one.
+    pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
+        let word=match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()};
+        Value::Blueprint(self.native_kind(&word))
     }
     /// Whether a value is a class at all: one the program laid out, or
     /// an intrinsic word naming a kind.
