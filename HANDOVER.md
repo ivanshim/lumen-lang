@@ -719,6 +719,95 @@ answers False for any member of a builtin value; the example sieve.py
 takes thirteen seconds alone in a debug build and times out at
 thirty under load.
 
+### 1n. Batch 5 merged as #491; batch 6 is four branches
+
+Pull request #491 merged into main at 41e88c7 with every check green.
+The count at 29052e3, the head of batch 4 and before batch 5, checked
+method by method against eec8af3 with no pass turning into an error or
+failure: stack8 1,050 of 2,463 across 50 files (was 998), microcode7
+991 of 2,321 (was 939). Two files ran nothing on that head that had
+run before, test_generators and test_unpack, and both were hangs the
+generator branch below removes: a `throw` into a `yield from` over an
+iterator the program wrote, and `x, y, z = thing` where the thing
+answers `__getitem__` and lies about its length. The denominators are
+smaller for that reason, not because a test went away.
+
+Batch 6 folds four branches, each probed against python3 on both
+kernels before merging, ten commits on 41e88c7:
+
+- **A write through a subscript on a global inside a function**
+  (`table[k] = v` in a function body, `table` a module global not
+  declared `global`) wrote into a fresh local on both kernels; the
+  write now reaches the name where it lives, as CPython does since the
+  statement binds no name. The same branch guards a callable whose
+  `__call__` is itself an instance (`A.__call__ = A(); A()()`), which
+  looped without limit; it is refused at the same recursion depth as
+  any other call, as CPython's RecursionError is.
+- **The two generator hangs above.** A `yield from` over the program's
+  own iterator is stepped a member at a time, so a `throw` or `close`
+  reaches the inner generator and a `StopIteration` from it ends the
+  walk; and unpacking asks a `__getitem__`-only thing for one member at
+  a time until IndexError, rather than gathering it first through a
+  `__len__` it may not honour.
+- **A write within a class's own value** (`C.table[k] = v` on a class
+  attribute, and `self.rows[i] = v` where `rows` is shared by the
+  class) reached a copy on microcode7 ("Cannot share property") and
+  lost the write; it now reaches the value the class keeps.
+- **`isinstance` and `issubclass` ask the metaclass first**, so
+  `ABCMeta.__instancecheck__` and `__subclasscheck__` run and
+  `register()` on an abstract class answers as CPython does;
+  `langs/lib_python/modules/abc.py` grows the registry and the two
+  hooks, and `collections/abc.py` and `numbers.py` lean on it rather
+  than on lists of their own.
+
+No record moves with those four: the 190 scratch programs the batch
+touches print what their fixtures hold on both kernels, the sixteen
+unittest fixtures that have moved since d669238 are unchanged, and the
+Python and PHP example sweeps pass alone what they timed out on under
+load (sieve.py, and four PHP programs on stack8, all with empty output
+at thirty seconds and their expected output when run alone).
+
+Three more folds follow on the same pull request. The nested-generator
+subscript write above is fixed on microcode7, and with it a routine
+named on the right of `and` or `or` (`hard and advance_hard or
+advance`) is handed back as a value rather than run, so the `conjoin`
+doctest of test_generators finds its tours on both kernels. `eval` and
+`exec` inside a function see the function's locals: the caller's
+frame is set aside for the text, compiled and run against a detached
+copy, so a write inside the text never reaches the routine (CPython
+3.13 and later behave the same, and `locals()` after such an `exec`
+does not show the text's names); a repeated keyword in a call is
+refused while reading, a keyword repeating a positional through `**`
+raises CPython's TypeError, a duplicate parameter in a `def` is
+named, and a SyntaxError from evaluated text carries its place. And
+`del D.table["z"]` through a class attribute, or `del
+type(self).items[0]` through a call's result, reaches the value the
+class keeps on stack8 as it already did on microcode7. Two records
+move with the eval work, both kernels alike and no pass lost:
+reader-tail/1 gains two passes (`...EEEEEEEEEEE.EE..EE.EEFE.E..FE...E.EEFF..FE.EF.FFEE......EEEE....E.EEE.E.....EF.EF..FFFF..`)
+and reader-tail/9 one (`.....E..EF..E..E`). CI then caught two
+more that the local subset had not covered, both wordings now
+CPython's own: params/12 (`f(**{"x": 1}, **{"x": 2})`) says
+`__main__.f() got multiple values for keyword argument 'x'`, and
+params/17 (`def f(a, a)`) says `duplicate argument 'a' in function
+definition`. A lesson for the local check: the subset must include
+every directory whose programs touch the changed behaviour, and
+`scratch/params` holds the call-binding programs.
+
+Gaps this round records, beyond §1m's: `del a["k"]` panics stack8
+when the class body defines `__delitem__` (compile.rs:619, not the
+class-attribute case above); `lst.__setitem__(i, v)` and the other
+operator dunders called by name on a builtin value are not found on
+either kernel (a branch is under way); a TypeError for a keyword
+repeating a positional lacks CPython's `f()` prefix; a class body has
+no namespace of its own in either kernel, so `locals()` there answers
+the module's names and `eval("v + 1")` in a class body cannot see
+`v`; test_funcdef now runs on to the library's stub `NotImplementedError:
+syntax checks need a compile builtin`; and unreferenced generators are
+never finalised, so a `finally:` in a generator that is dropped
+mid-walk does not run (generators-run/8 records this as a known
+divergence).
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

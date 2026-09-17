@@ -2107,7 +2107,12 @@ only. The extension labels so far, all from PHP:
   arguments in order, and `ext.builtin.compile.modes` the three manners:
   statements, one expression, and one statement whose value is written
   out as it runs. Text that cannot be read is refused with
-  `ext.builtin.source.syntax`, and a reading the kernels cannot yet
+  `ext.builtin.source.syntax`; where `ext.builtin.source.syntax.place`
+  holds three pieces, they set the file the text stands for and the line
+  the reading stopped on about that complaint, so a reader may say where
+  the text went wrong, and a reading that has words of the language's
+  own for what it found keeps them in front of the place. A reading the
+  kernels cannot yet
   honour — a closure handed over, a setting of optimisation beyond the
   ordinary — with `ext.builtin.source.unready`. `ext.builtin.import`
   fetches a module by its name as the import statement would.
@@ -2787,6 +2792,9 @@ only. The extension labels so far, all from PHP:
   parameters before it must be given by position.
 - `ext.stmt.function.parameters.amiss`: the words said when a parameter
   list repeats a name or puts a mark where none may stand.
+  `ext.stmt.function.parameters.duplicate` holds two pieces, before and
+  after the name, for a list naming the same parameter twice, where a
+  language words that refusal apart from the rest.
 - `ext.syntax.call.bind_names`: a switch; call labels, or the assignment
   sign after a name in call position, bind arguments by name. Defaults
   fill the places left empty, and a name given twice or
@@ -2842,7 +2850,13 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.call.amiss.builtin` says that a builtin takes no keyword
   arguments. One piece is said alone; two pieces stand before and after
   the builtin's last name, and the complete complaint is passed to the
-  host without another heading.
+  host without another heading. `ext.syntax.call.amiss.repeated` holds
+  one piece before the keyword, or two about it, for a call written with
+  the same keyword twice: such a call is refused as the text is read,
+  and not when it runs. Only a spread of pairs can hand the same keyword
+  over twice while the run goes, and `ext.syntax.call.amiss.keyword`
+  words that in three pieces, standing before the routine's name,
+  between it and the keyword, and after.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. With
@@ -4284,6 +4298,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
+| `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
@@ -4708,7 +4723,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.reader` | - | - | `__getattr__` | - | `__get` | - | - | - | - | - |
 | `ext.stmt.class.self` | - | - | - | - | `self` | - | - | - | - | - |
 | `ext.stmt.class.shared` | - | - | - | - | `static` | - | - | - | - | - |
-| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.special` | - | - | `__str__` `__repr__` `__eq__` `__ne__` `__lt__` `__le__` `__gt__` `__ge__` `__hash__` `__bool__` `__len__` `__getitem__` `__setitem__` `__delitem__` `__contains__` `__iter__` `__next__` `__call__` `__add__` `__sub__` `__mul__` `__truediv__` `__floordiv__` `__mod__` `__pow__` `__neg__` `__radd__` `__rsub__` `__rmul__` `__rtruediv__` `__rfloordiv__` `__rmod__` `__rpow__` `__enter__` `__exit__` `__class__` `__dict__` `__name__` `__int__` `__float__` `__abs__` `__pos__` `__reversed__` `__index__` `__invert__` `__matmul__` `__rmatmul__` `__iadd__` `__isub__` `__imul__` `__itruediv__` `__ifloordiv__` `__imod__` `__ipow__` `__imatmul__` `__ilshift__` `__irshift__` `__iand__` `__ior__` `__ixor__` `__divmod__` `__rdivmod__` `__lshift__` `__rshift__` `__and__` `__or__` `__xor__` `__rlshift__` `__rrshift__` `__rand__` `__ror__` `__rxor__` `__format__` `__round__` `__complex__` `__dir__` `__instancecheck__` `__subclasscheck__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.amiss` | - | - | `TypeError: special method returned an invalid value` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.declined` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.stmt.class.special.stop` | - | - | `StopIteration` | - | - | - | - | - | - | - |
@@ -4746,6 +4761,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
+| `ext.stmt.function.parameters.duplicate` | - | - | `SyntaxError: duplicate argument '` `' in function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | `lambda` `:` | - | `fn` `=>` | - | - | - | - | - |
@@ -4818,7 +4834,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |

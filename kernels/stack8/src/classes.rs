@@ -421,7 +421,11 @@ impl<'a> Engine<'a> {
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
-            Value::Object(o) => {let f=self.class_value(&o.class,self.class_word("call")).ok_or_else(||self.class_refusal())?;args.insert(0,Value::Object(o));self.class_apply(f,args)},
+            // A thing called stands on its own call member, which may be
+            // a thing again: each such step is counted with the calls
+            // standing, so a thing whose call member is a thing of its
+            // own kind is refused at the depth any endless call is.
+            Value::Object(o) => {let f=self.class_value(&o.class,self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
                 0 => Ok(w.1[0].clone()),
@@ -597,12 +601,31 @@ impl<'a> Engine<'a> {
             Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word) => {
                 if name==self.class_word("allocate") { return Ok(Self::adapter(14, vec![Value::text(word)])); }
                 if name==self.class_word("name") || self.lang.class_name.as_deref()==Some(name) { return Ok(Value::text(word)); }
+                // The kind read as a class stands on the root and on
+                // nothing else, so that is the whole of its line.
+                if name==self.class_word("mro") || name==self.class_word("order") {
+                    let listed=name==self.class_word("order");
+                    let word=word.to_string();
+                    let kind=self.kind_class(&word);
+                    let root=self.root_class();
+                    let line=Value::Tuple(Rc::new(vec![Value::Class(kind),Value::Class(root)]));
+                    return Ok(if listed {Self::adapter(0,vec![line])} else {line});
+                }
             }
             Value::Class(c) => {
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
                 if name==self.class_word("qualified") { return Ok(self.class_value(c,name).unwrap_or_else(|| Value::text(&c.name))); }
                 if name==self.class_word("bases") { return Ok(Value::Tuple(Rc::new(c.direct.iter().cloned().map(Value::Class).collect()))); }
-                if name==self.class_word("namespace") { return Ok(Self::namespace(&c.shared.borrow())); }
+                if name==self.class_word("namespace") {
+                    // A class standing for a builtin kind holds no
+                    // members of its own; what it names are the ones a
+                    // value of the kind answers to.
+                    if let Some(word)=Self::own_kind(c) {
+                        let named=self.kind_special_names(&word);
+                        return Ok(Value::Map(Rc::new(named.iter().map(|n|(Value::text(n),Value::text(&format!("<slot wrapper '{n}' of '{word}' objects>")))).collect())));
+                    }
+                    return Ok(Self::namespace(&c.shared.borrow()));
+                }
                 if name==self.class_word("mro") || name==self.class_word("order") {
                     let mut order=vec![subject.clone()]; order.extend(c.lineage.iter().cloned().map(Value::Class));
                     let tuple=Value::Tuple(Rc::new(order));
@@ -820,7 +843,22 @@ impl<'a> Engine<'a> {
             _=>Err(self.class_refusal()),
         }
     }
-    fn beneath(&self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+    /// A class whose metaclass holds the member for the question may
+    /// answer it itself: the member is read from the metaclass bound to
+    /// the class, called with the value, and its word taken. A class no
+    /// metaclass of its own made says nothing, and the plain check
+    /// stands, so the common question costs one look at the constants.
+    pub(super) fn maker_answers(&mut self,wanted:&Value,given:&Value,subclass:bool)->Flow<Option<bool>> {
+        let Value::Class(class)=wanted else{return Ok(None);};
+        let Some(maker)=Self::maker_beneath(class) else{return Ok(None);};
+        let Some(name)=self.lang.class_special.get(if subclass{77}else{76}).cloned() else{return Ok(None);};
+        let Some(member)=self.class_value(&maker,&name) else{return Ok(None);};
+        let bound=self.bind_class_value(member,Some(wanted.clone()),maker)?;
+        let told=self.class_apply(bound,vec![given.clone()])?;
+        Ok(Some(self.truth(&told)))
+    }
+    fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
+        if let Some(told)=self.maker_answers(wanted,value,subclass)? { return Ok(told); }
         // The bytes kinds stand as values of their own rather than as
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }

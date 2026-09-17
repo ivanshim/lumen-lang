@@ -450,7 +450,7 @@ fn compile_pass(
     }
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -873,7 +873,7 @@ impl<'a> Compiler<'a> {
     /// the unit it is written in, and every later reading of it must
     /// find the same cell.
     fn read_to_rewrite(&mut self, name: &str) {
-        let mut slot = self.cell_to_write(name);
+        let mut slot = self.rewriting_cell(name);
         // Where a language holds its sequences, what is written into is
         // left where it stands while the write is made: a write that is
         // refused must leave the name holding what it held before.
@@ -883,8 +883,23 @@ impl<'a> Compiler<'a> {
 
     /// The store after such a load, addressed the same way.
     fn rewritten(&mut self, name: &str) {
-        let slot = self.cell_to_write(name);
+        let slot = self.rewriting_cell(name);
         self.put(Instr::Write(slot));
+    }
+
+    /// The cell the array written into stands in. Where names close
+    /// over, a write through a place binds nothing: the array is the
+    /// one the name already stands for -- the routine's own, an
+    /// enclosing routine's, or the module's -- and never a fresh local
+    /// of the same spelling, which is the footing `del a[k]` reads the
+    /// name on as well.
+    fn rewriting_cell(&mut self, name: &str) -> Cell {
+        if !self.lang.closes_over {
+            return self.cell_to_write(name);
+        }
+        let kept = self.member_of(name);
+        let name = kept.as_deref().unwrap_or(name);
+        self.cell_to_read(name, false)
     }
 
     fn write(&mut self, name: &str) {
@@ -1677,11 +1692,10 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as a binding target")?;
         self.read(&name);
         self.called_on_value()?;
-        // What a call gave back is no place a binding can reach: the
-        // whole target is still read, and the run refuses it.
-        if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) {
-            self.awkward_place = true;
-        }
+        // Whether the chain so far ends on a call. What a call gave back
+        // is no place a binding can reach, but a member of it is: the
+        // mark is carried along and only the last step decides.
+        let mut on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
         let mut keyed = Vec::new();
         loop {
             if self.on_any(&self.lang.pipe_words) {
@@ -1690,6 +1704,7 @@ impl<'a> Compiler<'a> {
                 let member = self.want_name("after the member mark")?;
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
                 self.called_on_value()?;
+                on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
@@ -1748,6 +1763,12 @@ impl<'a> Compiler<'a> {
                 keyed.push(at);
                 self.act(Action::At, 2);
             } else { break; }
+        }
+        // A chain still standing on a call has no cell to be reached
+        // through: the whole target is read all the same, and the run
+        // refuses it.
+        if on_call {
+            self.awkward_place = true;
         }
         self.keyed = keyed;
         Ok(())
@@ -4599,7 +4620,11 @@ impl<'a> Compiler<'a> {
             }
             if lang.bind_names {
                 let newest = formals.last().ok_or_else(bad)?;
-                if formals[..formals.len() - 1].contains(newest) { return Err(bad()); }
+                if formals[..formals.len() - 1].contains(newest) {
+                    let twice = &lang.parameters_duplicate;
+                    if twice.is_empty() { return Err(bad()); }
+                    return Err(format!("{}{}{}", twice[0], newest, twice.get(1).map_or("", String::as_str)));
+                }
                 if self.on_assign() {
                     if rule >= 3 { return Err(bad()); }
                     if rule == 0 { default_seen = true; }
@@ -5802,7 +5827,7 @@ impl<'a> Compiler<'a> {
                     self.write(&made);
                 }
                 self.read(&made);
-                self.write(&name);
+                self.rewritten(&name);
                 Ok(())
             }
             // `p op= e` where the place is a member of something: what
@@ -8207,6 +8232,10 @@ impl<'a> Compiler<'a> {
         }
         let mut count = 0;
         let mut pieces: Vec<(bool, Vec<Instr>)> = Vec::new();
+        // The keywords written out in this call, so that one written
+        // twice is refused while the program is read, as the reference
+        // refuses it.
+        let mut spelled: Vec<String> = Vec::new();
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
@@ -8223,6 +8252,12 @@ impl<'a> Compiler<'a> {
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
             if tagged {
+                let word = self.look().lexeme.clone();
+                let twice = &self.lang.call_keyword_repeated;
+                if spelled.contains(&word) && !twice.is_empty() {
+                    return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
+                }
+                spelled.push(word);
                 self.constant(Value::text(&self.look().lexeme));
             } else if spread {
                 self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));

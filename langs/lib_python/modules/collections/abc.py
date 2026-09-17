@@ -1,14 +1,8 @@
 # The container kinds, as classes to inherit from and to ask after. The
 # mixin methods below are real: a class that gives the few abstract
 # methods its kind names gets the rest of the kind's behaviour from
-# here.
-#
-# Stub: register records the claim and answers with the class it was
-# given, as CPython's does, but isinstance cannot honour it. The reader
-# answers isinstance from the class a thing was built from, and offers
-# no instance-check hook for a class to speak for kinds it does not
-# stand above, so isinstance(x, Mapping) is true only where the class of
-# x really inherits Mapping.
+# here. A class claimed for a kind through register belongs to it, as
+# the builtin containers claimed at the foot of this file do.
 from abc import ABC, abstractmethod
 
 __all__ = ['Hashable', 'Sized', 'Container', 'Callable', 'Iterable',
@@ -17,13 +11,10 @@ __all__ = ['Hashable', 'Sized', 'Container', 'Callable', 'Iterable',
            'Mapping', 'MutableMapping', 'MappingView', 'KeysView',
            'ValuesView', 'ItemsView']
 
-# Which classes have been claimed for which kind, by the kind's name.
-_claimed = {}
-
 
 # The mixin comparisons below read the other operand by what it answers
-# to rather than by the kind it was claimed for, since a claim made
-# through register cannot be read back through isinstance here.
+# to as well as by the kind it was claimed for, since a value may answer
+# to a kind it was never claimed for.
 def _a_set(value):
     return isinstance(value, (set, frozenset)) or isinstance(value, Set)
 
@@ -43,25 +34,10 @@ def _a_walk(value):
 
 
 class _Kind(ABC):
-    # A kind every container kind below stands on, for the one thing
-    # they share: the claim a class makes to belong to the kind.
-    @classmethod
-    def register(cls, subclass):
-        table = _claimed
-        name = cls.__name__
-        if name not in table:
-            table[name] = []
-        if subclass not in table[name]:
-            table[name].append(subclass)
-        return subclass
-
-    @classmethod
-    def _registered(cls):
-        table = _claimed
-        name = cls.__name__
-        if name not in table:
-            return []
-        return list(table[name])
+    # A kind every container kind below stands on. The claim a class
+    # makes to belong to a kind is kept by the metaclass, which every
+    # kind here has from ABC.
+    pass
 
 
 class Hashable(_Kind):
@@ -618,8 +594,8 @@ class _PairList:
         return len(self._keys)
 
 
-# The builtin containers, claimed for the kinds they answer to, so the
-# registry reads as CPython's does.
+# The builtin containers, claimed for the kinds they answer to, as
+# CPython claims them.
 Sequence.register(tuple)
 Sequence.register(str)
 Sequence.register(range)

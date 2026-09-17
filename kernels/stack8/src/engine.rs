@@ -48,6 +48,11 @@ pub struct Engine<'a> {
     text_books: Vec<TextBook>,
     /// Which of those the run stands inside at present, if any.
     reading_in: Option<usize>,
+    /// The names and values of the frame the call to read text stands
+    /// in, where it stands in a routine and hands over no dictionaries
+    /// of its own. The text is read as a piece of that routine, so the
+    /// routine's names are its to read.
+    text_within: Option<(Vec<String>, Vec<Value>)>,
     /// The dictionary of builtin words, and the class of a code value,
     /// each made once a program asks for it.
     natives: Option<Rc<RefCell<Value>>>,
@@ -166,6 +171,13 @@ pub struct Engine<'a> {
     any_waiting: std::cell::Cell<bool>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
+    /// How many calls now standing were answered by a thing's own call
+    /// member rather than by a routine. Such an answer makes no frame,
+    /// so it is counted here and reckoned with the frames: a thing
+    /// whose call member is a thing again is reached through as many
+    /// times as the language allows calls to stand, and then refused
+    /// like any other call that runs away.
+    reaching: usize,
     /// Text read in that could not be read at all: what was said of it,
     /// where that text is reckoned to stand, and which of its own lines
     /// the reading stopped on. The reading answers with a note like any
@@ -744,10 +756,12 @@ impl<'a> Engine<'a> {
             any_waiting: std::cell::Cell::new(false),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
+            reaching: 0,
             reading_amiss: None,
             outer_book: None,
             text_books: Vec::new(),
             reading_in: None,
+            text_within: None,
             natives: None,
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
@@ -1626,6 +1640,30 @@ impl<'a> Engine<'a> {
         held.iter().position(|(n, v)| n == name && standing(v))
     }
 
+    /// The cell a class keeps for a value of its own, made where the
+    /// value still lies bare so that the class and every name that
+    /// reaches it stand for the one holding. The class along the line
+    /// that keeps the name answers for it, and a line keeping none takes
+    /// the name as this class's own.
+    fn own_cell(class: &Class, name: &str) -> Rc<RefCell<Value>> {
+        let keeper = class.holder(name).unwrap_or(class);
+        let mut own = keeper.shared.borrow_mut();
+        let at = match own.iter().position(|(n, _)| n == name) {
+            Some(at) => at,
+            None => {
+                own.push((name.to_string(), Value::Null));
+                own.len() - 1
+            }
+        };
+        if let Value::Bond(shared) = &own[at].1 {
+            return shared.clone();
+        }
+        let was = std::mem::replace(&mut own[at].1, Value::Null);
+        let shared = Rc::new(RefCell::new(was));
+        own[at].1 = Value::Bond(shared.clone());
+        shared
+    }
+
     /// The method a class answers with for a property the thing does
     /// not hold, and the one it takes such a write with, where the
     /// language names them and the class is written with them.
@@ -2152,6 +2190,35 @@ impl<'a> Engine<'a> {
         Some(told)
     }
 
+    /// The name the outermost names go by, where the language gives
+    /// them one: the module a routine written there belongs to.
+    fn module_named(&self) -> Option<String> {
+        let word = self.lang.module_names.first()?;
+        if let Some(book) = &self.outer_book {
+            if let Some(held) = book_entry(book, word) { return Some(held.plain()); }
+        }
+        let at = self.registry.idents.iter().position(|name| name == word)?;
+        match self.world.get(at)?.contents() {
+            Value::Text(said) => Some(said.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The words for a call handed the same keyword twice, which only a
+    /// spread of pairs can bring about since two written out are
+    /// refused while the program is read. The reference names the
+    /// routine by the module it belongs to and the name it goes by
+    /// there, so the two are written together here.
+    fn keyword_twice(&self, program: &Routine, name: &str) -> String {
+        let words = &self.lang.call_keyword_twice;
+        if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, name); }
+        let called = match self.module_named() {
+            Some(module) if !program.qualified.is_empty() => format!("{}.{}", module, program.qualified),
+            _ => program.qualified.clone(),
+        };
+        format!("{}{}{}{}{}", words[0], called, words[1], name, words[2])
+    }
+
     /// A counted row's complaint carries the class it belongs to in the
     /// words themselves, so it is marked as told whole and the language
     /// puts no further naming over it.
@@ -2191,7 +2258,7 @@ impl<'a> Engine<'a> {
         for (name, value) in items {
             let Some(name) = name else { continue };
             if !seen.insert(name.clone()) {
-                return Err(Self::named_fault(&self.lang.call_duplicate, &name).into());
+                return Err(self.keyword_twice(program, &name).into());
             }
             let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
             match slot {
@@ -2217,6 +2284,26 @@ impl<'a> Engine<'a> {
         let n = args.len();
         self.data.extend(args);
         self.invoke_top(program, n)
+    }
+
+    /// One step further into a call a thing answers with its own call
+    /// member: counted as a frame would be counted, and refused in the
+    /// words the language gives once the calls standing reach the
+    /// limit, so that a clause may take the fault as it takes the one a
+    /// routine calling itself for ever raises. What is counted here is
+    /// let go again by `answered`.
+    pub(super) fn reaching_further(&mut self) -> Flow<()> {
+        if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
+        }
+        self.reaching += 1;
+        Ok(())
+    }
+
+    /// The step back out: the call the thing answered is done with,
+    /// however it went.
+    pub(super) fn answered(&mut self) {
+        self.reaching = self.reaching.saturating_sub(1);
     }
 
     /// A call whose arguments are the top `n` of the data stack: they move
@@ -2785,7 +2872,7 @@ impl<'a> Engine<'a> {
     /// nothing more.
     fn shut_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
         let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-        if let Some(Value::Generator(inner)) = state.delegate.take() { self.shut_generator(&inner)?; }
+        if let Some(walk) = state.delegate.take() { self.shut_delegate(&walk)?; }
         state.closed = true;
         state.current = None;
         state.frame.clear();
@@ -2823,7 +2910,7 @@ impl<'a> Engine<'a> {
             self.shut_generator(held)?;
             return Ok(Value::Null);
         };
-        match self.step_generator(held, Value::Null, Some(exit)) {
+        match self.step_generator(held, Value::Null, Some(exit), &[]) {
             Ok(Some(_)) => {
                 self.shut_generator(held)?;
                 Err(self.lang.yield_close_ignored.first().cloned().unwrap_or_default().into())
@@ -2847,34 +2934,139 @@ impl<'a> Engine<'a> {
         Ok(self.watched_walk(&source, items))
     }
 
+    /// The walk a delegated suspension hands members over from. A thing
+    /// of the program's own, and a walk already under way, are kept as
+    /// they stand rather than gathered, since such a walk may have no
+    /// end at all and a suspension asks it for one member at a time.
+    fn delegated_walk(&mut self, source: Value) -> Flow<Value> {
+        if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Walk(_)) { return Ok(self.core_iterator(&source)?); }
+        self.iterator(source)
+    }
+
+    /// A delegated walk let go of: another suspended body is ended the
+    /// way a walk is ended, and a walk of the program's own is told to
+    /// end where it knows how, since it may have a last part of its own.
+    fn shut_delegate(&mut self, walk: &Value) -> Flow<()> {
+        if let Value::Generator(inner) = walk { return self.shut_generator(inner); }
+        let thing = Self::walked_thing(walk);
+        let method = thing.as_ref().and_then(|held| self.named_method(held, &self.lang.yield_close));
+        if let (Some(thing), Some(method)) = (thing, method) {
+            self.invoke(&method, vec![thing])?;
+            self.drop_top()?;
+        }
+        Self::finish_walk(walk);
+        Ok(())
+    }
+
+    /// A step of the walk a suspension delegates to: another suspended
+    /// body is handed what was sent in, and anything else is asked for
+    /// its next member, which is all such a walk knows how to be asked.
+    fn delegate_step(&mut self, walk: &Value, sent: Value) -> Flow<Option<Value>> {
+        if let Value::Generator(inner) = walk { return self.resume_generator(inner, sent); }
+        match self.core_step(walk) {
+            Ok(item) => Ok(item),
+            Err(words) => Err(match self.carried.take() { Some(fault) => fault, None => words.into() }),
+        }
+    }
+
+    /// What a walk gives back where it ends: a suspended body gives
+    /// what it returned, and a plain walk gives nothing.
+    fn delegate_returned(walk: &Value) -> Value {
+        match walk { Value::Generator(inner) => inner.borrow().returned.clone(), _ => Value::Null }
+    }
+
+    /// The thing of the program's own a walk steps through, where the
+    /// walk is one taken from such a thing.
+    fn walked_thing(walk: &Value) -> Option<Value> {
+        let Value::Cursor(cell) = walk else { return None };
+        match &cell.borrow().source { CursorSource::Handed(thing) => Some(thing.clone()), _ => None }
+    }
+
+    /// A walk told to hand over nothing more, so that the suspension
+    /// waiting on it steps past the delegation when it goes on.
+    fn finish_walk(walk: &Value) {
+        if let Value::Cursor(cell) = walk { let mut state = cell.borrow_mut(); state.pending = None; state.finished = true; }
+    }
+
+    /// The routine a thing of the program's own answers a plain name
+    /// with, looked for as a special name is: among the class's own
+    /// methods and then among the classes it stands upon.
+    fn named_method(&self, value: &Value, names: &[String]) -> Option<Rc<Routine>> {
+        let Value::Object(object) = value else { return None };
+        let named = |name: &String| names.iter().any(|word| word == name);
+        let mut class = Some(&object.class);
+        while let Some(current) = class {
+            if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(name, _)| named(name)) { return Some(routine.clone()); }
+            if let Some((_, routine)) = current.methods.iter().find(|(name, _)| named(name)) { return Some(routine.clone()); }
+            class = current.base.as_ref();
+        }
+        None
+    }
+
     fn resume_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value) -> Flow<Option<Value>> {
-        self.step_generator(held, sent, None)
+        self.step_generator(held, sent, None, &[])
     }
 
     /// A step back into a suspended body, either handing it a value or
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown in is raised on the spot.
-    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>) -> Flow<Option<Value>> {
+    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
         if let Some(value) = hurled.clone() {
-            let inner = {
+            let waited = {
                 let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                 match (&state.delegate, state.started && !state.closed) {
-                    (Some(Value::Generator(inner)), true) => Some(inner.clone()),
+                    (Some(walk), true) => Some(walk.clone()),
                     _ => None,
                 }
             };
-            if let Some(inner) = inner {
-                let stepped = self.step_generator(&inner, Value::Null, Some(value));
-                let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-                match stepped {
-                    Ok(Some(item)) => return Ok(Some(item)),
-                    Ok(None) => { hurled = None; }
-                    Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
-                    Err(other) => { state.delegate = None; return Err(other); }
+            match waited {
+                Some(Value::Generator(inner)) => {
+                    let stepped = self.step_generator(&inner, Value::Null, Some(value), given);
+                    let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+                    match stepped {
+                        Ok(Some(item)) => return Ok(Some(item)),
+                        Ok(None) => { hurled = None; }
+                        Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
+                        Err(other) => { state.delegate = None; return Err(other); }
+                    }
                 }
+                // A walk of the program's own that knows how to be
+                // thrown into is shown the value, and what it hands back
+                // is what the throw came to, the delegation standing.
+                // One that does not know is ended, and the value is
+                // raised where the delegation stands instead.
+                Some(walk) if !self.is_exit(&value) => {
+                    let thing = Self::walked_thing(&walk);
+                    let method = thing.as_ref().and_then(|held| self.named_method(held, &self.lang.yield_throw));
+                    match (thing, method) {
+                        // The walk is shown what the throw was given,
+                        // not the value the kernel made of it, since
+                        // that is what the reference hands it.
+                        (Some(thing), Some(method)) => match self.invoke(&method, std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect()) {
+                            Ok(()) => return Ok(Some(self.drop_top()?)),
+                            Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if self.stop_class(&o.class)) => {
+                                Self::finish_walk(&walk);
+                                hurled = None;
+                            }
+                            Err(other) => { Self::finish_walk(&walk); return Err(other); }
+                        },
+                        _ => {
+                            self.shut_delegate(&walk)?;
+                            held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None;
+                        }
+                    }
+                }
+                // A walk ended rather than thrown into is told to end
+                // where it knows how, and the ending is raised where the
+                // delegation stands.
+                Some(walk) => {
+                    self.shut_delegate(&walk)?;
+                    held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None;
+                }
+                None => {}
             }
         }
         let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
@@ -3065,14 +3257,15 @@ impl<'a> Engine<'a> {
                     } else {
                         if kept.delegate.is_none() {
                             let source = self.drop_top()?;
-                            kept.delegate = Some(self.iterator(source)?);
+                            kept.delegate = Some(self.delegated_walk(source)?);
                             kept.sent = Value::Null;
                         }
-                        let Value::Generator(inner) = kept.delegate.as_ref().expect("delegated walk").clone() else { unreachable!() };
-                        match self.resume_generator(&inner, std::mem::replace(&mut kept.sent, Value::Null))? {
+                        let inner = kept.delegate.as_ref().expect("delegated walk").clone();
+                        let sent = std::mem::replace(&mut kept.sent, Value::Null);
+                        match self.delegate_step(&inner, sent)? {
                             Some(item) => { kept.handed = Some(item); kept.pc = pc; }
                             None => {
-                                self.data.push(inner.borrow().returned.clone());
+                                self.data.push(Self::delegate_returned(&inner));
                                 kept.delegate = None;
                                 pc += 1;
                                 continue;
@@ -3088,6 +3281,26 @@ impl<'a> Engine<'a> {
                     // outermost body has none but the globals.
                     let done = match op {
                         Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 && self.lang.compile_modes.is_empty() => self.run_text_here(program, frame),
+                        // Where the language has manners of reading as
+                        // well, the reading is done past here, so the
+                        // names about the call are put aside for it to
+                        // find: it reads them only when it was handed
+                        // no dictionaries of its own.
+                        Action::Builtin(Builtin::Eval | Builtin::RunText, _) if !program.body_of_all && !self.lang.compile_modes.is_empty() => {
+                            // What the text is handed is a frame of its
+                            // own: a name the routine keeps in a cell is
+                            // given a cell of its own holding the same,
+                            // so a write the text makes is the text's
+                            // alone, as the reference has it.
+                            let mine: Vec<Value> = frame.iter().map(|held| match held {
+                                Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
+                                other => other.clone(),
+                            }).collect();
+                            let held = std::mem::replace(&mut self.text_within, Some((program.idents.clone(), mine)));
+                            let done = self.perform(op, *argc);
+                            self.text_within = held;
+                            done
+                        }
                         // The names standing where the call is made are
                         // only to be seen from here, where the frame is.
                         Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
@@ -3434,6 +3647,22 @@ impl<'a> Engine<'a> {
         match self.special_value(value, place) { Some(Value::Routine(routine)) => Some(routine), _ => None }
     }
 
+    /// The names a value of a builtin kind answers to, for the kind
+    /// read as a class: a sample of the kind is asked, so the namespace
+    /// of the kind and the members of a value of it never part ways.
+    pub(super) fn kind_special_names(&self, word: &str) -> Vec<String> {
+        let sample = match self.lang.builtins.get(word) {
+            Some(Builtin::ToText) => Value::text(""),
+            Some(Builtin::List) => Value::array(Vec::new()),
+            Some(Builtin::Tuple) => Value::Tuple(Rc::new(Vec::new())),
+            Some(Builtin::Dict) => Value::Map(Rc::new(Vec::new())),
+            Some(Builtin::Set) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
+            Some(Builtin::Bytes(mutable)) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
+            _ => return Vec::new(),
+        };
+        self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)).cloned().collect()
+    }
+
     /// Whether a value of a builtin kind answers this special name as a
     /// member of its own. A walk hands over its next member and itself;
     /// anything walked over hands over a walk of it; and the containers
@@ -3441,7 +3670,7 @@ impl<'a> Engine<'a> {
     /// membership, each where that kind has the member in the language.
     /// A window upon a map is looked at before its contents, which read
     /// as a plain row, so that it keeps the members a window has.
-    fn native_special(&self, subject: &Value, name: &str) -> bool {
+    pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
         let named = |at: usize| self.lang.class_special.get(at).map_or(false, |word| word == name);
         let mut held = subject.clone();
         while let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = held {
@@ -4265,6 +4494,22 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The members a walk hands over for taking apart: no more than the
+    /// places call for, and one beyond them so that too many may be told
+    /// from enough, except where a starred place takes all that is left.
+    /// Stepping may run the program's own code, and what that code
+    /// raised is raised on rather than the words that stood in for it.
+    fn apart_members(&mut self, walk: &Value, count: usize, resting: bool) -> Flow<Vec<Value>> {
+        let mut found = Vec::new();
+        while resting || found.len() <= count {
+            let stepped = self.core_step(walk);
+            if let Some(fled) = self.carried.take() { return Err(fled); }
+            let Some(value) = stepped? else { break };
+            found.push(value);
+        }
+        Ok(found)
+    }
+
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
             return Ok(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, _)| Value::text(k)).collect());
@@ -4448,28 +4693,7 @@ impl<'a> Engine<'a> {
                     self.class_it_spells(top)
                 };
                 match stands {
-                    Value::Class(c) => {
-                        let holder = c.holder(&name).unwrap_or(&c);
-                        let mut own = holder.shared.borrow_mut();
-                        let at = match own.iter().position(|(n, _)| n == name.as_ref()) {
-                            Some(at) => at,
-                            None => {
-                                own.push((name.to_string(), Value::Null));
-                                own.len() - 1
-                            }
-                        };
-                        if let Value::Bond(shared) = &own[at].1 {
-                            let shared = shared.clone();
-                            drop(own);
-                            Value::Bond(shared)
-                        } else {
-                            let was = std::mem::replace(&mut own[at].1, Value::Null);
-                            let shared = Rc::new(RefCell::new(was));
-                            own[at].1 = Value::Bond(shared.clone());
-                            drop(own);
-                            Value::Bond(shared)
-                        }
-                    }
+                    Value::Class(c) => Value::Bond(Self::own_cell(&c, name)),
                     v => {
                         let told = self.no_such_class(&v).unwrap_or_else(|| format!("Cannot reach '{}' in {}", name, v.plain()));
                         return Err(told.into());
@@ -4896,24 +5120,16 @@ impl<'a> Engine<'a> {
                         }
                         found
                     }
-                    ref cursor @ Value::Cursor(_) => {
-                        let mut found = Vec::new();
-                        while rest.is_some() || found.len() <= *count {
-                            // Taking a walk apart may run the program's
-                            // own code for each member, and what that
-                            // code raised is raised on rather than the
-                            // words that stood in for it.
-                            let stepped = self.core_step(cursor);
-                            if let Some(fled) = self.carried.take() { return Err(fled); }
-                            let Some(value) = stepped? else { break };
-                            found.push(value);
-                        }
-                        found
-                    }
+                    ref cursor @ Value::Cursor(_) => self.apart_members(&cursor.clone(), *count, rest.is_some())?,
                     Value::Set(set) => set.borrow().items(),
                     // A thing of the program's own is taken apart into
-                    // the members its own walk hands over.
-                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => self.special_items(&source)?,
+                    // the members its own walk hands over, asked for one
+                    // at a time: such a walk may have no end at all, and
+                    // the places call for no more than they call for.
+                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => {
+                        let walk = self.core_iterator(&source)?;
+                        self.apart_members(&walk, *count, rest.is_some())?
+                    }
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
@@ -5303,9 +5519,11 @@ impl<'a> Engine<'a> {
                     _ => false,
                 };
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
-                // A builtin kind's word has a maker, where a class may stand on it.
+                // A builtin kind's word has a maker, a name and a line
+                // of forebears, where a class may stand on it.
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
-                    && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref()));
+                    && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref())
+                        || name.as_ref() == self.class_word("mro") || name.as_ref() == self.class_word("order"));
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
@@ -5430,9 +5648,25 @@ impl<'a> Engine<'a> {
             // write both see.
             Action::BondField(name) => {
                 match self.drop_top()? {
+                    // A class named outright keeps its own values where
+                    // a thing keeps its properties, so a place within one
+                    // is reached through the cell the class holds, which
+                    // is the very holding that reading the name gives.
+                    Value::Class(c) if self.lang.member_pipes => Value::Bond(Self::own_cell(&c, name)),
                     Value::Object(o) => {
                         let mut held = o.fields.borrow_mut();
-                        let at = match self.member_at(&held, name) {
+                        let found = self.member_at(&held, name);
+                        // A thing holding nothing of that name reads its
+                        // class's own value, so a write within the place
+                        // lands in that shared holding rather than making
+                        // a property only the thing would see, as a write
+                        // of the name itself still does.
+                        if found.is_none() && self.lang.member_pipes && o.class.holder(name).is_some() {
+                            drop(held);
+                            self.data.push(Value::Bond(Self::own_cell(&o.class, name)));
+                            return Ok(());
+                        }
+                        let at = match found {
                             Some(at) => at,
                             None => {
                                 held.push((name.to_string(), Value::Null));
@@ -5597,8 +5831,9 @@ impl<'a> Engine<'a> {
                             None => return Err(self.stop_of(&held)),
                         }
                     } else if Lang::spells(&self.lang.yield_throw, name) && (1..=3).contains(&args.len()) {
+                        let given = args.clone();
                         let value = self.thrown_into(args)?;
-                        match self.step_generator(&held, Value::Null, Some(value))? {
+                        match self.step_generator(&held, Value::Null, Some(value), &given)? {
                             Some(item) => item,
                             None => return Err(self.stop_of(&held)),
                         }
@@ -11266,12 +11501,15 @@ impl Engine<'_> {
         }
     }
 
-    fn core_isinstance(&self, value: &Value, kind: &Value) -> Res<bool> {
+    fn core_isinstance(&mut self, value: &Value, kind: &Value) -> Res<bool> {
         if let Value::Tuple(types) = kind {
+            let types = types.clone();
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
             return Ok(false);
         }
         if let Value::Class(class) = kind {
+            // A class whose metaclass speaks for the kind is asked first.
+            if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.
@@ -12040,6 +12278,24 @@ impl Engine<'_> {
         self.lang.source_unready.clone().unwrap_or_default()
     }
 
+    /// The complaint for text that could not be read, set about with the
+    /// file the text stands for and the line the reading stopped on, as
+    /// the reference words such a complaint. The reading's own words
+    /// are kept where they name the very complaint the language has for
+    /// text it cannot read; any other words are that complaint instead,
+    /// since they are the assembler's and not the language's.
+    fn text_syntax(&self, said: String, file: &str, row: usize) -> String {
+        let generic = self.lang.source_syntax.clone().unwrap_or_default();
+        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
+        let told = match &kind {
+            Some(kind) if said.starts_with(kind.as_str()) => said,
+            _ => generic,
+        };
+        let words = &self.lang.source_place;
+        if words.len() < 3 { return told; }
+        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
+    }
+
     /// The tokens of text handed over to be read, or the language's
     /// words for text that cannot be read.
     fn text_tokens(&self, source: &str) -> Res<Vec<crate::lex::Token>> {
@@ -12095,7 +12351,9 @@ impl Engine<'_> {
         let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
-        crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))).map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())?;
+        if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
+            return Err(self.text_syntax(said, &file, trial.stopped_at));
+        }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64))];
@@ -12107,6 +12365,9 @@ impl Engine<'_> {
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.
     fn text_run(&mut self, weighing: bool, args: Vec<Value>) -> Res<Value> {
+        // The names about the call are only for a reading handed no
+        // dictionaries; taken here, no reading that follows finds them.
+        let within = self.text_within.take();
         let Some(first) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
@@ -12130,7 +12391,10 @@ impl Engine<'_> {
         let outer = as_book(args.get(1))?;
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
-            (None, None) => return self.run_text_here_about(&source, file, mode),
+            (None, None) => return match within.filter(|_| mode != 2) {
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values),
+                None => self.run_text_here_about(&source, file, mode),
+            },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
             (None, near) => (self.book_here(true), near),
@@ -12161,6 +12425,50 @@ impl Engine<'_> {
         let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
+    }
+
+    /// Text read where a routine stands and handed no dictionaries: it
+    /// is read as a piece of that routine, so the routine's names are
+    /// its own to read, as the reference has it. What it writes it
+    /// writes to a frame of its own making, a copy of the routine's, so
+    /// the routine goes on holding what it held and a name the text
+    /// makes is gone once the text is done.
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
+        let source = if mode == 1 { source.trim() } else { source };
+        let tokens = self.text_tokens(source)?;
+        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        // Text read inside a method is read as standing in that method's
+        // class, as text read where a language has no manners of reading
+        // already is.
+        let within = self.standing_in().map(str::to_string).map(|named| {
+            let base = match self.class_named(&named) {
+                Some(Value::Class(c)) => c.base.as_ref().map(|b| b.name.clone()),
+                _ => None,
+            };
+            (named, base)
+        });
+        self.registry.value_only = mode == 1;
+        let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
+            Ok(program) => program,
+            Err(said) => { let row = self.registry.stopped_at; return Err(self.text_syntax(said, &file, row)); }
+        };
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let mut mine = values;
+        mine.resize(program.idents.len().max(mine.len()), Value::Blank);
+        let (was_written_in, was_on) = (self.source.clone(), self.line);
+        self.source = file;
+        let base = self.data.len();
+        let ran = self.run_instrs(&program, &mut mine);
+        self.source = was_written_in;
+        self.line = was_on;
+        match ran {
+            Ok(()) => {}
+            Err(Fault::Note(told)) => { self.data.truncate(base); return Err(told); }
+            Err(fled) => { self.data.truncate(base); self.carried = Some(fled); return Err(String::new()); }
+        }
+        let answer = if mode == 1 && self.data.len() > base { self.drop_top()? } else { Value::Null };
+        self.data.truncate(base);
+        Ok(answer)
     }
 
     /// Text run in dictionaries of its own: its names are given slots
@@ -12199,15 +12507,20 @@ impl Engine<'_> {
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
     fn text_program(&mut self, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
-        let syntax = self.lang.source_syntax.clone().unwrap_or_default();
-        let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
-        if mode == 2 {
-            registry.value_only = true;
-            if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+        let amiss;
+        {
+            let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
+            if mode == 2 {
+                registry.value_only = true;
+                if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+            }
+            registry.value_only = mode == 1;
+            match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
+                Ok(program) => return Ok((program, false)),
+                Err(said) => amiss = (said, registry.stopped_at),
+            }
         }
-        registry.value_only = mode == 1;
-        let program = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())).map_err(|_| syntax)?;
-        Ok((program, false))
+        Err(self.text_syntax(amiss.0, file, amiss.1))
     }
 
     /// Run a text's program as standing in its file, and answer what it
