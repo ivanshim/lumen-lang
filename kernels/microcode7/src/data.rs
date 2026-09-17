@@ -427,7 +427,17 @@ impl Value {
             Value::Ellipsis => Ok("ellipsis".to_owned()),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
-                if ratio.beneath.is_zero() { return Err(""); }
+                // Nothing under the line marks a worth off the scale.
+                // Either endless worth is the one value wherever it is
+                // met, since it equals itself; a worth that is no
+                // number equals nothing at all, not even itself, so it
+                // takes the place it lies in for its address and shares
+                // that place with no other.
+                if ratio.beneath.is_zero() {
+                    if !ratio.above.is_zero() { return Ok(format!("beyond:{}", if ratio.above.is_negative() { '-' } else { '+' })); }
+                    if let Value::Frac(parts) = value { return Ok(format!("apart:{:p}", Rc::as_ptr(parts))); }
+                    return Err("");
+                }
                 let divisor = ratio.above.gcd(&ratio.beneath);
                 Ok(format!("number:{}:{}", ratio.above / &divisor, ratio.beneath / divisor))
             }

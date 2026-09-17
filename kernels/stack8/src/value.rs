@@ -539,6 +539,17 @@ impl Value {
             return Ok(format!("tuple:{keys:?}"));
         }
         if let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = self { return cell.borrow().member_key(); }
+        // A real outside the numbers proper. Either endless number is
+        // the one value wherever it is met, since it equals itself; a
+        // real that is no number equals nothing at all, not even
+        // itself, so it takes the place it lies in for its key and
+        // shares that key with nothing else.
+        if let Value::Real(number) = self {
+            if number.outside() {
+                if number.p.is_zero() { return Ok(format!("apart{:p}", Rc::as_ptr(number))); }
+                return Ok(format!("beyond{}", if number.p.is_negative() { "-" } else { "+" }));
+            }
+        }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);

@@ -7212,6 +7212,13 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A membership complaint the table words about a kind: the words
+    /// before it, the kind, and the words after it.
+    fn membership_words(&self, label: &str, kind: &str) -> String {
+        let words = self.table.strings(label);
+        format!("{}{kind}{}", words.first().map_or("", |w| w.as_str()), words.get(1).map_or("", |w| w.as_str()))
+    }
+
     fn bad_answer(&self) -> String {
         self.table.single("ext.stmt.class.special.amiss").unwrap_or("").to_owned()
     }
@@ -7742,6 +7749,20 @@ impl<'a> Machine<'a> {
             // for it: a class that sets the name to nothing has said
             // there is no membership in its things, and the asking
             // fails rather than falling back upon a walk.
+            // A thing sought among a set's members is sought as a key
+            // is: by its own hash and its own equality, the members
+            // standing in the set as the gathering put them there.
+            (Prim::Contains | Prim::Absent, [needle @ (Value::Thing(_) | Value::Keyed(..)), Value::Set(store)]) => {
+                let keyed = self.hash_key(needle)?;
+                let members = store.borrow().values();
+                let mut found = false;
+                for held in members { if self.keys_agree(&held, &keyed)? { found = true; break; } }
+                Value::Flag(found != (operation == Prim::Absent))
+            }
+            (Prim::Contains | Prim::Absent, [_, haystack])
+                if matches!(self.appointment(haystack, 14), Some(Value::Nil)) && self.table.strings("ext.op.in.declined").len() == 2 => {
+                return Err(self.membership_words("ext.op.in.declined", &haystack.kind_word()));
+            }
             (Prim::Contains | Prim::Absent, [needle, haystack]) if self.appointment(haystack, 14).is_some() => {
                 let found = self.ask_special(haystack, 14, std::slice::from_ref(needle))?.unwrap();
                 Value::Flag(self.object_truth(&found)? != (operation == Prim::Absent))
@@ -9941,12 +9962,24 @@ impl<'a> Machine<'a> {
                     }
                     (needle, Value::TextRow(words, _)) => words.iter().any(|s| needle.equals(&Value::text(s))),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
+                    // Searching text for what is not text is refused by
+                    // the kind of the value sought, where the table
+                    // words that refusal for itself.
+                    (needle, Value::Text(_)) if self.table.has_any("ext.op.in.text") => {
+                        return Err(format!("{}{}", self.table.single("ext.op.in.text").unwrap_or_default(), needle.kind_word()));
+                    }
                     // An iterator gives up members until the one sought
                     // turns up, and stands after it thereafter.
                     (needle, walk @ Value::Iterator(_)) => {
                         let mut seen = false;
                         while let Some(item) = self.next_value(walk)? { if contained_equal(needle, &item) { seen = true; break; } }
                         seen
+                    }
+                    // Nothing else can be searched at all: it neither
+                    // answers membership nor can be walked, and the
+                    // table names its kind in saying so.
+                    _ if self.table.strings("ext.op.in.uncontained").len() == 2 => {
+                        return Err(self.membership_words("ext.op.in.uncontained", &v[1].kind_word()));
                     }
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };

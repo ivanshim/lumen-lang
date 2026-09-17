@@ -3638,8 +3638,12 @@ impl<'a> Engine<'a> {
                 if !x.1.equals(&y.1) { return Ok(false); }
                 (&x.0, &y.0)
             }
+            // A hashed key beside a plain whole number agrees only
+            // where its hash is that number; beside anything else the
+            // thing it stands for is asked as it stands, since a key
+            // kept without its hash may still be the very same thing.
             (Value::Hashed(x), y) | (y, Value::Hashed(x)) => {
-                if !matches!(y, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || !x.1.equals(y) { return Ok(false); }
+                if matches!(y, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && !x.1.equals(y) { return Ok(false); }
                 (&x.0, y)
             }
             _ => return Ok(self.keys_alike(a, b)),
@@ -4341,6 +4345,23 @@ impl<'a> Engine<'a> {
                 let wanted = self.special_key(a)?;
                 let mut found = false;
                 for (key, _) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = true; break; } }
+                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+            }
+            // A class that sets the membership name to nothing has said
+            // there is no membership in its things: the question stops
+            // there, named by the class, rather than falling back upon
+            // a walk the thing may well answer.
+            if matches!(self.special_value(b, 14), Some(Value::Null)) && self.lang.membership_declined.len() == 2 {
+                return Err(self.membership_told(&self.lang.membership_declined, &b.core_kind()));
+            }
+            // A thing sought among a set's members is sought as a key
+            // is: by its own hash and its own equality, the members
+            // standing in the set as the gathering put them there.
+            if let (Value::Object(_) | Value::Hashed(_), Value::Set(cell)) = (a, b) {
+                let wanted = self.special_key(a)?;
+                let members = cell.borrow().items();
+                let mut found = false;
+                for held in members { if self.special_keys_equal(&held, &wanted)? { found = true; break; } }
                 return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
             }
             if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
@@ -7410,9 +7431,22 @@ impl<'a> Engine<'a> {
                     Value::Words(items, _) => items.iter().any(|s| a.equals(&Value::text(s))),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
-                        _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                        // Searching text for what is not text is refused
+                        // by the kind of the value sought, where the
+                        // language words that refusal for itself.
+                        _ => return Err(match &self.lang.membership_text {
+                            Some(words) => format!("{words}{}", a.core_kind()),
+                            None => self.lang.membership_unsupported.clone().unwrap_or_default(),
+                        }),
                     },
-                    _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                    // Nothing else can be searched at all: neither does
+                    // it answer membership nor can it be walked, and the
+                    // language names its kind in saying so.
+                    _ => return Err(if self.lang.membership_uncontained.len() == 2 {
+                        self.membership_told(&self.lang.membership_uncontained, &b.core_kind())
+                    } else {
+                        self.lang.membership_unsupported.clone().unwrap_or_default()
+                    }),
                 };
                 Value::Flag(found != matches!(op, Action::Lacks))
             }
@@ -8323,6 +8357,12 @@ impl<'a> Engine<'a> {
     }
 
     // ---------- builtins ----------
+
+    /// A membership complaint the language words about a kind: the
+    /// words before it, the kind, and the words after it.
+    fn membership_told(&self, words: &[String], kind: &str) -> String {
+        format!("{}{kind}{}", words.first().map_or("", String::as_str), words.get(1).map_or("", String::as_str))
+    }
 
     /// Membership asks identity before equality, and counts truth as one.
     fn member_matches(a: &Value, b: &Value) -> bool {
