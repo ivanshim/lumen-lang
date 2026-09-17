@@ -5527,15 +5527,9 @@ impl<'a> Engine<'a> {
             // routine of that name takes the receiver first, as a pipe,
             // and where nothing is bound by the name the value simply
             // has no such member.
-            Action::InvokeMember(name) => {
-                let told = match self.data.last() {
-                    Some(Value::Blank) => {
-                        let under = self.data.len().saturating_sub(argc);
-                        self.member_amiss(self.data.get(under).unwrap_or(&Value::Null), name)
-                    }
-                    _ => String::new(),
-                };
-                if told.is_empty() { return self.perform(&Action::Invoke(name.clone()), argc); }
+            Action::MemberAmiss(name) => {
+                let under = self.data.len().saturating_sub(argc);
+                let told = self.member_amiss(self.data.get(under).unwrap_or(&Value::Null), name);
                 self.drop_many(argc)?;
                 return Err(told.into());
             }
