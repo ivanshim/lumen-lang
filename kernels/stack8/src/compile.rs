@@ -450,7 +450,7 @@ fn compile_pass(
     }
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
-    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: true, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
+    Ok(Rc::new(Routine { qualified: String::new(), doc: None, generator: false, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -4599,7 +4599,11 @@ impl<'a> Compiler<'a> {
             }
             if lang.bind_names {
                 let newest = formals.last().ok_or_else(bad)?;
-                if formals[..formals.len() - 1].contains(newest) { return Err(bad()); }
+                if formals[..formals.len() - 1].contains(newest) {
+                    let twice = &lang.parameters_duplicate;
+                    if twice.is_empty() { return Err(bad()); }
+                    return Err(format!("{}{}{}", twice[0], newest, twice.get(1).map_or("", String::as_str)));
+                }
                 if self.on_assign() {
                     if rule >= 3 { return Err(bad()); }
                     if rule == 0 { default_seen = true; }
@@ -8207,6 +8211,10 @@ impl<'a> Compiler<'a> {
         }
         let mut count = 0;
         let mut pieces: Vec<(bool, Vec<Instr>)> = Vec::new();
+        // The keywords written out in this call, so that one written
+        // twice is refused while the program is read, as the reference
+        // refuses it.
+        let mut spelled: Vec<String> = Vec::new();
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
@@ -8223,6 +8231,12 @@ impl<'a> Compiler<'a> {
                 && (Lang::spells(&self.lang.call_spread, &self.look().lexeme)
                     || Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme));
             if tagged {
+                let word = self.look().lexeme.clone();
+                let twice = &self.lang.call_keyword_repeated;
+                if spelled.contains(&word) && !twice.is_empty() {
+                    return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
+                }
+                spelled.push(word);
                 self.constant(Value::text(&self.look().lexeme));
             } else if spread {
                 self.constant(Value::Flag(Lang::spells(&self.lang.call_spread_pairs, &self.look().lexeme)));

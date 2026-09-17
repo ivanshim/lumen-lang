@@ -326,6 +326,11 @@ pub struct Machine<'a> {
     /// The names of the frame each call is running in, innermost last,
     /// so that text read while the run goes can be built knowing them.
     frames_named: Vec<Rc<Routine>>,
+    /// The names and the frame set aside for a reading of text that
+    /// stands inside a routine and was handed no dictionaries of its
+    /// own. The text is read as a piece of that routine, so the
+    /// routine's names are its own to read.
+    text_within: Option<(Vec<String>, Rc<Env>)>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints still to be handed
     /// over, since one may be raised where the run is only reading; and
@@ -856,6 +861,7 @@ impl<'a> Machine<'a> {
             would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
+            text_within: None,
             hearer: RefCell::new(None),
             untaken: RefCell::new(None),
             written_out: std::cell::Cell::new(false),
@@ -2009,6 +2015,39 @@ impl<'a> Machine<'a> {
         self.utter(&format!("{}  thrown{}", self.calls_under(), complaint_tail(&self.table, &place, at)));
     }
 
+    /// A frame of the routine's own names set aside for text read where
+    /// it stands: the names it goes by, and a frame holding what each
+    /// holds now. A name kept in a cell is given a cell of its own, and
+    /// a name the routine reads from the scope around it is brought in
+    /// beside its own, so the text reads it as the reference has it and
+    /// a write the text makes is the text's alone.
+    fn frame_aside(&self, frame: &Rc<Env>) -> (Vec<String>, Rc<Env>) {
+        // The frame set aside stands directly under the outermost one,
+        // since the text is read knowing one frame of names and reaches
+        // the globals from just above them.
+        let under = Some(self.outermost.clone());
+        let Some(program) = self.frames_named.last() else {
+            return (Vec::new(), Env::make(0, under));
+        };
+        let apart = |held: &Value| match held {
+            Value::Shared(cell) => Value::Shared(Rc::new(RefCell::new(cell.borrow().clone()))),
+            other => other.clone(),
+        };
+        let mut names = program.idents.clone();
+        let mut cells: Vec<Value> = frame.cells.borrow().iter().map(apart).collect();
+        cells.resize(names.len(), Value::Unset);
+        for slot in &program.reaching {
+            if names.iter().any(|word| word == slot.ident.as_ref()) { continue; }
+            let held = match ascend(frame, slot.up).cells.borrow().get(slot.at) {
+                Some(held) => apart(held),
+                None => continue,
+            };
+            names.push(slot.ident.to_string());
+            cells.push(held);
+        }
+        (names, Rc::new(Env { cells: RefCell::new(cells), outer: under }))
+    }
+
     /// Build source against the globals this run already has and run it
     /// where it stands, giving back what it answered with.
     /// Text read as the run goes, built and run where it stands. Where
@@ -2034,7 +2073,7 @@ impl<'a> Machine<'a> {
             };
             (named, under)
         });
-        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within) {
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &held, knows, 0, within, false) {
             Ok(built) => built,
             Err((said, row)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
@@ -4479,7 +4518,21 @@ impl<'a> Machine<'a> {
                     if let Some(done) = self.stands_for_property(*op, &values)? {
                         return Ok(done);
                     }
+                    // Text read while the run goes is read where it
+                    // stands: inside a routine it knows that routine's
+                    // names, as the reference has it. They are set
+                    // aside here, where the frame is at hand, for the
+                    // reading past here to find, and only where it was
+                    // handed no dictionaries of its own does it look.
+                    let aside = match self.reads_manners() && matches!(op, Prim::Weigh | Prim::Perform) && !Rc::ptr_eq(frame, &self.outermost) {
+                        true => {
+                            let mine = self.frame_aside(frame);
+                            Some(std::mem::replace(&mut self.text_within, Some(mine)))
+                        }
+                        false => None,
+                    };
                     let made = self.prim(*op, name, &values);
+                    if let Some(held) = aside { self.text_within = held; }
                     if let Some(away) = self.got_away.take() {
                         return Err(away);
                     }
@@ -5671,6 +5724,35 @@ impl<'a> Machine<'a> {
         Ok((positions, names))
     }
 
+    /// The name the outermost names go by, where the language gives
+    /// them one: the namespace a routine written there belongs to.
+    fn namespace_named(&self) -> Option<String> {
+        let word = self.table.strings("ext.system.module.name").first()?;
+        if let Some(book) = &self.world_book {
+            if let Some(held) = looked_up(book, word) { return Some(held.bare()); }
+        }
+        let at = self.idents.iter().position(|name| name == word)?;
+        match self.outermost.cells.borrow().get(at)?.settled() {
+            Value::Text(said) => Some(said.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The words for a call handed the same keyword twice, which only a
+    /// spread of pairs can bring about since two written out are
+    /// refused as the text is read. The reference names the routine by
+    /// the namespace it belongs to and the name it goes by there, so
+    /// the two are written together here.
+    fn keyword_twice(&self, program: &Routine, key: &str) -> String {
+        let words = self.table.strings("ext.syntax.call.amiss.keyword");
+        if words.len() < 3 { return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)); }
+        let called = match self.namespace_named() {
+            Some(space) if !program.qualification.is_empty() => format!("{}.{}", space, program.qualification),
+            _ => program.qualification.clone(),
+        };
+        format!("{}{}{}{}{}", words[0], called, words[1], key, words[2])
+    }
+
     fn fit_arguments(&mut self, program: &Routine, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
         // Where every place is an ordinary one, none of the worths given
         // carries a name or a scattering, and there are exactly as many
@@ -5704,7 +5786,7 @@ impl<'a> Machine<'a> {
         let mut already = std::collections::HashSet::new();
         for (key, worth) in named {
             let duplicate = || self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key));
-            if !already.insert(key.clone()) { return Err(duplicate().into()); }
+            if !already.insert(key.clone()) { return Err(self.keyword_twice(program, &key).into()); }
             let found = program.formals.iter().enumerate()
                 .find(|(at, name)| **name == key && matches!(manners[*at], 'b' | 'n'));
             if let Some((at, _)) = found {
@@ -12177,6 +12259,25 @@ impl<'a> Machine<'a> {
         self.table.single("ext.builtin.source.syntax").unwrap_or_default().to_owned()
     }
 
+    /// The complaint for text that could not be read, set about with the
+    /// file the text stands for and the line the reading stopped on, as
+    /// the reference words such a complaint. The reading's own words are
+    /// kept where they name the very complaint the language has for text
+    /// it cannot read; any other words are that complaint instead, since
+    /// they are the builder's and not the language's.
+    fn text_unreadable_at(&self, said: String, file: &str, row: u32) -> String {
+        let generic = self.source_unreadable();
+        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
+        let told = match &kind {
+            Some(kind) if said.starts_with(kind.as_str()) => said,
+            _ => generic,
+        };
+        let words = self.table.strings("ext.builtin.source.syntax.place");
+        if words.len() < 3 { return told; }
+        let row = row.saturating_sub(self.lines_ahead()).max(1);
+        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row, words[2])
+    }
+
     /// The tokens of text handed over to be read, else the words for
     /// text that cannot be read.
     fn text_tokens(&self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
@@ -12224,6 +12325,9 @@ impl<'a> Machine<'a> {
     /// weighed, else as statements; in the dictionaries handed over,
     /// else where the call stands.
     fn text_performed(&mut self, weighing: bool, v: &[Value]) -> Result<Value, String> {
+        // The names set aside are only for a reading handed no
+        // dictionaries; taken here, no reading that follows finds them.
+        let within = self.text_within.take();
         let Some(first) = v.first().map(Value::settled) else { return Err(self.source_refused()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
@@ -12246,7 +12350,10 @@ impl<'a> Machine<'a> {
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
-            (None, None) => return self.perform_here(&source, file, mode),
+            (None, None) => return match within.filter(|_| mode != 2) {
+                Some((names, mine)) => self.perform_within(&source, file, mode, names, mine),
+                None => self.perform_here(&source, file, mode),
+            },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
             (None, near) => (self.book_about(true), near),
@@ -12279,6 +12386,50 @@ impl<'a> Machine<'a> {
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         self.text_concluded(&built, &file, mode, shown)
+    }
+
+    /// Text read where a routine stands and handed no dictionaries: it
+    /// is read as a piece of that routine, so the routine's names are
+    /// its own to read, as the reference has it. What it writes it
+    /// writes to a frame of its own, standing apart from the routine's,
+    /// so the routine goes on holding what it held and a name the text
+    /// makes is gone once the text is done.
+    fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>) -> Result<Value, String> {
+        let source = if mode == 1 { source.trim() } else { source };
+        let tokens = self.text_tokens(source)?;
+        let file = file.unwrap_or_else(|| "<string>".to_owned());
+        let knows = (&self.knows_cells.0, &self.knows_cells.1, &self.knows_cells.2);
+        // Text read inside a method is read as standing in that
+        // method's class, as text read where a language has no manners
+        // of reading already is.
+        let within = self.standing_in().map(str::to_string).map(|named| {
+            let under = match self.class_bound(&named) {
+                Some(Value::Blueprint(c)) => c.under.as_ref().map(|b| b.name.clone()),
+                _ => None,
+            };
+            (named, under)
+        });
+        let built = match crate::build::build_within_at(&tokens, self.table, &self.idents, &names, knows, 0, within, mode == 1) {
+            Ok(built) => built,
+            Err((said, row)) => return Err(self.text_unreadable_at(said, &file, row)),
+        };
+        self.idents = built.globals.clone();
+        self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        mine.cells.borrow_mut().resize(built.program.idents.len().max(names.len()), Value::Unset);
+        let (was_in, was_on) = (self.written_in.clone(), self.row);
+        self.written_in = Rc::from(file.as_str());
+        self.frames_named.push(built.program.clone());
+        let ran = self.value_of(&built.program.body, &mine);
+        self.frames_named.pop();
+        self.written_in = was_in;
+        self.row = was_on;
+        let answer = match ran {
+            Ok(answer) => answer,
+            Err(Escape::Error(told)) => return Err(told),
+            Err(Escape::Yield(answer)) => answer,
+            Err(other) => { self.got_away = Some(other); return Err("the source read in did not finish".to_owned()); }
+        };
+        Ok(if mode == 1 { answer } else { Value::Nil })
     }
 
     /// Text run in dictionaries of its own: its names are given slots
@@ -12318,7 +12469,7 @@ impl<'a> Machine<'a> {
             if let Ok(built) = crate::build::build_text(tokens, self.table, seeded, 0, written_in.clone(), true, shadowed) { return Ok((built, true)); }
         }
         crate::build::build_text(tokens, self.table, seeded, 0, written_in, mode == 1, shadowed)
-            .map(|built| (built, false)).map_err(|_| self.source_unreadable())
+            .map(|built| (built, false)).map_err(|(said, row)| self.text_unreadable_at(said, file, row))
     }
 
     /// Run a built text as standing in its file, and answer what it
