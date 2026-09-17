@@ -3141,6 +3141,37 @@ impl<'a> Engine<'a> {
         match self.special_value(value, place) { Some(Value::Routine(routine)) => Some(routine), _ => None }
     }
 
+    /// Whether a value of a builtin kind answers this special name as a
+    /// member of its own. A walk hands over its next member and itself;
+    /// anything walked over hands over a walk of it; and the containers
+    /// answer for their length, for a place read of them and for
+    /// membership, each where that kind has the member in the language.
+    /// A window upon a map is looked at before its contents, which read
+    /// as a plain row, so that it keeps the members a window has.
+    fn native_special(&self, subject: &Value, name: &str) -> bool {
+        let named = |at: usize| self.lang.class_special.get(at).map_or(false, |word| word == name);
+        let mut held = subject.clone();
+        while let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = held {
+            let inner = cell.borrow().clone();
+            held = inner;
+        }
+        let (walking, keyed, ordered, gathered) = match held {
+            Value::Cursor(_) | Value::Generator(_) => (true, false, false, false),
+            Value::Map(_) => (false, true, false, false),
+            Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Bytes(..) | Value::Counted(_) => (false, false, true, false),
+            Value::Set(_) => (false, false, false, true),
+            // A window has no place to read of it, and the one upon the
+            // values of a map is not asked about membership either.
+            Value::View(view) => return named(15) || named(10) || named(14) && view.1.as_str() != "values",
+            _ => return false,
+        };
+        let holds = keyed || ordered || gathered;
+        named(15) && (walking || holds)
+            || named(16) && walking
+            || (named(10) || named(14)) && holds
+            || named(11) && (keyed || ordered)
+    }
+
     fn special_fault(&self) -> String {
         self.lang.special_amiss.first().cloned().unwrap_or_default()
     }
@@ -3914,6 +3945,11 @@ impl<'a> Engine<'a> {
         match self.invoke(&method, vec![value.clone()]) {
             Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
             Err(Fault::Thrown(Value::Object(o))) if self.lang.special_stop.iter().any(|n| o.class.named(n, false)) => Ok(None),
+            // The kernel says a walk is over in words of its own, with
+            // no value raised behind them. A method that hands over
+            // members of another walk meets those words when that walk
+            // ends, and the walk it is the method of ends there too.
+            Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|n| words == *n || words.starts_with(&format!("{}:", n))) => Ok(None),
             Err(Fault::Note(words)) => Err(words),
             Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
         }
@@ -4950,7 +4986,7 @@ impl<'a> Engine<'a> {
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
-                Value::Flag(kind_named || kind_maker || text_method || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                Value::Flag(kind_named || kind_maker || text_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
@@ -4962,6 +4998,9 @@ impl<'a> Engine<'a> {
                     1 => Value::of_big(row.stop.clone()),
                     _ => Value::of_big(row.step.clone()),
                 },
+                // A walk, a row, a map or a set hands over the walking
+                // pair and the container members as methods bound to it.
+                subject if self.native_special(&subject, name) => Value::ValueMethod(Rc::new((subject, name.to_string()))),
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
@@ -7970,6 +8009,22 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Null);
                 }
             }
+        }
+        // The walking pair and the container members, asked for by name
+        // on a value of a builtin kind. Each hands its work to the
+        // builtin or the sign that already does it, so that the answer
+        // and the refusal are the ones the plain form gives.
+        if self.native_special(receiver, operation) {
+            let named_at = |at: usize| self.lang.class_special.get(at).map_or(false, |word| word == operation);
+            let (stepping, walking, sizing, reading) = (named_at(16), named_at(15), named_at(10), named_at(11));
+            let wanted = usize::from(reading || named_at(14));
+            if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
+            let subject = receiver.clone();
+            let plain = if stepping { Some(Builtin::Next) } else if walking { Some(Builtin::Iter) } else if sizing { Some(Builtin::Length) } else { None };
+            if let Some(plain) = plain { return self.builtin_call(plain, operation, vec![(None, subject)]); }
+            let held = subject.contents();
+            if reading { return self.special_dyad(&Action::At, &held, &args[0]); }
+            return self.special_dyad(&Action::Contains, &args[0], &held);
         }
         let contents = receiver.contents();
         if let Value::Object(object) = &contents {
