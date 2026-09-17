@@ -7474,8 +7474,8 @@ impl<'a> Machine<'a> {
     }
 
     /// Whether a value is one the machine has words of its own for: a
-    /// thing built from a blueprint, in a language that names the
-    /// special methods at all.
+    /// thing built from a blueprint, or a collection carrying one, in a
+    /// language that names the special methods at all.
     pub(super) fn speaks_for(&self, item: &Value) -> bool {
         Self::carries_instance(item) && !self.table.strings("ext.stmt.class.special").is_empty()
     }
@@ -7517,8 +7517,14 @@ impl<'a> Machine<'a> {
         // the right gives the marks its words and is never asked for the
         // turned-about answer, which it has no business giving.
         if let (Prim::Mod, [Value::Text(pattern), right], true) = (operation, operands, self.table.flag("ext.op.rem.formats_text")) {
-            let (pattern, right) = (pattern.clone(), right.clone());
-            return self.text_remainder(&pattern, &right).map(|filled| Some(Value::text(&filled)));
+            // A thing built over text stands below the left side's own
+            // kind, and the language asks its turned-about method first,
+            // so such a thing keeps that road.
+            let over_text = matches!(Self::underlying(right).map(|worth| worth.settled()), Some(Value::Text(_)));
+            if !(over_text && self.appointed(right, 31).is_some()) {
+                let (pattern, right) = (pattern.clone(), right.clone());
+                return self.text_remainder(&pattern, &right).map(|filled| Some(Value::text(&filled)));
+            }
         }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),

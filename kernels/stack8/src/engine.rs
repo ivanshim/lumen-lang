@@ -4270,11 +4270,17 @@ impl<'a> Engine<'a> {
         }
         // Text on the left of the remainder sign fills its own marks,
         // which is what the left side's own method does in the
-        // language. The thing on the right is shown by its words and is
-        // never asked for a turned-about answer it has no place giving.
+        // language: the thing on the right is shown by its words and is
+        // not asked for a turned-about answer. The one thing that is
+        // asked is one standing on text itself, whose class comes below
+        // the left side's own and whose turned-about method the
+        // language therefore puts first.
         if let (Action::Mod, Value::Text(pattern), true) = (op, a, self.lang.rem_formats_text) {
-            let pattern = pattern.clone();
-            return Ok(Value::text(&self.rem_filled(&pattern, b)?));
+            let below = matches!(Self::worth_of(b).map(|worth| worth.contents()), Some(Value::Text(_)));
+            if !(below && self.special_method(b, 31).is_some()) {
+                let pattern = pattern.clone();
+                return Ok(Value::text(&self.rem_filled(&pattern, b)?));
+            }
         }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),

@@ -30,6 +30,7 @@ impl Layout<'_> {
     }
 
     fn refused(&self) -> String { self.complain("ext.text.format.unready", &[]) }
+    fn invalid(&self) -> String { self.complain("ext.text.format.invalid", &[]) }
 
     /// A name under which nothing was supplied. Where the table knows
     /// the exceptions of the language, the name travels whole and the
@@ -41,7 +42,6 @@ impl Layout<'_> {
             false => self.complain("ext.text.format.key", &[key]),
         }
     }
-    fn invalid(&self) -> String { self.complain("ext.text.format.invalid", &[]) }
 
     pub fn typename(&self, item: &Value) -> &str {
         let position = match item {
