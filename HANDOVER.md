@@ -1002,6 +1002,44 @@ bound `bytearray(b'ab').decode` called through a spread still refuses;
 fifteen names, the set methods and `bytes.decode` among them, refuse a
 bare unbound read though they work when called.
 
+### 1q. Batch 8 merged as #495; batch 9 begins
+
+Pull request #495 merged into main at 83ae1ad with every job green on
+bb4ad6e. The count at bb4ad6e, taken with a copied binary over the
+fifty reference files: stack8 1,211 pass of 2,536 ran, microcode7
+1,155 of 2,394 (from 1,127 and 1,059 at 6348f05). test_set rose from
+362 to 395 on both kernels, test_str from 27 to 59 on stack8 and 73 on
+microcode7, test_with by six, test_dict by three on stack8, and
+test_bool, test_class, test_contains, test_float, test_list,
+test_long, test_range and test_slice by one or two each. Two passes
+were LOST and are batch 9's first duty: test_compare's test_bytes on
+both kernels, because the strict-kinds check now refuses `b"a" <
+bytearray(b"b")`, which CPython allows (bytes and bytearray are one
+family for ordering); and test_generators' test_pickle on stack8
+alone, because `pickle.dumps(gen())` now aborts the run with `'start'
+is not a function` where it used to raise a catchable PicklingError
+(CPython: `TypeError: cannot pickle 'generator' object`). The lesson:
+the count sweep is the only check that sees a pass lost in a file no
+fixture covers, so read it before the next push, not after.
+
+Batch 9 opens with bytes. A row of bytes answers to all 42 non-dunder
+members of its kind, on bytes and bytearray alike and through
+getattr, where members sharing a name with a global builtin word
+(`hex`, `count`, `index`, `rsplit`, `endswith`, `rfind`, `lstrip`,
+`rstrip`, the `is*` family, `fromhex`) used to stop with a missing
+member or reach the text builtin of that name; the faults are worded
+as CPython words them (`byte indices must be integers or slices, not
+str`, `bytearray indices ...`, `can't concat str to bytes`, `can only
+concatenate str (not "bytes") to str`, `unsupported operand type(s)
+for +: 'dict' and 'dict'`, a subclass named by its own class, a
+repetition naming the side that is no sequence); `del ba[i]` and `del
+ba[i:j]` shorten a bytearray. Five labels join the definition. Gaps
+that fold records: bytes `%`-formatting is not implemented;
+bytearray's own mutators (`extend`, `insert`, `pop`, `remove`,
+`clear`, `reverse`, `copy`, `__iadd__`) do not resolve; `sum([{1:
+2}])` says `sum needs numbers`; a bound builtin method's repr is
+`<member wrapper>`; stack8 cannot `del d["k"][1]` inside a function.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
