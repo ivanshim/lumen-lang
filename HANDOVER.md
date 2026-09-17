@@ -785,7 +785,14 @@ type(self).items[0]` through a call's result, reaches the value the
 class keeps on stack8 as it already did on microcode7. Two records
 move with the eval work, both kernels alike and no pass lost:
 reader-tail/1 gains two passes (`...EEEEEEEEEEE.EE..EE.EEFE.E..FE...E.EEFF..FE.EF.FFEE......EEEE....E.EEE.E.....EF.EF..FFFF..`)
-and reader-tail/9 one (`.....E..EF..E..E`).
+and reader-tail/9 one (`.....E..EF..E..E`). CI then caught two
+more that the local subset had not covered, both wordings now
+CPython's own: params/12 (`f(**{"x": 1}, **{"x": 2})`) says
+`__main__.f() got multiple values for keyword argument 'x'`, and
+params/17 (`def f(a, a)`) says `duplicate argument 'a' in function
+definition`. A lesson for the local check: the subset must include
+every directory whose programs touch the changed behaviour, and
+`scratch/params` holds the call-binding programs.
 
 Gaps this round records, beyond §1m's: `del a["k"]` panics stack8
 when the class body defines `__delitem__` (compile.rs:619, not the
