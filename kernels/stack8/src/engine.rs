@@ -2783,7 +2783,7 @@ impl<'a> Engine<'a> {
     /// nothing more.
     fn shut_generator(&mut self, held: &Rc<RefCell<Generator>>) -> Flow<()> {
         let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-        if let Some(Value::Generator(inner)) = state.delegate.take() { self.shut_generator(&inner)?; }
+        if let Some(walk) = state.delegate.take() { self.shut_delegate(&walk)?; }
         state.closed = true;
         state.current = None;
         state.frame.clear();
@@ -2821,7 +2821,7 @@ impl<'a> Engine<'a> {
             self.shut_generator(held)?;
             return Ok(Value::Null);
         };
-        match self.step_generator(held, Value::Null, Some(exit)) {
+        match self.step_generator(held, Value::Null, Some(exit), &[]) {
             Ok(Some(_)) => {
                 self.shut_generator(held)?;
                 Err(self.lang.yield_close_ignored.first().cloned().unwrap_or_default().into())
@@ -2845,34 +2845,139 @@ impl<'a> Engine<'a> {
         Ok(self.watched_walk(&source, items))
     }
 
+    /// The walk a delegated suspension hands members over from. A thing
+    /// of the program's own, and a walk already under way, are kept as
+    /// they stand rather than gathered, since such a walk may have no
+    /// end at all and a suspension asks it for one member at a time.
+    fn delegated_walk(&mut self, source: Value) -> Flow<Value> {
+        if matches!(source, Value::Object(_) | Value::Cursor(_) | Value::Walk(_)) { return Ok(self.core_iterator(&source)?); }
+        self.iterator(source)
+    }
+
+    /// A delegated walk let go of: another suspended body is ended the
+    /// way a walk is ended, and a walk of the program's own is told to
+    /// end where it knows how, since it may have a last part of its own.
+    fn shut_delegate(&mut self, walk: &Value) -> Flow<()> {
+        if let Value::Generator(inner) = walk { return self.shut_generator(inner); }
+        let thing = Self::walked_thing(walk);
+        let method = thing.as_ref().and_then(|held| self.named_method(held, &self.lang.yield_close));
+        if let (Some(thing), Some(method)) = (thing, method) {
+            self.invoke(&method, vec![thing])?;
+            self.drop_top()?;
+        }
+        Self::finish_walk(walk);
+        Ok(())
+    }
+
+    /// A step of the walk a suspension delegates to: another suspended
+    /// body is handed what was sent in, and anything else is asked for
+    /// its next member, which is all such a walk knows how to be asked.
+    fn delegate_step(&mut self, walk: &Value, sent: Value) -> Flow<Option<Value>> {
+        if let Value::Generator(inner) = walk { return self.resume_generator(inner, sent); }
+        match self.core_step(walk) {
+            Ok(item) => Ok(item),
+            Err(words) => Err(match self.carried.take() { Some(fault) => fault, None => words.into() }),
+        }
+    }
+
+    /// What a walk gives back where it ends: a suspended body gives
+    /// what it returned, and a plain walk gives nothing.
+    fn delegate_returned(walk: &Value) -> Value {
+        match walk { Value::Generator(inner) => inner.borrow().returned.clone(), _ => Value::Null }
+    }
+
+    /// The thing of the program's own a walk steps through, where the
+    /// walk is one taken from such a thing.
+    fn walked_thing(walk: &Value) -> Option<Value> {
+        let Value::Cursor(cell) = walk else { return None };
+        match &cell.borrow().source { CursorSource::Handed(thing) => Some(thing.clone()), _ => None }
+    }
+
+    /// A walk told to hand over nothing more, so that the suspension
+    /// waiting on it steps past the delegation when it goes on.
+    fn finish_walk(walk: &Value) {
+        if let Value::Cursor(cell) = walk { let mut state = cell.borrow_mut(); state.pending = None; state.finished = true; }
+    }
+
+    /// The routine a thing of the program's own answers a plain name
+    /// with, looked for as a special name is: among the class's own
+    /// methods and then among the classes it stands upon.
+    fn named_method(&self, value: &Value, names: &[String]) -> Option<Rc<Routine>> {
+        let Value::Object(object) = value else { return None };
+        let named = |name: &String| names.iter().any(|word| word == name);
+        let mut class = Some(&object.class);
+        while let Some(current) = class {
+            if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(name, _)| named(name)) { return Some(routine.clone()); }
+            if let Some((_, routine)) = current.methods.iter().find(|(name, _)| named(name)) { return Some(routine.clone()); }
+            class = current.base.as_ref();
+        }
+        None
+    }
+
     fn resume_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value) -> Flow<Option<Value>> {
-        self.step_generator(held, sent, None)
+        self.step_generator(held, sent, None, &[])
     }
 
     /// A step back into a suspended body, either handing it a value or
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown in is raised on the spot.
-    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>) -> Flow<Option<Value>> {
+    fn step_generator(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Flow<Option<Value>> {
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
         if let Some(value) = hurled.clone() {
-            let inner = {
+            let waited = {
                 let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                 match (&state.delegate, state.started && !state.closed) {
-                    (Some(Value::Generator(inner)), true) => Some(inner.clone()),
+                    (Some(walk), true) => Some(walk.clone()),
                     _ => None,
                 }
             };
-            if let Some(inner) = inner {
-                let stepped = self.step_generator(&inner, Value::Null, Some(value));
-                let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
-                match stepped {
-                    Ok(Some(item)) => return Ok(Some(item)),
-                    Ok(None) => { hurled = None; }
-                    Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
-                    Err(other) => { state.delegate = None; return Err(other); }
+            match waited {
+                Some(Value::Generator(inner)) => {
+                    let stepped = self.step_generator(&inner, Value::Null, Some(value), given);
+                    let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+                    match stepped {
+                        Ok(Some(item)) => return Ok(Some(item)),
+                        Ok(None) => { hurled = None; }
+                        Err(Fault::Thrown(raised)) => { state.delegate = None; hurled = Some(raised); }
+                        Err(other) => { state.delegate = None; return Err(other); }
+                    }
                 }
+                // A walk of the program's own that knows how to be
+                // thrown into is shown the value, and what it hands back
+                // is what the throw came to, the delegation standing.
+                // One that does not know is ended, and the value is
+                // raised where the delegation stands instead.
+                Some(walk) if !self.is_exit(&value) => {
+                    let thing = Self::walked_thing(&walk);
+                    let method = thing.as_ref().and_then(|held| self.named_method(held, &self.lang.yield_throw));
+                    match (thing, method) {
+                        // The walk is shown what the throw was given,
+                        // not the value the kernel made of it, since
+                        // that is what the reference hands it.
+                        (Some(thing), Some(method)) => match self.invoke(&method, std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect()) {
+                            Ok(()) => return Ok(Some(self.drop_top()?)),
+                            Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if self.stop_class(&o.class)) => {
+                                Self::finish_walk(&walk);
+                                hurled = None;
+                            }
+                            Err(other) => { Self::finish_walk(&walk); return Err(other); }
+                        },
+                        _ => {
+                            self.shut_delegate(&walk)?;
+                            held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None;
+                        }
+                    }
+                }
+                // A walk ended rather than thrown into is told to end
+                // where it knows how, and the ending is raised where the
+                // delegation stands.
+                Some(walk) => {
+                    self.shut_delegate(&walk)?;
+                    held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?.delegate = None;
+                }
+                None => {}
             }
         }
         let mut kept = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
@@ -3063,14 +3168,15 @@ impl<'a> Engine<'a> {
                     } else {
                         if kept.delegate.is_none() {
                             let source = self.drop_top()?;
-                            kept.delegate = Some(self.iterator(source)?);
+                            kept.delegate = Some(self.delegated_walk(source)?);
                             kept.sent = Value::Null;
                         }
-                        let Value::Generator(inner) = kept.delegate.as_ref().expect("delegated walk").clone() else { unreachable!() };
-                        match self.resume_generator(&inner, std::mem::replace(&mut kept.sent, Value::Null))? {
+                        let inner = kept.delegate.as_ref().expect("delegated walk").clone();
+                        let sent = std::mem::replace(&mut kept.sent, Value::Null);
+                        match self.delegate_step(&inner, sent)? {
                             Some(item) => { kept.handed = Some(item); kept.pc = pc; }
                             None => {
-                                self.data.push(inner.borrow().returned.clone());
+                                self.data.push(Self::delegate_returned(&inner));
                                 kept.delegate = None;
                                 pc += 1;
                                 continue;
@@ -5590,8 +5696,9 @@ impl<'a> Engine<'a> {
                             None => return Err(self.stop_of(&held)),
                         }
                     } else if Lang::spells(&self.lang.yield_throw, name) && (1..=3).contains(&args.len()) {
+                        let given = args.clone();
                         let value = self.thrown_into(args)?;
-                        match self.step_generator(&held, Value::Null, Some(value))? {
+                        match self.step_generator(&held, Value::Null, Some(value), &given)? {
                             Some(item) => item,
                             None => return Err(self.stop_of(&held)),
                         }
