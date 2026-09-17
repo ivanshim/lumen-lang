@@ -1,39 +1,13 @@
 # The numeric tower: each kind stands on the one above it, and a kind
-# declares the operations a number of that kind answers to.
-#
-# Stub: register records the claim and answers with the class it was
-# given, as CPython's does, but isinstance cannot honour it. The reader
-# answers isinstance from the class a thing was built from and offers no
-# instance-check hook, so isinstance(1, Integral) is false here where
-# CPython says true, and a registered class is known only through the
-# registry below.
+# declares the operations a number of that kind answers to. A class
+# claimed for a kind through register belongs to that kind and to every
+# kind above it, which is how the builtin numbers below join the tower.
 from abc import ABC, abstractmethod
 
 __all__ = ['Number', 'Complex', 'Real', 'Rational', 'Integral']
 
-# Which classes have been claimed for which kind, by the kind's name.
-_claimed = {}
-
 
 class Number(ABC):
-    @classmethod
-    def register(cls, subclass):
-        table = _claimed
-        name = cls.__name__
-        if name not in table:
-            table[name] = []
-        if subclass not in table[name]:
-            table[name].append(subclass)
-        return subclass
-
-    @classmethod
-    def _registered(cls):
-        table = _claimed
-        name = cls.__name__
-        if name not in table:
-            return []
-        return list(table[name])
-
     # CPython makes a number unhashable by default, by giving the kind
     # no hash at all. The reader has no way to take a hash away, so the
     # kind's own hash refuses instead.
@@ -267,7 +241,10 @@ class Integral(Rational):
         return 1
 
 
-# The builtin numbers, claimed for the kinds they answer to.
+# The builtin numbers, claimed for the kinds they answer to. CPython
+# has a truth value stand under int, and so needs no claim for one; the
+# reader keeps the two kinds apart, so a truth value is claimed here.
 Integral.register(int)
+Integral.register(bool)
 Real.register(float)
 Complex.register(complex)
