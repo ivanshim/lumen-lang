@@ -230,6 +230,14 @@ class _NeverEqual:
     def __eq__(self, other):
         return False
 
+    def __ne__(self, other):
+        return True
+
+    # Equality of its own leaves a class without a hash; this one keeps
+    # a hash of its own so that its value may be a key or a member.
+    def __hash__(self):
+        return 1
+
 NEVER_EQ = _NeverEqual()
 
 # Tracing control is a stub; the kernel does not install trace callbacks.

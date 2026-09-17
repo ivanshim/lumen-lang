@@ -770,6 +770,11 @@ class Emitter:
     def has(self, label):
         return bool(self.d[label])
 
+    def strict_sum(self):
+        """Whether the language refuses a sum of kinds it means nothing for,
+        a line and a number among them."""
+        return bool(self.d.get("ext.op.arithmetic.strict"))
+
     def w(self, label, what=None):
         if not self.d[label]:
             raise Skip(f"no `{what or label}`")
@@ -928,13 +933,24 @@ class Emitter:
             return lexeme + joiner + text, tier
         if e.kind == "Bin":
             op = e.op
-            if op == "." and not self.has("op.concat"):
+            joining = op == "." and not self.has("op.concat")
+            if joining:
                 op = "+"
             lexeme = self.w(self.OP_LABELS[op], e.op)
             tier = self.binary_tier(lexeme)
             right_assoc = lexeme in self.d["op.right_associative"]
             left, lt = self.expr(e.left, scope)
             right, rt = self.expr(e.right, scope)
+            if joining and self.strict_sum() and self.has("builtin.to_string"):
+                # A join borrowing the adding sign is arithmetic as well,
+                # and a language that keeps the two apart adds nothing to
+                # a line, so a side known to be no line is put into words.
+                spelled = self.w("builtin.to_string")
+                worded = lambda k: k not in (STR, UNKNOWN)
+                if worded(self.kinds.kind_of(e.left, scope.kinds_env)):
+                    left, lt = f"{spelled}({left})", None
+                if worded(self.kinds.kind_of(e.right, scope.kinds_env)):
+                    right, rt = f"{spelled}({right})", None
             if lt is not None and (lt < tier or (lt == tier and right_assoc)):
                 left = self.paren(left)
             if rt is not None and (rt < tier or (rt == tier and not right_assoc)):

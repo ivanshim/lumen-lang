@@ -10,6 +10,14 @@ pub struct Layout<'a> {
     pub names: Names<'a>,
 }
 
+/// A field whose value the layout has no marks of its own for is put to
+/// whoever asked for the layout. The answer is the field as it stands,
+/// and nothing at all where the layout is to lay the value out itself.
+pub trait Elsewhere {
+    fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String>;
+    fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String>;
+}
+
 type Answer = Result<String, String>;
 
 impl Layout<'_> {
@@ -24,6 +32,17 @@ impl Layout<'_> {
     fn refused(&self) -> String { self.complain("ext.text.format.unready", &[]) }
     fn invalid(&self) -> String { self.complain("ext.text.format.invalid", &[]) }
 
+    /// A name under which nothing was supplied. Where the table knows
+    /// the exceptions of the language, the name travels whole and the
+    /// fault raised keeps it as its own value, quoted once over; without
+    /// them the words of the label stand in its place.
+    fn name_absent(&self, key: &str) -> String {
+        match self.table.has_any("ext.builtin.exceptions") {
+            true => format!("\0absent-text={key}"),
+            false => self.complain("ext.text.format.key", &[key]),
+        }
+    }
+
     pub fn typename(&self, item: &Value) -> &str {
         let position = match item {
             Value::Text(_) => 2, Value::Small(_) | Value::Huge(_) => 0,
@@ -36,23 +55,11 @@ impl Layout<'_> {
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
-            Value::Text(_) => {
-                let original = item.in_field(self.names, "", if escaped { "a" } else { "r" }).ok_or_else(|| self.refused())?;
-                original.chars().map(|letter| {
-                    if letter.is_ascii() { return Ok(letter.to_string()); }
-                    if letter.is_whitespace() {
-                        let ordinal = u32::from(letter);
-                        return Ok(match ordinal {
-                            0..=0xff => format!("\\x{:02x}", ordinal),
-                            0x100..=0xffff => format!("\\u{:04x}", ordinal),
-                            _ => format!("\\U{:08x}", ordinal),
-                        });
-                    }
-                    let with_base = ['a', letter].iter().collect::<String>();
-                    if with_base.escape_debug().skip(1).next() == Some('\\') { return Err(self.refused()); }
-                    Ok(letter.to_string())
-                }).collect::<Result<String, String>>()?
-            }
+            // A text is quoted by the hand that quotes it everywhere
+            // else, so that a field and the representation builtin
+            // agree on a letter that cannot be shown as itself.
+            Value::Text(word) if !escaped => crate::text::quotation(word),
+            Value::Text(_) => item.in_field(self.names, "", "a").ok_or_else(|| self.refused())?,
             Value::Octets { .. } => item.render(self.names),
             // A field lays a collection out by walking its members
             // here, so it leaves the same note on them that the other
@@ -216,11 +223,11 @@ impl Layout<'_> {
         }
     }
 
-    pub fn interpolate(&self, pattern: &str, positions: &[Value], names: &[(String, Value)]) -> Answer {
-        self.weave(pattern, positions, names, &mut 0, 2)
+    pub fn interpolate(&self, pattern: &str, positions: &[Value], names: &[(String, Value)], asked: &mut dyn Elsewhere) -> Answer {
+        self.weave(pattern, positions, names, &mut 0, 2, asked)
     }
 
-    fn weave(&self, mut rest: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64, allowance: i32) -> Answer {
+    fn weave(&self, mut rest: &str, positions: &[Value], names: &[(String, Value)], numbering: &mut i64, allowance: i32, asked: &mut dyn Elsewhere) -> Answer {
         if allowance < 0 { return Err(self.complain("ext.text.format.recursion", &[])); }
         let mut finished = String::new();
         while let Some(start) = rest.find(['{', '}']) {
@@ -232,6 +239,10 @@ impl Layout<'_> {
             if rest.starts_with('}') { return Err(self.complain("ext.text.format.brace.close", &[])); }
             if allowance == 0 { return Err(self.complain("ext.text.format.recursion", &[])); }
             rest = &rest[1..];
+            // Nothing after the opening brace at all: the brace stands
+            // alone, which the language words apart from a field that
+            // was begun and never closed.
+            if rest.is_empty() { return Err(self.complain("ext.text.format.brace.single", &[])); }
             let mut inside_key = false;
             let split = rest.char_indices().find_map(|(i, c)| {
                 if c == '[' { inside_key = true; }
@@ -257,11 +268,15 @@ impl Layout<'_> {
                     }
                     None
                 }).ok_or_else(|| self.complain("ext.text.format.brace.open", &[]))?;
-                let spec = self.weave(&rest[..end], positions, names, numbering, allowance - 1)?;
+                let spec = self.weave(&rest[..end], positions, names, numbering, allowance - 1, asked)?;
                 rest = &rest[end..]; spec
             } else { String::new() };
             if !rest.starts_with('}') { return Err(self.complain("ext.text.format.brace.open", &[])); }
-            finished.push_str(&self.present(&value, &specification, &conversion)?);
+            let laid = match asked.field_laid(&value, &specification, &conversion)? {
+                Some(ready) => ready,
+                None => self.present(&value, &specification, &conversion)?,
+            };
+            finished.push_str(&laid);
             rest = &rest[1..];
         }
         finished.push_str(rest);
@@ -284,7 +299,7 @@ impl Layout<'_> {
         let mut selected = match index {
             Some(n) => positions.get(n).cloned().ok_or_else(|| self.complain("ext.text.format.index", &[&n.to_string()]))?,
             None => names.iter().find(|(k, _)| k == first).map(|(_, v)| v.clone())
-                .ok_or_else(|| self.complain("ext.text.format.key", &[first]))?,
+                .ok_or_else(|| self.name_absent(first))?,
         };
         let mut following = &field[first_end..];
         while !following.is_empty() {
@@ -312,13 +327,13 @@ impl Layout<'_> {
                     _ => None,
                 }
             };
-            selected = found.ok_or_else(|| if bracket { self.complain("ext.text.format.key", &[asked]) } else { self.refused() })?;
+            selected = found.ok_or_else(|| if bracket { self.name_absent(asked) } else { self.refused() })?;
             following = &tail[end + usize::from(bracket)..];
         }
         Ok(selected)
     }
 
-    pub fn remainder(&self, pattern: &str, supplied: &Value) -> Answer {
+    pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere) -> Answer {
         let stored = supplied.settled();
         let supplied = &stored;
         let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
@@ -344,7 +359,7 @@ impl Layout<'_> {
                 named_seen = true;
                 used = positional.len();
                 Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
-                    .ok_or_else(|| self.complain("ext.text.format.key", &[&key]))?)
+                    .ok_or_else(|| self.name_absent(&key))?)
             } else { None };
             let mut shape = Presentation::new();
             loop {
@@ -387,7 +402,11 @@ impl Layout<'_> {
             }
             let (head, body) = match conversion {
                 'a' | 'r' | 's' => {
-                    let text = if conversion == 's' { self.plain(item)? } else { self.quote(item, conversion == 'a')? };
+                    let text = match asked.value_worded(item, conversion != 's')? {
+                        Some(ready) => ready,
+                        None if conversion == 's' => self.plain(item)?,
+                        None => self.quote(item, conversion == 'a')?,
+                    };
                     shape.padding = ' ';
                     if shape.justify == Some('=') { shape.justify = Some('>'); }
                     (String::new(), text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect())
@@ -570,7 +589,7 @@ impl Presentation {
 }
 
 pub fn is_complaint(table: &Table, message: &str) -> bool {
-    let labels = "ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
+    let labels = "ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
     labels.split_whitespace().filter_map(|label| table.single(label))
         .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }

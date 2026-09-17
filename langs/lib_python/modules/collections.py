@@ -91,6 +91,32 @@ class deque:
     def count(self, value):
         return sum([1 for held in self.data if held == value])
 
+    def __len__(self):
+        return len(self.data)
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __reversed__(self):
+        return reversed(self.data)
+
+    def __getitem__(self, index):
+        return self.data[index]
+
+    def __contains__(self, value):
+        for held in self.data:
+            if held is value or held == value:
+                return True
+        return False
+
+    def __eq__(self, other):
+        if isinstance(other, deque):
+            return self.data == other.data
+        return NotImplemented
+
+    def __repr__(self):
+        return 'deque(' + repr(self.data) + ')'
+
 class defaultdict:
     def __init__(self, default_factory=None, *args, **kwargs):
         raise 'NotImplementedError: defaultdict needs object indexing methods'

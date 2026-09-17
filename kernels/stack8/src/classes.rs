@@ -535,10 +535,26 @@ impl<'a> Engine<'a> {
         Ok(object)
     }
     fn missing_member(&self, subject: &Value, name: &str) -> Fault {
-        let class = match subject { Value::Object(o)=>o.class.name.as_str(), Value::Class(c)=>c.name.as_str(), _=>"function" };
+        // A module and a kind are named by their own name in words of
+        // their own, as CPython names them.
+        let named = self.member_named_amiss(subject, name);
+        if !named.is_empty() { return named.into(); }
+        // A thing and a class are named by their own name; anything
+        // else by the name its kind goes under.
+        let held;
+        let class = match subject { Value::Object(o)=>o.class.name.as_str(), Value::Class(c)=>c.name.as_str(), other=>{held=other.contents().core_kind();&held} };
         let pieces = self.lang.class_details.get("attribute.amiss").cloned().unwrap_or_default();
         if pieces.len()!=3 { return self.class_refusal(); }
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
+    }
+
+    /// A member a thing cannot take: it keeps no namespace of its own
+    /// to put one in, whether because its class names the members it
+    /// holds or because it is a value of a builtin kind.
+    fn unwritable_member(&self, subject: &Value, name: &str) -> Fault {
+        let told = self.member_unwritable(subject, name);
+        if told.is_empty() { return self.missing_member(subject, name); }
+        told.into()
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
@@ -781,7 +797,7 @@ impl<'a> Engine<'a> {
                     if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
                 }
                 if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
-                if value.is_some() && !self.slots_allow(&o.class,name) {return Err(absent);}
+                if value.is_some() && !self.slots_allow(&o.class,name) {return Err(self.unwritable_member(&subject,name));}
                 // A module's members are its own bindings, written through
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
@@ -801,7 +817,7 @@ impl<'a> Engine<'a> {
                 let at=self.function_storage(&subject);
                 Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
-            _ => return Err(absent),
+            _ => return Err(self.unwritable_member(&subject,name)),
         }
         Ok(Value::Null)
     }
@@ -868,7 +884,7 @@ impl<'a> Engine<'a> {
             |Builtin::ClassTool(9..=11))
     }
     /// The word a value names a builtin kind by, where it names one.
-    fn kind_spelled(&self,value:&Value)->Option<Rc<str>> {
+    pub(super) fn kind_spelled(&self,value:&Value)->Option<Rc<str>> {
         let Value::Adapter(w)=value else{return None};
         if w.0!=8 {return None;}
         let Value::Text(word)=&w.1[0] else{return None};
@@ -984,6 +1000,14 @@ impl<'a> Engine<'a> {
                         return Ok(Value::array(names));
                     }
                 }
+                // A builtin kind, named as the kind itself or held as a
+                // value of one, answers the members a value of that kind
+                // has: the methods of the kind and the special names its
+                // family answers to.
+                if let Some(sample)=self.dir_sample(&one) {
+                    let names=self.kind_member_names(&sample);
+                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
+                }
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
                 else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
@@ -996,6 +1020,19 @@ impl<'a> Engine<'a> {
             _=>Err(self.class_refusal()),
         }
     }
+    /// The value whose kind a directory should describe: an empty value
+    /// of the kind a builtin kind word names, or the value itself where
+    /// it is one of a builtin kind. Nothing for a class or a thing of
+    /// one, which answer with their own members instead.
+    fn dir_sample(&self,value:&Value)->Option<Value> {
+        if let Value::Native(_,word)=value { return self.kind_sample(word); }
+        if let Value::ByteKind(mutable,_)=value { let word=self.byte_kind_word(*mutable).to_string(); return self.kind_sample(&word); }
+        if let Value::Class(c)=value { return Self::own_kind(c).and_then(|word|self.kind_sample(&word)); }
+        if matches!(value,Value::Object(_)) { return None; }
+        if self.kind_member_names(value).is_empty() { return None; }
+        Some(value.clone())
+    }
+
     pub(super) fn class_super(&mut self,subject:Value,owner:&str,name:&str,args:Vec<Value>)->Flow<Value> {
         let receiver=match &subject{Value::Object(o)=>o.class.clone(),Value::Class(c)=>c.clone(),_=>return Err(self.class_refusal())};
         let owned=|a:&Self,c:&Rc<Class>|c.name==owner || Self::own_class_value(c,a.class_word("qualified")).map_or(false,|v|v.plain()==owner);

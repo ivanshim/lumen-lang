@@ -89,7 +89,33 @@ fn bound(n: i64, length: usize) -> usize {
     if n < 0 { (length as i64).saturating_add(n).max(0) as usize } else { (n as usize).min(length) }
 }
 
-pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String) -> Answer {
+/// The names a value of a builtin kind answers to, by the working
+/// each stands for. A kind answers its own alone: a list appends, a
+/// tuple does not.
+pub fn answered(value: &Value, operation: &str) -> bool {
+    const TEXT: &[&str] = &["upper", "lower", "title", "capitalize", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace",
+        "find", "rfind", "index", "count", "startswith", "endswith", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper",
+        "center", "ljust", "rjust", "zfill", "format", "encode"];
+    const ROW: &[&str] = &["append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "index", "count"];
+    const PAIRS: &[&str] = &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"];
+    const PLACES: &[&str] = &["index", "count"];
+    const WHOLE: &[&str] = &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio",
+        "is_integer", "__index__", "__truediv__"];
+    const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex"];
+    let names: &[&str] = match value.contents() {
+        Value::Text(_) => TEXT,
+        Value::Array(_) => ROW,
+        Value::Map(_) => PAIRS,
+        Value::Tuple(_) | Value::Counted(_) => PLACES,
+        Value::Small(_) | Value::Huge(_) | Value::Flag(_) => WHOLE,
+        Value::Real(_) | Value::Frac(_) => FRACTION,
+        Value::Complex(_) => &["real", "imag", "conjugate"],
+        _ => &[],
+    };
+    names.contains(&operation)
+}
+
+pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String) -> Answer {
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
         let slots: &[&str] = match op { "split" | "rsplit" => &["sep", "maxsplit"], _ => &[] };
@@ -231,7 +257,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                         format!("{}{}{}",fill.repeat(before),s,fill.repeat(extra-before))
                     }
                 }
-                _ => return Err(fault("attribute")),
+                _ => return Err(absent(&held, op)),
             };
             Ok(Value::text(&answer))
         }
@@ -254,7 +280,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "reverse" => {arity(0,0)?;row.reverse();}
                 "clear" => {arity(0,0)?;row.clear();}
                 "copy" => {arity(0,0)?;return Ok(Value::array(row).held(true));}
-                _ => return Err(fault("attribute")),
+                _ => return Err(absent(&held, op)),
             }
             store(Value::array(row))
         }
@@ -298,11 +324,13 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     store(Value::Map(Rc::new(pairs)))?;
                     return match amiss {Some(told)=>Err(told),None=>Ok(Value::Null)};
                 }
-                _ => return Err(fault("attribute")),
+                _ => return Err(absent(&held, op)),
             }
             store(Value::Map(Rc::new(pairs)))
         }
-        Value::Small(_) | Value::Huge(_) | Value::Real(_) => {
+        // A flag stands for the whole number it counts as, so the
+        // members of a whole number answer of it as they do of one.
+        Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) => {
             let real=matches!(held,Value::Real(_));
             // True division asked of the whole number's class: the two
             // whole numbers become the real their quotient rounds to.
@@ -317,7 +345,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "bit_count" if !real => Ok(Value::Small(held.as_big()?.magnitude().count_ones() as i64)),
                 "numerator" | "__index__" if !real => Ok(Value::of_big(held.as_big()?)),
                 "denominator" if !real => Ok(Value::Small(1)),
-                "real" | "conjugate" => Ok(held.clone()),
+                "real" | "conjugate" => Ok(if matches!(held,Value::Flag(_)) {Value::of_big(held.as_big()?)} else {held.clone()}),
                 "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),
@@ -330,10 +358,10 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                         else {let power=((bits>>52)&0x7ff) as i32;let (lead,exponent)=if power==0 {(0,-1022)}else{(1,power-1023)};format!("{minus}0x{lead}.{:013x}p{exponent:+}",bits&0xfffffffffffff)};
                     Ok(Value::text(&shown))
                 },
-                _=>Err(fault("attribute")),
+                _=>Err(absent(&held, op)),
             }
         }
-        _ => Err(fault("attribute")),
+        _ => Err(absent(&held, op)),
     }
 }
 

@@ -357,8 +357,11 @@ impl Members {
         found
     }
 
+    /// The members as they are read out. A thing kept beside its hash
+    /// is handed over as the thing itself: the hash is the set's own
+    /// reckoning of where the thing lies and no part of the member.
     pub fn items(&self) -> Vec<Value> {
-        self.row.iter().map(|k| self.held[k].clone()).collect()
+        self.row.iter().map(|k| match &self.held[k] { Value::Hashed(pair) => pair.0.clone(), held => held.clone() }).collect()
     }
 
     pub fn beneath(&self, other: &Self) -> bool {
@@ -539,6 +542,27 @@ impl Value {
             return Ok(format!("tuple:{keys:?}"));
         }
         if let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = self { return cell.borrow().member_key(); }
+        // A real outside the numbers proper. Either endless number is
+        // the one value wherever it is met, since it equals itself; a
+        // real that is no number equals nothing at all, not even
+        // itself, so it takes the place it lies in for its key and
+        // shares that key with nothing else.
+        if let Value::Real(number) = self {
+            if number.outside() {
+                if number.p.is_zero() { return Ok(format!("apart{:p}", Rc::as_ptr(number))); }
+                return Ok(format!("beyond{}", if number.p.is_negative() { "-" } else { "+" }));
+            }
+        }
+        // A span of numbers is keyed by the places it names: how many
+        // there are, where they begin and how far apart they stand, so
+        // that two spans naming the same places are one key. A span of
+        // one place has no stride to it, and an empty one no start.
+        if let Value::Counted(span) = self {
+            let length = span.length();
+            if length.is_zero() { return Ok("span0".into()); }
+            if length.is_one() { return Ok(format!("span1/{}", span.start)); }
+            return Ok(format!("span{}/{}/{}", length, span.start, span.step));
+        }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);

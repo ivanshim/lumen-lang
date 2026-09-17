@@ -3,7 +3,7 @@
 
 use crate::value::{CursorSource, Value};
 use num_bigint::BigInt;
-use num_traits::{Signed, ToPrimitive};
+use num_traits::{Signed, ToPrimitive, Zero};
 use std::hash::{Hash, Hasher};
 
 impl Value {
@@ -31,6 +31,8 @@ impl Value {
             Value::Set(_) => "set",
             Value::Map(_) => "dict",
             Value::Counted(_) => "range",
+            Value::Bytes(_, mutable, _) => if *mutable { "bytearray" } else { "bytes" },
+            Value::Generator(_) => "generator",
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
             // A cursor is known by what it walks, as CPython names it.
@@ -148,6 +150,18 @@ impl Value {
                 }
                 h = h.wrapping_add(items.len() as u64 ^ (2870177450012600261 ^ 3527539));
                 Some(if h == u64::MAX { 1546275796 } else { h as i64 })
+            }
+            // A span of numbers folds the three that settle which
+            // places it names: how many there are, where they begin and
+            // how far apart they stand. Two spans naming the same
+            // places fold the same three and so hash alike, which is
+            // what equal spans owe one another. A span of one place has
+            // no stride to it, and an empty one no start either.
+            Value::Counted(span) => {
+                let length = span.length();
+                let start = if length.is_zero() { Value::Null } else { Value::of_big(span.start.clone()) };
+                let step = if length > BigInt::from(1) { Value::of_big(span.step.clone()) } else { Value::Null };
+                Value::Tuple(std::rc::Rc::new(vec![Value::of_big(length), start, step])).core_hash()
             }
             _ => None,
         }

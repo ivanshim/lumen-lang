@@ -28,6 +28,18 @@ impl<'a> Machine<'a> {
         kind
     }
     fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
+    /// The value whose kind a directory should describe: an empty value
+    /// of the kind a native kind word names, or the value itself where
+    /// it is one of a native kind. Nothing for a blueprint of a class's
+    /// own or a thing of one, which list their own members instead.
+    fn directory_stand_in(&self,value:&Value)->Option<Value> {
+        if let Value::Intrinsic(word)=value { return self.kind_stand_in(word); }
+        if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word); }
+        if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)); }
+        if matches!(value,Value::Thing(_)) { return None; }
+        if self.native_directory(value).is_empty() { return None; }
+        Some(value.clone())
+    }
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
@@ -521,10 +533,25 @@ impl<'a> Machine<'a> {
         Ok(created)
     }
     fn absent_attribute(&self,value:&Value,member:&str)->Escape {
-        let name=match value{Value::Thing(t)=>t.of.name.as_str(),Value::Blueprint(b)=>b.name.as_str(),_=>"function"};
+        // A namespace and a kind go by their own name, in words of
+        // their own, as CPython names them.
+        let named=self.member_named_missing(value,member);
+        if !named.is_empty(){return named.into();}
+        // A thing and a blueprint go by their own name; anything else
+        // by the name its kind goes under.
+        let kind;
+        let name=match value{Value::Thing(t)=>t.of.name.as_str(),Value::Blueprint(b)=>b.name.as_str(),other=>{kind=other.kind_word();&kind}};
         let parts=self.table.strings("ext.stmt.class.detail.attribute.amiss");
         if parts.len()<3{return self.class_unready();}
         format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
+    }
+    /// An entry a value will not take: it keeps no namespace of its own
+    /// to hold one, its blueprint naming the entries it holds or the
+    /// value being of a builtin kind.
+    fn unwritable_attribute(&self,value:&Value,member:&str)->Escape {
+        let told=self.member_unwritable(value,member);
+        if told.is_empty(){return self.absent_attribute(value,member);}
+        told.into()
     }
     pub(super) fn member_binding(&mut self,entry:Value,receiver:Option<Value>,owner:Rc<Blueprint>)->Res {
         match &entry {
@@ -736,6 +763,7 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        let writing=replacement.is_some();
         let success=match &subject {
             Value::Thing(t)=>{
                 if self.is_fault_kind(&t.of) && self.table.single("ext.builtin.exceptions.args") == Some(key) {
@@ -806,7 +834,16 @@ impl<'a> Machine<'a> {
             }
             _=>false,
         };
-        if success{Ok(Value::Nil)}else{Err(self.absent_attribute(&subject,key))}
+        if success{return Ok(Value::Nil);}
+        // A thing whose blueprint names the entries it holds, and a
+        // value of a builtin kind, have nowhere to put a new entry.
+        let nowhere=match &subject {
+            Value::Thing(_)=>writing,
+            Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)=>false,
+            _=>true,
+        };
+        if nowhere{return Err(self.unwritable_attribute(&subject,key));}
+        Err(self.absent_attribute(&subject,key))
     }
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let values: Vec<Value> = values.iter().map(Value::settled).collect();
@@ -851,7 +888,7 @@ impl<'a> Machine<'a> {
             |Prim::ClassWork(9..=11))
     }
     /// The word a value names a kind by, where it names one at all.
-    fn kind_spelling(&self,value:&Value)->Option<Rc<str>>{
+    pub(super) fn kind_spelling(&self,value:&Value)->Option<Rc<str>>{
         let Value::Wrapped(8,parts)=value else{return None};
         let Value::Text(word)=&parts[0] else{return None};
         self.table.prims.get(word.as_ref()).filter(|op|Self::names_a_kind(op)).map(|_|word.clone())
@@ -982,6 +1019,13 @@ impl<'a> Machine<'a> {
                     names.sort_by_key(|name|name.bare());
                     return Ok(Value::Vector(Rc::new(names)));
                 }
+            }
+            // A native kind, named as the kind itself or held as a value
+            // of one, answers the members a value of that kind has: the
+            // methods of the kind and the special names its mark answers.
+            if let Some(sample)=self.directory_stand_in(&values[0]) {
+                let named=self.native_directory(&sample);
+                return Ok(Value::Vector(Rc::new(named.iter().map(|word|Value::text(word)).collect())));
             }
             let mut names=Vec::new();
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.of)},Value::Blueprint(b)=>Some(b),_=>None};

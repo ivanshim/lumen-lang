@@ -875,6 +875,133 @@ while `format(obj, spec)` and f-strings do; `'%s' % obj` ignores
 test_fractions' `test_float_format_testfile` wants `open` and a data
 file the tree does not hold.
 
+### 1p. Batch 7 merged as #493 and #494; batch 8 begins
+
+Pull request #494 merged into main at 6348f05 with every job green on
+c9766bd; #493 went in before it at 2e5a006. The Lumen example sweep,
+still running when c9766bd was pushed, finished with two programs
+timed out under load (fibonacci_iterative and sieve) that print the
+same output on stream35, stack8 and microcode7 when run alone.
+
+The count at 6348f05, taken with a copied binary over the fifty
+reference files: stack8 1,127 pass of 2,536 ran, microcode7 1,059 of
+2,394, no pass lost against cbd0553. test_fractions rose from 12 to 17
+on both kernels with `Fraction.__format__`, test_list by four, and
+test_bool, test_builtin and test_index by one or two each.
+
+Batch 8 opens with the wording of a missing member. A missing
+attribute on a builtin value said "value has no such method"; it now
+says what CPython says, naming the kind and the member (`'tuple'
+object has no attribute 'append'`), with the class form (`type object
+'C' has no attribute 'zz'`), the module form (`module 'math' has no
+attribute 'zz'`), and `hasattr` answering for the members a builtin
+value does have. Two records move, both kernels alike:
+class-advanced/2.out takes CPython 3.13's wording for a write to a
+`__slots__` instance (`'C' object has no attribute 'z' and no __dict__
+for setting new attributes`), and reader-tail/4.err gains nothing but
+prints the same line with the new wording beneath it. The branch had
+to take the operator-dunder fold into itself first, since both rewrote
+the member road in stack8's engine.rs; the merge kept both (the
+dunder probes stay identical on both kernels).
+
+Gaps this round records: `hasattr(int, "real")` answers False, since
+a builtin kind's own members are not modelled; `frozenset` and `set`
+share one word at the value level, so `isinstance(frozenset([1]),
+set)` is True; `type(slice(1, 3))` stops with "unknown value type";
+`isinstance` accepts a list of kinds where CPython wants a tuple;
+`testHashComparisonOfMethods` in test_class is an error on stack8
+and a failure on microcode7.
+
+Three more folds followed the attr-wording one. A list written at a
+key that names no place stays a list (`b["k"] = 1` raises `list
+indices must be integers or slices, not str` instead of turning the
+row into a map), and arithmetic between kinds it means nothing for is
+refused in Python under a new switch, `ext.op.arithmetic.strict`, that
+only the Python definition turns on: `"a" + 1` says `can only
+concatenate str (not "int") to str`, `1 + "a"` names the sign and both
+kinds, `None + 1` is refused, and a compound write names its compound
+sign. PHP and Lumen keep the shared arithmetic. Two sequence-ops
+records (24 and 8) that joined text to a number in the open catch the
+refusal where it stands; the porter writes `str()` around a side it
+knows to be no line when it spells a Lumen join with the adding sign
+for Python, so `examples/python/constructs/string_operations.py` says
+what it said before. test_list gains test_setitem and
+test_setitem_error on both kernels.
+
+Text formatted by method or by mark reaches an object's own words:
+`'{}'.format(obj)` and `'{:spec}'.format(obj)` reach `__format__`,
+`'%s' % obj` reaches `__str__` (text on the left of the remainder sign
+fills its own marks before either side is asked for a method, except
+for a subclass of text hooking `__rmod__`, which keeps its road), and
+`"{}".format` read without being called is a bound value like any
+other member. A text written as a representation in a field is quoted
+by the same hand as `repr()`, so `'%r' % '\u0378'` prints instead of
+refusing; a caught `'{x}'.format()` says `KeyError: 'x'`; an opening
+brace that ends the text says `Single '{' encountered in format string`
+under `ext.text.format.brace.single`. format-spec/20 and 24 move from a
+refusal to the output CPython prints. test_str gains one method;
+test_class's testMisc goes from an error to a failure (it now reaches
+a real assertion about `__eq__` operand order).
+
+Gaps those two rounds record: `b"ab"["k"]`, `bytearray(b"ab")["k"] =
+99` and `del bytearray(...)["k"]` give generic wording where CPython
+names byte or bytearray indices; `{"a": 1} + {"b": 2}` says
+`unsupported operand types` without the kinds; `SubInt(1) + "a"` names
+`'int'` rather than the subclass; `b"a" + "b"` and `"a" + b"b"` refuse
+with a NotImplementedError where CPython says `can't concat str to
+bytes` / `can only concatenate str (not "bytes") to str`; a complex
+number cannot be formatted to a spec and `format(3, "n")` is refused,
+which is what stops three of test_format's five failing methods, while
+test_str_format needs some twenty CPython 3.14 `%`-error wordings the
+definition does not hold; a KeyError built from a message keeps its
+key double-quoted when caught (`{}.pop("x")` → `KeyError: "'x'"`), and
+`s.remove(5)` on a set says `KeyError: '5'` for an int key; `ascii()`
+is not defined; `'{:>5}'.format([1, 2])` says "this format cannot be
+represented" where CPython raises `TypeError: unsupported format string
+passed to list.__format__`.
+
+The fourth fold is membership, hashing and the directory of a builtin.
+A membership question the kernels could not answer now says why, in
+CPython's words, under three new labels (`ext.op.in.text`,
+`ext.op.in.uncontained`, `ext.op.in.declined`): `1 in "abc"` says `'in
+<string>' requires string as left operand, not int`, `1 in 5` says
+`argument of type 'int' is not a container or iterable` (the 3.14
+phrase test_contains asserts; 3.11 said "is not iterable"), and a class
+setting `__contains__ = None` says `'C' object is not a container`. A
+span of numbers has a hash folded from its count, start and stride, so
+`range(3)` and `range(0, 3, 1)` share a place in a set or map. `dir()`
+of a builtin value, or of its kind, names the members that kind answers
+to, from the same per-kind tables the members are resolved through.
+There is now one routine per kernel for the address a value takes among
+a set's members — a builtin value by its worth, a thing by the hash and
+equality its class gives it — on every way in (braces, `set()`,
+`frozenset()`, a comprehension, add, update, remove, discard, `in`), so
+two equal things share one place and sets gathered in different orders
+agree; a member taken out of a set is the thing itself, not the pair it
+was kept as; ±inf is one key and NaN keys by identity. A set method
+kept as a bound value and called later, as `assertRaises` calls it,
+opens its arguments as any other callee (it was handed the spread
+marker itself, for any value), and a missing set member reads
+`KeyError: 5`, not `KeyError: '5'`. The library's `deque` gains
+`__len__`, `__iter__`, `__reversed__`, `__getitem__`, `__contains__`,
+`__eq__` and `__repr__`, and `_NeverEqual` in the test-support stub
+gains `__ne__` and `__hash__`. Records moved: file-iter/13 (test_contains)
+to an empty .out — all four methods pass; file-iter/15 (test_range)
+gains one method; expressions/9, file-exceptions/23 and file-iter/17
+take the new membership wording; reader-tail/4 (test_set) ends with 33
+methods gained against 6348f05 and none lost, test_badcmp on TestSet
+and TestFrozenSet among them. test_dict gains three on stack8 and
+test_class one on both kernels.
+
+Gaps that fold records: `{slice(1, 2)}` refuses to hash although
+`hash(slice(1, 2))` works (3.12+ allows both); the repr of a set holding
+objects shows `{<object Ok>}` instead of calling `__repr__`, as lists
+and maps do; `s in [s]` for an instance of a class standing on `set`
+answers False on stack8 and True on microcode7 (CPython: True); a
+bound `bytearray(b'ab').decode` called through a spread still refuses;
+fifteen names, the set methods and `bytes.decode` among them, refuse a
+bare unbound read though they work when called.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

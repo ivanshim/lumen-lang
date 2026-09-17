@@ -1,5 +1,6 @@
 ['hello', ('world',), {'a': ['b']}, {'x'}]
 ('a',) {'a': 'b'}
-Answer: 42 42! a1
-value=7
+can only concatenate str (not "int") to str
+can only concatenate str (not "int") to str
+value=
 ['a', 'b']

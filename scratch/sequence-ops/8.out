@@ -3,5 +3,5 @@
 (1, 2, 1, 2) (1, 2, 1, 2) [0, 0]
 can only concatenate list (not "tuple") to list
 can only concatenate tuple (not "list") to tuple
-a1
+can only concatenate str (not "int") to str
 can't multiply sequence by non-int of type 'float'

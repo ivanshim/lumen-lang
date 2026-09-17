@@ -273,8 +273,11 @@ impl SetStore {
         Some(self.entries.remove(place).1)
     }
 
+    /// The entries as they are read out. A thing kept beside its hash
+    /// comes back as the thing alone: the hash is how the store knows
+    /// where the thing lies and is no part of the entry.
     pub fn values(&self) -> Vec<Value> {
-        self.entries.iter().map(|(_, v)| v.clone()).collect()
+        self.entries.iter().map(|(_, v)| match v { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() }).collect()
     }
 
     pub fn merge(&self, rhs: &SetStore, rule: u8) -> SetStore {
@@ -422,12 +425,32 @@ impl Value {
             Value::Dict(_) => Err("dict"),
             Value::Set(_) => Err("set"),
             Value::Text(word) => Ok(format!("text:{word}")),
+            // A progression is addressed by the places it names: their
+            // count, where they begin and how far apart they stand, so
+            // that two naming the same places share one address. One of
+            // a single place has no stride, an empty one no start.
+            Value::Progression(sequence) => {
+                let count = sequence.count();
+                if count.is_zero() { return Ok("walk:0".to_owned()); }
+                if count.is_one() { return Ok(format!("walk:1:{}", sequence.first)); }
+                Ok(format!("walk:{}:{}:{}", count, sequence.first, sequence.stride))
+            }
             Value::Flag(b) => Ok(format!("number:{}:1", u8::from(*b))),
             Value::Nil => Ok("nothing".to_owned()),
             Value::Ellipsis => Ok("ellipsis".to_owned()),
             value => {
                 let Some(ratio) = crate::math::ratio_of(value) else { return Err(""); };
-                if ratio.beneath.is_zero() { return Err(""); }
+                // Nothing under the line marks a worth off the scale.
+                // Either endless worth is the one value wherever it is
+                // met, since it equals itself; a worth that is no
+                // number equals nothing at all, not even itself, so it
+                // takes the place it lies in for its address and shares
+                // that place with no other.
+                if ratio.beneath.is_zero() {
+                    if !ratio.above.is_zero() { return Ok(format!("beyond:{}", if ratio.above.is_negative() { '-' } else { '+' })); }
+                    if let Value::Frac(parts) = value { return Ok(format!("apart:{:p}", Rc::as_ptr(parts))); }
+                    return Err("");
+                }
                 let divisor = ratio.above.gcd(&ratio.beneath);
                 Ok(format!("number:{}:{}", ratio.above / &divisor, ratio.beneath / divisor))
             }
