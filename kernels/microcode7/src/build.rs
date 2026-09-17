@@ -222,7 +222,7 @@ enum Mode {
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, false, false)
 }
 
 /// The same, saying besides which row the reading had reached when it
@@ -230,7 +230,7 @@ pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMa
 pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32, bool)> {
     let at = std::cell::Cell::new(0u32);
     let hard = std::cell::Cell::new(false);
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, false)
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, false, false)
         .map_err(|said| (said, at.get(), hard.get()))
 }
 
@@ -239,7 +239,7 @@ pub fn build_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
 /// statement that means one thing in a program of its own and another
 /// in a piece of a run in progress can tell the two apart.
 pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>) -> Res<Built> {
-    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true)
+    build_marking(tokens, table, seeded, assumed, strict, before, written_in, None, None, None, true, false)
 }
 
 /// The same, save that the text stands inside a routine already running:
@@ -257,7 +257,7 @@ pub fn build_within(
     before: u32,
     within: Option<(String, Option<String>)>,
 ) -> Res<Built> {
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true)
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, None, Some((inside, knows)), within, true, false)
 }
 
 /// `build_within` and `build_from`, each saying besides which row the
@@ -271,37 +271,40 @@ pub fn build_within_at(
     knows: Knows,
     before: u32,
     within: Option<(String, Option<String>)>,
+    value_only: bool,
 ) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
-    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within, true).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, HashMap::new(), true, before, None, Some((&at, &hard)), Some((inside, knows)), within, true, value_only).map_err(|said| (said, at.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
     let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
-    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true).map_err(|said| (said, at.get()))
+    build_marking(tokens, table, seeded, assumed, strict, before, None, Some((&at, &hard)), None, None, true, false).map_err(|said| (said, at.get()))
 }
 
 /// Text handed over to be read while the run goes: as one expression
 /// and nothing after it where it is to be weighed, else as statements;
 /// said besides which file it came out of, and which builtin words are
 /// to be read as names the program bound, in front of the builtins.
-pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, value_only: bool, shadowed: &[String]) -> Res<Built> {
+pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u32, written_in: Option<Rc<str>>, value_only: bool, shadowed: &[String]) -> Result<Built, (String, u32)> {
+    let (at, hard) = (std::cell::Cell::new(0u32), std::cell::Cell::new(false));
+    let mark = Some((&at, &hard));
     let mut words = HashMap::new();
     if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), None, None, None, true, &mut words, true, value_only, shadowed)?;
+        build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed).map_err(|said| (said, at.get()))?;
     }
-    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, None, None, None, true, &mut words, false, value_only, shadowed)
+    build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in, mark, None, None, true, &mut words, false, value_only, shadowed).map_err(|said| (said, at.get()))
 }
 
 type Knows<'w> = (&'w HashMap<String, Vec<bool>>, &'w HashMap<String, Vec<String>>, &'w HashSet<String>);
 type Within<'w> = (&'w [String], Knows<'w>);
 
-fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool) -> Res<Built> {
+fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool) -> Res<Built> {
     let mut words = HashMap::new();
     if table.flag("ext.stmt.function.closes_over") {
-        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, false, &[])?;
+        build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[])?;
     }
-    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, false, &[])
+    build_survey(tokens, table, seeded, assumed, strict, before, written_in, mark, within, standing_in, read_in, &mut words, false, value_only, &[])
 }
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String]) -> Res<Built> {
@@ -883,7 +886,12 @@ impl<'a> Builder<'a> {
         for index in (1..self.layers.len()).rev() {
             let layer = &self.layers[index];
             if layer.holds == Holds::Nothing { continue; }
-            if !(borrowed && index == owner) {
+            // Text read as standing inside a routine knows that
+            // routine's names at its own top level alone: a routine
+            // written in the text reaches the globals and none of them,
+            // as the reference has it.
+            let set_aside = self.read_in && index < self.outer_layers && index + 1 < self.layers.len();
+            if !set_aside && !(borrowed && index == owner) {
                 if layer.aliases.iter().any(|pair| pair.0 == name) { return None; }
                 if let Some(at) = layer.idents.iter().rposition(|word| word == name) {
                     let slot = Address { ident: Rc::from(name), up: distance, at, fallback: None };
@@ -4478,7 +4486,11 @@ impl<'a> Builder<'a> {
             }
             if bind {
                 let last = params.last().ok_or_else(wrong)?;
-                if params.iter().filter(|p| *p == last).count() != 1 { return Err(wrong()); }
+                if params.iter().filter(|p| *p == last).count() != 1 {
+                    let twice = table.strings("ext.stmt.function.parameters.duplicate");
+                    if twice.is_empty() { return Err(wrong()); }
+                    return Err(format!("{}{}{}", twice[0], last, twice.get(1).map_or("", String::as_str)));
+                }
                 match (self.on_assign(), manner) {
                     (true, 'v' | 'k') => return Err(wrong()),
                     (true, 'b') => optional = true,
@@ -7573,6 +7585,10 @@ impl<'a> Builder<'a> {
         let sep = self.table.single(sep_key).map(str::to_string);
         let mut items = Vec::new();
         let mut named_values = Vec::new();
+        // The keywords written out in this call, so that one written
+        // twice is refused as the text is read, as the reference
+        // refuses it.
+        let mut spelled: Vec<String> = Vec::new();
         while !self.sign(&close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
@@ -7583,7 +7599,15 @@ impl<'a> Builder<'a> {
             let mut tag = None;
             let bind = self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close";
             if label {
-                if bind { tag = Some(Value::text(&self.look().lexeme)); }
+                if bind {
+                    let word = self.look().lexeme.clone();
+                    let twice = self.table.strings("ext.syntax.call.amiss.repeated");
+                    if spelled.contains(&word) && !twice.is_empty() {
+                        return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
+                    }
+                    spelled.push(word.clone());
+                    tag = Some(Value::text(&word));
+                }
                 self.pos += 2;
             } else if bind && matches!(self.look().shape, Shape::Bare | Shape::Sign) {
                 let word = &self.look().lexeme;

@@ -48,6 +48,11 @@ pub struct Engine<'a> {
     text_books: Vec<TextBook>,
     /// Which of those the run stands inside at present, if any.
     reading_in: Option<usize>,
+    /// The names and values of the frame the call to read text stands
+    /// in, where it stands in a routine and hands over no dictionaries
+    /// of its own. The text is read as a piece of that routine, so the
+    /// routine's names are its to read.
+    text_within: Option<(Vec<String>, Vec<Value>)>,
     /// The dictionary of builtin words, and the class of a code value,
     /// each made once a program asks for it.
     natives: Option<Rc<RefCell<Value>>>,
@@ -756,6 +761,7 @@ impl<'a> Engine<'a> {
             outer_book: None,
             text_books: Vec::new(),
             reading_in: None,
+            text_within: None,
             natives: None,
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
@@ -2160,6 +2166,35 @@ impl<'a> Engine<'a> {
         Some(told)
     }
 
+    /// The name the outermost names go by, where the language gives
+    /// them one: the module a routine written there belongs to.
+    fn module_named(&self) -> Option<String> {
+        let word = self.lang.module_names.first()?;
+        if let Some(book) = &self.outer_book {
+            if let Some(held) = book_entry(book, word) { return Some(held.plain()); }
+        }
+        let at = self.registry.idents.iter().position(|name| name == word)?;
+        match self.world.get(at)?.contents() {
+            Value::Text(said) => Some(said.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The words for a call handed the same keyword twice, which only a
+    /// spread of pairs can bring about since two written out are
+    /// refused while the program is read. The reference names the
+    /// routine by the module it belongs to and the name it goes by
+    /// there, so the two are written together here.
+    fn keyword_twice(&self, program: &Routine, name: &str) -> String {
+        let words = &self.lang.call_keyword_twice;
+        if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, name); }
+        let called = match self.module_named() {
+            Some(module) if !program.qualified.is_empty() => format!("{}.{}", module, program.qualified),
+            _ => program.qualified.clone(),
+        };
+        format!("{}{}{}{}{}", words[0], called, words[1], name, words[2])
+    }
+
     /// A counted row's complaint carries the class it belongs to in the
     /// words themselves, so it is marked as told whole and the language
     /// puts no further naming over it.
@@ -2199,7 +2234,7 @@ impl<'a> Engine<'a> {
         for (name, value) in items {
             let Some(name) = name else { continue };
             if !seen.insert(name.clone()) {
-                return Err(Self::named_fault(&self.lang.call_duplicate, &name).into());
+                return Err(self.keyword_twice(program, &name).into());
             }
             let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
             match slot {
@@ -3222,6 +3257,26 @@ impl<'a> Engine<'a> {
                     // outermost body has none but the globals.
                     let done = match op {
                         Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 && self.lang.compile_modes.is_empty() => self.run_text_here(program, frame),
+                        // Where the language has manners of reading as
+                        // well, the reading is done past here, so the
+                        // names about the call are put aside for it to
+                        // find: it reads them only when it was handed
+                        // no dictionaries of its own.
+                        Action::Builtin(Builtin::Eval | Builtin::RunText, _) if !program.body_of_all && !self.lang.compile_modes.is_empty() => {
+                            // What the text is handed is a frame of its
+                            // own: a name the routine keeps in a cell is
+                            // given a cell of its own holding the same,
+                            // so a write the text makes is the text's
+                            // alone, as the reference has it.
+                            let mine: Vec<Value> = frame.iter().map(|held| match held {
+                                Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
+                                other => other.clone(),
+                            }).collect();
+                            let held = std::mem::replace(&mut self.text_within, Some((program.idents.clone(), mine)));
+                            let done = self.perform(op, *argc);
+                            self.text_within = held;
+                            done
+                        }
                         // The names standing where the call is made are
                         // only to be seen from here, where the frame is.
                         Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
@@ -12204,6 +12259,24 @@ impl Engine<'_> {
         self.lang.source_unready.clone().unwrap_or_default()
     }
 
+    /// The complaint for text that could not be read, set about with the
+    /// file the text stands for and the line the reading stopped on, as
+    /// the reference words such a complaint. The reading's own words
+    /// are kept where they name the very complaint the language has for
+    /// text it cannot read; any other words are that complaint instead,
+    /// since they are the assembler's and not the language's.
+    fn text_syntax(&self, said: String, file: &str, row: usize) -> String {
+        let generic = self.lang.source_syntax.clone().unwrap_or_default();
+        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
+        let told = match &kind {
+            Some(kind) if said.starts_with(kind.as_str()) => said,
+            _ => generic,
+        };
+        let words = &self.lang.source_place;
+        if words.len() < 3 { return told; }
+        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
+    }
+
     /// The tokens of text handed over to be read, or the language's
     /// words for text that cannot be read.
     fn text_tokens(&self, source: &str) -> Res<Vec<crate::lex::Token>> {
@@ -12259,7 +12332,9 @@ impl Engine<'_> {
         let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
-        crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))).map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())?;
+        if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
+            return Err(self.text_syntax(said, &file, trial.stopped_at));
+        }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64))];
@@ -12271,6 +12346,9 @@ impl Engine<'_> {
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.
     fn text_run(&mut self, weighing: bool, args: Vec<Value>) -> Res<Value> {
+        // The names about the call are only for a reading handed no
+        // dictionaries; taken here, no reading that follows finds them.
+        let within = self.text_within.take();
         let Some(first) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
@@ -12294,7 +12372,10 @@ impl Engine<'_> {
         let outer = as_book(args.get(1))?;
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
-            (None, None) => return self.run_text_here_about(&source, file, mode),
+            (None, None) => return match within.filter(|_| mode != 2) {
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values),
+                None => self.run_text_here_about(&source, file, mode),
+            },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
             (None, near) => (self.book_here(true), near),
@@ -12325,6 +12406,50 @@ impl Engine<'_> {
         let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
+    }
+
+    /// Text read where a routine stands and handed no dictionaries: it
+    /// is read as a piece of that routine, so the routine's names are
+    /// its own to read, as the reference has it. What it writes it
+    /// writes to a frame of its own making, a copy of the routine's, so
+    /// the routine goes on holding what it held and a name the text
+    /// makes is gone once the text is done.
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
+        let source = if mode == 1 { source.trim() } else { source };
+        let tokens = self.text_tokens(source)?;
+        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        // Text read inside a method is read as standing in that method's
+        // class, as text read where a language has no manners of reading
+        // already is.
+        let within = self.standing_in().map(str::to_string).map(|named| {
+            let base = match self.class_named(&named) {
+                Some(Value::Class(c)) => c.base.as_ref().map(|b| b.name.clone()),
+                _ => None,
+            };
+            (named, base)
+        });
+        self.registry.value_only = mode == 1;
+        let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
+            Ok(program) => program,
+            Err(said) => { let row = self.registry.stopped_at; return Err(self.text_syntax(said, &file, row)); }
+        };
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let mut mine = values;
+        mine.resize(program.idents.len().max(mine.len()), Value::Blank);
+        let (was_written_in, was_on) = (self.source.clone(), self.line);
+        self.source = file;
+        let base = self.data.len();
+        let ran = self.run_instrs(&program, &mut mine);
+        self.source = was_written_in;
+        self.line = was_on;
+        match ran {
+            Ok(()) => {}
+            Err(Fault::Note(told)) => { self.data.truncate(base); return Err(told); }
+            Err(fled) => { self.data.truncate(base); self.carried = Some(fled); return Err(String::new()); }
+        }
+        let answer = if mode == 1 && self.data.len() > base { self.drop_top()? } else { Value::Null };
+        self.data.truncate(base);
+        Ok(answer)
     }
 
     /// Text run in dictionaries of its own: its names are given slots
@@ -12363,15 +12488,20 @@ impl Engine<'_> {
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
     fn text_program(&mut self, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
-        let syntax = self.lang.source_syntax.clone().unwrap_or_default();
-        let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
-        if mode == 2 {
-            registry.value_only = true;
-            if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+        let amiss;
+        {
+            let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
+            if mode == 2 {
+                registry.value_only = true;
+                if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+            }
+            registry.value_only = mode == 1;
+            match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
+                Ok(program) => return Ok((program, false)),
+                Err(said) => amiss = (said, registry.stopped_at),
+            }
         }
-        registry.value_only = mode == 1;
-        let program = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())).map_err(|_| syntax)?;
-        Ok((program, false))
+        Err(self.text_syntax(amiss.0, file, amiss.1))
     }
 
     /// Run a text's program as standing in its file, and answer what it

@@ -1731,6 +1731,11 @@
   "ext.builtin.source.syntax": [
     "SyntaxError: invalid syntax"
   ],
+  "ext.builtin.source.syntax.place": [
+    " (",
+    ", line ",
+    ")"
+  ],
   "ext.builtin.source.unready": [
     "NotImplementedError: this source operation cannot run yet"
   ],
@@ -2598,6 +2603,10 @@
   "ext.stmt.function.parameters.amiss": [
     "SyntaxError: invalid parameter list"
   ],
+  "ext.stmt.function.parameters.duplicate": [
+    "SyntaxError: duplicate argument '",
+    "' in function definition"
+  ],
   "ext.stmt.function.positional_only": [
     "/"
   ],
@@ -2804,6 +2813,11 @@
     "TypeError: multiple values for argument '",
     "'"
   ],
+  "ext.syntax.call.amiss.keyword": [
+    "TypeError: ",
+    "() got multiple values for keyword argument '",
+    "'"
+  ],
   "ext.syntax.call.amiss.missing": [
     "TypeError: missing required argument '",
     "'"
@@ -2811,6 +2825,9 @@
   "ext.syntax.call.amiss.unknown": [
     "TypeError: unexpected keyword argument '",
     "'"
+  ],
+  "ext.syntax.call.amiss.repeated": [
+    "SyntaxError: keyword argument repeated: "
   ],
   "ext.syntax.call.bind_names": true,
   "ext.syntax.call.chained": true,
