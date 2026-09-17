@@ -760,25 +760,46 @@ kernels before merging, ten commits on 41e88c7:
   hooks, and `collections/abc.py` and `numbers.py` lean on it rather
   than on lists of their own.
 
-No record moves: the 190 scratch programs the batch touches print what
-their fixtures hold on both kernels, the sixteen unittest fixtures
-that have moved since d669238 are unchanged, and the Python and PHP
-example sweeps pass alone what they timed out on under load (sieve.py,
-and four PHP programs on stack8, all with empty output at thirty
-seconds and their expected output when run alone).
+No record moves with those four: the 190 scratch programs the batch
+touches print what their fixtures hold on both kernels, the sixteen
+unittest fixtures that have moved since d669238 are unchanged, and the
+Python and PHP example sweeps pass alone what they timed out on under
+load (sieve.py, and four PHP programs on stack8, all with empty output
+at thirty seconds and their expected output when run alone).
 
-Gaps this round records, beyond §1m's: on microcode7 a generator
-writing into a subscript of a name from an enclosing scope
-(`def g(): d[k] = yield` inside a function) is refused with "First
-argument to () must be an array variable name", being fixed on the
-subscript branch; a `del` through a class attribute (`del D.table["z"]`)
-panics stack8 when the class body defines `__delitem__`, on its own
-branch; the `conjoin` doctest in test_generators passes on stack8 and
-fails on microcode7, one method that the two kernels disagree on;
-`lst.__setitem__(i, v)` called by name is not found on either kernel;
-and unreferenced generators are never finalised, so a `finally:` in a
-generator that is dropped mid-walk does not run (generators-run/8
-records this as a known divergence).
+Three more folds follow on the same pull request. The nested-generator
+subscript write above is fixed on microcode7, and with it a routine
+named on the right of `and` or `or` (`hard and advance_hard or
+advance`) is handed back as a value rather than run, so the `conjoin`
+doctest of test_generators finds its tours on both kernels. `eval` and
+`exec` inside a function see the function's locals: the caller's
+frame is set aside for the text, compiled and run against a detached
+copy, so a write inside the text never reaches the routine (CPython
+3.13 and later behave the same, and `locals()` after such an `exec`
+does not show the text's names); a repeated keyword in a call is
+refused while reading, a keyword repeating a positional through `**`
+raises CPython's TypeError, a duplicate parameter in a `def` is
+named, and a SyntaxError from evaluated text carries its place. And
+`del D.table["z"]` through a class attribute, or `del
+type(self).items[0]` through a call's result, reaches the value the
+class keeps on stack8 as it already did on microcode7. Two records
+move with the eval work, both kernels alike and no pass lost:
+reader-tail/1 gains two passes (`...EEEEEEEEEEE.EE..EE.EEFE.E..FE...E.EEFF..FE.EF.FFEE......EEEE....E.EEE.E.....EF.EF..FFFF..`)
+and reader-tail/9 one (`.....E..EF..E..E`).
+
+Gaps this round records, beyond §1m's: `del a["k"]` panics stack8
+when the class body defines `__delitem__` (compile.rs:619, not the
+class-attribute case above); `lst.__setitem__(i, v)` and the other
+operator dunders called by name on a builtin value are not found on
+either kernel (a branch is under way); a TypeError for a keyword
+repeating a positional lacks CPython's `f()` prefix; a class body has
+no namespace of its own in either kernel, so `locals()` there answers
+the module's names and `eval("v + 1")` in a class body cannot see
+`v`; test_funcdef now runs on to the library's stub `NotImplementedError:
+syntax checks need a compile builtin`; and unreferenced generators are
+never finalised, so a `finally:` in a generator that is dropped
+mid-walk does not run (generators-run/8 records this as a known
+divergence).
 
 ## 2. What is waiting on branches
 
