@@ -286,6 +286,33 @@ enum Kindred {
     View(bool),
 }
 
+/// The labels under which the definition spells the methods that text,
+/// a run of bytes and a set answer through builtins of their own.
+const TEXT_METHOD_LABELS: &[&str] = &[
+    "ext.builtin.text.splitlines", "ext.builtin.text.partition", "ext.builtin.text.rpartition", "ext.builtin.text.expandtabs",
+    "ext.builtin.text.swapcase", "ext.builtin.text.casefold", "ext.builtin.text.capitalize", "ext.builtin.text.title",
+    "ext.builtin.text.istitle", "ext.builtin.text.isidentifier", "ext.builtin.text.isprintable", "ext.builtin.text.isdecimal",
+    "ext.builtin.text.isnumeric", "ext.builtin.text.isascii", "ext.builtin.text.removeprefix", "ext.builtin.text.removesuffix",
+    "ext.builtin.text.format_map", "ext.builtin.text.maketrans", "ext.builtin.text.translate", "ext.builtin.text.encode",
+    "ext.builtin.text.join", "ext.builtin.text.split", "ext.builtin.text.rsplit", "ext.builtin.text.strip",
+    "ext.builtin.text.lstrip", "ext.builtin.text.rstrip", "ext.builtin.text.center", "ext.builtin.text.ljust",
+    "ext.builtin.text.rjust", "ext.builtin.text.zfill", "ext.builtin.text.count", "ext.builtin.text.find",
+    "ext.builtin.text.rfind", "ext.builtin.text.index", "ext.builtin.text.rindex", "ext.builtin.text.startswith",
+    "ext.builtin.text.endswith", "ext.builtin.text.replace", "ext.builtin.text.upper", "ext.builtin.text.lower",
+];
+const BYTE_METHOD_LABELS: &[&str] = &[
+    "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower",
+    "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace",
+    "ext.builtin.bytes.strip", "ext.builtin.bytes.find",
+];
+const SET_METHOD_LABELS: &[&str] = &[
+    "ext.builtin.set.add", "ext.builtin.set.remove", "ext.builtin.set.discard", "ext.builtin.set.pop",
+    "ext.builtin.set.clear", "ext.builtin.set.copy", "ext.builtin.set.update", "ext.builtin.set.union",
+    "ext.builtin.set.intersection", "ext.builtin.set.difference", "ext.builtin.set.symmetric_difference",
+    "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
+    "ext.builtin.set.intersection_update", "ext.builtin.set.difference_update", "ext.builtin.set.symmetric_difference_update",
+];
+
 /// What parts a group of exceptions: classes its members may stand
 /// beneath, or a routine asked of each member in turn.
 enum Chooser {
@@ -3676,16 +3703,78 @@ impl<'a> Engine<'a> {
     /// read as a class: a sample of the kind is asked, so the namespace
     /// of the kind and the members of a value of it never part ways.
     pub(super) fn kind_special_names(&self, word: &str) -> Vec<String> {
-        let sample = match self.lang.builtins.get(word) {
-            Some(Builtin::ToText) => Value::text(""),
-            Some(Builtin::List) => Value::array(Vec::new()),
-            Some(Builtin::Tuple) => Value::Tuple(Rc::new(Vec::new())),
-            Some(Builtin::Dict) => Value::Map(Rc::new(Vec::new())),
-            Some(Builtin::Set) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
-            Some(Builtin::Bytes(mutable)) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
-            _ => return Vec::new(),
-        };
+        let Some(sample) = self.kind_sample(word) else { return Vec::new() };
         self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)).cloned().collect()
+    }
+
+    /// An empty value of the builtin kind that word names, standing for
+    /// the kind wherever the kind itself is asked what its values can
+    /// do. Nothing for a word that names no builtin kind.
+    pub(super) fn kind_sample(&self, word: &str) -> Option<Value> {
+        Some(match self.lang.builtins.get(word)? {
+            Builtin::ToText => Value::text(""),
+            Builtin::ToInt => Value::Small(0),
+            Builtin::Bool => Value::Flag(false),
+            Builtin::AsReal => crate::complex::real(0.0),
+            Builtin::Complex => crate::complex::made(self.lang, 0.0, 0.0),
+            Builtin::List => Value::array(Vec::new()),
+            Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
+            Builtin::Dict => Value::Map(Rc::new(Vec::new())),
+            Builtin::Set => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
+            Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
+            Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
+                start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
+            })),
+            _ => return None,
+        })
+    }
+
+    /// Whether a value of that family answers a method of that working.
+    /// The workings are the ones the definition gives names to, and each
+    /// belongs to the kinds whose values the kernel runs it for.
+    fn family_works(family: Kindred, working: &str) -> bool {
+        let text = matches!(family, Kindred::Text);
+        let number = matches!(family, Kindred::Whole | Kindred::Real);
+        match working {
+            "append" | "extend" | "insert" | "remove" | "sort" | "reverse" => matches!(family, Kindred::Row),
+            "index" | "count" => matches!(family, Kindred::Row | Kindred::Tuple) || text,
+            "pop" | "copy" | "clear" => matches!(family, Kindred::Row | Kindred::Map),
+            "get" | "keys" | "values" | "items" | "setdefault" | "update" | "popitem" | "fromkeys" => matches!(family, Kindred::Map),
+            "upper" | "lower" | "strip" | "lstrip" | "rstrip" | "split" | "rsplit" | "join" | "replace" => text,
+            "startswith" | "endswith" | "find" | "rfind" | "format" | "encode" => text,
+            "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper" => text,
+            "title" | "capitalize" | "center" | "ljust" | "rjust" | "zfill" => text,
+            "bit_length" | "bit_count" | "numerator" | "denominator" => matches!(family, Kindred::Whole),
+            "real" | "imag" | "conjugate" | "is_integer" | "as_integer_ratio" => number,
+            "hex" | "fromhex" => matches!(family, Kindred::Real),
+            _ => false,
+        }
+    }
+
+    /// The members a value of a builtin kind answers to by name: the
+    /// special names its family answers, and the methods of its kind,
+    /// each spelled as the definition spells it. A spelling that names
+    /// the kind before the method is a way to the kind's own maker and
+    /// not a member of a value, so it is left out.
+    pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
+        let Some(family) = Self::native_family(sample) else { return Vec::new() };
+        let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
+        for (spelling, working) in self.lang.value_methods.iter() {
+            if Self::family_works(family, working) { names.push(spelling.clone()); }
+        }
+        // Text, a run of bytes and a set answer further methods through
+        // builtins of their own, each found by the label it stands under.
+        let (book, labels) = match family {
+            Kindred::Text => (&self.lang.text_words, TEXT_METHOD_LABELS),
+            Kindred::Bytes(_) => (&self.lang.byte_words, BYTE_METHOD_LABELS),
+            Kindred::Set => (&self.lang.set_words, SET_METHOD_LABELS),
+            _ => (&self.lang.text_words, [].as_slice()),
+        };
+        for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
+        names.retain(|name| !name.contains('.'));
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// The family a builtin value belongs to, read through whatever

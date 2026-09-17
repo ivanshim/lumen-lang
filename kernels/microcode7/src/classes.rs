@@ -28,6 +28,18 @@ impl<'a> Machine<'a> {
         kind
     }
     fn native_word(b:&Blueprint)->Option<String> {b.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v.bare())}
+    /// The value whose kind a directory should describe: an empty value
+    /// of the kind a native kind word names, or the value itself where
+    /// it is one of a native kind. Nothing for a blueprint of a class's
+    /// own or a thing of one, which list their own members instead.
+    fn directory_stand_in(&self,value:&Value)->Option<Value> {
+        if let Value::Intrinsic(word)=value { return self.kind_stand_in(word); }
+        if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word); }
+        if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)); }
+        if matches!(value,Value::Thing(_)) { return None; }
+        if self.native_directory(value).is_empty() { return None; }
+        Some(value.clone())
+    }
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
@@ -982,6 +994,13 @@ impl<'a> Machine<'a> {
                     names.sort_by_key(|name|name.bare());
                     return Ok(Value::Vector(Rc::new(names)));
                 }
+            }
+            // A native kind, named as the kind itself or held as a value
+            // of one, answers the members a value of that kind has: the
+            // methods of the kind and the special names its mark answers.
+            if let Some(sample)=self.directory_stand_in(&values[0]) {
+                let named=self.native_directory(&sample);
+                return Ok(Value::Vector(Rc::new(named.iter().map(|word|Value::text(word)).collect())));
             }
             let mut names=Vec::new();
             let class=match &values[0]{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.of)},Value::Blueprint(b)=>Some(b),_=>None};

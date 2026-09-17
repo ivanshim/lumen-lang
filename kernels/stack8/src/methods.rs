@@ -302,7 +302,9 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             }
             store(Value::Map(Rc::new(pairs)))
         }
-        Value::Small(_) | Value::Huge(_) | Value::Real(_) => {
+        // A flag stands for the whole number it counts as, and answers
+        // the methods of a whole number as the reference has it.
+        Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) => {
             let real=matches!(held,Value::Real(_));
             // True division asked of the whole number's class: the two
             // whole numbers become the real their quotient rounds to.
@@ -317,7 +319,9 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "bit_count" if !real => Ok(Value::Small(held.as_big()?.magnitude().count_ones() as i64)),
                 "numerator" | "__index__" if !real => Ok(Value::of_big(held.as_big()?)),
                 "denominator" if !real => Ok(Value::Small(1)),
-                "real" | "conjugate" => Ok(held.clone()),
+                // A flag answers these as the whole number it counts as,
+                // which is what it stands for among the numbers.
+                "real" | "conjugate" => Ok(if matches!(held,Value::Flag(_)) {Value::of_big(held.as_big()?)} else {held.clone()}),
                 "imag" => Ok(if real {crate::complex::real(0.0)} else {Value::Small(0)}),
                 "bit_length" if !matches!(held,Value::Real(_)) => Ok(Value::Small(held.as_big()?.bits() as i64)),
                 "is_integer" => Ok(Value::Flag(match &held {Value::Real(r)=>!r.outside() && (&r.p % &r.q).is_zero(),_=>true})),

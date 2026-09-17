@@ -84,7 +84,9 @@ impl Request<'_> {
             Value::Text(chars)=>self.on_text(&chars),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec()),
-            number @ (Value::Small(_)|Value::Huge(_)|Value::Frac(_))=>self.on_number(number),
+            // A flag counts as the whole number it stands for, and
+            // answers the methods of a whole number as CPython has it.
+            number @ (Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Flag(_))=>self.on_number(number),
             _=>Err(self.fail("attribute")),
         }
     }
@@ -101,7 +103,9 @@ impl Request<'_> {
         if self.operation=="bit_count" && !real{return Ok(Value::Small(value.as_big()?.magnitude().count_ones() as i64));}
         if (self.operation=="numerator"||self.operation=="__index__") && !real{return Ok(Value::from_big(value.as_big()?));}
         if self.operation=="denominator" && !real{return Ok(Value::Small(1));}
-        if self.operation=="real"||self.operation=="conjugate"{return Ok(value);}
+        // A flag gives back the whole number it counts as, which is what
+        // it stands for among the numbers.
+        if self.operation=="real"||self.operation=="conjugate"{return Ok(if matches!(value,Value::Flag(_)){Value::from_big(value.as_big()?)}else{value});}
         if self.operation=="imag"{return Ok(if real{crate::data::worth_of_binary(0.0,crate::math::DEFAULT_PLACES).keeping_point(true)}else{Value::Small(0)});}
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}

@@ -4912,19 +4912,92 @@ impl<'a> Machine<'a> {
     /// the kind read as a class: a sample of the kind is asked, so what
     /// the kind names and what a value of it answers stay one thing.
     pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
-        let sample = match self.table.prims.get(word) {
-            Some(Prim::AsText) => Value::text(""),
-            Some(Prim::Listed) => Value::Vector(Rc::new(Vec::new())),
-            Some(Prim::Tupling) => Value::Tuple(Rc::new(Vec::new())),
-            Some(Prim::Dictionary) => Value::Dict(Rc::new(Vec::new())),
-            Some(Prim::Uniques) => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
-            Some(Prim::Octets(kind)) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
-            _ => return Vec::new(),
-        };
+        let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
         for name in self.table.strings("ext.stmt.class.special") {
             if self.native_member(&sample, name) { gathered.push(name.clone()); }
         }
+        gathered
+    }
+
+    /// An empty value of the native kind that word names, standing in
+    /// for the kind itself wherever the kind is asked what its values
+    /// can do. Nothing where the word names no native kind.
+    pub(super) fn kind_stand_in(&self, word: &str) -> Option<Value> {
+        Some(match self.table.prims.get(word)? {
+            Prim::AsText => Value::text(""),
+            Prim::AsInt => Value::Small(0),
+            Prim::Truthful => Value::Flag(false),
+            Prim::AsReal => crate::data::worth_of_binary(0.0, crate::math::DEFAULT_PLACES),
+            Prim::ComplexMade => crate::complex::pair(self.table, 0.0, 0.0),
+            Prim::Span => Value::Progression(Rc::new(crate::data::Progression {
+                first: BigInt::from(0), limit: BigInt::from(0), stride: BigInt::from(1), word: word.to_owned(),
+            })),
+            Prim::Listed => Value::Vector(Rc::new(Vec::new())),
+            Prim::Tupling => Value::Tuple(Rc::new(Vec::new())),
+            Prim::Dictionary => Value::Dict(Rc::new(Vec::new())),
+            Prim::Uniques => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
+            Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
+            _ => return None,
+        })
+    }
+
+    /// Whether a value marked so answers a method of that working. The
+    /// workings are the ones the table gives names to, each belonging
+    /// to the kinds whose values this kernel runs it for.
+    fn mark_works(mark: char, working: &str) -> bool {
+        let lettered = mark == 's';
+        // A real is held as a ratio whether or not the table writes it
+        // with a point, so both marks stand for a real here.
+        let ratio = "rq".contains(mark);
+        let counted = ratio || mark == 'n';
+        match working {
+            "append" | "extend" | "insert" | "remove" | "sort" | "reverse" => mark == 'l',
+            "index" | "count" => "lt".contains(mark) || lettered,
+            "pop" | "copy" | "clear" => "ld".contains(mark),
+            "get" | "keys" | "values" | "items" | "setdefault" | "update" | "popitem" | "fromkeys" => mark == 'd',
+            "upper" | "lower" | "strip" | "lstrip" | "rstrip" | "split" | "rsplit" | "join" | "replace" => lettered,
+            "startswith" | "endswith" | "find" | "rfind" | "format" | "encode" => lettered,
+            "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper" => lettered,
+            "title" | "capitalize" | "center" | "ljust" | "rjust" | "zfill" => lettered,
+            "bit_length" | "bit_count" | "numerator" | "denominator" => mark == 'n',
+            "real" | "imag" | "conjugate" | "is_integer" | "as_integer_ratio" => counted,
+            "hex" | "fromhex" => ratio,
+            _ => false,
+        }
+    }
+
+    /// Every member a value of a native kind answers to by name: the
+    /// special names its mark answers, and the methods of its kind,
+    /// spelled as the table spells them. A spelling that names the kind
+    /// before the method leads to the kind's own maker rather than to a
+    /// member of a value, so it is passed over.
+    pub(super) fn native_directory(&self, sample: &Value) -> Vec<String> {
+        let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
+        let mut gathered = Vec::new();
+        for name in self.table.strings("ext.stmt.class.special") {
+            if self.native_member(sample, name) { gathered.push(name.clone()); }
+        }
+        for (label, operation) in crate::table::BUILTIN_LABELS {
+            let wanted = match operation {
+                Prim::ValueMethod => match label.strip_prefix("ext.builtin.method.") {
+                    Some(working) => Self::mark_works(mark, working),
+                    None => false,
+                },
+                // Text, a set and a run of bytes answer further methods
+                // through primitives of their own. Neither the extent of
+                // text nor how it shows is a method of it, and of the
+                // bytes primitives only those a run of bytes answers to.
+                Prim::Textual(work) => mark == 's' && !matches!(work, crate::text::Work::LENGTH | crate::text::Work::REPR),
+                Prim::SetCall(1..=17) => mark == 'e',
+                Prim::Octets(3 | 4 | 6..=13) => "bB".contains(mark),
+                _ => false,
+            };
+            if !wanted { continue; }
+            gathered.extend(self.table.strings(label).iter().filter(|word| !word.contains('.')).cloned());
+        }
+        gathered.sort();
+        gathered.dedup();
         gathered
     }
 
