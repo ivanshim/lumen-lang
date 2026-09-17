@@ -31,7 +31,7 @@ use num_traits::ToPrimitive;
 use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
-use crate::value::{Reach, Value};
+use crate::value::{Reach, Value, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr, Plan, Attempt, Taking};
 
 /// The global names, each with a slot.
@@ -4102,16 +4102,23 @@ impl<'a> Compiler<'a> {
                 if spread { self.take(); unready = true; }
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
                 let mut handed = None;
+                // The keyword that names a metaclass says what makes the
+                // class; every other keyword is for the parent's hook.
+                let mut names_maker = false;
                 if keyword {
                     let word = self.take().lexeme;
                     self.take();
-                    // A metaclass is named by a keyword no class form
-                    // runs, so the form stays unready with it.
-                    if lang.class_details.get("subclass").map_or(true, |v| v.is_empty()) || Lang::spells(&lang.metaclass_word, &word) { unready = true; } else { handed = Some(word); }
+                    if Lang::spells(&lang.metaclass_word, &word) { names_maker = true; }
+                    else if lang.class_details.get("subclass").map_or(true, |v| v.is_empty()) { unready = true; }
+                    else { handed = Some(word); }
                 }
                 let from = self.mark();
                 self.expr(0)?;
-                if let Some(word) = handed {
+                if names_maker {
+                    let held = self.gensym("metaclass");
+                    self.write(&held);
+                    carried_words.push((MAKER_MEMBER.to_string(), held));
+                } else if let Some(word) = handed {
                     let held = self.gensym("keyword");
                     self.write(&held);
                     carried_words.push((format!("\0keyword:{word}"), held));

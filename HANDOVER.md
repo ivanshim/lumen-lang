@@ -682,6 +682,43 @@ do, so no probe covers it; `*args` packs into a list rather than a
 tuple; `it.__next__()` on a native iterator is an undefined variable
 (an agent is on it).
 
+### 1m. Batch 4 merged as #490; batch 5 begins
+
+Pull request #490 merged into main at f774a3e with every check green
+on 29052e3. The count at eec8af3, the batch's first head and before
+the sequence and generator work, checked method by method against
+d669238 with no pass turning into an error or failure: stack8 998 of
+2,524 across 50 files with 4 running nothing (was 810), microcode7
+939 of 2,382 with 5 running nothing (was 755). The sweep of 29052e3
+follows here when it lands.
+
+Batch 5 opens with two branches, each checked against python3 on
+both kernels with probes of my own beside the agent's: the iteration
+dunders called by name on a native value (`it.__next__()`,
+`lst.__iter__()`, `s.__len__()`, `t.__getitem__(i)`,
+`d.__contains__(k)`), resolved to the same bound method a named
+method gets and forwarding to the primitive `next()`, `iter()`,
+`len()`, indexing and membership already run; and `*args` gathering
+a tuple rather than a list, one line in each kernel's call binding.
+Six records move, each to a line both kernels print alike: params/0,
+4 and 18 to what python3 prints; reader-tail/4 and 9 gain a pass;
+reader-tail/3 turns one failure into an error, since test_funcdef
+now passes its starred-call assertion and runs on to an `eval` that
+cannot see the enclosing local `f`.
+
+Gaps this round records: `eval` inside a function does not see the
+function's locals, and `f(1, x=2, *(3,4), x=5)` is accepted where
+CPython refuses the repeated keyword; a missing attribute on a
+builtin value says "value has no such method" where CPython names
+the type and the attribute; on microcode7 a write through a subscript
+on a class attribute (`C.table[k] = v`) fails with "Cannot share
+property"; a callable object whose `__call__` is itself an instance
+loops forever on both kernels where CPython raises RecursionError
+(being guarded on the subscript branch, which it blocks); `hasattr`
+answers False for any member of a builtin value; the example sieve.py
+takes thirteen seconds alone in a debug build and times out at
+thirty under load.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

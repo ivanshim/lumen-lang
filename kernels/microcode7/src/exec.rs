@@ -215,6 +215,8 @@ pub struct Machine<'a> {
     ancestor: Option<Rc<Blueprint>>,
     /// The blueprint of properties, once one has been asked for.
     property_kind: Option<Rc<Blueprint>>,
+    /// The blueprint every metaclass is built on, made when first asked for.
+    builder_kind: Option<Rc<Blueprint>>,
     /// The blueprints standing for native kinds, one for each word a class has stood on.
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     routine_members: Vec<(Value, Rc<Thing>)>,
@@ -813,7 +815,7 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             code_kind: None,
-            ancestor: None, property_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
+            ancestor: None, property_kind: None, builder_kind: None, native_kinds: Vec::new(), routine_members: Vec::new(),
             table,
             outermost,
             args_cell: find("system.args"),
@@ -3773,6 +3775,10 @@ impl<'a> Machine<'a> {
                     false => None,
                     true => match given.next() {
                         Some(Value::Blueprint(b)) => Some(b),
+                        // The kind primitive, built on: what is being
+                        // made is a metaclass, and the things it makes
+                        // are classes rather than objects.
+                        Some(Value::Intrinsic(word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => Some(self.builder_blueprint()),
                         // A native kind the table lets a class stand on.
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
                         // The byte kinds are values in their own right,
@@ -3793,6 +3799,7 @@ impl<'a> Machine<'a> {
                 for _ in 0..plan.answers {
                     match given.next() {
                         Some(Value::Blueprint(b)) => answers.push(b),
+                        Some(Value::Intrinsic(word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
                         Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
                         Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
                             let word = self.octet_kind_word(changeable).to_owned();
@@ -4655,6 +4662,33 @@ impl<'a> Machine<'a> {
         class.program(named).cloned()
     }
 
+    /// Whether a value of a native kind answers this special name as a
+    /// member of its own. A walk hands over its next member and itself;
+    /// whatever is walked over hands over a walk of it; and the holders
+    /// answer for their extent, for a place read of them and for
+    /// membership, each where the kind has the member in the table. A
+    /// window upon a map is looked at before it settles, since settling
+    /// leaves a plain row with none of a window's ways.
+    fn native_member(&self, value: &Value, name: &str) -> bool {
+        let names = self.table.strings("ext.stmt.class.special");
+        let called = |at: usize| names.get(at).map_or(false, |word| word == name);
+        let mut held = value.clone();
+        while let Value::Mutable(cell, _) | Value::Shared(cell) = held { let inner = cell.borrow().clone(); held = inner; }
+        // A window has no place to read of it, and the one upon the
+        // values of a map is not asked about membership either.
+        if let Value::Window(_, portion) = held { return called(15) || called(10) || called(14) && portion != 'v'; }
+        let (walking, keyed, ordered, gathered) = match held {
+            Value::Iterator(_) | Value::Generator(_) => (true, false, false, false),
+            Value::Dict(_) => (false, true, false, false),
+            Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_) | Value::Octets { .. } | Value::Progression(_) => (false, false, true, false),
+            Value::Set(_) => (false, false, false, true),
+            _ => return false,
+        };
+        let holds = keyed || ordered || gathered;
+        called(15) && (walking || holds) || called(16) && walking
+            || (called(10) || called(14)) && holds || called(11) && (keyed || ordered)
+    }
+
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
@@ -4684,6 +4718,9 @@ impl<'a> Machine<'a> {
         if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
             return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
         }
+        // A walk, a row, a map or a set hands over the walking pair and
+        // the holder's members as a method bound to it.
+        if self.native_member(value, name) { return Some(Value::Member(Rc::new(value.clone()), name.to_string())); }
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
@@ -4982,6 +5019,22 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Nil);
                 }
             }
+        }
+        // The walking pair and the holder's members, asked for by name on
+        // a value of a native kind. Each hands its work to the primitive
+        // that already does it, so that the answer and the refusal are
+        // the ones the plain form gives.
+        if self.native_member(receiver, name) {
+            let names = self.table.strings("ext.stmt.class.special");
+            let called = |at: usize| names.get(at).map_or(false, |word| word == name);
+            let (stepping, walking, sizing, reading, asking) = (called(16), called(15), called(10), called(11), called(14));
+            if !keywords.is_empty() || arguments.len() != usize::from(reading || asking) { return Err(self.method_fault("arguments").into()); }
+            let operation = if stepping { Prim::NextItem } else if walking { Prim::Iterator } else if sizing { Prim::Length } else if reading { Prim::At } else { Prim::Contains };
+            let mut operands = vec![receiver.clone()];
+            if reading { operands.push(arguments[0].clone()); }
+            if asking { operands.insert(0, arguments[0].clone()); }
+            return if Self::is_core_primitive(operation) { self.core_primitive(operation, name, operands, Vec::new()).map_err(Escape::from) }
+                else { self.prim(operation, name, &operands).map_err(Escape::from) };
         }
         if let Value::Thing(thing) = receiver.settled() {
             if self.is_fault_kind(&thing.of) {
@@ -5575,7 +5628,7 @@ impl<'a> Machine<'a> {
 
     /// Gather the positional things apart from the named ones, retaining
     /// every keyword until the call has checked for repeated names.
-    fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+    pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
@@ -5644,7 +5697,9 @@ impl<'a> Machine<'a> {
                 None => remaining.push(held),
             }
         }
-        if let Some(slot) = gather { fitted[slot] = Value::Vector(Rc::new(remaining)); }
+        // The spare worths a gathering place takes stand as a tuple, so
+        // that they read, weigh and compare as the language says.
+        if let Some(slot) = gather { fitted[slot] = Value::Tuple(Rc::new(remaining)); }
         let mut spare_names = Vec::new();
         let mut already = std::collections::HashSet::new();
         for (key, worth) in named {
@@ -6884,6 +6939,11 @@ impl<'a> Machine<'a> {
                 match self.invoke(routine, scope, vec![source.clone()]) {
                     Ok(v) => Ok(Some(v)),
                     Err(Escape::Thrown(Value::Thing(t))) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| t.of.goes_by(name, false)) => Ok(None),
+                    // The kernel says a walk is over in words of its own,
+                    // with no value raised behind them. A method handing
+                    // over the members of another walk meets those words
+                    // when that walk ends, and ends there too.
+                    Err(Escape::Error(s)) if self.table.strings("ext.stmt.class.special.stop").iter().any(|name| s == *name || s.starts_with(&format!("{name}:"))) => Ok(None),
                     Err(Escape::Error(s)) => Err(s),
                     Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
                 }
@@ -8314,7 +8374,7 @@ impl<'a> Machine<'a> {
                     _ => (None, false),
                 };
                 let native = matches!(v[0], Value::Text(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
-                Value::Flag(native || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                Value::Flag(native || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;
@@ -12309,7 +12369,7 @@ impl Machine<'_> {
         matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
-    fn core_complaint(&self, key: &str, middle: &str) -> String {
+    pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
         let label = format!("ext.builtin.{}", key);
         let words = self.table.strings(&label);
         match words { [] => String::new(), [one] => one.clone(), [head, tail, ..] => format!("{head}{middle}{tail}") }
@@ -12321,7 +12381,10 @@ impl Machine<'_> {
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
         match source {
-            Value::Iterator(_) => Ok(source.clone()),
+            // A walk is its own walk, and so is a suspended program: a
+            // walk taken of either is the very one, not a copy of what
+            // it still has to give.
+            Value::Iterator(_) | Value::Generator(_) => Ok(source.clone()),
             Value::Progression(walk) => Ok(Self::cursor_value(IteratorKind::Stepping(walk.clone(), BigInt::from(0)))),
             // A thing of the program's own is walked the way a loop
             // walks it: by the walk it hands over, or by its places

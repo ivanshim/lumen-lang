@@ -1082,6 +1082,11 @@ pub enum Reach {
     Hidden,
 }
 
+/// The name a class keeps its metaclass under, among its constants,
+/// where its header named one or a class it stands on was made by one.
+/// No program can spell it.
+pub const MAKER_MEMBER: &str = "\0metaclass";
+
 /// A class: what it is called, what it stands on, the properties an
 /// object of it begins with, the programs it answers to, its constants
 /// and the values it keeps for itself.
