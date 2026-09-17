@@ -4369,6 +4369,22 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// The members a walk hands over for taking apart: no more than the
+    /// places call for, and one beyond them so that too many may be told
+    /// from enough, except where a starred place takes all that is left.
+    /// Stepping may run the program's own code, and what that code
+    /// raised is raised on rather than the words that stood in for it.
+    fn apart_members(&mut self, walk: &Value, count: usize, resting: bool) -> Flow<Vec<Value>> {
+        let mut found = Vec::new();
+        while resting || found.len() <= count {
+            let stepped = self.core_step(walk);
+            if let Some(fled) = self.carried.take() { return Err(fled); }
+            let Some(value) = stepped? else { break };
+            found.push(value);
+        }
+        Ok(found)
+    }
+
     fn special_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Value::Fields(o) = value {
             return Ok(o.fields.borrow().iter().filter(|(k, v)| !matches!(v, Value::Blank) && !k.starts_with('\0')).map(|(k, _)| Value::text(k)).collect());
@@ -5000,24 +5016,16 @@ impl<'a> Engine<'a> {
                         }
                         found
                     }
-                    ref cursor @ Value::Cursor(_) => {
-                        let mut found = Vec::new();
-                        while rest.is_some() || found.len() <= *count {
-                            // Taking a walk apart may run the program's
-                            // own code for each member, and what that
-                            // code raised is raised on rather than the
-                            // words that stood in for it.
-                            let stepped = self.core_step(cursor);
-                            if let Some(fled) = self.carried.take() { return Err(fled); }
-                            let Some(value) = stepped? else { break };
-                            found.push(value);
-                        }
-                        found
-                    }
+                    ref cursor @ Value::Cursor(_) => self.apart_members(&cursor.clone(), *count, rest.is_some())?,
                     Value::Set(set) => set.borrow().items(),
                     // A thing of the program's own is taken apart into
-                    // the members its own walk hands over.
-                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => self.special_items(&source)?,
+                    // the members its own walk hands over, asked for one
+                    // at a time: such a walk may have no end at all, and
+                    // the places call for no more than they call for.
+                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some() => {
+                        let walk = self.core_iterator(&source)?;
+                        self.apart_members(&walk, *count, rest.is_some())?
+                    }
                     Value::Words(..) | Value::Bytes(..) | Value::Counted(_) => self.comprehension_items(&source)?,
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),

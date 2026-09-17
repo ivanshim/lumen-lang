@@ -2415,6 +2415,17 @@ impl<'a> Machine<'a> {
         self.table.single(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
     }
 
+    /// The members a walk hands over for taking apart: no more than the
+    /// places call for, and one beyond them so that too many may be told
+    /// from enough, except where a starred place takes all that is left.
+    fn apart_members(&mut self, walk: &Value, wanted: usize, starred: bool) -> Result<Vec<Value>, String> {
+        let mut taken = Vec::new();
+        while starred || taken.len() <= wanted {
+            match self.next_value(walk)? { Some(item) => taken.push(item), None => break }
+        }
+        Ok(taken)
+    }
+
     fn make_iterator(&mut self, source: Value) -> Res {
         if let Value::Generator(_) = source { return Ok(source); }
         let members = self.gathered_members(&source)?;
@@ -8088,17 +8099,16 @@ impl<'a> Machine<'a> {
                         }
                         yielded
                     }
-                    walk @ Value::Iterator(_) => {
-                        let mut taken = Vec::new();
-                        while star.is_some() || taken.len() <= wanted {
-                            match self.next_value(walk)? { Some(item) => taken.push(item), None => break }
-                        }
-                        taken
-                    }
+                    walk @ Value::Iterator(_) => self.apart_members(&walk.clone(), wanted, star.is_some())?,
                     Value::Set(set) => set.borrow().values(),
                     // A thing of the program's own is taken apart into
-                    // the members its own walk hands over.
-                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => self.object_members(&v[0])?,
+                    // the members its own walk hands over, asked for one
+                    // at a time: such a walk may have no end at all, and
+                    // the places call for no more than they call for.
+                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => {
+                        let walk = self.iterated_value(&thing.clone())?;
+                        self.apart_members(&walk, wanted, star.is_some())?
+                    }
                     Value::Tuple(items) | Value::Row(items) => items.to_vec(),
                     Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
