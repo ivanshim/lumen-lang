@@ -808,6 +808,38 @@ never finalised, so a `finally:` in a generator that is dropped
 mid-walk does not run (generators-run/8 records this as a known
 divergence).
 
+### 1o. Batch 6 merged as #492; batch 7 begins
+
+Pull request #492 merged into main at a6ec218 with every check green
+on cbd0553. Its first run on 1f0ea37 was red on the scratch job for
+the two params records §1n describes, and nothing else. A count of
+cbd0553 is being taken as this is written and follows here when it
+lands.
+
+Batch 7 opens with the Fraction formatting work: `Fraction.__format__`
+after CPython 3.14's fractions module, in Python under
+`langs/lib_python/modules/fractions.py` alone. The library's `re`
+has no groups of the `(?P<name>...)` kind, so the two specification
+grammars are read by hand rather than by CPython's matchers, with
+the same rules (a lone `0` is a width, a `0` before a digit is the
+zero-pad flag; width and precision are `[0-9]*`). Rounding uses
+`divmod`, which floors as CPython does, never `//` or `%`, which
+truncate in this project by design (§4); parity is `abs(n) % 2`.
+Five methods of test_fractions pass on both kernels
+(`..F..E.EEEEFEEFEFEE.EEFFEE.F..EEEE.E.EEE......EEFE`, from
+`...EEEEEEE.EEEFE` at the end), and a probe of a hundred
+specifications agrees with CPython's float formatting wherever the
+value is a float.
+
+Gaps this fold records: `'{}'.format(obj)` and `'{:spec}'.format(obj)`
+do not reach `__format__` on either kernel (the method goes through a
+writer that cannot call back into the interpreter: `Writer::template`
+in stack8's engine.rs, `fill_fields` in microcode7's members.rs),
+while `format(obj, spec)` and f-strings do; `'%s' % obj` ignores
+`__str__` and the two kernels word the failure differently;
+test_fractions' `test_float_format_testfile` wants `open` and a data
+file the tree does not hold.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
