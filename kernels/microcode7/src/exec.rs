@@ -2417,10 +2417,94 @@ impl<'a> Machine<'a> {
         self.table.single(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
     }
 
+    /// The members a walk hands over for taking apart: no more than the
+    /// places call for, and one beyond them so that too many may be told
+    /// from enough, except where a starred place takes all that is left.
+    fn apart_members(&mut self, walk: &Value, wanted: usize, starred: bool) -> Result<Vec<Value>, String> {
+        let mut taken = Vec::new();
+        while starred || taken.len() <= wanted {
+            match self.next_value(walk)? { Some(item) => taken.push(item), None => break }
+        }
+        Ok(taken)
+    }
+
     fn make_iterator(&mut self, source: Value) -> Res {
         if let Value::Generator(_) = source { return Ok(source); }
         let members = self.gathered_members(&source)?;
         Ok(self.walk_over(&source, members))
+    }
+
+    /// The walk a delegated suspension hands members over from. A thing
+    /// of the program's own, and a walk already under way, are kept as
+    /// they stand rather than gathered, since such a walk may have no
+    /// end at all and a suspension asks it for one member at a time.
+    fn delegated_walk(&mut self, source: Value) -> Res {
+        if matches!(source, Value::Thing(_) | Value::Iterator(_) | Value::Cursor(_)) { return Ok(self.iterated_value(&source)?); }
+        self.make_iterator(source)
+    }
+
+    /// A step of the walk a suspension delegates to: another sleeping
+    /// body is handed what was sent in, and anything else is asked for
+    /// its next member, which is all such a walk knows how to be asked.
+    fn delegated_step(&mut self, walk: &Value, sent: Value) -> Res<Option<Value>> {
+        if let Value::Generator(inner) = walk { return self.resume(inner, sent); }
+        match self.next_value(walk) {
+            Ok(item) => Ok(item),
+            Err(words) => Err(match self.got_away.take() { Some(escape) => escape, None => Escape::Error(words) }),
+        }
+    }
+
+    /// What a walk gives back where it ends: a sleeping body gives what
+    /// it returned, and a plain walk gives nothing.
+    fn delegated_result(walk: &Value) -> Value {
+        match walk { Value::Generator(inner) => inner.borrow().result.clone(), _ => Value::Nil }
+    }
+
+    /// The thing of the program's own a walk steps through, where the
+    /// walk is one taken from such a thing.
+    fn walked_thing(walk: &Value) -> Option<Value> {
+        let Value::Iterator(cell) = walk else { return None };
+        match &cell.borrow().kind { IteratorKind::Handed(thing) => Some(thing.clone()), _ => None }
+    }
+
+    /// A walk told to hand over nothing more, so that the suspension
+    /// waiting on it steps past the delegation when it goes on.
+    fn finish_walk(walk: &Value) {
+        if let Value::Iterator(cell) = walk { let mut held = cell.borrow_mut(); held.peek = None; held.done = true; }
+    }
+
+    /// The method a thing of the program's own answers a plain name
+    /// with, and the frame it runs in, looked for as a special name is:
+    /// in the blueprint's namespace, then among its methods, then in the
+    /// blueprints it stands upon.
+    fn named_within(&self, subject: &Value, names: &[String]) -> Option<(Rc<Routine>, Rc<Env>)> {
+        let Value::Thing(thing) = subject else { return None };
+        let named = |key: &String| names.iter().any(|word| word == key);
+        let mut blueprint = &thing.of;
+        loop {
+            let found = blueprint.shared.borrow().iter().find(|(key, _)| named(key)).map(|(_, value)| value.clone())
+                .or_else(|| blueprint.methods.iter().find(|(key, _)| named(key)).map(|(_, body)| Value::Routine(body.clone())));
+            match found {
+                Some(Value::Bound(body, frame)) => return Some((body, frame)),
+                Some(Value::Routine(body)) => return Some((body, self.outermost.clone())),
+                Some(_) => return None,
+                None => blueprint = blueprint.under.as_ref()?,
+            }
+        }
+    }
+
+    /// A walk let go of: another sleeping body is ended the way a walk
+    /// is ended, and a walk of the program's own is told to end where it
+    /// knows how, since it may have a last part of its own.
+    fn end_delegate(&mut self, walk: &Value) -> Res<()> {
+        if let Value::Generator(inner) = walk { return self.end_generator(inner); }
+        let thing = Self::walked_thing(walk);
+        let shutting = thing.as_ref().and_then(|held| self.named_within(held, &self.table.strings("ext.stmt.yield.close").to_vec()));
+        if let (Some(thing), Some((body, scope))) = (thing, shutting) {
+            self.invoke(body, scope, vec![thing])?;
+        }
+        Self::finish_walk(walk);
+        Ok(())
     }
 
     /// A walk handing out members taken from a value. Taken from a map
@@ -2549,7 +2633,7 @@ impl<'a> Machine<'a> {
 
     fn end_generator(&mut self, generator: &Rc<RefCell<Suspension>>) -> Res<()> {
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
-        if let Some(Value::Generator(child)) = state.inner.take() { self.end_generator(&child)?; }
+        if let Some(walk) = state.inner.take() { self.end_delegate(&walk)?; }
         state.ended = true;
         state.ready = None;
         state.owed.clear();
@@ -2620,7 +2704,7 @@ impl<'a> Machine<'a> {
             self.end_generator(generator)?;
             return Ok(Value::Nil);
         };
-        match self.step_into(generator, Value::Nil, Some(exit)) {
+        match self.step_into(generator, Value::Nil, Some(exit), &[]) {
             Ok(Some(_)) => {
                 self.end_generator(generator)?;
                 Err(self.generator_words("close.ignored").into())
@@ -2639,33 +2723,72 @@ impl<'a> Machine<'a> {
     }
 
     fn resume(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value) -> Res<Option<Value>> {
-        self.step_into(generator, sent, None)
+        self.step_into(generator, sent, None, &[])
     }
 
     /// A step back into a sleeping body, either handing it a value or
     /// raising one where it left off. A body never begun and one already
     /// over take nothing in: what is thrown at them is raised on the spot.
-    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>) -> Res<Option<Value>> {
+    fn step_into(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, mut hurled: Option<Value>, given: &[Value]) -> Res<Option<Value>> {
         // A body waiting on a delegated walk is not where the throw
         // lands: the walk it waits on is shown the value first, and only
         // what comes back out of that reaches the body itself.
         if let Some(value) = hurled.clone() {
-            let inner = {
+            let waited = {
                 let state = generator.try_borrow().map_err(|_| self.generator_words("busy"))?;
                 match (&state.inner, state.begun && !state.ended) {
-                    (Some(Value::Generator(inner)), true) => Some(inner.clone()),
+                    (Some(walk), true) => Some(walk.clone()),
                     _ => None,
                 }
             };
-            if let Some(inner) = inner {
-                let stepped = self.step_into(&inner, Value::Nil, Some(value));
-                let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
-                match stepped {
-                    Ok(Some(item)) => return Ok(Some(item)),
-                    Ok(None) => { hurled = None; }
-                    Err(Escape::Thrown(raised)) => { state.inner = None; hurled = Some(raised); }
-                    Err(other) => { state.inner = None; return Err(other); }
+            match waited {
+                Some(Value::Generator(inner)) => {
+                    let stepped = self.step_into(&inner, Value::Nil, Some(value), given);
+                    let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
+                    match stepped {
+                        Ok(Some(item)) => return Ok(Some(item)),
+                        Ok(None) => { hurled = None; }
+                        Err(Escape::Thrown(raised)) => { state.inner = None; hurled = Some(raised); }
+                        Err(other) => { state.inner = None; return Err(other); }
+                    }
                 }
+                // A walk of the program's own that knows how to be
+                // thrown into is shown the value, and what it hands back
+                // is what the throw came to, the delegation standing.
+                // One that does not know is ended, and the value is
+                // raised where the delegation stands instead.
+                Some(walk) if !self.is_exit(&value) => {
+                    let thing = Self::walked_thing(&walk);
+                    let throwing = thing.as_ref().and_then(|held| self.named_within(held, &self.table.strings("ext.stmt.yield.throw").to_vec()));
+                    match (thing, throwing) {
+                        // The walk is shown what the throw was given,
+                        // not the value the kernel made of it, since
+                        // that is what the reference hands it.
+                        (Some(thing), Some((body, scope))) => {
+                            let arguments = std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect();
+                            match self.invoke(body, scope, arguments) {
+                                Ok(handed) => return Ok(Some(handed)),
+                                Err(Escape::Thrown(raised)) if matches!(&raised, Value::Thing(thing) if self.is_stop_kind(&thing.of)) => {
+                                    Self::finish_walk(&walk);
+                                    hurled = None;
+                                }
+                                Err(other) => { Self::finish_walk(&walk); return Err(other); }
+                            }
+                        }
+                        _ => {
+                            self.end_delegate(&walk)?;
+                            generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
+                        }
+                    }
+                }
+                // A walk ended rather than thrown into is told to end
+                // where it knows how, and the ending is raised where the
+                // delegation stands.
+                Some(walk) => {
+                    self.end_delegate(&walk)?;
+                    generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?.inner = None;
+                }
+                None => {}
             }
         }
         let mut state = generator.try_borrow_mut().map_err(|_| self.generator_words("busy"))?;
@@ -2884,15 +3007,15 @@ impl<'a> Machine<'a> {
                 Owed::From => {
                     if state.inner.is_none() {
                         let source = state.found.pop().unwrap_or(Value::Nil);
-                        state.inner = Some(self.make_iterator(source)?);
+                        state.inner = Some(self.delegated_walk(source)?);
                         *sent = Value::Nil;
                     }
-                    let Some(Value::Generator(inner)) = state.inner.clone() else { unreachable!() };
-                    if let Some(item) = self.resume(&inner, std::mem::replace(sent, Value::Nil))? {
+                    let inner = state.inner.clone().expect("the delegated walk");
+                    if let Some(item) = self.delegated_step(&inner, std::mem::replace(sent, Value::Nil))? {
                         state.owed.push(Owed::From);
                         return Ok(Stepped::Handed(item));
                     }
-                    state.found.push(inner.borrow().result.clone());
+                    state.found.push(Self::delegated_result(&inner));
                     state.inner = None;
                 }
                 Owed::Finish => {
@@ -4152,8 +4275,9 @@ impl<'a> Machine<'a> {
                             };
                         }
                         if self.table.spells("ext.stmt.yield.throw", &called) && (1..=3).contains(&values.len()) {
+                            let given = values.clone();
                             let value = self.thrown_into(values, frame)?;
-                            return match self.step_into(&generator, Value::Nil, Some(value))? {
+                            return match self.step_into(&generator, Value::Nil, Some(value), &given)? {
                                 Some(item) => Ok(item),
                                 None => Err(self.exhausted_of(&generator)),
                             };
@@ -7982,17 +8106,16 @@ impl<'a> Machine<'a> {
                         }
                         yielded
                     }
-                    walk @ Value::Iterator(_) => {
-                        let mut taken = Vec::new();
-                        while star.is_some() || taken.len() <= wanted {
-                            match self.next_value(walk)? { Some(item) => taken.push(item), None => break }
-                        }
-                        taken
-                    }
+                    walk @ Value::Iterator(_) => self.apart_members(&walk.clone(), wanted, star.is_some())?,
                     Value::Set(set) => set.borrow().values(),
                     // A thing of the program's own is taken apart into
-                    // the members its own walk hands over.
-                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => self.object_members(&v[0])?,
+                    // the members its own walk hands over, asked for one
+                    // at a time: such a walk may have no end at all, and
+                    // the places call for no more than they call for.
+                    thing @ Value::Thing(_) if self.appointment(thing, 15).is_some() || self.placed_walk(thing).is_some() => {
+                        let walk = self.iterated_value(&thing.clone())?;
+                        self.apart_members(&walk, wanted, star.is_some())?
+                    }
                     Value::Tuple(items) | Value::Row(items) => items.to_vec(),
                     Value::TextRow(..) | Value::Octets { .. } | Value::Progression(_) => self.gathered_members(&v[0])?,
                     Value::Text(s) => s.chars().map(|letter| Value::text(&letter.to_string())).collect(),
