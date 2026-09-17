@@ -5837,8 +5837,12 @@ impl<'a> Engine<'a> {
                 Value::Class(c) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&c.name),
                 Value::Native(_, word) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(&word),
                 Value::SortOf(sort) if self.lang.class_name.as_deref() == Some(name.as_ref()) => Value::text(Value::sort_called(sort)),
-                Value::Text(_) if Lang::spells(&self.lang.format_method, name) => {
-                    return Err(self.lang.fmt_text_format_unready.first().cloned().unwrap_or_default().into());
+                // The member that fills a template is handed over bound
+                // to the text it was read from, as the other members of
+                // a text are, and fills the template when it is called.
+                Value::Text(subject) if Lang::spells(&self.lang.format_method, name) => {
+                    let operation = self.lang.value_methods.get(name.as_ref()).cloned().unwrap_or_else(|| name.to_string());
+                    Value::ValueMethod(Rc::new((Value::Text(subject), operation)))
                 }
                 Value::Class(c) if self.lang.member_pipes => {
                     if let Some(method) = c.method(name).filter(|_| c.holder(name).is_none() && c.constant(name).is_none()) {
@@ -9009,6 +9013,18 @@ impl<'a> Engine<'a> {
         }
         let mut used = std::collections::HashSet::new();
         if named.iter().any(|(key,_)| !used.insert(key)) { return Err(self.lang.method_errors["arguments"].clone()); }
+
+        // A text asked to fill a template goes to the writer wherever
+        // the language has one, whether the method was named on the
+        // text where it stands or taken from it and called later. The
+        // two ways then say the same words and reach the same methods.
+        if operation == "format" && !self.lang.format_builtin.is_empty() {
+            if let Value::Text(text) = receiver.contents() {
+                let items = args.into_iter().map(|value| (None, value))
+                    .chain(named.into_iter().map(|(key, value)| (Some(key), value))).collect::<Vec<_>>();
+                return self.filled_template(&text, &items).map(|filled| Value::text(&filled));
+            }
+        }
 
         let named = if matches!(operation, "split" | "rsplit") {
             named.into_iter().map(|(key,value)| {

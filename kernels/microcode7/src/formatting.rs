@@ -55,23 +55,11 @@ impl Layout<'_> {
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
-            Value::Text(_) => {
-                let original = item.in_field(self.names, "", if escaped { "a" } else { "r" }).ok_or_else(|| self.refused())?;
-                original.chars().map(|letter| {
-                    if letter.is_ascii() { return Ok(letter.to_string()); }
-                    if letter.is_whitespace() {
-                        let ordinal = u32::from(letter);
-                        return Ok(match ordinal {
-                            0..=0xff => format!("\\x{:02x}", ordinal),
-                            0x100..=0xffff => format!("\\u{:04x}", ordinal),
-                            _ => format!("\\U{:08x}", ordinal),
-                        });
-                    }
-                    let with_base = ['a', letter].iter().collect::<String>();
-                    if with_base.escape_debug().skip(1).next() == Some('\\') { return Err(self.refused()); }
-                    Ok(letter.to_string())
-                }).collect::<Result<String, String>>()?
-            }
+            // A text is quoted by the hand that quotes it everywhere
+            // else, so that a field and the representation builtin
+            // agree on a letter that cannot be shown as itself.
+            Value::Text(word) if !escaped => crate::text::quotation(word),
+            Value::Text(_) => item.in_field(self.names, "", "a").ok_or_else(|| self.refused())?,
             Value::Octets { .. } => item.render(self.names),
             // A field lays a collection out by walking its members
             // here, so it leaves the same note on them that the other

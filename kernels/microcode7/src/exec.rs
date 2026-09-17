@@ -5607,6 +5607,19 @@ impl<'a> Machine<'a> {
             return Err(self.builtin_keyword_fault(spelling).into());
         }
 
+        // Text asked to fill a template is laid out by the layout the
+        // table gives, whether the member was named on the text where
+        // it stands or taken from it and called afterwards, so that
+        // both ways reach a thing's own methods alike.
+        if name == "format" && self.table.has_any("ext.builtin.format") {
+            if let Value::Text(pattern) = receiver.settled() {
+                let pattern = pattern.to_string();
+                let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+                let filled = layout.interpolate(&pattern, &arguments, &keywords, self)?;
+                return Ok(Value::text(&filled));
+            }
+        }
+
         let keywords = if name == "split" || name == "rsplit" {
             keywords.into_iter().map(|(written, value)| {
                 let purpose = if self.table.spells("ext.builtin.method.split.sep", &written) { "sep" }
@@ -8904,8 +8917,11 @@ impl<'a> Machine<'a> {
                 if matches!(v[0], Value::Member(..)) {
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
+                // The member that lays a template out is given back
+                // bound to its text, like any other member of a text,
+                // and lays the template out when it is called.
                 if matches!(v[0], Value::Text(_)) && self.table.spells("ext.text.format", &called) {
-                    return Err(self.table.single("ext.text.format.unready").unwrap_or_default().to_owned());
+                    return Ok(Value::Member(Rc::new(v[0].clone()), String::from("format")));
                 }
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }

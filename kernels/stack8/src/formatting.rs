@@ -81,26 +81,11 @@ impl Writer<'_> {
     pub fn representation(&self, value: &Value, ascii: bool) -> Result<String> {
         if matches!(value, Value::Collection(..) | Value::View(_)) { return self.representation(&value.contents(), ascii); }
         match value {
-            Value::Text(_) => {
-                let quoted = value.string_field(&self.words, "", if ascii { "a" } else { "r" }).ok_or_else(|| self.fault("ext.text.format.unready", &[]))?;
-                let mut out = String::new();
-                for c in quoted.chars() {
-                    if !c.is_ascii() && c.is_whitespace() {
-                        let n = c as u32;
-                        if n <= 255 { out.push_str(&format!("\\x{n:02x}")); }
-                        else if n <= 65535 { out.push_str(&format!("\\u{n:04x}")); }
-                        else { out.push_str(&format!("\\U{n:08x}")); }
-                    } else {
-                        // A preceding letter keeps combining marks ordinary.
-                        let probe = format!("a{c}");
-                        if !c.is_ascii() && probe.escape_debug().skip(1).take(3).collect::<String>() == "\\u{" {
-                            return Err(self.fault("ext.text.format.unready", &[]));
-                        }
-                        out.push(c);
-                    }
-                }
-                Ok(out)
-            }
+            // A text is written as the representation builtin writes
+            // it, by the same hand, so that a field and a plain call
+            // say the same thing of a letter that cannot be shown.
+            Value::Text(text) if !ascii => Ok(crate::strings::quoted(text)),
+            Value::Text(_) => value.string_field(&self.words, "", "a").ok_or_else(|| self.fault("ext.text.format.unready", &[])),
             Value::Bytes(..) => Ok(value.display(&self.words)),
             // This writer walks a collection's members itself, so it
             // keeps the same note of the members it is within that the
