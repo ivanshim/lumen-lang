@@ -5690,7 +5690,9 @@ impl<'a> Machine<'a> {
                 None => remaining.push(held),
             }
         }
-        if let Some(slot) = gather { fitted[slot] = Value::Vector(Rc::new(remaining)); }
+        // The spare worths a gathering place takes stand as a tuple, so
+        // that they read, weigh and compare as the language says.
+        if let Some(slot) = gather { fitted[slot] = Value::Tuple(Rc::new(remaining)); }
         let mut spare_names = Vec::new();
         let mut already = std::collections::HashSet::new();
         for (key, worth) in named {
