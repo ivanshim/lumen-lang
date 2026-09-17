@@ -116,6 +116,10 @@ enum Owed {
     Store(Address),
     Drop,
     Apply(Callee, usize),
+    /// The same, save that the first argument is the place written
+    /// into and stays the form that reads it, so the primitive is
+    /// still handed the name and not what it holds.
+    Into(Callee, Form, usize),
     Call(usize),
     Select(Form, Form),
     Test(Rc<Form>),
@@ -2939,6 +2943,20 @@ impl<'a> Machine<'a> {
                         for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
                         state.owed.push(Owed::Find(*target));
                     }
+                    // A call that writes into a place is handed the
+                    // place by the form that reads it, not by what that
+                    // form holds: the name has to reach the primitive
+                    // for it to write where the name lives. So the
+                    // place is kept whole while the rest are worked out
+                    // one at a time, and a suspension among them still
+                    // finds its way out.
+                    Form::Apply(Callee::Prim(op @ (Prim::Append | Prim::Replace | Prim::Restore | Prim::Front), called), mut args)
+                        if matches!(args.first(), Some(Form::Read(_))) =>
+                    {
+                        let place = args.remove(0);
+                        state.owed.push(Owed::Into(Callee::Prim(op, called), place, args.len()));
+                        for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
+                    }
                     Form::Apply(callee, args) => {
                         state.owed.push(Owed::Apply(callee, args.len()));
                         for arg in args.into_iter().rev() { state.owed.push(Owed::Find(arg)); }
@@ -2980,6 +2998,11 @@ impl<'a> Machine<'a> {
                 Owed::Drop => { state.found.pop(); }
                 Owed::Apply(callee, count) => {
                     let args = state.found.split_off(state.found.len() - count).into_iter().map(Form::Const).collect();
+                    state.found.push(self.value_of(&Form::Apply(callee, args), &frame)?);
+                }
+                Owed::Into(callee, place, count) => {
+                    let mut args = vec![place];
+                    args.extend(state.found.split_off(state.found.len() - count).into_iter().map(Form::Const));
                     state.found.push(self.value_of(&Form::Apply(callee, args), &frame)?);
                 }
                 Owed::Call(count) => {
