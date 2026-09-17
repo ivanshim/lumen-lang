@@ -97,7 +97,8 @@ ext.builtin.module.load:L \
 ext.builtin.copy:L \
 ext.stmt.with.enter:L ext.stmt.with.leave:L \
 ext.system.module.cache:L \
-ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L \
+ext.builtin.module.helper.amiss:L ext.builtin.member.absent:L ext.builtin.member.unwritable:L \
+ext.builtin.member.absent.class:L ext.builtin.member.absent.module:L \
 ext.builtin.math.floating:B \
 ext.builtin.class.derive:L \
 ext.builtin.call.outcome:L \

@@ -535,10 +535,26 @@ impl<'a> Engine<'a> {
         Ok(object)
     }
     fn missing_member(&self, subject: &Value, name: &str) -> Fault {
-        let class = match subject { Value::Object(o)=>o.class.name.as_str(), Value::Class(c)=>c.name.as_str(), _=>"function" };
+        // A module and a kind are named by their own name in words of
+        // their own, as CPython names them.
+        let named = self.member_named_amiss(subject, name);
+        if !named.is_empty() { return named.into(); }
+        // A thing and a class are named by their own name; anything
+        // else by the name its kind goes under.
+        let held;
+        let class = match subject { Value::Object(o)=>o.class.name.as_str(), Value::Class(c)=>c.name.as_str(), other=>{held=other.contents().core_kind();&held} };
         let pieces = self.lang.class_details.get("attribute.amiss").cloned().unwrap_or_default();
         if pieces.len()!=3 { return self.class_refusal(); }
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
+    }
+
+    /// A member a thing cannot take: it keeps no namespace of its own
+    /// to put one in, whether because its class names the members it
+    /// holds or because it is a value of a builtin kind.
+    fn unwritable_member(&self, subject: &Value, name: &str) -> Fault {
+        let told = self.member_unwritable(subject, name);
+        if told.is_empty() { return self.missing_member(subject, name); }
+        told.into()
     }
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
         if let Value::Adapter(w) = &value {
@@ -781,7 +797,7 @@ impl<'a> Engine<'a> {
                     if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
                 }
                 if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
-                if value.is_some() && !self.slots_allow(&o.class,name) {return Err(absent);}
+                if value.is_some() && !self.slots_allow(&o.class,name) {return Err(self.unwritable_member(&subject,name));}
                 // A module's members are its own bindings, written through
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
@@ -801,7 +817,7 @@ impl<'a> Engine<'a> {
                 let at=self.function_storage(&subject);
                 Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
-            _ => return Err(absent),
+            _ => return Err(self.unwritable_member(&subject,name)),
         }
         Ok(Value::Null)
     }

@@ -7792,11 +7792,23 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                 } else if let Some(method) = native.filter(|b| b.set_method()) {
                     if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }
+                    // A set's method named without a call is a member of
+                    // the set like any other, where the language has the
+                    // words for a member; a language without them keeps
+                    // its refusal.
+                    else if lang.member_amiss.is_some() { self.act(Action::Grab(Rc::from(named.as_str())), 1); }
                     else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
                 } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
                     self.discard();
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
+                } else if native.is_none() && lang.member_amiss.is_some() {
+                    // The receiver's kind answers to no such name: the
+                    // call becomes a pipe into a routine the program
+                    // binds by that name, and where it binds none the
+                    // value is told to have no such member.
+                    self.glance(&named);
+                    self.act(Action::InvokeMember(Rc::from(named.as_str())), argc + 2);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;

@@ -7133,12 +7133,30 @@ impl<'a> Builder<'a> {
                         return Ok(prim_call(Prim::Ask, args));
                     }
                     if let Some(op @ Prim::SetCall(1..=17)) = table.prims.get(&named).copied() {
-                        return Ok(if calling { Form::Apply(Callee::Prim(op, Rc::from(named.as_str())), args) }
-                            else { prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]) });
+                        if calling { return Ok(Form::Apply(Callee::Prim(op, Rc::from(named.as_str())), args)); }
+                        // Named without a call, a set's method is read
+                        // as a member of the set, where the table words
+                        // what an absent member says; a table without
+                        // those words keeps the old refusal.
+                        if table.strings("ext.builtin.method.error.attribute").len() == 3 {
+                            return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
+                        }
+                        return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
                     if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
                         return Ok(sequence(args));
+                    }
+                    // The receiver's kind answers to no such name: the
+                    // call is a pipe into a routine the program binds by
+                    // that name, and where it binds none the value is
+                    // told it has no such member.
+                    if table.prims.get(&named).is_none() && table.strings("ext.builtin.method.error.attribute").len() == 3 {
+                        if let Form::Read(slot) = r.read(&named) {
+                            let amiss = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
+                            let piped = invoke(Form::Read(slot.clone()), args);
+                            return Ok(r.choose(Form::Missing(slot), amiss, piped));
+                        }
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
