@@ -4166,9 +4166,14 @@ impl<'a> Machine<'a> {
                     if (*op == Prim::Both && !left) || (*op == Prim::Either && left) {
                         return Ok(if whole { seen } else { Value::Flag(left) });
                     }
-                    // The right side is read in place and evaluated only here.
+                    // The right side is read in place and evaluated only
+                    // here. Where a language holds it back as an arm of
+                    // its own, that arm is run now; a routine the
+                    // program merely named is a value like any other and
+                    // is handed back unrun, since `x or f` answers with
+                    // f and does not call it.
                     let right = match self.value_of(&args[1], frame)? {
-                        Value::Bound(p, env) => self.invoke(p, env, Vec::new())?,
+                        Value::Bound(p, env) if p.frameless => self.invoke(p, env, Vec::new())?,
                         v => v,
                     };
                     if whole { return Ok(right); }
