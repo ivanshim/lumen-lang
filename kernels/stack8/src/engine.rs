@@ -166,6 +166,13 @@ pub struct Engine<'a> {
     any_waiting: std::cell::Cell<bool>,
     args_cell: Option<usize>,
     memo_cell: Option<usize>,
+    /// How many calls now standing were answered by a thing's own call
+    /// member rather than by a routine. Such an answer makes no frame,
+    /// so it is counted here and reckoned with the frames: a thing
+    /// whose call member is a thing again is reached through as many
+    /// times as the language allows calls to stand, and then refused
+    /// like any other call that runs away.
+    reaching: usize,
     /// Text read in that could not be read at all: what was said of it,
     /// where that text is reckoned to stand, and which of its own lines
     /// the reading stopped on. The reading answers with a note like any
@@ -744,6 +751,7 @@ impl<'a> Engine<'a> {
             any_waiting: std::cell::Cell::new(false),
             args_cell: find(&lang.args_binding),
             memo_cell: find(&lang.memo_binding),
+            reaching: 0,
             reading_amiss: None,
             outer_book: None,
             text_books: Vec::new(),
@@ -2217,6 +2225,26 @@ impl<'a> Engine<'a> {
         let n = args.len();
         self.data.extend(args);
         self.invoke_top(program, n)
+    }
+
+    /// One step further into a call a thing answers with its own call
+    /// member: counted as a frame would be counted, and refused in the
+    /// words the language gives once the calls standing reach the
+    /// limit, so that a clause may take the fault as it takes the one a
+    /// routine calling itself for ever raises. What is counted here is
+    /// let go again by `answered`.
+    pub(super) fn reaching_further(&mut self) -> Flow<()> {
+        if let (Some(limit), Some(words)) = (self.lang.recursion_limit, &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
+        }
+        self.reaching += 1;
+        Ok(())
+    }
+
+    /// The step back out: the call the thing answered is done with,
+    /// however it went.
+    pub(super) fn answered(&mut self) {
+        self.reaching = self.reaching.saturating_sub(1);
     }
 
     /// A call whose arguments are the top `n` of the data stack: they move

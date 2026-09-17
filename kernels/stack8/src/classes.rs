@@ -421,7 +421,11 @@ impl<'a> Engine<'a> {
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
             Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
-            Value::Object(o) => {let f=self.class_value(&o.class,self.class_word("call")).ok_or_else(||self.class_refusal())?;args.insert(0,Value::Object(o));self.class_apply(f,args)},
+            // A thing called stands on its own call member, which may be
+            // a thing again: each such step is counted with the calls
+            // standing, so a thing whose call member is a thing of its
+            // own kind is refused at the depth any endless call is.
+            Value::Object(o) => {let f=self.class_value(&o.class,self.class_word("call")).ok_or_else(||self.class_refusal())?;self.reaching_further()?;args.insert(0,Value::Object(o));let answer=self.class_apply(f,args);self.answered();answer},
             Value::Class(c) => self.class_make(c,args),
             Value::Adapter(w) => match w.0 {
                 0 => Ok(w.1[0].clone()),

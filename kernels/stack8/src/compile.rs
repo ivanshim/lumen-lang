@@ -873,7 +873,7 @@ impl<'a> Compiler<'a> {
     /// the unit it is written in, and every later reading of it must
     /// find the same cell.
     fn read_to_rewrite(&mut self, name: &str) {
-        let mut slot = self.cell_to_write(name);
+        let mut slot = self.rewriting_cell(name);
         // Where a language holds its sequences, what is written into is
         // left where it stands while the write is made: a write that is
         // refused must leave the name holding what it held before.
@@ -883,8 +883,23 @@ impl<'a> Compiler<'a> {
 
     /// The store after such a load, addressed the same way.
     fn rewritten(&mut self, name: &str) {
-        let slot = self.cell_to_write(name);
+        let slot = self.rewriting_cell(name);
         self.put(Instr::Write(slot));
+    }
+
+    /// The cell the array written into stands in. Where names close
+    /// over, a write through a place binds nothing: the array is the
+    /// one the name already stands for -- the routine's own, an
+    /// enclosing routine's, or the module's -- and never a fresh local
+    /// of the same spelling, which is the footing `del a[k]` reads the
+    /// name on as well.
+    fn rewriting_cell(&mut self, name: &str) -> Cell {
+        if !self.lang.closes_over {
+            return self.cell_to_write(name);
+        }
+        let kept = self.member_of(name);
+        let name = kept.as_deref().unwrap_or(name);
+        self.cell_to_read(name, false)
     }
 
     fn write(&mut self, name: &str) {
@@ -5802,7 +5817,7 @@ impl<'a> Compiler<'a> {
                     self.write(&made);
                 }
                 self.read(&made);
-                self.write(&name);
+                self.rewritten(&name);
                 Ok(())
             }
             // `p op= e` where the place is a member of something: what
