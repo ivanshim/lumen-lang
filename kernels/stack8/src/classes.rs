@@ -920,6 +920,12 @@ impl<'a> Engine<'a> {
     /// and kept, so that two askings answer with the very same class.
     pub(super) fn named_kind(&mut self,value:&Value)->Value {
         let word=match self.module_holding(value) {Some(_)=>String::from("module"),None=>value.core_kind()};
+        // Where the definition spells that very kind, its builtin word
+        // is the answer, so that a kind asked for and a kind answered
+        // with are the one value: `type(enumerate(r)) is enumerate`.
+        if let Some(op)=self.lang.builtins.get(&word).copied().filter(Self::kind_builtin) {
+            return Value::Native(op,Rc::from(word.as_str()));
+        }
         Value::Class(self.kind_class(&word))
     }
     /// Whether a value stands as a class at all: one the program wrote,

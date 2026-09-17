@@ -843,7 +843,7 @@ impl<'a> Machine<'a> {
         // A routine and a method are of kinds the table does not name,
         // so each takes the word the reference gives its kind; an
         // intrinsic word read as a class is of the kind builder's kind.
-        if let [value @ (Value::Routine(_)|Value::Bound(..)|Value::Method(..))]=values.as_slice(){return Ok(self.kind_named_after(&value.clone()));}
+        if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind
@@ -911,7 +911,13 @@ impl<'a> Machine<'a> {
     /// once and kept, so two askings answer with the very same one.
     pub(super) fn kind_named_after(&mut self,value:&Value)->Value{
         let word=match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()};
-        Value::Blueprint(self.native_kind(&word))
+        // A table spelling that very kind answers with its intrinsic
+        // word, so that the kind asked for and the kind answered with
+        // are one value: `type(enumerate(r)) is enumerate`.
+        match self.table.prims.get(word.as_str()).filter(|op|Self::names_a_kind(op)) {
+            Some(_)=>Value::Intrinsic(Rc::from(word.as_str())),
+            None=>Value::Blueprint(self.native_kind(&word)),
+        }
     }
     /// Whether a value is a class at all: one the program laid out, or
     /// an intrinsic word naming a kind.

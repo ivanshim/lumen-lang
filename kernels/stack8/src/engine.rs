@@ -7712,7 +7712,7 @@ impl<'a> Engine<'a> {
                     (Value::Cursor(x), Value::Cursor(y)) => Rc::ptr_eq(x, y),
                     (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
                     (Value::Declined(_), Value::Declined(_)) => true,
-                    (Value::Native(x, _), Value::Native(y, _)) => x == y,
+                    (Value::Native(x, v), Value::Native(y, w)) => x == y && v == w,
                     (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
                     (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
                     (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
