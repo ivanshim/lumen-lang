@@ -857,6 +857,63 @@ impl<'a> Engine<'a> {
         let told=self.class_apply(bound,vec![given.clone()])?;
         Ok(Some(self.truth(&told)))
     }
+    /// The builtin words that name a kind of value rather than a piece
+    /// of work. Only one of these stands as a class where `issubclass`
+    /// and `isinstance` ask for one; every other builtin word is as
+    /// much a refusal there as a number would be.
+    pub(super) fn kind_builtin(op:&Builtin)->bool {
+        matches!(op,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::SortOf|Builtin::List|Builtin::Dict
+            |Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Span
+            |Builtin::Enumerate|Builtin::Zip|Builtin::Map|Builtin::Filter|Builtin::Reversed|Builtin::MakeSlice
+            |Builtin::ClassTool(9..=11))
+    }
+    /// The word a value names a builtin kind by, where it names one.
+    fn kind_spelled(&self,value:&Value)->Option<Rc<str>> {
+        let Value::Adapter(w)=value else{return None};
+        if w.0!=8 {return None;}
+        let Value::Text(word)=&w.1[0] else{return None};
+        self.lang.builtins.get(word.as_ref()).filter(|op|Self::kind_builtin(op)).map(|_|word.clone())
+    }
+    /// Whether a value stands as a class at all: one the program wrote,
+    /// or a builtin word that names a kind.
+    fn stands_as_class(&self,value:&Value)->bool {
+        matches!(value,Value::Class(_))||self.kind_spelled(value).is_some()
+    }
+    /// One builtin kind stands beneath another only where it is that
+    /// very kind, or where it is the flag kind, which stands under the
+    /// whole-number kind as the language counts a flag a number.
+    fn kinds_beneath(&self,under:&str,over:&str)->bool {
+        under==over
+            || (self.lang.builtins.get(under)==Some(&Builtin::Bool) && self.lang.builtins.get(over)==Some(&Builtin::ToInt))
+    }
+    /// Whether a value is of a builtin kind. A walk is known by the name
+    /// its kind is told by, which is the word that made it.
+    pub(super) fn kind_holds(&self,op:&Builtin,word:&str,value:&Value)->bool {
+        match op {
+            Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),
+            Builtin::ToText=>matches!(value,Value::Text(_)),
+            Builtin::AsReal=>matches!(value,Value::Real(_)),
+            Builtin::List=>matches!(value,Value::Array(_)),
+            Builtin::SortOf=>matches!(value,Value::Class(_)|Value::Native(..)|Value::ByteKind(..)|Value::SortOf(_))||self.kind_spelled(value).is_some(),
+            Builtin::Dict=>matches!(value,Value::Map(_)),
+            Builtin::Tuple=>matches!(value,Value::Tuple(_)),
+            Builtin::Set=>matches!(value,Value::Set(_)),
+            Builtin::Bool=>matches!(value,Value::Flag(_)),
+            Builtin::Complex=>matches!(value,Value::Complex(_)),
+            Builtin::Span=>matches!(value,Value::Counted(_)),
+            Builtin::MakeSlice=>matches!(value,Value::Slice(_)),
+            Builtin::Bytes(m)=>matches!(value,Value::Bytes(_,mutable,_) if *mutable==(*m==1)),
+            Builtin::Enumerate|Builtin::Zip|Builtin::Map|Builtin::Filter|Builtin::Reversed=>value.core_kind()==word,
+            _=>false,
+        }
+    }
+    /// The refusal for a subject or a kind that is no class. Where a
+    /// language has no words of its own for it, the class refusal
+    /// stands, as it did before any of these were spelled.
+    pub(super) fn unclassed(&self,label:&str)->Fault {
+        let told=self.core_fault(label,"");
+        if told.is_empty(){self.class_refusal()}else{told.into()}
+    }
     fn beneath(&mut self,value:&Value,wanted:&Value,subclass:bool)->Flow<bool> {
         if let Some(told)=self.maker_answers(wanted,value,subclass)? { return Ok(told); }
         // The bytes kinds stand as values of their own rather than as
@@ -866,35 +923,50 @@ impl<'a> Engine<'a> {
         if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         if let Value::Native(_, word) = wanted { return self.beneath(value, &Self::adapter(8, vec![Value::text(word)]), subclass); }
         if let Value::Array(v)|Value::Tuple(v)=wanted {for c in v.iter(){if self.beneath(value,c,subclass)?{return Ok(true);}}return Ok(false);}
+        // Whatever is asked about must be a class where a class is asked
+        // about, and the kind asked after must be one wherever it is
+        // asked: each has its own words, as the reference has.
+        let amiss=if subclass{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         if let Value::Class(c)=wanted {
-            if c.name==self.class_word("root"){
-                if !subclass||matches!(value,Value::Class(_)){return Ok(true);}
-                if let Value::Adapter(w)=value{if w.0==8{if let Value::Text(n)=&w.1[0]{return Ok(matches!(self.lang.builtins.get(n.as_ref()),Some(Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf)));}}}
-                return Err(self.class_refusal());
-            }
+            if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
+            // Everything stands beneath the class every other one does.
+            if c.name==self.class_word("root"){return Ok(true);}
             let kind=match value {Value::Object(o) if !subclass=>Some(&o.class),Value::Class(c) if subclass=>Some(c),_=>None};
             return Ok(kind.map_or(false,|k|Rc::ptr_eq(k,c)||k.lineage.iter().any(|b|Rc::ptr_eq(b,c))));
         }
         if let Value::Adapter(w)=wanted {
             if w.0==8 {if let Value::Text(word)=&w.1[0] {
-                let Some(builtin)=self.lang.builtins.get(word.as_ref()) else{return Err(self.class_refusal());};
+                let Some(builtin)=self.lang.builtins.get(word.as_ref()).copied().filter(Self::kind_builtin) else{return Err(self.unclassed(amiss));};
                 if subclass{
-                    if !matches!(builtin,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::List|Builtin::SortOf|Builtin::Dict|Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Enumerate){return Err(self.class_refusal());}
                     if let Value::Class(c)=value{return Ok(Self::kind_beneath(c).as_deref()==Some(word.as_ref()));}
-                    if let Value::Adapter(other)=value {if other.0==8{return Ok(other.1[0].equals(&w.1[0]));}}
-                    return Err(self.class_refusal());
+                    let Some(under)=self.kind_spelled(value) else{return Err(self.unclassed("core.issubclass.subject"));};
+                    return Ok(self.kinds_beneath(&under,word));
                 }
                 // A thing of a class standing on the kind is of the kind.
                 if let Value::Object(o)=value{return Ok(Self::kind_beneath(&o.class).as_deref()==Some(word.as_ref()));}
-                return Ok(match builtin{Builtin::ToInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),Builtin::ToText=>matches!(value,Value::Text(_)),Builtin::AsReal=>matches!(value,Value::Real(_)),Builtin::List=>matches!(value,Value::Array(_)),Builtin::SortOf=>matches!(value,Value::Class(_)),Builtin::Dict=>matches!(value,Value::Map(_)),Builtin::Tuple=>matches!(value,Value::Tuple(_)),Builtin::Set=>matches!(value,Value::Set(_)),Builtin::Bool=>matches!(value,Value::Flag(_)),Builtin::Complex=>matches!(value,Value::Complex(_)),Builtin::Enumerate=>matches!(value,Value::Walk(_)|Value::Walking(_)|Value::Cursor(_)),Builtin::Bytes(m)=>matches!(value,Value::Bytes(_,mutable,_) if *mutable==(*m==1)),_=>return Err(self.class_refusal())});
+                return Ok(self.kind_holds(&builtin,word,value));
             }}
         }
-        Err(self.class_refusal())
+        if subclass && !self.stands_as_class(value){return Err(self.unclassed("core.issubclass.subject"));}
+        Err(self.unclassed(amiss))
+    }
+    /// The words for a question handed the wrong number of arguments,
+    /// which name the question, the number it wants and the number it
+    /// was given.
+    fn arity_told(&self,name:&str,wanted:usize,given:usize)->Fault {
+        let Some(words)=self.lang.core_words.get("core.arity.exact").filter(|w|w.len()>=3) else{return self.class_refusal();};
+        format!("{}{}{}{}{}{}",words[0],name,words[1],wanted,words[2],given).into()
     }
     pub(super) fn class_work(&mut self,which:u8,args:Vec<Value>)->Flow<Value> {
         let one=args.first().cloned().unwrap_or(Value::Null);
         match which {
             0|1 if args.len()==2=>Ok(Value::Flag(self.beneath(&one,&args[1],which==1)?)),
+            // Both questions want two arguments and name themselves
+            // where they are handed another number of them.
+            0|1=>{
+                let word=self.lang.builtins.iter().find(|(_,b)|**b==Builtin::ClassTool(which)).map(|(n,_)|n.clone()).unwrap_or_default();
+                Err(self.arity_told(&word,2,args.len()))
+            }
             2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
             3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.

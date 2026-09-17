@@ -3646,6 +3646,15 @@ impl<'a> Machine<'a> {
                     asked?;
                     return Ok(Value::Nil);
                 }
+                // A thing whose blueprint appoints no such method parts
+                // with no place, and the kind that will not is named, as
+                // a tuple's and a text's are. A thing keeping a native
+                // worth parts with the place out of that worth, which is
+                // what the thing holds.
+                if matches!(&target, Value::Thing(_)) && self.table.has_any("ext.op.sequence.delete")
+                    && !matches!(Self::underlying(&target), Some(Value::Mutable(..))) {
+                    return Err(self.deletion_refused(&target).into());
+                }
                 // A thing standing for a whole number is that number
                 // where a row or a text is shortened at a place.
                 let named = if matches!(target, Value::Vector(_) | Value::Text(_)) && matches!(named, Value::Thing(_)) {
@@ -3680,9 +3689,19 @@ impl<'a> Machine<'a> {
                 // collection itself is in hand.
                 let mut cell = cell;
                 loop {
-                    let within = match &*cell.borrow() {
-                        Value::Mutable(inner, _) | Value::Shared(inner) => Some(inner.clone()),
-                        _ => None,
+                    let within = {
+                        let inside = cell.borrow();
+                        match &*inside {
+                            Value::Mutable(inner, _) | Value::Shared(inner) => Some(inner.clone()),
+                            // A thing of a blueprint standing on a
+                            // native kind is stepped into as its worth,
+                            // which is where its places live.
+                            thing @ Value::Thing(_) => match Self::underlying(thing) {
+                                Some(Value::Mutable(inner, _)) => Some(inner),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
                     };
                     match within { Some(inner) => cell = inner, None => break }
                 }
@@ -13199,27 +13218,24 @@ impl Machine<'_> {
             Value::Blueprint(class) => {
                 // A class whose metaclass speaks for the kind is asked first.
                 if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
+                // Every value at all is of the class every value is of.
+                if class.name == self.detail("root") { return Ok(true); }
                 Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false)))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
-            Value::Intrinsic(word) => {
+            // A kind is asked after by the word naming it, whether the
+            // word arrived as an intrinsic of its own or as the plain
+            // reading of the name; nothing else names a kind.
+            Value::Intrinsic(_) | Value::Wrapped(8, _) => {
+                let word = match expected {
+                    Value::Intrinsic(word) => word.clone(),
+                    Value::Wrapped(_, parts) => match &parts[0] { Value::Text(word) => word.clone(), _ => return Err(self.core_complaint("core.isinstance.amiss", "")) },
+                    _ => unreachable!(),
+                };
                 // A thing of a blueprint standing on the native kind is of that kind.
                 if let Value::Thing(t) = item { if let Some(kind) = Self::native_beneath(&t.of) { return Ok(kind == word.as_ref()); } }
-                let op = self.table.prims.get(word.as_ref());
-                let answer = match op {
-                    Some(Prim::ComplexMade) => matches!(item, Value::Complex(_)),
-                    Some(Prim::AsInt) => matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
-                    Some(Prim::AsReal) => matches!(item, Value::Frac(r) if r.places.is_some()),
-                    Some(Prim::AsText) => matches!(item, Value::Text(_)),
-                    Some(Prim::SortOf) => matches!(item, Value::Blueprint(_) | Value::Intrinsic(_) | Value::OctetKind { .. }),
-                    Some(Prim::Truthful) => matches!(item, Value::Flag(_)),
-                    Some(Prim::Listed) => matches!(item, Value::Vector(_)),
-                    Some(Prim::Tupling) => matches!(item, Value::Tuple(_)),
-                    Some(Prim::Uniques) => matches!(item, Value::Set(_)),
-                    Some(Prim::Dictionary) => matches!(item, Value::Dict(_)),
-                    _ => return Err(self.core_complaint("core.isinstance.amiss", "")),
-                };
-                Ok(answer)
+                let Some(op) = self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else { return Err(self.core_complaint("core.isinstance.amiss", "")) };
+                Ok(self.kind_covers(&op, &word, item))
             }
             _ => Err(self.core_complaint("core.isinstance.amiss", "")),
         }

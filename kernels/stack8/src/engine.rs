@@ -4959,6 +4959,15 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
+                // A thing whose class answers no such method gives up no
+                // place, and the kind that will not is named, as a
+                // tuple's and a text's are. A thing keeping a worth of
+                // the builtin kind its class stands on gives the place
+                // up out of that worth, which is the thing's own.
+                if matches!(&target, Value::Object(_)) && !self.lang.sequence_delete.is_empty()
+                    && !matches!(Self::worth_of(&target), Some(Value::Collection(..))) {
+                    return Err(self.sequence_delete_fault(&target).into());
+                }
                 let named = match &named {
                     Value::Slice(bounds) if self.lang.slice_values() => Value::Slice(Rc::new(self.slice_settled(bounds)?)),
                     // A thing standing for a whole number is that number
@@ -4982,9 +4991,19 @@ impl<'a> Engine<'a> {
                 // until one holds the collection and not another cell.
                 let mut cell = cell;
                 loop {
-                    let deeper = match &*cell.borrow() {
-                        Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
-                        _ => None,
+                    let deeper = {
+                        let inside = cell.borrow();
+                        match &*inside {
+                            Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
+                            // A thing of a class standing on a builtin
+                            // kind is stepped into as its worth, which
+                            // is where its places live.
+                            thing @ Value::Object(_) => match Self::worth_of(thing) {
+                                Some(Value::Collection(held, _)) => Some(held),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
                     };
                     match deeper { Some(held) => cell = held, None => break }
                 }
@@ -5736,7 +5755,10 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::HasMember(name) => {
-                let held = self.drop_top()?;
+                // What a shared cell holds is what the member is looked
+                // for on, as reading one is: a name a place was taken
+                // out of stands for its cell from then on.
+                let held = { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } };
                 let class = match &held {
                     Value::Object(o) => Some(&o.class),
                     Value::Class(c) => Some(c),
@@ -11735,30 +11757,31 @@ impl Engine<'_> {
         if let Value::Class(class) = kind {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
+            // Every value whatever is of the class every other one is of.
+            if class.name == self.class_word("root") { return Ok(true); }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
             if let Some(kind) = Self::kind_beneath(&o.class) { return Ok(kind == word.as_ref()); }
         }
-        let b = match kind {
-            Value::Native(b, _) => *b,
+        // A builtin kind is asked about by the word that names it,
+        // whether the word came as a builtin of its own or as the plain
+        // reading of the name; anything else is no kind to ask after.
+        let (b, word) = match kind {
+            Value::Native(b, word) => (*b, word.to_string()),
+            Value::Adapter(w) if w.0 == 8 => match &w.1[0] {
+                Value::Text(word) => match self.lang.builtins.get(word.as_ref()) {
+                    Some(b) => (*b, word.to_string()),
+                    None => return Err(self.core_fault("core.isinstance.amiss", "")),
+                },
+                _ => return Err(self.core_fault("core.isinstance.amiss", "")),
+            },
             Value::SortOf(Sort::Null) => return Ok(matches!(value, Value::Null)),
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
         };
-        Ok(match b {
-            Builtin::Complex => matches!(value, Value::Complex(_)),
-            Builtin::ToInt => matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
-            Builtin::AsReal => matches!(value, Value::Real(_)),
-            Builtin::ToText => matches!(value, Value::Text(_)),
-            Builtin::Bool => matches!(value, Value::Flag(_)),
-            Builtin::List => matches!(value, Value::Array(_)),
-            Builtin::Tuple => matches!(value, Value::Tuple(_)),
-            Builtin::SortOf => matches!(value, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)),
-            Builtin::Set => matches!(value, Value::Set(_)),
-            Builtin::Dict => matches!(value, Value::Map(_)),
-            _ => return Err(self.core_fault("core.isinstance.amiss", "")),
-        })
+        if !Self::kind_builtin(&b) { return Err(self.core_fault("core.isinstance.amiss", "")); }
+        Ok(self.kind_holds(&b, &word, value))
     }
 
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
