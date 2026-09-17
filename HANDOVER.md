@@ -875,6 +875,37 @@ while `format(obj, spec)` and f-strings do; `'%s' % obj` ignores
 test_fractions' `test_float_format_testfile` wants `open` and a data
 file the tree does not hold.
 
+### 1p. Batch 7 merged as #493 and #494; batch 8 begins
+
+Pull request #494 merged into main at 6348f05 with every job green on
+c9766bd; #493 went in before it at 2e5a006. The Lumen example sweep,
+still running when c9766bd was pushed, finished with two programs
+timed out under load (fibonacci_iterative and sieve) that print the
+same output on stream35, stack8 and microcode7 when run alone.
+
+Batch 8 opens with the wording of a missing member. A missing
+attribute on a builtin value said "value has no such method"; it now
+says what CPython says, naming the kind and the member (`'tuple'
+object has no attribute 'append'`), with the class form (`type object
+'C' has no attribute 'zz'`), the module form (`module 'math' has no
+attribute 'zz'`), and `hasattr` answering for the members a builtin
+value does have. Two records move, both kernels alike:
+class-advanced/2.out takes CPython 3.13's wording for a write to a
+`__slots__` instance (`'C' object has no attribute 'z' and no __dict__
+for setting new attributes`), and reader-tail/4.err gains nothing but
+prints the same line with the new wording beneath it. The branch had
+to take the operator-dunder fold into itself first, since both rewrote
+the member road in stack8's engine.rs; the merge kept both (the
+dunder probes stay identical on both kernels).
+
+Gaps this round records: `hasattr(int, "real")` answers False, since
+a builtin kind's own members are not modelled; `frozenset` and `set`
+share one word at the value level, so `isinstance(frozenset([1]),
+set)` is True; `type(slice(1, 3))` stops with "unknown value type";
+`isinstance` accepts a list of kinds where CPython wants a tuple;
+`testHashComparisonOfMethods` in test_class is an error on stack8
+and a failure on microcode7.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
