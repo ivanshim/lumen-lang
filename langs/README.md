@@ -2141,6 +2141,12 @@ only. The extension labels so far, all from PHP:
   give the plain complaints for an absent field map, finished walk,
   bad kind, division by nought, zero modulus,
   missing inverse and misplaced default respectively.
+  `ext.builtin.core.issubclass.amiss` and `.issubclass.subject` are the
+  two plain complaints the subclass question gives: the first where what
+  it is asked about is no class, a tuple of classes or a union, the
+  second where what is asked after is no class at all. The kind question
+  has only the first of the two, `.isinstance.amiss`, since any value
+  whatever may be asked about.
   `ext.builtin.core.dict.pair` places the row number and its length
   between three pieces of the complaint for an ill-shaped pair.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
@@ -4031,6 +4037,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
 | `ext.builtin.core.inverse` | - | - | `ValueError: base is not invertible for the given modulus` | - | - | - | - | - | - | - |
 | `ext.builtin.core.isinstance.amiss` | - | - | `TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union` | - | - | - | - | - | - | - |
+| `ext.builtin.core.issubclass.amiss` | - | - | `TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union` | - | - | - | - | - | - | - |
+| `ext.builtin.core.issubclass.subject` | - | - | `TypeError: issubclass() arg 1 must be a class` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
 | `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` | - | - | - | - | - | - | - |

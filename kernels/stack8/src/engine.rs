@@ -11532,30 +11532,31 @@ impl Engine<'_> {
         if let Value::Class(class) = kind {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
+            // Every value whatever is of the class every other one is of.
+            if class.name == self.class_word("root") { return Ok(true); }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
             if let Some(kind) = Self::kind_beneath(&o.class) { return Ok(kind == word.as_ref()); }
         }
-        let b = match kind {
-            Value::Native(b, _) => *b,
+        // A builtin kind is asked about by the word that names it,
+        // whether the word came as a builtin of its own or as the plain
+        // reading of the name; anything else is no kind to ask after.
+        let (b, word) = match kind {
+            Value::Native(b, word) => (*b, word.to_string()),
+            Value::Adapter(w) if w.0 == 8 => match &w.1[0] {
+                Value::Text(word) => match self.lang.builtins.get(word.as_ref()) {
+                    Some(b) => (*b, word.to_string()),
+                    None => return Err(self.core_fault("core.isinstance.amiss", "")),
+                },
+                _ => return Err(self.core_fault("core.isinstance.amiss", "")),
+            },
             Value::SortOf(Sort::Null) => return Ok(matches!(value, Value::Null)),
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
         };
-        Ok(match b {
-            Builtin::Complex => matches!(value, Value::Complex(_)),
-            Builtin::ToInt => matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
-            Builtin::AsReal => matches!(value, Value::Real(_)),
-            Builtin::ToText => matches!(value, Value::Text(_)),
-            Builtin::Bool => matches!(value, Value::Flag(_)),
-            Builtin::List => matches!(value, Value::Array(_)),
-            Builtin::Tuple => matches!(value, Value::Tuple(_)),
-            Builtin::SortOf => matches!(value, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)),
-            Builtin::Set => matches!(value, Value::Set(_)),
-            Builtin::Dict => matches!(value, Value::Map(_)),
-            _ => return Err(self.core_fault("core.isinstance.amiss", "")),
-        })
+        if !Self::kind_builtin(&b) { return Err(self.core_fault("core.isinstance.amiss", "")); }
+        Ok(self.kind_holds(&b, &word, value))
     }
 
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
