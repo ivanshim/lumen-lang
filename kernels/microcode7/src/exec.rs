@@ -4130,7 +4130,11 @@ impl<'a> Machine<'a> {
                     return self.call_adornment(adornment, given, frame);
                 }
                 if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
-                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {let values=self.value_list(args,frame)?;return self.apply_class_member(stands,values);}
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
+                    let mut values=self.value_list(args,frame)?;
+                    if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
+                    return self.apply_class_member(stands,values);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -4852,6 +4856,16 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The arguments of a call upon a bound member of a value, with
+    /// whatever was spread opened out: a row spread hands over its
+    /// members and a map spread its pairs, each keyed as it was
+    /// written, which is what every other callee is handed.
+    fn opened_arguments(&mut self, values: Vec<Value>) -> Res<Vec<Value>> {
+        let (mut given, keywords) = self.open_arguments(values)?;
+        given.extend(keywords.into_iter().map(|(word, value)| Value::Couple(Rc::new((Value::text(&word), value)))));
+        Ok(given)
+    }
+
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
@@ -5395,7 +5409,11 @@ impl<'a> Machine<'a> {
                     return self.call_adornment(adornment, given, frame).map(Next::Value);
                 }
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
-                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)){let given=self.value_list(args,frame)?;return Ok(Next::Value(self.apply_class_member(stands,given)?));}
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
+                    let mut given=self.value_list(args,frame)?;
+                    if matches!(&stands,Value::Wrapped(..)) { given=self.opened_arguments(given)?; }
+                    return Ok(Next::Value(self.apply_class_member(stands,given)?));
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -11778,6 +11796,12 @@ impl<'a> Machine<'a> {
                 {
                     let taken = target.borrow_mut().take(&address);
                     if taken.is_none() && which == 2 {
+                        // A member a set has not is told of as a map
+                        // tells of a key it has not, so a number is
+                        // named as the number it is and text with its
+                        // quotes about it.
+                        let absent = self.absent_key(&values[1]);
+                        if absent.starts_with('\0') { return Err(absent); }
                         let member = values[1].set_member_spelling(self.wording());
                         return Err(self.set_complaint("missing", &member));
                     }

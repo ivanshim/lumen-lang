@@ -5530,7 +5530,19 @@ impl<'a> Engine<'a> {
                         Ok(())
                     }
                     Value::Object(o) if self.fuller_classes() => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Object(o),args)?;self.data.push(v);Ok(())},
-                    Value::Adapter(w) => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Adapter(w),args)?;self.data.push(v);Ok(())},
+                    // A bound member of a value, as a set's or a run of
+                    // bytes' methods are read, takes its arguments the
+                    // way every other callee does: what was spread is
+                    // opened first, so that a call spreading a row hands
+                    // over the row's members and not the row.
+                    Value::Adapter(w) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let opened = self.call_items(args)?.into_iter()
+                            .map(|(key, value)| match key { Some(word) => Value::Tie(Rc::new((Value::text(&word), value))), None => value }).collect();
+                        let v = self.class_apply(Value::Adapter(w), opened)?;
+                        self.data.push(v);
+                        Ok(())
+                    },
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -8811,6 +8823,11 @@ impl<'a> Engine<'a> {
             let members = Self::set_pairs(cell);
             let key = self.set_place(&members, &args[1])?;
             if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
+                // A member a set has not is told of as a map tells of a
+                // key it has not, so a number is named as the number it
+                // is and text with its quotes about it.
+                let absent = self.key_absent(&args[1]);
+                if absent.starts_with('\0') { return Err(absent); }
                 return Err(self.set_said(".missing", &args[1].member_text(&self.wording())));
             }
             return Ok(Value::Null);
