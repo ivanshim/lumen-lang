@@ -912,6 +912,54 @@ set)` is True; `type(slice(1, 3))` stops with "unknown value type";
 `testHashComparisonOfMethods` in test_class is an error on stack8
 and a failure on microcode7.
 
+Three more folds followed the attr-wording one. A list written at a
+key that names no place stays a list (`b["k"] = 1` raises `list
+indices must be integers or slices, not str` instead of turning the
+row into a map), and arithmetic between kinds it means nothing for is
+refused in Python under a new switch, `ext.op.arithmetic.strict`, that
+only the Python definition turns on: `"a" + 1` says `can only
+concatenate str (not "int") to str`, `1 + "a"` names the sign and both
+kinds, `None + 1` is refused, and a compound write names its compound
+sign. PHP and Lumen keep the shared arithmetic. Two sequence-ops
+records (24 and 8) that joined text to a number in the open catch the
+refusal where it stands; the porter writes `str()` around a side it
+knows to be no line when it spells a Lumen join with the adding sign
+for Python, so `examples/python/constructs/string_operations.py` says
+what it said before. test_list gains test_setitem and
+test_setitem_error on both kernels.
+
+Text formatted by method or by mark reaches an object's own words:
+`'{}'.format(obj)` and `'{:spec}'.format(obj)` reach `__format__`,
+`'%s' % obj` reaches `__str__` (text on the left of the remainder sign
+fills its own marks before either side is asked for a method, except
+for a subclass of text hooking `__rmod__`, which keeps its road), and
+`"{}".format` read without being called is a bound value like any
+other member. A text written as a representation in a field is quoted
+by the same hand as `repr()`, so `'%r' % '\u0378'` prints instead of
+refusing; a caught `'{x}'.format()` says `KeyError: 'x'`; an opening
+brace that ends the text says `Single '{' encountered in format string`
+under `ext.text.format.brace.single`. format-spec/20 and 24 move from a
+refusal to the output CPython prints. test_str gains one method;
+test_class's testMisc goes from an error to a failure (it now reaches
+a real assertion about `__eq__` operand order).
+
+Gaps those two rounds record: `b"ab"["k"]`, `bytearray(b"ab")["k"] =
+99` and `del bytearray(...)["k"]` give generic wording where CPython
+names byte or bytearray indices; `{"a": 1} + {"b": 2}` says
+`unsupported operand types` without the kinds; `SubInt(1) + "a"` names
+`'int'` rather than the subclass; `b"a" + "b"` and `"a" + b"b"` refuse
+with a NotImplementedError where CPython says `can't concat str to
+bytes` / `can only concatenate str (not "bytes") to str`; a complex
+number cannot be formatted to a spec and `format(3, "n")` is refused,
+which is what stops three of test_format's five failing methods, while
+test_str_format needs some twenty CPython 3.14 `%`-error wordings the
+definition does not hold; a KeyError built from a message keeps its
+key double-quoted when caught (`{}.pop("x")` → `KeyError: "'x'"`), and
+`s.remove(5)` on a set says `KeyError: '5'` for an int key; `ascii()`
+is not defined; `'{:>5}'.format([1, 2])` says "this format cannot be
+represented" where CPython raises `TypeError: unsupported format string
+passed to list.__format__`.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
