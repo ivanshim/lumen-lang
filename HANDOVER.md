@@ -812,9 +812,18 @@ divergence).
 
 Pull request #492 merged into main at a6ec218 with every check green
 on cbd0553. Its first run on 1f0ea37 was red on the scratch job for
-the two params records §1n describes, and nothing else. A count of
-cbd0553 is being taken as this is written and follows here when it
-lands.
+the two params records §1n describes, and nothing else. The count at
+cbd0553, checked method by method against 29052e3 with no pass
+turning into an error or failure: stack8 1,114 of 2,536 across 50
+files with 3 running nothing (was 1,050 of 2,463), microcode7 1,047 of
+2,394 with 4 running nothing (was 991 of 2,321). Eleven files that
+ran nothing at 29052e3 now run on stack8 (test_binop, test_builtin,
+test_cmath, test_complex, test_dict, test_enumerate, test_float,
+test_fractions, test_grammar, test_list, test_set) and ten on
+microcode7 (the same list without test_dict, plus test_long), which
+is the metaclass, generator and subscript work of batches 5 and 6
+letting their imports and class bodies through; test_syntax shows
+fewer passes only because `@cpython_only` now skips what it should.
 
 Batch 7 opens with the Fraction formatting work: `Fraction.__format__`
 after CPython 3.14's fractions module, in Python under
@@ -830,6 +839,32 @@ Five methods of test_fractions pass on both kernels
 `...EEEEEEE.EEEFE` at the end), and a probe of a hundred
 specifications agrees with CPython's float formatting wherever the
 value is a float.
+
+Pull request #493 merged that fold into main at 2e5a006, green on
+every job. Batch 7 continues on the next pull request with two more
+folds, each probed against python3 on both kernels:
+
+- **A builtin value answers the operator dunders by name.**
+  `lst.__setitem__(i, v)`, `__delitem__`, `__add__`, `__eq__`,
+  `__iadd__` and the rest were undefined names; they now resolve to
+  the bound member a named method gets and forward to the sign
+  already run. Two cell faults came out with it: a container asked
+  for a member lost the cell its names share (stack8 unwrapped the
+  bond in `Grab`, microcode7 read the value out of `Shared` in
+  `prim`), so a writing member wrote into a copy; and stack8's
+  `__setitem__` stored a bond inside a cell, after which `__iadd__`
+  on the same list fell through to a pure `+` whose answer was
+  dropped. Both are fixed; a bare `a.__iadd__(x)`, `__imul__`,
+  `__ior__`, `__iand__`, `__isub__`, `__ixor__` mutate the name on
+  both kernels, and `a.__setitem__(0, b)` keeps `b` shared.
+  test_list gains four passes and turns one error into a failure
+  (test_setitem now runs and asserts the TypeError a list should
+  raise for a text key, which neither kernel raises).
+- **`del a["k"]` reaches the `__delitem__` the class wrote** on
+  stack8 (it reached for a name inside the method instead), and
+  `issubclass`/`isinstance` answer for every builtin kind
+  (`issubclass(int, range)` is False, not a refusal), with CPython's
+  TypeError for a non-class argument. file-builtin/28 gains a pass.
 
 Gaps this fold records: `'{}'.format(obj)` and `'{:spec}'.format(obj)`
 do not reach `__format__` on either kernel (the method goes through a

@@ -627,6 +627,12 @@
   "ext.builtin.core.isinstance.amiss": [
     "TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union"
   ],
+  "ext.builtin.core.issubclass.amiss": [
+    "TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union"
+  ],
+  "ext.builtin.core.issubclass.subject": [
+    "TypeError: issubclass() arg 1 must be a class"
+  ],
   "ext.builtin.core.mod.zero": [
     "ValueError: pow() 3rd argument cannot be 0"
   ],
