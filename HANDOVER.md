@@ -960,6 +960,48 @@ is not defined; `'{:>5}'.format([1, 2])` says "this format cannot be
 represented" where CPython raises `TypeError: unsupported format string
 passed to list.__format__`.
 
+The fourth fold is membership, hashing and the directory of a builtin.
+A membership question the kernels could not answer now says why, in
+CPython's words, under three new labels (`ext.op.in.text`,
+`ext.op.in.uncontained`, `ext.op.in.declined`): `1 in "abc"` says `'in
+<string>' requires string as left operand, not int`, `1 in 5` says
+`argument of type 'int' is not a container or iterable` (the 3.14
+phrase test_contains asserts; 3.11 said "is not iterable"), and a class
+setting `__contains__ = None` says `'C' object is not a container`. A
+span of numbers has a hash folded from its count, start and stride, so
+`range(3)` and `range(0, 3, 1)` share a place in a set or map. `dir()`
+of a builtin value, or of its kind, names the members that kind answers
+to, from the same per-kind tables the members are resolved through.
+There is now one routine per kernel for the address a value takes among
+a set's members — a builtin value by its worth, a thing by the hash and
+equality its class gives it — on every way in (braces, `set()`,
+`frozenset()`, a comprehension, add, update, remove, discard, `in`), so
+two equal things share one place and sets gathered in different orders
+agree; a member taken out of a set is the thing itself, not the pair it
+was kept as; ±inf is one key and NaN keys by identity. A set method
+kept as a bound value and called later, as `assertRaises` calls it,
+opens its arguments as any other callee (it was handed the spread
+marker itself, for any value), and a missing set member reads
+`KeyError: 5`, not `KeyError: '5'`. The library's `deque` gains
+`__len__`, `__iter__`, `__reversed__`, `__getitem__`, `__contains__`,
+`__eq__` and `__repr__`, and `_NeverEqual` in the test-support stub
+gains `__ne__` and `__hash__`. Records moved: file-iter/13 (test_contains)
+to an empty .out — all four methods pass; file-iter/15 (test_range)
+gains one method; expressions/9, file-exceptions/23 and file-iter/17
+take the new membership wording; reader-tail/4 (test_set) ends with 33
+methods gained against 6348f05 and none lost, test_badcmp on TestSet
+and TestFrozenSet among them. test_dict gains three on stack8 and
+test_class one on both kernels.
+
+Gaps that fold records: `{slice(1, 2)}` refuses to hash although
+`hash(slice(1, 2))` works (3.12+ allows both); the repr of a set holding
+objects shows `{<object Ok>}` instead of calling `__repr__`, as lists
+and maps do; `s in [s]` for an instance of a class standing on `set`
+answers False on stack8 and True on microcode7 (CPython: True); a
+bound `bytearray(b'ab').decode` called through a spread still refuses;
+fifteen names, the set methods and `bytes.decode` among them, refuse a
+bare unbound read though they work when called.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
