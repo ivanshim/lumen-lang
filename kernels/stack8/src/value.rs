@@ -357,8 +357,11 @@ impl Members {
         found
     }
 
+    /// The members as they are read out. A thing kept beside its hash
+    /// is handed over as the thing itself: the hash is the set's own
+    /// reckoning of where the thing lies and no part of the member.
     pub fn items(&self) -> Vec<Value> {
-        self.row.iter().map(|k| self.held[k].clone()).collect()
+        self.row.iter().map(|k| match &self.held[k] { Value::Hashed(pair) => pair.0.clone(), held => held.clone() }).collect()
     }
 
     pub fn beneath(&self, other: &Self) -> bool {

@@ -273,8 +273,11 @@ impl SetStore {
         Some(self.entries.remove(place).1)
     }
 
+    /// The entries as they are read out. A thing kept beside its hash
+    /// comes back as the thing alone: the hash is how the store knows
+    /// where the thing lies and is no part of the entry.
     pub fn values(&self) -> Vec<Value> {
-        self.entries.iter().map(|(_, v)| v.clone()).collect()
+        self.entries.iter().map(|(_, v)| match v { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() }).collect()
     }
 
     pub fn merge(&self, rhs: &SetStore, rule: u8) -> SetStore {
