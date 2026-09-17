@@ -7,12 +7,12 @@ result1 = str1 + str2
 sys.stdout.write("Period operator (string . string): ")
 print(result1)
 num = 42
-result2 = "Answer: " + num
+result2 = "Answer: " + str(num)
 sys.stdout.write("Period operator with number coercion: ")
 print(result2)
 x = 10
 y = 20
-result3 = "Sum: " + (x + y)
+result3 = "Sum: " + str((x + y))
 sys.stdout.write("Period operator with expression: ")
 print(result3)
 test_str = "Hello"
@@ -58,7 +58,7 @@ print(ch_edge)
 word = "Test"
 length = len(word)
 first_char = word[0]
-result10 = "Word: " + word + ", Length: " + length + ", First: " + first_char
+result10 = "Word: " + word + ", Length: " + str(length) + ", First: " + first_char
 sys.stdout.write("Combined operations: ")
 print(result10)
 print("Done!")
