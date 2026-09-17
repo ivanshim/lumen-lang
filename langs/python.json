@@ -2045,6 +2045,17 @@
   "ext.op.in.negated": [
     "not"
   ],
+  "ext.op.in.declined": [
+    "TypeError: '",
+    "' object is not a container"
+  ],
+  "ext.op.in.text": [
+    "TypeError: 'in <string>' requires string as left operand, not "
+  ],
+  "ext.op.in.uncontained": [
+    "TypeError: argument of type '",
+    "' is not a container or iterable"
+  ],
   "ext.op.in.unready": [
     "NotImplementedError: membership is not supported"
   ],

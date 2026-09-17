@@ -1,1 +1,1 @@
-PythonError: Membership requires an array, string or map
+PythonError: TypeError: argument of type 'NoneType' is not a container or iterable

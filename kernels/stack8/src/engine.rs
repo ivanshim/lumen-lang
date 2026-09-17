@@ -291,6 +291,33 @@ enum Kindred {
     View(bool),
 }
 
+/// The labels under which the definition spells the methods that text,
+/// a run of bytes and a set answer through builtins of their own.
+const TEXT_METHOD_LABELS: &[&str] = &[
+    "ext.builtin.text.splitlines", "ext.builtin.text.partition", "ext.builtin.text.rpartition", "ext.builtin.text.expandtabs",
+    "ext.builtin.text.swapcase", "ext.builtin.text.casefold", "ext.builtin.text.capitalize", "ext.builtin.text.title",
+    "ext.builtin.text.istitle", "ext.builtin.text.isidentifier", "ext.builtin.text.isprintable", "ext.builtin.text.isdecimal",
+    "ext.builtin.text.isnumeric", "ext.builtin.text.isascii", "ext.builtin.text.removeprefix", "ext.builtin.text.removesuffix",
+    "ext.builtin.text.format_map", "ext.builtin.text.maketrans", "ext.builtin.text.translate", "ext.builtin.text.encode",
+    "ext.builtin.text.join", "ext.builtin.text.split", "ext.builtin.text.rsplit", "ext.builtin.text.strip",
+    "ext.builtin.text.lstrip", "ext.builtin.text.rstrip", "ext.builtin.text.center", "ext.builtin.text.ljust",
+    "ext.builtin.text.rjust", "ext.builtin.text.zfill", "ext.builtin.text.count", "ext.builtin.text.find",
+    "ext.builtin.text.rfind", "ext.builtin.text.index", "ext.builtin.text.rindex", "ext.builtin.text.startswith",
+    "ext.builtin.text.endswith", "ext.builtin.text.replace", "ext.builtin.text.upper", "ext.builtin.text.lower",
+];
+const BYTE_METHOD_LABELS: &[&str] = &[
+    "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower",
+    "ext.builtin.bytes.split", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace",
+    "ext.builtin.bytes.strip", "ext.builtin.bytes.find",
+];
+const SET_METHOD_LABELS: &[&str] = &[
+    "ext.builtin.set.add", "ext.builtin.set.remove", "ext.builtin.set.discard", "ext.builtin.set.pop",
+    "ext.builtin.set.clear", "ext.builtin.set.copy", "ext.builtin.set.update", "ext.builtin.set.union",
+    "ext.builtin.set.intersection", "ext.builtin.set.difference", "ext.builtin.set.symmetric_difference",
+    "ext.builtin.set.issubset", "ext.builtin.set.issuperset", "ext.builtin.set.isdisjoint",
+    "ext.builtin.set.intersection_update", "ext.builtin.set.difference_update", "ext.builtin.set.symmetric_difference_update",
+];
+
 /// What parts a group of exceptions: classes its members may stand
 /// beneath, or a routine asked of each member in turn.
 enum Chooser {
@@ -3644,8 +3671,12 @@ impl<'a> Engine<'a> {
                 if !x.1.equals(&y.1) { return Ok(false); }
                 (&x.0, &y.0)
             }
+            // A hashed key beside a plain whole number agrees only
+            // where its hash is that number; beside anything else the
+            // thing it stands for is asked as it stands, since a key
+            // kept without its hash may still be the very same thing.
             (Value::Hashed(x), y) | (y, Value::Hashed(x)) => {
-                if !matches!(y, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) || !x.1.equals(y) { return Ok(false); }
+                if matches!(y, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && !x.1.equals(y) { return Ok(false); }
                 (&x.0, y)
             }
             _ => return Ok(self.keys_alike(a, b)),
@@ -3678,16 +3709,56 @@ impl<'a> Engine<'a> {
     /// read as a class: a sample of the kind is asked, so the namespace
     /// of the kind and the members of a value of it never part ways.
     pub(super) fn kind_special_names(&self, word: &str) -> Vec<String> {
-        let sample = match self.lang.builtins.get(word) {
-            Some(Builtin::ToText) => Value::text(""),
-            Some(Builtin::List) => Value::array(Vec::new()),
-            Some(Builtin::Tuple) => Value::Tuple(Rc::new(Vec::new())),
-            Some(Builtin::Dict) => Value::Map(Rc::new(Vec::new())),
-            Some(Builtin::Set) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
-            Some(Builtin::Bytes(mutable)) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
-            _ => return Vec::new(),
-        };
+        let Some(sample) = self.kind_sample(word) else { return Vec::new() };
         self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)).cloned().collect()
+    }
+
+    /// An empty value of the builtin kind that word names, standing for
+    /// the kind wherever the kind itself is asked what its values can
+    /// do. Nothing for a word that names no builtin kind.
+    pub(super) fn kind_sample(&self, word: &str) -> Option<Value> {
+        Some(match self.lang.builtins.get(word)? {
+            Builtin::ToText => Value::text(""),
+            Builtin::ToInt => Value::Small(0),
+            Builtin::Bool => Value::Flag(false),
+            Builtin::AsReal => crate::complex::real(0.0),
+            Builtin::Complex => crate::complex::made(self.lang, 0.0, 0.0),
+            Builtin::List => Value::array(Vec::new()),
+            Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
+            Builtin::Dict => Value::Map(Rc::new(Vec::new())),
+            Builtin::Set => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
+            Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
+            Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
+                start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
+            })),
+            _ => return None,
+        })
+    }
+
+    /// The members a value of a builtin kind answers to by name: the
+    /// special names its family answers, and the methods of its kind,
+    /// each spelled as the definition spells it. A spelling that names
+    /// the kind before the method is a way to the kind's own maker and
+    /// not a member of a value, so it is left out.
+    pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
+        let Some(family) = Self::native_family(sample) else { return Vec::new() };
+        let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
+        for (spelling, working) in self.lang.value_methods.iter() {
+            if crate::methods::answered(sample, working) { names.push(spelling.clone()); }
+        }
+        // Text, a run of bytes and a set answer further methods through
+        // builtins of their own, each found by the label it stands under.
+        let (book, labels) = match family {
+            Kindred::Text => (&self.lang.text_words, TEXT_METHOD_LABELS),
+            Kindred::Bytes(_) => (&self.lang.byte_words, BYTE_METHOD_LABELS),
+            Kindred::Set => (&self.lang.set_words, SET_METHOD_LABELS),
+            _ => (&self.lang.text_words, [].as_slice()),
+        };
+        for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
+        names.retain(|name| !name.contains('.'));
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// The words for a member something has not got: what the thing
@@ -4521,6 +4592,23 @@ impl<'a> Engine<'a> {
                 for (key, _) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = true; break; } }
                 return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
             }
+            // A class that sets the membership name to nothing has said
+            // there is no membership in its things: the question stops
+            // there, named by the class, rather than falling back upon
+            // a walk the thing may well answer.
+            if matches!(self.special_value(b, 14), Some(Value::Null)) && self.lang.membership_declined.len() == 2 {
+                return Err(self.membership_told(&self.lang.membership_declined, &b.core_kind()));
+            }
+            // A thing sought among a set's members is sought as a key
+            // is: by its own hash and its own equality, the members
+            // standing in the set as the gathering put them there.
+            if let (Value::Object(_) | Value::Hashed(_), Value::Set(cell)) = (a, b) {
+                let wanted = self.special_key(a)?;
+                let members = cell.borrow().items();
+                let mut found = false;
+                for held in members { if self.special_keys_equal(&held, &wanted)? { found = true; break; } }
+                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+            }
             if let Some(answer) = self.special_call(b, 14, vec![a.clone()])? {
                 return Ok(Value::Flag(self.special_truth(&answer)? != matches!(op, Action::Lacks)));
             }
@@ -5268,7 +5356,7 @@ impl<'a> Engine<'a> {
                 let v = self.drop_top()?;
                 let sp = self.wording();
                 match kind {
-                    Sort::Set => { let items = self.comprehension_items(&v)?; Value::Set(Rc::new(RefCell::new(self.set_from(items)?))) },
+                    Sort::Set => { let items = self.comprehension_items(&v)?; Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?))) },
                     Sort::Text => Value::text(&v.display(&sp)),
                     Sort::Boolean => Value::Flag(self.truth(&v)),
                     Sort::Null => Value::Null,
@@ -5442,7 +5530,19 @@ impl<'a> Engine<'a> {
                         Ok(())
                     }
                     Value::Object(o) if self.fuller_classes() => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Object(o),args)?;self.data.push(v);Ok(())},
-                    Value::Adapter(w) => {let args=self.drop_many(argc-1)?;let v=self.class_apply(Value::Adapter(w),args)?;self.data.push(v);Ok(())},
+                    // A bound member of a value, as a set's or a run of
+                    // bytes' methods are read, takes its arguments the
+                    // way every other callee does: what was spread is
+                    // opened first, so that a call spreading a row hands
+                    // over the row's members and not the row.
+                    Value::Adapter(w) => {
+                        let args = self.drop_many(argc - 1)?;
+                        let opened = self.call_items(args)?.into_iter()
+                            .map(|(key, value)| match key { Some(word) => Value::Tie(Rc::new((Value::text(&word), value))), None => value }).collect();
+                        let v = self.class_apply(Value::Adapter(w), opened)?;
+                        self.data.push(v);
+                        Ok(())
+                    },
                     Value::Routine(p) => self.invoke_top(&p, argc - 1),
                     Value::Method(object, method) => {
                         let args = self.drop_many(argc - 1)?;
@@ -5652,15 +5752,7 @@ impl<'a> Engine<'a> {
                 let next = both.next().expect("literal item");
                 if let Value::Set(cell) = gathered_so_far {
                     let incoming = if *spread { self.comprehension_items(&next)? } else { vec![next] };
-                    for item in incoming {
-                        if matches!(item, Value::Object(_)) {
-                            let hashed = self.special_key(&item)?;
-                            let prior = cell.borrow().items();
-                            let mut found = false;
-                            for old in prior { if self.special_keys_equal(&old, &hashed)? { found = true; break; } }
-                            if !found { let key = format!("object:{}", cell.borrow().held.len()); cell.borrow_mut().insert(key, hashed); }
-                        } else { cell.borrow_mut().insert(self.set_key(&item)?, item); }
-                    }
+                    for item in incoming { self.set_put(&cell, item)?; }
                     Value::Set(cell)
                 } else if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
@@ -7661,9 +7753,22 @@ impl<'a> Engine<'a> {
                     Value::Words(items, _) => items.iter().any(|s| a.equals(&Value::text(s))),
                     Value::Text(haystack) => match a {
                         Value::Text(needle) => haystack.contains(needle.as_ref()),
-                        _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                        // Searching text for what is not text is refused
+                        // by the kind of the value sought, where the
+                        // language words that refusal for itself.
+                        _ => return Err(match &self.lang.membership_text {
+                            Some(words) => format!("{words}{}", a.core_kind()),
+                            None => self.lang.membership_unsupported.clone().unwrap_or_default(),
+                        }),
                     },
-                    _ => return Err(self.lang.membership_unsupported.clone().unwrap_or_default()),
+                    // Nothing else can be searched at all: neither does
+                    // it answer membership nor can it be walked, and the
+                    // language names its kind in saying so.
+                    _ => return Err(if self.lang.membership_uncontained.len() == 2 {
+                        self.membership_told(&self.lang.membership_uncontained, &b.core_kind())
+                    } else {
+                        self.lang.membership_unsupported.clone().unwrap_or_default()
+                    }),
                 };
                 Value::Flag(found != matches!(op, Action::Lacks))
             }
@@ -8297,7 +8402,9 @@ impl<'a> Engine<'a> {
         if let Some(cell) = self.walked_set(target)? {
             let held = cell.borrow();
             let index = as_index(at)?;
-            return held.row.get(index).map(|key| held.held[key].clone()).ok_or_else(|| self.set_said(".missing", &index.to_string()));
+            // A thing kept beside its hash is handed over as the thing.
+            return held.row.get(index).map(|key| match &held.held[key] { Value::Hashed(pair) => pair.0.clone(), member => member.clone() })
+                .ok_or_else(|| self.set_said(".missing", &index.to_string()));
         }
         if !self.lang.exceptions.is_empty() {
             if let Value::Map(pairs) = target {
@@ -8575,6 +8682,12 @@ impl<'a> Engine<'a> {
 
     // ---------- builtins ----------
 
+    /// A membership complaint the language words about a kind: the
+    /// words before it, the kind, and the words after it.
+    fn membership_told(&self, words: &[String], kind: &str) -> String {
+        format!("{}{kind}{}", words.first().map_or("", String::as_str), words.get(1).map_or("", String::as_str))
+    }
+
     /// Membership asks identity before equality, and counts truth as one.
     fn member_matches(a: &Value, b: &Value) -> bool {
         if let Value::Bond(cell) = a { return Self::member_matches(&cell.borrow(), b); }
@@ -8615,10 +8728,61 @@ impl<'a> Engine<'a> {
         value.member_key().map_err(|kind| self.set_said(if kind.is_empty() { ".unsupported" } else { ".unhashable" }, kind))
     }
 
+    /// The address a value takes among a set's members. A value of a
+    /// builtin kind is addressed by its worth alone. A thing is
+    /// addressed by the hash its class gives it, and where a thing
+    /// already among the members hashes alike the two are asked whether
+    /// they are equal: equal things share the one address, and unequal
+    /// ones that hash alike stand apart at the same hash. The members
+    /// are taken out of the set before any of this, since asking a
+    /// thing for its hash or its equality may run the program's own
+    /// code, which may reach the set.
+    fn set_place(&mut self, members: &[(String, Value)], value: &Value) -> Res<String> {
+        if !matches!(value, Value::Object(_) | Value::Hashed(_)) { return self.set_key(value); }
+        let wanted = self.special_key(value)?;
+        let hash = match &wanted { Value::Hashed(pair) => pair.1.plain(), _ => String::new() };
+        let opening = format!("object:{hash}:");
+        let mut apart = 0;
+        for (key, held) in members {
+            if !key.starts_with(&opening) { continue; }
+            if self.special_keys_equal(held, &wanted)? { return Ok(key.clone()); }
+            apart += 1;
+        }
+        Ok(format!("{opening}{apart}"))
+    }
+
+    /// The members of a set as a row of address and value, taken out so
+    /// that the set is no longer borrowed while a thing is asked.
+    fn set_pairs(cell: &Rc<RefCell<crate::value::Members>>) -> Vec<(String, Value)> {
+        let set = cell.borrow();
+        set.row.iter().map(|key| (key.clone(), set.held[key].clone())).collect()
+    }
+
+    /// A value put into a set at the address it takes there. A thing is
+    /// kept beside its hash, as a map's keys are.
+    fn set_put(&mut self, cell: &Rc<RefCell<crate::value::Members>>, value: Value) -> Res<()> {
+        let members = Self::set_pairs(cell);
+        let key = self.set_place(&members, &value)?;
+        let kept = if matches!(value, Value::Object(_)) { self.special_key(&value)? } else { value };
+        cell.borrow_mut().insert(key, kept);
+        Ok(())
+    }
+
     fn set_from(&self, items: Vec<Value>) -> Res<crate::value::Members> {
         let mut set = crate::value::Members::empty(self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default());
         for item in items { set.insert(self.set_key(&item)?, item); }
         Ok(set)
+    }
+
+    /// A set gathered from a row of values, each put at the address it
+    /// takes there, so that a thing among them is addressed by its own
+    /// hash and its own equality wherever it is gathered.
+    fn set_gathered(&mut self, items: Vec<Value>) -> Res<crate::value::Members> {
+        let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
+        let cell = Rc::new(RefCell::new(crate::value::Members::empty(word)));
+        for item in items { self.set_put(&cell, item)?; }
+        let gathered = cell.borrow().clone();
+        Ok(gathered)
     }
 
     fn set_builtin(&mut self, op: Builtin, args: &[Value]) -> Res<Value> {
@@ -8626,7 +8790,7 @@ impl<'a> Engine<'a> {
         if op == SetMake {
             if args.len() > 1 { return Err(self.set_said(".arguments", "")); }
             let items = if args.is_empty() { Vec::new() } else { self.comprehension_items(&args[0])? };
-            return Ok(Value::Set(Rc::new(RefCell::new(self.set_from(items)?))));
+            return Ok(Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?))));
         }
         if op == SetSorted {
             if args.len() != 1 { return Err(self.set_said(".arguments", "")); }
@@ -8655,9 +8819,15 @@ impl<'a> Engine<'a> {
             return Err(self.set_said(".arguments", ""));
         }
         if matches!(op, SetAdd | SetRemove | SetDiscard) {
-            let key = self.set_key(&args[1])?;
-            if op == SetAdd { cell.borrow_mut().insert(key, args[1].clone()); }
-            else if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
+            if op == SetAdd { self.set_put(&cell.clone(), args[1].clone())?; return Ok(Value::Null); }
+            let members = Self::set_pairs(cell);
+            let key = self.set_place(&members, &args[1])?;
+            if cell.borrow_mut().remove(&key).is_none() && op == SetRemove {
+                // A member a set has not is told of as a map tells of a
+                // key it has not, so a number is named as the number it
+                // is and text with its quotes about it.
+                let absent = self.key_absent(&args[1]);
+                if absent.starts_with('\0') { return Err(absent); }
                 return Err(self.set_said(".missing", &args[1].member_text(&self.wording())));
             }
             return Ok(Value::Null);
@@ -8673,15 +8843,16 @@ impl<'a> Engine<'a> {
             return Ok(Value::Null);
         }
         if op == SetUpdate {
+            let held = cell.clone();
             for source in &args[1..] {
-                for item in self.comprehension_items(source)? { cell.borrow_mut().insert(self.set_key(&item)?, item); }
+                for item in self.comprehension_items(source)? { self.set_put(&held, item)?; }
             }
             return Ok(Value::Null);
         }
         let mut result = cell.borrow().clone();
         for other in &args[1..] {
             let items = self.comprehension_items(other)?;
-            let rhs = self.set_from(items)?;
+            let rhs = self.set_gathered(items)?;
             let comparison = match op {
                 SetSubset => Some(result.beneath(&rhs)),
                 SetSuperset => Some(rhs.beneath(&result)),
@@ -12182,21 +12353,19 @@ impl Engine<'_> {
                     // A thing among the members is keyed as the set literal
                     // keys it, by its own hash method and its own equality;
                     // any other member with no hash is refused.
-                    let mut set = self.set_from(Vec::new())?;
+                    let word = self.lang.set_words["ext.builtin.set"].first().cloned().unwrap_or_default();
+                    let gathered = Rc::new(RefCell::new(crate::value::Members::empty(word)));
                     for v in items {
-                        if matches!(v, Value::Object(_)) {
-                            let hashed = self.special_key(&v)?;
-                            let mut found = false;
-                            for old in set.items() { if self.special_keys_equal(&old, &hashed)? { found = true; break; } }
-                            if !found { let key = format!("object:{}", set.held.len()); set.insert(key, hashed); }
-                        } else {
-                            if v.core_hash().is_none() { return Err(self.core_fault("core.unhashable", &v.core_kind())); }
-                            set.insert(self.set_key(&v)?, v);
+                        // A member of a builtin kind with no hash of its
+                        // own is refused by its kind, as the language has it.
+                        if !matches!(v, Value::Object(_) | Value::Hashed(_)) && v.core_hash().is_none() {
+                            return Err(self.core_fault("core.unhashable", &v.core_kind()));
                         }
+                        self.set_put(&gathered, v)?;
                     }
-                    return Ok(Value::Set(Rc::new(RefCell::new(set))));
+                    return Ok(Value::Set(gathered));
                 }
-                if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(RefCell::new(self.set_from(items)?))) }
+                if b == Builtin::Tuple { Value::Tuple(Rc::new(items)) } else { Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?))) }
             }
             Builtin::Dict => {
                 arity(0, 1)?;

@@ -1786,6 +1786,16 @@ only. The extension labels so far, all from PHP:
   is a word before the operator that turns the answer about (`not in`).
   `ext.op.in.unsupported` holds the plain complaint where the right
   value cannot be searched, or the left of a text search is not text.
+- `ext.op.in.text`, `ext.op.in.uncontained` and `ext.op.in.declined`:
+  the three complaints a language may word for a membership question it
+  cannot answer, each said in place of the plain one. `ext.op.in.text`
+  opens the complaint for a search through text whose left value is not
+  text, and the kind of that value closes it. `ext.op.in.uncontained`
+  stands about the kind of a right value that neither answers membership
+  nor can be walked. `ext.op.in.declined` stands about the kind of a
+  thing whose class sets the membership method to nothing, which says
+  there is no membership in its things and stops the question rather
+  than letting it fall back upon a walk.
 - `ext.op.logical.operand`: a switch; `op.and` and `op.or` give back the
   operand that settled the answer rather than a flag standing for its
   truth. With it on, `and` gives its left side when that side is untrue
@@ -4575,7 +4585,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.identity.unready` | - | - | `NotImplementedError: identity is not supported` | - | - | - | - | - | - | - |
 | `ext.op.if_else` | - | - | `if` `else` | - | - | - | - | - | - | - |
 | `ext.op.in` | - | - | `in` | - | - | - | - | - | - | - |
+| `ext.op.in.declined` | - | - | `TypeError: '` `' object is not a container` | - | - | - | - | - | - | - |
 | `ext.op.in.negated` | - | - | `not` | - | - | - | - | - | - | - |
+| `ext.op.in.text` | - | - | `TypeError: 'in <string>' requires string as left operand, not ` | - | - | - | - | - | - | - |
+| `ext.op.in.uncontained` | - | - | `TypeError: argument of type '` `' is not a container or iterable` | - | - | - | - | - | - | - |
 | `ext.op.in.unready` | - | - | `NotImplementedError: membership is not supported` | - | - | - | - | - | - | - |
 | `ext.op.in.unsupported` | - | - | `Membership requires an array, string or map` | - | - | - | - | - | - | - |
 | `ext.op.increment` | - | - | - | - | `++` | - | - | - | - | - |

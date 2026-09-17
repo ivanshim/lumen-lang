@@ -1000,6 +1000,14 @@ impl<'a> Engine<'a> {
                         return Ok(Value::array(names));
                     }
                 }
+                // A builtin kind, named as the kind itself or held as a
+                // value of one, answers the members a value of that kind
+                // has: the methods of the kind and the special names its
+                // family answers to.
+                if let Some(sample)=self.dir_sample(&one) {
+                    let names=self.kind_member_names(&sample);
+                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
+                }
                 let mut names=vec![];let class=match &one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with('\0')).map(|(n,_)|n.clone()));Some(&o.class)},_=>None};
                 if let Some(c)=class {for b in std::iter::once(c).chain(c.lineage.iter()){names.extend(b.shared.borrow().iter().map(|(n,_)|n.clone()));}}
                 else if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
@@ -1012,6 +1020,19 @@ impl<'a> Engine<'a> {
             _=>Err(self.class_refusal()),
         }
     }
+    /// The value whose kind a directory should describe: an empty value
+    /// of the kind a builtin kind word names, or the value itself where
+    /// it is one of a builtin kind. Nothing for a class or a thing of
+    /// one, which answer with their own members instead.
+    fn dir_sample(&self,value:&Value)->Option<Value> {
+        if let Value::Native(_,word)=value { return self.kind_sample(word); }
+        if let Value::ByteKind(mutable,_)=value { let word=self.byte_kind_word(*mutable).to_string(); return self.kind_sample(&word); }
+        if let Value::Class(c)=value { return Self::own_kind(c).and_then(|word|self.kind_sample(&word)); }
+        if matches!(value,Value::Object(_)) { return None; }
+        if self.kind_member_names(value).is_empty() { return None; }
+        Some(value.clone())
+    }
+
     pub(super) fn class_super(&mut self,subject:Value,owner:&str,name:&str,args:Vec<Value>)->Flow<Value> {
         let receiver=match &subject{Value::Object(o)=>o.class.clone(),Value::Class(c)=>c.clone(),_=>return Err(self.class_refusal())};
         let owned=|a:&Self,c:&Rc<Class>|c.name==owner || Self::own_class_value(c,a.class_word("qualified")).map_or(false,|v|v.plain()==owner);

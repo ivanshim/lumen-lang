@@ -168,6 +168,18 @@ impl Value {
                 accum = accum.wrapping_add(parts.len() as u64 ^ (2_870_177_450_012_600_261u64 ^ 3_527_539));
                 return Some(if accum == u64::MAX { 1_546_275_796 } else { accum as i64 });
             }
+            // A progression folds the three that settle which places
+            // it names: how many there are, where they begin and how
+            // far apart they stand. Two progressions naming the same
+            // places fold the same three and so agree in hash, which is
+            // what equal progressions owe each other. One of a single
+            // place has no stride to it, and an empty one no start.
+            Self::Progression(sequence) => {
+                let count = sequence.count();
+                let first = if count == BigInt::from(0) { Self::Nil } else { Self::from_big(sequence.first.clone()) };
+                let stride = if count > BigInt::from(1) { Self::from_big(sequence.stride.clone()) } else { Self::Nil };
+                return Self::Tuple(std::rc::Rc::new(vec![Self::from_big(count), first, stride])).hash_number();
+            }
             Self::Huge(_) | Self::Small(_) | Self::Flag(_) => {
                 let integer = self.as_big().ok()?;
                 let residue = (integer.abs() % BigInt::from(2_305_843_009_213_693_951u64)).to_i64()?;

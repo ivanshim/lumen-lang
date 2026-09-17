@@ -4130,7 +4130,11 @@ impl<'a> Machine<'a> {
                     return self.call_adornment(adornment, given, frame);
                 }
                 if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
-                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {let values=self.value_list(args,frame)?;return self.apply_class_member(stands,values);}
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
+                    let mut values=self.value_list(args,frame)?;
+                    if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
+                    return self.apply_class_member(stands,values);
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = vec![Value::Thing(object.clone())];
                     given.extend(self.value_list(args, frame)?);
@@ -4852,6 +4856,16 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The arguments of a call upon a bound member of a value, with
+    /// whatever was spread opened out: a row spread hands over its
+    /// members and a map spread its pairs, each keyed as it was
+    /// written, which is what every other callee is handed.
+    fn opened_arguments(&mut self, values: Vec<Value>) -> Res<Vec<Value>> {
+        let (mut given, keywords) = self.open_arguments(values)?;
+        given.extend(keywords.into_iter().map(|(word, value)| Value::Couple(Rc::new((Value::text(&word), value)))));
+        Ok(given)
+    }
+
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
@@ -4928,19 +4942,67 @@ impl<'a> Machine<'a> {
     /// the kind read as a class: a sample of the kind is asked, so what
     /// the kind names and what a value of it answers stay one thing.
     pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
-        let sample = match self.table.prims.get(word) {
-            Some(Prim::AsText) => Value::text(""),
-            Some(Prim::Listed) => Value::Vector(Rc::new(Vec::new())),
-            Some(Prim::Tupling) => Value::Tuple(Rc::new(Vec::new())),
-            Some(Prim::Dictionary) => Value::Dict(Rc::new(Vec::new())),
-            Some(Prim::Uniques) => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
-            Some(Prim::Octets(kind)) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
-            _ => return Vec::new(),
-        };
+        let Some(sample) = self.kind_stand_in(word) else { return Vec::new() };
         let mut gathered = Vec::new();
         for name in self.table.strings("ext.stmt.class.special") {
             if self.native_member(&sample, name) { gathered.push(name.clone()); }
         }
+        gathered
+    }
+
+    /// An empty value of the native kind that word names, standing in
+    /// for the kind itself wherever the kind is asked what its values
+    /// can do. Nothing where the word names no native kind.
+    pub(super) fn kind_stand_in(&self, word: &str) -> Option<Value> {
+        Some(match self.table.prims.get(word)? {
+            Prim::AsText => Value::text(""),
+            Prim::AsInt => Value::Small(0),
+            Prim::Truthful => Value::Flag(false),
+            Prim::AsReal => crate::data::worth_of_binary(0.0, crate::math::DEFAULT_PLACES),
+            Prim::ComplexMade => crate::complex::pair(self.table, 0.0, 0.0),
+            Prim::Span => Value::Progression(Rc::new(crate::data::Progression {
+                first: BigInt::from(0), limit: BigInt::from(0), stride: BigInt::from(1), word: word.to_owned(),
+            })),
+            Prim::Listed => Value::Vector(Rc::new(Vec::new())),
+            Prim::Tupling => Value::Tuple(Rc::new(Vec::new())),
+            Prim::Dictionary => Value::Dict(Rc::new(Vec::new())),
+            Prim::Uniques => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
+            Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
+            _ => return None,
+        })
+    }
+
+    /// Every member a value of a native kind answers to by name: the
+    /// special names its mark answers, and the methods of its kind,
+    /// spelled as the table spells them. A spelling that names the kind
+    /// before the method leads to the kind's own maker rather than to a
+    /// member of a value, so it is passed over.
+    pub(super) fn native_directory(&self, sample: &Value) -> Vec<String> {
+        let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
+        let mut gathered = Vec::new();
+        for name in self.table.strings("ext.stmt.class.special") {
+            if self.native_member(sample, name) { gathered.push(name.clone()); }
+        }
+        for (label, operation) in crate::table::BUILTIN_LABELS {
+            let wanted = match operation {
+                Prim::ValueMethod => match label.strip_prefix("ext.builtin.method.") {
+                    Some(working) => crate::members::answers_to(sample, working),
+                    None => false,
+                },
+                // Text, a set and a run of bytes answer further methods
+                // through primitives of their own. Neither the extent of
+                // text nor how it shows is a method of it, and of the
+                // bytes primitives only those a run of bytes answers to.
+                Prim::Textual(work) => mark == 's' && !matches!(work, crate::text::Work::LENGTH | crate::text::Work::REPR),
+                Prim::SetCall(1..=17) => mark == 'e',
+                Prim::Octets(3 | 4 | 6..=13) => "bB".contains(mark),
+                _ => false,
+            };
+            if !wanted { continue; }
+            gathered.extend(self.table.strings(label).iter().filter(|word| !word.contains('.')).cloned());
+        }
+        gathered.sort();
+        gathered.dedup();
         gathered
     }
 
@@ -5347,7 +5409,11 @@ impl<'a> Machine<'a> {
                     return self.call_adornment(adornment, given, frame).map(Next::Value);
                 }
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
-                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)){let given=self.value_list(args,frame)?;return Ok(Next::Value(self.apply_class_member(stands,given)?));}
+                if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
+                    let mut given=self.value_list(args,frame)?;
+                    if matches!(&stands,Value::Wrapped(..)) { given=self.opened_arguments(given)?; }
+                    return Ok(Next::Value(self.apply_class_member(stands,given)?));
+                }
                 if let Value::Method(body, object) = &stands {
                     let mut given = self.value_list(args, frame)?;
                     given.insert(0, Value::Thing(object.clone()));
@@ -7344,6 +7410,13 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// A membership complaint the table words about a kind: the words
+    /// before it, the kind, and the words after it.
+    fn membership_words(&self, label: &str, kind: &str) -> String {
+        let words = self.table.strings(label);
+        format!("{}{kind}{}", words.first().map_or("", |w| w.as_str()), words.get(1).map_or("", |w| w.as_str()))
+    }
+
     fn bad_answer(&self) -> String {
         self.table.single("ext.stmt.class.special.amiss").unwrap_or("").to_owned()
     }
@@ -7720,6 +7793,19 @@ impl<'a> Machine<'a> {
                 }));
             }
         }
+        // A thing sought among a set's members is sought as a key is,
+        // by its own hash and its own equality, before the worth
+        // beneath it is let to stand in its place: the worth would be
+        // asked for an address of its own kind and have none.
+        if let (Prim::Contains | Prim::Absent, [needle @ (Value::Thing(_) | Value::Keyed(..)), haystack]) = (operation, operands) {
+            if let Value::Set(store) = haystack.settled() {
+                let keyed = self.hash_key(needle)?;
+                let members = store.borrow().values();
+                let mut found = false;
+                for held in members { if self.keys_agree(&held, &keyed)? { found = true; break; } }
+                return Ok(Some(Value::Flag(found != (operation == Prim::Absent))));
+            }
+        }
         let free_at: &[usize] = match operation {
             Prim::Length => &[10], Prim::Hashed => &[8], Prim::Truthful | Prim::AsTruth => &[9, 10], Prim::NextItem => &[16],
             Prim::AsText => &[0, 1], Prim::Quoted => &[1], Prim::AsInt => &[38], Prim::AsReal => &[39], Prim::Magnitude => &[40],
@@ -7895,6 +7981,13 @@ impl<'a> Machine<'a> {
             // for it: a class that sets the name to nothing has said
             // there is no membership in its things, and the asking
             // fails rather than falling back upon a walk.
+            // A thing sought among a set's members is sought as a key
+            // is: by its own hash and its own equality, the members
+            // standing in the set as the gathering put them there.
+            (Prim::Contains | Prim::Absent, [_, haystack])
+                if matches!(self.appointment(haystack, 14), Some(Value::Nil)) && self.table.strings("ext.op.in.declined").len() == 2 => {
+                return Err(self.membership_words("ext.op.in.declined", &haystack.kind_word()));
+            }
             (Prim::Contains | Prim::Absent, [needle, haystack]) if self.appointment(haystack, 14).is_some() => {
                 let found = self.ask_special(haystack, 14, std::slice::from_ref(needle))?.unwrap();
                 Value::Flag(self.object_truth(&found)? != (operation == Prim::Absent))
@@ -8715,15 +8808,8 @@ impl<'a> Machine<'a> {
             Prim::ExtendLiteral(dictionary, expanded) => {
                 if let Value::Set(kept) = &v[0] {
                     let additions = if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] };
-                    for addition in additions {
-                        if matches!(addition, Value::Thing(_)) {
-                            let key = self.hash_key(&addition)?;
-                            let previous = kept.borrow().values();
-                            let mut duplicate = false;
-                            for entry in previous { if self.keys_agree(&entry, &key)? { duplicate = true; break; } }
-                            if !duplicate { let address = format!("instance:{}", kept.borrow().entries.len()); kept.borrow_mut().put(address, key); }
-                        } else { kept.borrow_mut().put(self.hash_for_set(&addition)?, addition); }
-                    }
+                    let held = kept.clone();
+                    for addition in additions { self.set_include(&held, addition)?; }
                     v[0].clone()
                 } else if !dictionary {
                     let Value::Vector(prior) = &v[0] else { unreachable!() };
@@ -10117,7 +10203,15 @@ impl<'a> Machine<'a> {
                     },
                     (needle, Value::Vector(hay) | Value::Tuple(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
                     (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k) || self.keys_match(key, k)),
-                    (item, Value::Set(hay)) => hay.borrow().keys.contains(&self.hash_for_set(item)?),
+                    // Sought through the one routine for the address a
+                    // value takes among a set's members, so that a thing
+                    // is sought by its own hash and its own equality
+                    // here as it is wherever the set was grown.
+                    (item, Value::Set(hay)) => {
+                        let entries = hay.borrow().entries.clone();
+                        let address = self.set_address(&entries, item)?;
+                        hay.borrow().keys.contains(&address)
+                    }
                     (item, Value::Octets { cell, .. }) => {
                         let numbers = cell.borrow();
                         if let Value::Octets { cell: needle, .. } = item {
@@ -10127,12 +10221,24 @@ impl<'a> Machine<'a> {
                     }
                     (needle, Value::TextRow(words, _)) => words.iter().any(|s| needle.equals(&Value::text(s))),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
+                    // Searching text for what is not text is refused by
+                    // the kind of the value sought, where the table
+                    // words that refusal for itself.
+                    (needle, Value::Text(_)) if self.table.has_any("ext.op.in.text") => {
+                        return Err(format!("{}{}", self.table.single("ext.op.in.text").unwrap_or_default(), needle.kind_word()));
+                    }
                     // An iterator gives up members until the one sought
                     // turns up, and stands after it thereafter.
                     (needle, walk @ Value::Iterator(_)) => {
                         let mut seen = false;
                         while let Some(item) = self.next_value(walk)? { if contained_equal(needle, &item) { seen = true; break; } }
                         seen
+                    }
+                    // Nothing else can be searched at all: it neither
+                    // answers membership nor can be walked, and the
+                    // table names its kind in saying so.
+                    _ if self.table.strings("ext.op.in.uncontained").len() == 2 => {
+                        return Err(self.membership_words("ext.op.in.uncontained", &v[1].kind_word()));
                     }
                     _ => return Err(self.table.single("ext.op.in.unsupported").unwrap_or_default().to_string()),
                 };
@@ -11274,7 +11380,10 @@ impl<'a> Machine<'a> {
         if matches!(target, Value::Mutable(..) | Value::Window(..)) { return self.element(&target.settled(), at, how); }
         if let Some(store) = self.check_set_walk(target)? {
             let position = as_index(at)?;
-            return store.borrow().entries.get(position).map(|(_, item)| item.clone()).ok_or_else(|| self.set_complaint("missing", &position.to_string()));
+            // A thing kept beside its hash comes back as the thing.
+            return store.borrow().entries.get(position)
+                .map(|(_, item)| match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() })
+                .ok_or_else(|| self.set_complaint("missing", &position.to_string()));
         }
         if self.table.has_any("ext.builtin.exceptions") {
             if let Value::Dict(entries) = target {
@@ -11592,6 +11701,38 @@ impl<'a> Machine<'a> {
         words
     }
 
+    /// The address a value takes among a set's entries. A native value
+    /// is addressed by its worth alone. A thing is addressed by the
+    /// hash its class gives it, and where a thing already among the
+    /// entries hashes alike the two are asked whether they agree: things
+    /// that agree share the one address, and things that do not stand
+    /// apart under the same hash. The entries are copied out before any
+    /// of this, since asking a thing for its hash or its equality runs
+    /// the program's own code, which may reach the set itself.
+    fn set_address(&mut self, entries: &[(String, Value)], item: &Value) -> Result<String, String> {
+        if !matches!(item, Value::Thing(_) | Value::Keyed(..)) { return self.hash_for_set(item); }
+        let keyed = self.hash_key(item)?;
+        let hash = match &keyed { Value::Keyed(_, hash) => hash.bare(), _ => String::new() };
+        let opening = format!("instance:{hash}:");
+        let mut apart = 0;
+        for (address, held) in entries {
+            if !address.starts_with(&opening) { continue; }
+            if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
+            apart += 1;
+        }
+        Ok(format!("{opening}{apart}"))
+    }
+
+    /// A value placed in a set at the address it takes there, a thing
+    /// kept beside its hash as a map's keys are kept.
+    fn set_include(&mut self, store: &Rc<RefCell<crate::data::SetStore>>, item: Value) -> Result<(), String> {
+        let entries = store.borrow().entries.clone();
+        let address = self.set_address(&entries, &item)?;
+        let kept = if matches!(item, Value::Thing(_)) { self.hash_key(&item)? } else { item };
+        store.borrow_mut().put(address, kept);
+        Ok(())
+    }
+
     fn hash_for_set(&self, item: &Value) -> Result<String, String> {
         match item.hash_address() {
             Ok(address) => Ok(address),
@@ -11601,11 +11742,12 @@ impl<'a> Machine<'a> {
     }
 
     fn gather_set(&mut self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
-        let mut gathered = crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""));
+        let gathered = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""))));
         if let Some(source) = source {
-            for item in self.gathered_members(source)? { gathered.put(self.hash_for_set(&item)?, item); }
+            for item in self.gathered_members(source)? { self.set_include(&gathered, item)?; }
         }
-        Ok(gathered)
+        let store = gathered.borrow().clone();
+        Ok(store)
     }
 
     fn work_set(&mut self, which: u8, values: &[Value]) -> Result<Value, String> {
@@ -11639,22 +11781,27 @@ impl<'a> Machine<'a> {
             _ => (),
         }
         if which == 7 {
+            let held = target.clone();
             for input in values.iter().skip(1) {
                 let additions = self.gathered_members(input)?;
-                for value in additions {
-                    let address = self.hash_for_set(&value)?;
-                    target.borrow_mut().put(address, value);
-                }
+                for value in additions { self.set_include(&held, value)?; }
             }
             return Ok(Value::Nil);
         }
         match which {
             1..=3 => {
-                let address = self.hash_for_set(&values[1])?;
-                if which == 1 { target.borrow_mut().put(address, values[1].clone()); }
-                else {
+                if which == 1 { let held = target.clone(); self.set_include(&held, values[1].clone())?; return Ok(Value::Nil); }
+                let entries = target.borrow().entries.clone();
+                let address = self.set_address(&entries, &values[1])?;
+                {
                     let taken = target.borrow_mut().take(&address);
                     if taken.is_none() && which == 2 {
+                        // A member a set has not is told of as a map
+                        // tells of a key it has not, so a number is
+                        // named as the number it is and text with its
+                        // quotes about it.
+                        let absent = self.absent_key(&values[1]);
+                        if absent.starts_with('\0') { return Err(absent); }
                         let member = values[1].set_member_spelling(self.wording());
                         return Err(self.set_complaint("missing", &member));
                     }
@@ -13618,20 +13765,16 @@ impl Machine<'_> {
                 // A thing among the entries goes in as the set literal puts
                 // it in, under its own hash and its own equality; any other
                 // entry with no hash is refused.
-                let mut store = crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""));
+                let store = Rc::new(RefCell::new(crate::data::SetStore::new(self.table.single("ext.builtin.set").unwrap_or(""))));
                 for entry in entries {
-                    if matches!(entry, Value::Thing(_)) {
-                        let key = self.hash_key(&entry)?;
-                        let previous = store.values();
-                        let mut duplicate = false;
-                        for old in previous { if self.keys_agree(&old, &key)? { duplicate = true; break; } }
-                        if !duplicate { let address = format!("instance:{}", store.entries.len()); store.put(address, key); }
-                    } else {
-                        if entry.hash_number().is_none() { return Err(self.core_complaint("core.unhashable", &entry.kind_word())); }
-                        store.put(self.hash_for_set(&entry)?, entry);
+                    // An entry of a native kind with no hash of its own is
+                    // refused by its kind, as the table has it.
+                    if !matches!(entry, Value::Thing(_) | Value::Keyed(..)) && entry.hash_number().is_none() {
+                        return Err(self.core_complaint("core.unhashable", &entry.kind_word()));
                     }
+                    self.set_include(&store, entry)?;
                 }
-                return Ok(Value::Set(Rc::new(RefCell::new(store))));
+                return Ok(Value::Set(store));
             }
             Dictionary => {
                 require(0, 1)?;
