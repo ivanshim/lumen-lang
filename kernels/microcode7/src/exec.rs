@@ -1721,9 +1721,10 @@ impl<'a> Machine<'a> {
         Ok(format!("{}{}{}", delimiter, middle, delimiter))
     }
 
-    fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+    fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
         if self.table.has_any("ext.builtin.format") {
-            return crate::formatting::Layout { table: self.table, names: self.wording() }.remainder(pattern, rhs);
+            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+            return layout.remainder(pattern, rhs, self);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -4394,7 +4395,8 @@ impl<'a> Machine<'a> {
                         if let Value::Text(pattern) = &subject {
                             let (positions, keywords) = self.open_arguments(values)?;
                             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-                            return Ok(Value::text(&layout.interpolate(pattern, &positions, &keywords)?));
+                            let filled = layout.interpolate(pattern, &positions, &keywords, self)?;
+                            return Ok(Value::text(&filled));
                         }
                     }
                     if self.has_class_order() && matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..)){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
@@ -5719,6 +5721,19 @@ impl<'a> Machine<'a> {
         if !keywords.is_empty() && !["sort", "split", "rsplit", "format", "update", "encode"].contains(&name) {
             let spelling = self.table.single(&format!("ext.builtin.method.{name}")).unwrap_or(name);
             return Err(self.builtin_keyword_fault(spelling).into());
+        }
+
+        // Text asked to fill a template is laid out by the layout the
+        // table gives, whether the member was named on the text where
+        // it stands or taken from it and called afterwards, so that
+        // both ways reach a thing's own methods alike.
+        if name == "format" && self.table.has_any("ext.builtin.format") {
+            if let Value::Text(pattern) = receiver.settled() {
+                let pattern = pattern.to_string();
+                let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+                let filled = layout.interpolate(&pattern, &arguments, &keywords, self)?;
+                return Ok(Value::text(&filled));
+            }
         }
 
         let keywords = if name == "split" || name == "rsplit" {
@@ -7588,6 +7603,13 @@ impl<'a> Machine<'a> {
         format!("{}{sign}{}{}{}{}{}", pieces[0], pieces[1], left.kind_word(), pieces[2], right.kind_word(), pieces[3])
     }
 
+    /// Whether a value is one the machine has words of its own for: a
+    /// thing built from a blueprint, or a collection carrying one, in a
+    /// language that names the special methods at all.
+    pub(super) fn speaks_for(&self, item: &Value) -> bool {
+        Self::carries_instance(item) && !self.table.strings("ext.stmt.class.special").is_empty()
+    }
+
     /// A thing written to a specification: by its own method, by the
     /// worth beneath it, or as its text where nothing was specified.
     pub(super) fn thing_in_spec(&mut self, item: &Value, spec: &str) -> Result<String, String> {
@@ -7620,6 +7642,20 @@ impl<'a> Machine<'a> {
         }
         if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
+        // Text before the remainder sign lays its own marks out, which
+        // is the working the left side's own method names. The value on
+        // the right gives the marks its words and is never asked for the
+        // turned-about answer, which it has no business giving.
+        if let (Prim::Mod, [Value::Text(pattern), right], true) = (operation, operands, self.table.flag("ext.op.rem.formats_text")) {
+            // A thing built over text stands below the left side's own
+            // kind, and the language asks its turned-about method first,
+            // so such a thing keeps that road.
+            let over_text = matches!(Self::underlying(right).map(|worth| worth.settled()), Some(Value::Text(_)));
+            if !(over_text && self.appointed(right, 31).is_some()) {
+                let (pattern, right) = (pattern.clone(), right.clone());
+                return self.text_remainder(&pattern, &right).map(|filled| Some(Value::text(&filled)));
+            }
+        }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),
             Prim::Over | Prim::OverReal => Some((21, 29)), Prim::IntDiv => Some((22, 30)),
@@ -9012,8 +9048,11 @@ impl<'a> Machine<'a> {
                 if matches!(v[0], Value::Member(..)) {
                     return Err(self.table.single("ext.stmt.class.unready").unwrap_or_default().to_owned());
                 }
+                // The member that lays a template out is given back
+                // bound to its text, like any other member of a text,
+                // and lays the template out when it is called.
                 if matches!(v[0], Value::Text(_)) && self.table.spells("ext.text.format", &called) {
-                    return Err(self.table.single("ext.text.format.unready").unwrap_or_default().to_owned());
+                    return Ok(Value::Member(Rc::new(v[0].clone()), String::from("format")));
                 }
                 if self.table.flag("ext.op.member.pipes") {
                     if let Some(found) = self.attribute(&v[0], &called) { return Ok(found); }
@@ -13965,5 +14004,25 @@ impl Machine<'_> {
         }
     }
 }
+/// The machine answers for the fields a layout cannot lay out: a thing
+/// of the program's own is written by its own methods, and the layout
+/// keeps everything else.
+impl crate::formatting::Elsewhere for Machine<'_> {
+    fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String> {
+        let held = item.settled();
+        if !self.speaks_for(&held) { return Ok(None); }
+        if convert.is_empty() { return self.thing_in_spec(&held, pattern).map(Some); }
+        let said = Value::text(&self.object_words(&held, convert != "s")?);
+        let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+        layout.present(&said, pattern, "").map(Some)
+    }
+
+    fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String> {
+        let held = item.settled();
+        if !self.speaks_for(&held) { return Ok(None); }
+        self.object_words(&held, quoted).map(Some)
+    }
+}
+
 #[path = "classes.rs"]
 mod classes;
