@@ -3855,7 +3855,6 @@ impl<'a> Engine<'a> {
     /// builtin kind, or where that kind carries no such member.
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
         let Value::Native(_, word) = value else { return None };
-        if !Lang::spells(&self.lang.builtin_bases, word) { return None; }
         let sample = self.kind_sample(word)?;
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
         Some(Self::adapter(29, vec![Value::text(word), Value::text(name)]))

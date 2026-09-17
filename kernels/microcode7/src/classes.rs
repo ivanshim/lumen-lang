@@ -1035,7 +1035,7 @@ impl<'a> Machine<'a> {
             let word=self.table.prims.iter().find(|(_,p)|**p==Prim::ClassWork(op)).map(|(w,_)|w.to_string()).unwrap_or_default();
             return Err(self.wrong_count(&word,2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59|60))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
         if (op==3||op==6)&&values.len()>=2{
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
             // Asking whether a name is there, or reading it with something
