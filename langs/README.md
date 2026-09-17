@@ -2112,7 +2112,12 @@ only. The extension labels so far, all from PHP:
   arguments in order, and `ext.builtin.compile.modes` the three manners:
   statements, one expression, and one statement whose value is written
   out as it runs. Text that cannot be read is refused with
-  `ext.builtin.source.syntax`, and a reading the kernels cannot yet
+  `ext.builtin.source.syntax`; where `ext.builtin.source.syntax.place`
+  holds three pieces, they set the file the text stands for and the line
+  the reading stopped on about that complaint, so a reader may say where
+  the text went wrong, and a reading that has words of the language's
+  own for what it found keeps them in front of the place. A reading the
+  kernels cannot yet
   honour — a closure handed over, a setting of optimisation beyond the
   ordinary — with `ext.builtin.source.unready`. `ext.builtin.import`
   fetches a module by its name as the import statement would.
@@ -2141,6 +2146,12 @@ only. The extension labels so far, all from PHP:
   give the plain complaints for an absent field map, finished walk,
   bad kind, division by nought, zero modulus,
   missing inverse and misplaced default respectively.
+  `ext.builtin.core.issubclass.amiss` and `.issubclass.subject` are the
+  two plain complaints the subclass question gives: the first where what
+  it is asked about is no class, a tuple of classes or a union, the
+  second where what is asked after is no class at all. The kind question
+  has only the first of the two, `.isinstance.amiss`, since any value
+  whatever may be asked about.
   `ext.builtin.core.dict.pair` places the row number and its length
   between three pieces of the complaint for an ill-shaped pair.
 - `ext.op.walk.class` and its family: a thing may be its own walk.
@@ -2792,6 +2803,9 @@ only. The extension labels so far, all from PHP:
   parameters before it must be given by position.
 - `ext.stmt.function.parameters.amiss`: the words said when a parameter
   list repeats a name or puts a mark where none may stand.
+  `ext.stmt.function.parameters.duplicate` holds two pieces, before and
+  after the name, for a list naming the same parameter twice, where a
+  language words that refusal apart from the rest.
 - `ext.syntax.call.bind_names`: a switch; call labels, or the assignment
   sign after a name in call position, bind arguments by name. Defaults
   fill the places left empty, and a name given twice or
@@ -2847,7 +2861,13 @@ only. The extension labels so far, all from PHP:
   `ext.syntax.call.amiss.builtin` says that a builtin takes no keyword
   arguments. One piece is said alone; two pieces stand before and after
   the builtin's last name, and the complete complaint is passed to the
-  host without another heading.
+  host without another heading. `ext.syntax.call.amiss.repeated` holds
+  one piece before the keyword, or two about it, for a call written with
+  the same keyword twice: such a call is refused as the text is read,
+  and not when it runs. Only a spread of pairs can hand the same keyword
+  over twice while the run goes, and `ext.syntax.call.amiss.keyword`
+  words that in three pieces, standing before the routine's name,
+  between it and the keyword, and after.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. With
@@ -4034,6 +4054,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.integer` | - | - | `TypeError: '` `' object cannot be interpreted as an integer` | - | - | - | - | - | - | - |
 | `ext.builtin.core.inverse` | - | - | `ValueError: base is not invertible for the given modulus` | - | - | - | - | - | - | - |
 | `ext.builtin.core.isinstance.amiss` | - | - | `TypeError: isinstance() arg 2 must be a type, a tuple of types, or a union` | - | - | - | - | - | - | - |
+| `ext.builtin.core.issubclass.amiss` | - | - | `TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union` | - | - | - | - | - | - | - |
+| `ext.builtin.core.issubclass.subject` | - | - | `TypeError: issubclass() arg 1 must be a class` | - | - | - | - | - | - | - |
 | `ext.builtin.core.mod.zero` | - | - | `ValueError: pow() 3rd argument cannot be 0` | - | - | - | - | - | - | - |
 | `ext.builtin.core.not_iterator` | - | - | `TypeError: '` `' object is not an iterator` | - | - | - | - | - | - | - |
 | `ext.builtin.core.power.integer` | - | - | `TypeError: pow() 3rd argument not allowed unless all arguments are integers` | - | - | - | - | - | - | - |
@@ -4304,6 +4326,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.slice.stop` | - | - | `stop` | - | - | - | - | - | - | - |
 | `ext.builtin.sorted` | - | - | `sorted` | - | - | - | - | - | - | - |
 | `ext.builtin.source.syntax` | - | - | `SyntaxError: invalid syntax` | - | - | - | - | - | - | - |
+| `ext.builtin.source.syntax.place` | - | - | ` (` `, line ` `)` | - | - | - | - | - | - | - |
 | `ext.builtin.source.unready` | - | - | `NotImplementedError: this source operation cannot run yet` | - | - | - | - | - | - | - |
 | `ext.builtin.spelled` | - | - | - | - | `__words_spelled` | - | - | - | - | - |
 | `ext.builtin.start` | - | - | `start` | - | - | - | - | - | - | - |
@@ -4766,6 +4789,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.function.outermost` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.own_names` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.stmt.function.parameters.amiss` | - | - | `SyntaxError: invalid parameter list` | - | - | - | - | - | - | - |
+| `ext.stmt.function.parameters.duplicate` | - | - | `SyntaxError: duplicate argument '` `' in function definition` | - | - | - | - | - | - | - |
 | `ext.stmt.function.positional_only` | - | - | `/` | - | - | - | - | - | - | - |
 | `ext.stmt.function.returns` | - | - | `->` | - | `:` | - | - | - | - | - |
 | `ext.stmt.function.short` | - | - | `lambda` `:` | - | `fn` `=>` | - | - | - | - | - |
@@ -4838,7 +4862,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss` | - | - | `TypeError: invalid arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.builtin` | - | - | `TypeError: ` `() takes no keyword arguments` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |

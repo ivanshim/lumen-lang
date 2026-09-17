@@ -865,6 +865,62 @@ impl<'a> Machine<'a> {
         let told=self.apply_class_member(bound,vec![given.clone()])?;
         Ok(Some(told.is_true()))
     }
+    /// The intrinsic words that name a kind of value rather than a piece
+    /// of work. Only such a word stands for a class where `issubclass`
+    /// and `isinstance` want one; every other intrinsic is as much a
+    /// refusal there as a number is.
+    pub(super) fn names_a_kind(op:&Prim)->bool {
+        matches!(op,Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::SortOf|Prim::Listed|Prim::Dictionary
+            |Prim::Tupling|Prim::Uniques|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1)|Prim::Span
+            |Prim::Numbered|Prim::Zipped|Prim::Mapped|Prim::Filtered|Prim::Backwards|Prim::SpanOf
+            |Prim::ClassWork(9..=11))
+    }
+    /// The word a value names a kind by, where it names one at all.
+    pub(super) fn kind_spelling(&self,value:&Value)->Option<Rc<str>>{
+        let Value::Wrapped(8,parts)=value else{return None};
+        let Value::Text(word)=&parts[0] else{return None};
+        self.table.prims.get(word.as_ref()).filter(|op|Self::names_a_kind(op)).map(|_|word.clone())
+    }
+    /// Whether a value is a class at all: one the program laid out, or
+    /// an intrinsic word naming a kind.
+    fn counts_as_class(&self,value:&Value)->bool{
+        matches!(value,Value::Blueprint(_))||self.kind_spelling(value).is_some()
+    }
+    /// One kind lies under another only where it is that same kind, or
+    /// where it is the flag kind, which lies under the whole-number kind
+    /// because a flag counts as a number here.
+    fn kind_under(&self,under:&str,over:&str)->bool{
+        under==over
+            || (self.table.prims.get(under)==Some(&Prim::Truthful) && self.table.prims.get(over)==Some(&Prim::AsInt))
+    }
+    /// Whether a value is of an intrinsic kind. A walk answers by the
+    /// name its kind is told by, which is the word that made it.
+    pub(super) fn kind_covers(&self,op:&Prim,word:&str,value:&Value)->bool{
+        match op {
+            Prim::AsInt=>matches!(value,Value::Small(_)|Value::Huge(_)|Value::Flag(_)),
+            Prim::AsText=>matches!(value,Value::Text(_)),
+            Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
+            Prim::Listed=>matches!(value,Value::Vector(_)),
+            Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(_)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
+            Prim::Dictionary=>matches!(value,Value::Dict(_)),
+            Prim::Tupling=>matches!(value,Value::Tuple(_)),
+            Prim::Uniques=>matches!(value,Value::Set(_)),
+            Prim::Truthful=>matches!(value,Value::Flag(_)),
+            Prim::ComplexMade=>matches!(value,Value::Complex(_)),
+            Prim::Span=>matches!(value,Value::Progression(_)),
+            Prim::SpanOf=>matches!(value,Value::Span(_)),
+            Prim::Octets(which)=>matches!(value,Value::Octets{changeable,..} if *changeable==(*which==1)),
+            Prim::Numbered|Prim::Zipped|Prim::Mapped|Prim::Filtered|Prim::Backwards=>value.kind_word()==word,
+            _=>false,
+        }
+    }
+    /// The refusal for a subject or a kind that is no class. Where a
+    /// language spells no words of its own for it, the class refusal
+    /// stands, as it stood before any were spelled.
+    pub(super) fn not_a_class(&self,key:&str)->Escape{
+        let told=self.core_complaint(key,"");
+        if told.is_empty(){self.class_unready()}else{told.into()}
+    }
     fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
         // The byte kinds are values in their own right rather than
@@ -873,46 +929,53 @@ impl<'a> Machine<'a> {
         if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)])), class_only); }
         if let Value::Intrinsic(word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)])), choice, class_only); }
         if let Value::Intrinsic(word) = choice { return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(word)])), class_only); }
+        // The kind asked after must be a class wherever it is asked, and
+        // each of the two has its own words, as the reference has.
+        let amiss=if class_only{"core.issubclass.amiss"}else{"core.isinstance.amiss"};
         match choice {
             Value::Tuple(options)|Value::Vector(options)=>{for option in options.iter(){if self.is_beneath(subject,option,class_only)?{return Ok(true);}}Ok(false)},
             Value::Blueprint(c)=>{
-                if c.name==self.detail("root"){
-                    if !class_only||matches!(subject,Value::Blueprint(_)){return Ok(true);}
-                    if let Value::Wrapped(8,parts)=subject{if let Value::Text(n)=&parts[0]{return Ok(matches!(self.table.prims.get(n.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf)));}}
-                    return Err(self.class_unready());
-                }
+                // What is asked about must be a class wherever a class
+                // is what is asked about.
+                if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
+                // Everything lies under the class everything lies under.
+                if c.name==self.detail("root"){return Ok(true);}
                 let b=match subject{Value::Blueprint(b) if class_only=>Some(b),Value::Thing(t) if !class_only=>Some(&t.of),_=>None};
                 Ok(b.map_or(false,|b|Rc::ptr_eq(b,c)||b.ancestry.iter().any(|a|Rc::ptr_eq(a,c))))
             }
             Value::Wrapped(8,names)=>{
-                let Value::Text(word)=&names[0] else{return Err(self.class_unready());};
+                let Value::Text(word)=&names[0] else{return Err(self.not_a_class(amiss));};
+                let Some(op)=self.table.prims.get(word.as_ref()).copied().filter(Self::names_a_kind) else{return Err(self.not_a_class(amiss));};
                 if class_only{
-                    if !matches!(self.table.prims.get(word.as_ref()),Some(Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::Listed|Prim::SortOf|Prim::Dictionary|Prim::Tupling|Prim::Uniques|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1)|Prim::Numbered)){return Err(self.class_unready());}
-                    return match subject {Value::Blueprint(b)=>Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref())),Value::Wrapped(8,other)=>Ok(other[0].equals(&names[0])),_=>Err(self.class_unready())};
+                    if let Value::Blueprint(b)=subject{return Ok(Self::native_beneath(b).as_deref()==Some(word.as_ref()));}
+                    let Some(under)=self.kind_spelling(subject) else{return Err(self.not_a_class("core.issubclass.subject"));};
+                    return Ok(self.kind_under(&under,word));
                 }
                 // A thing of a blueprint standing on the kind is of the kind.
                 if let Value::Thing(t)=subject{return Ok(Self::native_beneath(&t.of).as_deref()==Some(word.as_ref()));}
-                match self.table.prims.get(word.as_ref()){
-                    Some(Prim::AsInt)=>Ok(matches!(subject,Value::Small(_)|Value::Huge(_)|Value::Flag(_))),
-                    Some(Prim::AsText)=>Ok(matches!(subject,Value::Text(_))),
-                    Some(Prim::AsReal)=>Ok(matches!(subject,Value::Frac(r) if r.places.is_some())),
-                    Some(Prim::Listed)=>Ok(matches!(subject,Value::Vector(_))),
-                    Some(Prim::SortOf)=>Ok(matches!(subject,Value::Blueprint(_))),
-                    Some(Prim::Dictionary)=>Ok(matches!(subject,Value::Dict(_))),
-                    Some(Prim::Tupling)=>Ok(matches!(subject,Value::Tuple(_))),
-                    Some(Prim::Uniques)=>Ok(matches!(subject,Value::Set(_))),
-                    Some(Prim::Truthful)=>Ok(matches!(subject,Value::Flag(_))),
-                    Some(Prim::ComplexMade)=>Ok(matches!(subject,Value::Complex(_))),
-                    Some(Prim::Numbered)=>Ok(matches!(subject,Value::Iterator(_)|Value::Cursor(_)|Value::Traversal(..))),
-                    Some(Prim::Octets(which))=>Ok(matches!(subject,Value::Octets{changeable,..} if *changeable==(*which==1))),
-                    _=>Err(self.class_unready()),
-                }
+                Ok(self.kind_covers(&op,word,subject))
             },
-            _=>Err(self.class_unready()),
+            _=>{
+                if class_only && !self.counts_as_class(subject){return Err(self.not_a_class("core.issubclass.subject"));}
+                Err(self.not_a_class(amiss))
+            }
         }
+    }
+    /// The words for a question handed the wrong count of arguments:
+    /// they name the question, the count it wants and the count it got.
+    fn wrong_count(&self,name:&str,wanted:usize,given:usize)->Escape {
+        let parts=self.table.strings("ext.builtin.core.arity.exact");
+        if parts.len()<3 {return self.class_unready();}
+        format!("{}{}{}{}{}{}",parts[0],name,parts[1],wanted,parts[2],given).into()
     }
     pub(super) fn work_on_class(&mut self,op:u8,values:Vec<Value>)->Res {
         if op<=1 && values.len()==2{return Ok(Value::Flag(self.is_beneath(&values[0],&values[1],op==1)?));}
+        // Both questions want two arguments and name themselves where
+        // they are handed another count of them.
+        if op<=1 {
+            let word=self.table.prims.iter().find(|(_,p)|**p==Prim::ClassWork(op)).map(|(w,_)|w.to_string()).unwrap_or_default();
+            return Err(self.wrong_count(&word,2,values.len()));
+        }
         if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
         if (op==3||op==6)&&values.len()>=2{
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};

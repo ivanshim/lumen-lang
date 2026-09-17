@@ -48,6 +48,11 @@ pub struct Engine<'a> {
     text_books: Vec<TextBook>,
     /// Which of those the run stands inside at present, if any.
     reading_in: Option<usize>,
+    /// The names and values of the frame the call to read text stands
+    /// in, where it stands in a routine and hands over no dictionaries
+    /// of its own. The text is read as a piece of that routine, so the
+    /// routine's names are its to read.
+    text_within: Option<(Vec<String>, Vec<Value>)>,
     /// The dictionary of builtin words, and the class of a code value,
     /// each made once a program asks for it.
     natives: Option<Rc<RefCell<Value>>>,
@@ -259,6 +264,27 @@ impl Fault {
 
 /// A run that a raised value may stop.
 type Flow<T> = Result<T, Fault>;
+
+/// The families the builtin kinds fall into, for the special members a
+/// value of each answers to and for the values those members work with.
+/// A changeable run of bytes is parted from a fixed one, and the window
+/// upon a map's values from the other two.
+#[derive(Clone, Copy, PartialEq)]
+enum Kindred {
+    Walk,
+    Whole,
+    Real,
+    Ratio,
+    Complex,
+    Text,
+    Bytes(bool),
+    Row,
+    Tuple,
+    Map,
+    Set,
+    Counted,
+    View(bool),
+}
 
 /// What parts a group of exceptions: classes its members may stand
 /// beneath, or a routine asked of each member in turn.
@@ -756,6 +782,7 @@ impl<'a> Engine<'a> {
             outer_book: None,
             text_books: Vec::new(),
             reading_in: None,
+            text_within: None,
             natives: None,
             code_class: None,
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
@@ -1634,6 +1661,30 @@ impl<'a> Engine<'a> {
         held.iter().position(|(n, v)| n == name && standing(v))
     }
 
+    /// The cell a class keeps for a value of its own, made where the
+    /// value still lies bare so that the class and every name that
+    /// reaches it stand for the one holding. The class along the line
+    /// that keeps the name answers for it, and a line keeping none takes
+    /// the name as this class's own.
+    fn own_cell(class: &Class, name: &str) -> Rc<RefCell<Value>> {
+        let keeper = class.holder(name).unwrap_or(class);
+        let mut own = keeper.shared.borrow_mut();
+        let at = match own.iter().position(|(n, _)| n == name) {
+            Some(at) => at,
+            None => {
+                own.push((name.to_string(), Value::Null));
+                own.len() - 1
+            }
+        };
+        if let Value::Bond(shared) = &own[at].1 {
+            return shared.clone();
+        }
+        let was = std::mem::replace(&mut own[at].1, Value::Null);
+        let shared = Rc::new(RefCell::new(was));
+        own[at].1 = Value::Bond(shared.clone());
+        shared
+    }
+
     /// The method a class answers with for a property the thing does
     /// not hold, and the one it takes such a write with, where the
     /// language names them and the class is written with them.
@@ -2160,6 +2211,35 @@ impl<'a> Engine<'a> {
         Some(told)
     }
 
+    /// The name the outermost names go by, where the language gives
+    /// them one: the module a routine written there belongs to.
+    fn module_named(&self) -> Option<String> {
+        let word = self.lang.module_names.first()?;
+        if let Some(book) = &self.outer_book {
+            if let Some(held) = book_entry(book, word) { return Some(held.plain()); }
+        }
+        let at = self.registry.idents.iter().position(|name| name == word)?;
+        match self.world.get(at)?.contents() {
+            Value::Text(said) => Some(said.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The words for a call handed the same keyword twice, which only a
+    /// spread of pairs can bring about since two written out are
+    /// refused while the program is read. The reference names the
+    /// routine by the module it belongs to and the name it goes by
+    /// there, so the two are written together here.
+    fn keyword_twice(&self, program: &Routine, name: &str) -> String {
+        let words = &self.lang.call_keyword_twice;
+        if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, name); }
+        let called = match self.module_named() {
+            Some(module) if !program.qualified.is_empty() => format!("{}.{}", module, program.qualified),
+            _ => program.qualified.clone(),
+        };
+        format!("{}{}{}{}{}", words[0], called, words[1], name, words[2])
+    }
+
     /// A counted row's complaint carries the class it belongs to in the
     /// words themselves, so it is marked as told whole and the language
     /// puts no further naming over it.
@@ -2199,7 +2279,7 @@ impl<'a> Engine<'a> {
         for (name, value) in items {
             let Some(name) = name else { continue };
             if !seen.insert(name.clone()) {
-                return Err(Self::named_fault(&self.lang.call_duplicate, &name).into());
+                return Err(self.keyword_twice(program, &name).into());
             }
             let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
             match slot {
@@ -3222,6 +3302,26 @@ impl<'a> Engine<'a> {
                     // outermost body has none but the globals.
                     let done = match op {
                         Action::Builtin(Builtin::Eval, _) if !program.body_of_all && *argc == 1 && self.lang.compile_modes.is_empty() => self.run_text_here(program, frame),
+                        // Where the language has manners of reading as
+                        // well, the reading is done past here, so the
+                        // names about the call are put aside for it to
+                        // find: it reads them only when it was handed
+                        // no dictionaries of its own.
+                        Action::Builtin(Builtin::Eval | Builtin::RunText, _) if !program.body_of_all && !self.lang.compile_modes.is_empty() => {
+                            // What the text is handed is a frame of its
+                            // own: a name the routine keeps in a cell is
+                            // given a cell of its own holding the same,
+                            // so a write the text makes is the text's
+                            // alone, as the reference has it.
+                            let mine: Vec<Value> = frame.iter().map(|held| match held {
+                                Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
+                                other => other.clone(),
+                            }).collect();
+                            let held = std::mem::replace(&mut self.text_within, Some((program.idents.clone(), mine)));
+                            let done = self.perform(op, *argc);
+                            self.text_within = held;
+                            done
+                        }
                         // The names standing where the call is made are
                         // only to be seen from here, where the frame is.
                         Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
@@ -3597,7 +3697,7 @@ impl<'a> Engine<'a> {
 
     /// The name a module read in goes by, where this value is that very
     /// module and nothing else.
-    fn module_named(&self, value: &Value) -> Option<String> {
+    fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
         self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))).map(|(path, _)| path.clone())
     }
@@ -3605,17 +3705,13 @@ impl<'a> Engine<'a> {
     /// The word a value goes by as a kind: a class its own name, a
     /// builtin kind the word that spells it. Nothing where the value
     /// does not stand for a kind at all.
-    fn kind_spelled(&self, value: &Value) -> Option<String> {
+    fn kind_word_of(&self, value: &Value) -> Option<String> {
         match value {
             Value::Class(c) => Some(c.name.clone()),
             Value::SortOf(sort) => Some(Value::sort_called(*sort).to_string()),
             Value::ByteKind(mutable, _) => Some(self.byte_kind_word(*mutable).to_string()),
-            // The builtins that stand for a kind, which are those a
-            // value may be asked whether it belongs to.
-            Value::Native(b, word) => matches!(b, Builtin::Complex | Builtin::ToInt | Builtin::AsReal | Builtin::ToText
-                | Builtin::Bool | Builtin::List | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::SortOf | Builtin::Span)
-                .then(|| word.to_string()),
-            _ => None,
+            Value::Native(b, word) if Self::kind_builtin(b) => Some(word.to_string()),
+            other => self.kind_spelled(other).map(|word| word.to_string()),
         }
     }
 
@@ -3625,8 +3721,8 @@ impl<'a> Engine<'a> {
     /// language words no such complaint.
     pub(super) fn member_named_amiss(&self, value: &Value, name: &str) -> String {
         let held = value.contents();
-        if let Some(path) = self.module_named(&held) { return Self::member_said(&self.lang.member_absent_module, &path, name); }
-        match self.kind_spelled(&held) {
+        if let Some(path) = self.module_holding(&held) { return Self::member_said(&self.lang.member_absent_module, &path, name); }
+        match self.kind_word_of(&held) {
             Some(word) => Self::member_said(&self.lang.member_absent_class, &word, name),
             None => String::new(),
         }
@@ -3709,35 +3805,245 @@ impl<'a> Engine<'a> {
         self.bound_value_method(value.clone().held(false), &operation).map(Some)
     }
 
-    /// Whether a value of a builtin kind answers this special name as a
-    /// member of its own. A walk hands over its next member and itself;
-    /// anything walked over hands over a walk of it; and the containers
-    /// answer for their length, for a place read of them and for
-    /// membership, each where that kind has the member in the language.
-    /// A window upon a map is looked at before its contents, which read
-    /// as a plain row, so that it keeps the members a window has.
-    pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
-        let named = |at: usize| self.lang.class_special.get(at).map_or(false, |word| word == name);
+    /// The family a builtin value belongs to, read through whatever
+    /// cells stand between the name and the value itself. The family
+    /// settles both which special members the value answers to and
+    /// which values those members will work with.
+    fn native_family(subject: &Value) -> Option<Kindred> {
         let mut held = subject.clone();
         while let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = held {
             let inner = cell.borrow().clone();
             held = inner;
         }
-        let (walking, keyed, ordered, gathered) = match held {
-            Value::Cursor(_) | Value::Generator(_) => (true, false, false, false),
-            Value::Map(_) => (false, true, false, false),
-            Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Bytes(..) | Value::Counted(_) => (false, false, true, false),
-            Value::Set(_) => (false, false, false, true),
-            // A window has no place to read of it, and the one upon the
-            // values of a map is not asked about membership either.
-            Value::View(view) => return named(15) || named(10) || named(14) && view.1.as_str() != "values",
-            _ => return false,
+        Some(match held {
+            Value::Cursor(_) | Value::Generator(_) => Kindred::Walk,
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Kindred::Whole,
+            Value::Real(_) => Kindred::Real,
+            Value::Frac(_) => Kindred::Ratio,
+            Value::Complex(_) => Kindred::Complex,
+            Value::Text(_) => Kindred::Text,
+            Value::Bytes(_, changeable, _) => Kindred::Bytes(changeable),
+            Value::Array(_) => Kindred::Row,
+            Value::Tuple(_) => Kindred::Tuple,
+            Value::Map(_) => Kindred::Map,
+            Value::Set(_) => Kindred::Set,
+            Value::Counted(_) => Kindred::Counted,
+            // A window upon a map is read before its contents, which
+            // stand as a plain row and would lose the ways a window has.
+            Value::View(view) => Kindred::View(view.1.as_str() == "values"),
+            _ => return None,
+        })
+    }
+
+    /// Whether a value of that family answers the special name standing
+    /// at that place in the language's list. A walk hands over its next
+    /// member and itself; anything walked over hands over a walk of it;
+    /// the containers answer for their length, for a place read of them
+    /// and for membership; a row, a map and a changeable run of bytes
+    /// answer for a place written into, and a row and a map for one
+    /// taken out; and every kind that stands on its own answers for how
+    /// it reads, for how it compares and for the signs its kind knows.
+    fn family_answers(family: Kindred, place: usize) -> bool {
+        let number = matches!(family, Kindred::Whole | Kindred::Real | Kindred::Ratio | Kindred::Complex);
+        let ordered = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple | Kindred::Counted);
+        let holds = ordered || matches!(family, Kindred::Map | Kindred::Set);
+        let joined = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple);
+        // A walk and a window stand for something else and are read and
+        // compared as that thing is, so neither answers for itself here.
+        let standing = !matches!(family, Kindred::Walk | Kindred::View(_));
+        let written = matches!(family, Kindred::Row | Kindred::Map | Kindred::Bytes(true));
+        // A run of bytes is written into place by place, but no kernel
+        // here takes a place out of one, by sign or by name.
+        let emptied = matches!(family, Kindred::Row | Kindred::Map);
+        match place {
+            0..=7 => standing,
+            8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set | Kindred::Bytes(true)),
+            9 => number,
+            10 => holds || matches!(family, Kindred::View(_)),
+            11 => holds && !matches!(family, Kindred::Set),
+            12 => written,
+            13 => emptied,
+            14 => holds || matches!(family, Kindred::View(false)),
+            15 => holds || matches!(family, Kindred::Walk | Kindred::View(_)),
+            16 => matches!(family, Kindred::Walk),
+            18 | 20 | 28 => number || joined,
+            19 => number || matches!(family, Kindred::Set),
+            23 | 31 => number && !matches!(family, Kindred::Complex) || matches!(family, Kindred::Text | Kindred::Bytes(_)),
+            21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => number,
+            22 | 30 | 60 | 61 => number && !matches!(family, Kindred::Complex),
+            43 | 44 | 62 | 63 | 67 | 68 => matches!(family, Kindred::Whole),
+            47 | 49 => matches!(family, Kindred::Row),
+            48 | 57 | 59 => matches!(family, Kindred::Set),
+            58 => matches!(family, Kindred::Set | Kindred::Map),
+            64 | 66 | 69 | 71 => matches!(family, Kindred::Whole | Kindred::Set),
+            65 | 70 => matches!(family, Kindred::Whole | Kindred::Set | Kindred::Map),
+            _ => false,
+        }
+    }
+
+    /// Whether a working of the first family will take a value of the
+    /// second, or turn it down so that the other side may answer. A
+    /// whole number works with whole numbers alone, a real with those
+    /// and reals, and a container with its own kind.
+    fn family_takes(family: Kindred, other: Option<Kindred>) -> bool {
+        let Some(other) = other else { return false };
+        match family {
+            Kindred::Whole => other == Kindred::Whole,
+            Kindred::Real => matches!(other, Kindred::Whole | Kindred::Real),
+            Kindred::Ratio => matches!(other, Kindred::Whole | Kindred::Real | Kindred::Ratio),
+            Kindred::Complex => matches!(other, Kindred::Whole | Kindred::Real | Kindred::Complex),
+            Kindred::Bytes(_) => matches!(other, Kindred::Bytes(_)),
+            _ => family == other,
+        }
+    }
+
+    /// Whether the member at that place turns a value it cannot take
+    /// down rather than refusing it. The comparisons and the workings a
+    /// number answers with do; the joining and the repeating a row
+    /// answers with refuse outright, as the plain signs do.
+    fn family_turns_down(family: Kindred, place: usize) -> bool {
+        let joined = matches!(family, Kindred::Text | Kindred::Bytes(_) | Kindred::Row | Kindred::Tuple);
+        if joined && matches!(place, 18 | 20 | 28 | 23 | 31) { return false; }
+        matches!(place, 2..=7 | 18..=24 | 26..=32 | 60..=71)
+    }
+
+    /// Where among the language's special names this one stands, when a
+    /// value of a builtin kind answers to it as a member of its own.
+    pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
+        let family = Self::native_family(subject)?;
+        let place = self.lang.class_special.iter().position(|word| word == name)?;
+        Self::family_answers(family, place).then_some(place)
+    }
+
+    pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
+        self.native_place(subject, name).is_some()
+    }
+
+    /// The cell a container's name stands for, followed through however
+    /// many cells lie between the name and the container itself.
+    fn holding_cell(subject: &Value) -> Option<Rc<RefCell<Value>>> {
+        let (Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell)) = subject else { return None };
+        let mut cell = cell.clone();
+        loop {
+            let deeper = match &*cell.borrow() {
+                Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
+                _ => None,
+            };
+            match deeper { Some(held) => cell = held, None => break }
+        }
+        Some(cell)
+    }
+
+    /// A special member of a builtin value, run by the place its name
+    /// stands at. Nothing is worked out afresh here: the reading, the
+    /// comparing, the signs, the length, the walk, the place written
+    /// into and the place taken out are the ones the plain forms run,
+    /// so the answers and the refusals are the plain forms' too.
+    fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        let wanted = match place {
+            12 => 2,
+            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=71 => 1,
+            _ => 0,
         };
-        let holds = keyed || ordered || gathered;
-        named(15) && (walking || holds)
-            || named(16) && walking
-            || (named(10) || named(14)) && holds
-            || named(11) && (keyed || ordered)
+        if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
+        let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
+        // A working handed a value of a kind it cannot take turns that
+        // value down, leaving the other side of the pair to answer.
+        if wanted == 1 && Self::family_turns_down(family, place) && !Self::family_takes(family, Self::native_family(&args[0])) {
+            let word = self.lang.special_declined.first().cloned().unwrap_or_default();
+            return Ok(Value::Declined(Rc::from(word.as_str())));
+        }
+        // The members a builtin of one value answers for.
+        if let Some(plain) = match place {
+            0 => Some(Builtin::ToText), 1 => Some(Builtin::Repr), 8 => Some(Builtin::Hash), 9 => Some(Builtin::Bool),
+            10 => Some(Builtin::Length), 15 => Some(Builtin::Iter), 16 => Some(Builtin::Next),
+            38 | 43 => Some(Builtin::ToInt), 39 => Some(Builtin::AsReal), 40 => Some(Builtin::Absolute),
+            _ => None,
+        } {
+            return self.builtin_call(plain, operation, vec![(None, receiver.clone())]);
+        }
+        // A whole and a remainder taken at once, either way round.
+        if matches!(place, 60 | 61) {
+            let pair = if place == 60 { [receiver.clone(), args[0].clone()] } else { [args[0].clone(), receiver.clone()] };
+            return self.builtin_call(Builtin::Divmod, operation, pair.into_iter().map(|value| (None, value)).collect());
+        }
+        // A place written into and a place taken out. The container's
+        // own cell takes the change, so that every name for it sees it,
+        // and neither writing is worth anything, as the definition has
+        // it. What the cell is handed is the container itself and never
+        // another cell holding it: a cell within a cell is still the
+        // same container to a reading, but a working that writes where
+        // the container lies looks for the container and finds a cell.
+        if place == 12 {
+            let cell = Self::holding_cell(receiver).unwrap_or_else(|| Rc::new(RefCell::new(receiver.contents())));
+            let held = cell.borrow().clone();
+            let written = self.builtin_call(Builtin::Replace, operation, vec![(None, args[0].clone()), (None, args[1].clone()), (None, held)])?;
+            *cell.borrow_mut() = written.contents();
+            return Ok(Value::Null);
+        }
+        if place == 13 {
+            // A container with no cell of its own is written into a cell
+            // made here and then let go, as the definition has a place
+            // taken out of a row no name holds.
+            let cell = Self::holding_cell(receiver).unwrap_or_else(|| Rc::new(RefCell::new(receiver.clone())));
+            let depth = self.data.len();
+            self.data.push(Value::Bond(cell));
+            self.data.push(args[0].clone());
+            return match self.perform(&Action::ForgetWithin, 2) {
+                Ok(()) => { self.drop_top().map_err(|_| self.special_fault())?; Ok(Value::Null) }
+                Err(Fault::Note(words)) => { self.data.truncate(depth); Err(words) }
+                Err(fled) => { self.data.truncate(depth); self.carried = Some(fled); Err(String::new()) }
+            };
+        }
+        // The compound writings: a row grows or repeats where it stands,
+        // and a set or a map takes in what the sign gathers. Each hands
+        // back the very value it was asked of.
+        if let Some(repeat) = match place { 47 => Some(false), 49 => Some(true), _ => None } {
+            if let Some(kept) = self.sequence_in_place(repeat, receiver, &args[0])? { return Ok(kept); }
+            let plain = if repeat { Action::Mul } else { Action::Add };
+            return self.special_dyad(&plain, receiver, &args[0]);
+        }
+        if let Some(which) = match place { 58 => Some(0), 57 => Some(1), 48 => Some(2), 59 => Some(3), _ => None } {
+            self.special_dyad(&Action::SetWrite(which), receiver, &args[0])?;
+            return Ok(receiver.clone());
+        }
+        // The signs a number wears alone.
+        if let Some(sign) = match place { 25 => Some(Action::Negate), 41 => Some(Action::Positive), 44 => Some(Action::BitTurn), _ => None } {
+            let depth = self.data.len();
+            self.data.push(receiver.clone());
+            return match self.perform(&sign, 1) {
+                Ok(()) => self.drop_top().map_err(|_| self.special_fault()),
+                Err(Fault::Note(words)) => { self.data.truncate(depth); Err(words) }
+                Err(fled) => { self.data.truncate(depth); self.carried = Some(fled); Err(String::new()) }
+            };
+        }
+        let held = receiver.contents();
+        // Membership reads the other way round: the member stands before
+        // the container it is sought in.
+        if place == 14 { return self.special_dyad(&Action::Contains, &args[0], &held); }
+        // The signs of a pair. A reflected member is the same sign with
+        // the value it was asked of on the right.
+        let (sign, turned) = match place {
+            2 => (Action::Eq, false), 3 => (Action::Ne, false),
+            4 => (Action::Lt, false), 5 => (Action::Le, false),
+            6 => (Action::Gt, false), 7 => (Action::Ge, false),
+            11 => (Action::At, false),
+            18 => (Action::Add, false), 26 => (Action::Add, true),
+            19 => (Action::Sub, false), 27 => (Action::Sub, true),
+            20 => (Action::Mul, false), 28 => (Action::Mul, true),
+            21 => (Action::DivReal, false), 29 => (Action::DivReal, true),
+            22 => (Action::IntDiv, false), 30 => (Action::IntDiv, true),
+            23 => (Action::Mod, false), 31 => (Action::Mod, true),
+            24 => (Action::Power, false), 32 => (Action::Power, true),
+            62 => (Action::BitUp, false), 67 => (Action::BitUp, true),
+            63 => (Action::BitDown, false), 68 => (Action::BitDown, true),
+            64 => (Action::BitBoth, false), 69 => (Action::BitBoth, true),
+            65 => (Action::BitEither, false), 70 => (Action::BitEither, true),
+            66 => (Action::BitOne, false), 71 => (Action::BitOne, true),
+            _ => return Err(self.lang.method_errors["arguments"].clone()),
+        };
+        let other = args[0].contents();
+        if turned { self.special_dyad(&sign, &other, &held) } else { self.special_dyad(&sign, &held, &other) }
     }
 
     fn special_fault(&self) -> String {
@@ -4733,28 +5039,7 @@ impl<'a> Engine<'a> {
                     self.class_it_spells(top)
                 };
                 match stands {
-                    Value::Class(c) => {
-                        let holder = c.holder(&name).unwrap_or(&c);
-                        let mut own = holder.shared.borrow_mut();
-                        let at = match own.iter().position(|(n, _)| n == name.as_ref()) {
-                            Some(at) => at,
-                            None => {
-                                own.push((name.to_string(), Value::Null));
-                                own.len() - 1
-                            }
-                        };
-                        if let Value::Bond(shared) = &own[at].1 {
-                            let shared = shared.clone();
-                            drop(own);
-                            Value::Bond(shared)
-                        } else {
-                            let was = std::mem::replace(&mut own[at].1, Value::Null);
-                            let shared = Rc::new(RefCell::new(was));
-                            own[at].1 = Value::Bond(shared.clone());
-                            drop(own);
-                            Value::Bond(shared)
-                        }
-                    }
+                    Value::Class(c) => Value::Bond(Self::own_cell(&c, name)),
                     v => {
                         let told = self.no_such_class(&v).unwrap_or_else(|| format!("Cannot reach '{}' in {}", name, v.plain()));
                         return Err(told.into());
@@ -4789,6 +5074,15 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
+                // A thing whose class answers no such method gives up no
+                // place, and the kind that will not is named, as a
+                // tuple's and a text's are. A thing keeping a worth of
+                // the builtin kind its class stands on gives the place
+                // up out of that worth, which is the thing's own.
+                if matches!(&target, Value::Object(_)) && !self.lang.sequence_delete.is_empty()
+                    && !matches!(Self::worth_of(&target), Some(Value::Collection(..))) {
+                    return Err(self.sequence_delete_fault(&target).into());
+                }
                 let named = match &named {
                     Value::Slice(bounds) if self.lang.slice_values() => Value::Slice(Rc::new(self.slice_settled(bounds)?)),
                     // A thing standing for a whole number is that number
@@ -4812,9 +5106,19 @@ impl<'a> Engine<'a> {
                 // until one holds the collection and not another cell.
                 let mut cell = cell;
                 loop {
-                    let deeper = match &*cell.borrow() {
-                        Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
-                        _ => None,
+                    let deeper = {
+                        let inside = cell.borrow();
+                        match &*inside {
+                            Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
+                            // A thing of a class standing on a builtin
+                            // kind is stepped into as its worth, which
+                            // is where its places live.
+                            thing @ Value::Object(_) => match Self::worth_of(thing) {
+                                Some(Value::Collection(held, _)) => Some(held),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
                     };
                     match deeper { Some(held) => cell = held, None => break }
                 }
@@ -5582,7 +5886,10 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::HasMember(name) => {
-                let held = self.drop_top()?;
+                // What a shared cell holds is what the member is looked
+                // for on, as reading one is: a name a place was taken
+                // out of stands for its cell from then on.
+                let held = { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } };
                 let class = match &held {
                     Value::Object(o) => Some(&o.class),
                     Value::Class(c) => Some(c),
@@ -5607,7 +5914,10 @@ impl<'a> Engine<'a> {
                 Value::Flag(kind_named || kind_maker || text_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
-            Action::Grab(name) => match { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } } {
+            // A container asked for one of its special members keeps
+            // the cell its names share, so that a write through the
+            // member is a write every one of those names sees.
+            Action::Grab(name) => match { let top = self.drop_top()?; if let (Value::Bond(cell), false) = (&top, self.native_special(&top, name)) { cell.borrow().clone() } else { top } } {
                 Value::Slice(bounds) if self.slice_bound_named(name).is_some() => bounds[self.slice_bound_named(name).expect("the bound")].clone(),
                 // A counted row keeps its bounds rather than its places,
                 // and hands each of them over by name.
@@ -5618,7 +5928,7 @@ impl<'a> Engine<'a> {
                 },
                 // A walk, a row, a map or a set hands over the walking
                 // pair and the container members as methods bound to it.
-                subject if self.native_special(&subject, name) => Value::ValueMethod(Rc::new((subject, name.to_string()))),
+                subject if self.native_special(&subject, name) => Value::ValueMethod(Rc::new((subject.held(false), name.to_string()))),
                 Value::Text(subject) if matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(_))) => {
                     let Builtin::Text(op) = self.lang.builtins[name.as_ref()] else { unreachable!() };
                     Value::TextMethod(subject, op, name.clone())
@@ -5737,9 +6047,25 @@ impl<'a> Engine<'a> {
             // write both see.
             Action::BondField(name) => {
                 match self.drop_top()? {
+                    // A class named outright keeps its own values where
+                    // a thing keeps its properties, so a place within one
+                    // is reached through the cell the class holds, which
+                    // is the very holding that reading the name gives.
+                    Value::Class(c) if self.lang.member_pipes => Value::Bond(Self::own_cell(&c, name)),
                     Value::Object(o) => {
                         let mut held = o.fields.borrow_mut();
-                        let at = match self.member_at(&held, name) {
+                        let found = self.member_at(&held, name);
+                        // A thing holding nothing of that name reads its
+                        // class's own value, so a write within the place
+                        // lands in that shared holding rather than making
+                        // a property only the thing would see, as a write
+                        // of the name itself still does.
+                        if found.is_none() && self.lang.member_pipes && o.class.holder(name).is_some() {
+                            drop(held);
+                            self.data.push(Value::Bond(Self::own_cell(&o.class, name)));
+                            return Ok(());
+                        }
+                        let at = match found {
                             Some(at) => at,
                             None => {
                                 held.push((name.to_string(), Value::Null));
@@ -8653,21 +8979,12 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        // The walking pair and the container members, asked for by name
-        // on a value of a builtin kind. Each hands its work to the
-        // builtin or the sign that already does it, so that the answer
-        // and the refusal are the ones the plain form gives.
-        if self.native_special(receiver, operation) {
-            let named_at = |at: usize| self.lang.class_special.get(at).map_or(false, |word| word == operation);
-            let (stepping, walking, sizing, reading) = (named_at(16), named_at(15), named_at(10), named_at(11));
-            let wanted = usize::from(reading || named_at(14));
-            if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
-            let subject = receiver.clone();
-            let plain = if stepping { Some(Builtin::Next) } else if walking { Some(Builtin::Iter) } else if sizing { Some(Builtin::Length) } else { None };
-            if let Some(plain) = plain { return self.builtin_call(plain, operation, vec![(None, subject)]); }
-            let held = subject.contents();
-            if reading { return self.special_dyad(&Action::At, &held, &args[0]); }
-            return self.special_dyad(&Action::Contains, &args[0], &held);
+        // A special member asked for by name on a value of a builtin
+        // kind. Each hands its work to the builtin or the sign that
+        // already does it, so that the answer and the refusal are the
+        // ones the plain form gives.
+        if let Some(place) = self.native_place(receiver, operation) {
+            return self.native_member_call(receiver, operation, place, args, named);
         }
         let contents = receiver.contents();
         if let Value::Object(object) = &contents {
@@ -11585,30 +11902,31 @@ impl Engine<'_> {
         if let Value::Class(class) = kind {
             // A class whose metaclass speaks for the kind is asked first.
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
+            // Every value whatever is of the class every other one is of.
+            if class.name == self.class_word("root") { return Ok(true); }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.
         if let (Value::Object(o), Value::Native(_, word)) = (value, kind) {
             if let Some(kind) = Self::kind_beneath(&o.class) { return Ok(kind == word.as_ref()); }
         }
-        let b = match kind {
-            Value::Native(b, _) => *b,
+        // A builtin kind is asked about by the word that names it,
+        // whether the word came as a builtin of its own or as the plain
+        // reading of the name; anything else is no kind to ask after.
+        let (b, word) = match kind {
+            Value::Native(b, word) => (*b, word.to_string()),
+            Value::Adapter(w) if w.0 == 8 => match &w.1[0] {
+                Value::Text(word) => match self.lang.builtins.get(word.as_ref()) {
+                    Some(b) => (*b, word.to_string()),
+                    None => return Err(self.core_fault("core.isinstance.amiss", "")),
+                },
+                _ => return Err(self.core_fault("core.isinstance.amiss", "")),
+            },
             Value::SortOf(Sort::Null) => return Ok(matches!(value, Value::Null)),
             _ => return Err(self.core_fault("core.isinstance.amiss", "")),
         };
-        Ok(match b {
-            Builtin::Complex => matches!(value, Value::Complex(_)),
-            Builtin::ToInt => matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)),
-            Builtin::AsReal => matches!(value, Value::Real(_)),
-            Builtin::ToText => matches!(value, Value::Text(_)),
-            Builtin::Bool => matches!(value, Value::Flag(_)),
-            Builtin::List => matches!(value, Value::Array(_)),
-            Builtin::Tuple => matches!(value, Value::Tuple(_)),
-            Builtin::SortOf => matches!(value, Value::Class(_) | Value::Native(..) | Value::ByteKind(..)),
-            Builtin::Set => matches!(value, Value::Set(_)),
-            Builtin::Dict => matches!(value, Value::Map(_)),
-            _ => return Err(self.core_fault("core.isinstance.amiss", "")),
-        })
+        if !Self::kind_builtin(&b) { return Err(self.core_fault("core.isinstance.amiss", "")); }
+        Ok(self.kind_holds(&b, &word, value))
     }
 
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
@@ -12371,6 +12689,24 @@ impl Engine<'_> {
         self.lang.source_unready.clone().unwrap_or_default()
     }
 
+    /// The complaint for text that could not be read, set about with the
+    /// file the text stands for and the line the reading stopped on, as
+    /// the reference words such a complaint. The reading's own words
+    /// are kept where they name the very complaint the language has for
+    /// text it cannot read; any other words are that complaint instead,
+    /// since they are the assembler's and not the language's.
+    fn text_syntax(&self, said: String, file: &str, row: usize) -> String {
+        let generic = self.lang.source_syntax.clone().unwrap_or_default();
+        let kind = generic.split_once(':').map(|(word, _)| format!("{}:", word));
+        let told = match &kind {
+            Some(kind) if said.starts_with(kind.as_str()) => said,
+            _ => generic,
+        };
+        let words = &self.lang.source_place;
+        if words.len() < 3 { return told; }
+        format!("{}{}{}{}{}{}", told, words[0], file, words[1], row.max(1), words[2])
+    }
+
     /// The tokens of text handed over to be read, or the language's
     /// words for text that cannot be read.
     fn text_tokens(&self, source: &str) -> Res<Vec<crate::lex::Token>> {
@@ -12426,7 +12762,9 @@ impl Engine<'_> {
         let tokens = self.text_tokens(if mode == 1 { source.trim() } else { &source })?;
         let mut trial = crate::compile::Registry::default();
         trial.value_only = mode == 1;
-        crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))).map_err(|_| self.lang.source_syntax.clone().unwrap_or_default())?;
+        if let Err(said) = crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
+            return Err(self.text_syntax(said, &file, trial.stopped_at));
+        }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file)), (words[2].clone(), Value::Small(mode as i64))];
@@ -12438,6 +12776,9 @@ impl Engine<'_> {
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.
     fn text_run(&mut self, weighing: bool, args: Vec<Value>) -> Res<Value> {
+        // The names about the call are only for a reading handed no
+        // dictionaries; taken here, no reading that follows finds them.
+        let within = self.text_within.take();
         let Some(first) = args.first().map(Value::contents) else { return Err(self.source_unready()) };
         let (source, file, mode) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing)),
@@ -12461,7 +12802,10 @@ impl Engine<'_> {
         let outer = as_book(args.get(1))?;
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
-            (None, None) => return self.run_text_here_about(&source, file, mode),
+            (None, None) => return match within.filter(|_| mode != 2) {
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values),
+                None => self.run_text_here_about(&source, file, mode),
+            },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
             (None, near) => (self.book_here(true), near),
@@ -12492,6 +12836,50 @@ impl Engine<'_> {
         let (program, shown) = self.text_program(&tokens, &file, mode, None)?;
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
+    }
+
+    /// Text read where a routine stands and handed no dictionaries: it
+    /// is read as a piece of that routine, so the routine's names are
+    /// its own to read, as the reference has it. What it writes it
+    /// writes to a frame of its own making, a copy of the routine's, so
+    /// the routine goes on holding what it held and a name the text
+    /// makes is gone once the text is done.
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>) -> Res<Value> {
+        let source = if mode == 1 { source.trim() } else { source };
+        let tokens = self.text_tokens(source)?;
+        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        // Text read inside a method is read as standing in that method's
+        // class, as text read where a language has no manners of reading
+        // already is.
+        let within = self.standing_in().map(str::to_string).map(|named| {
+            let base = match self.class_named(&named) {
+                Some(Value::Class(c)) => c.base.as_ref().map(|b| b.name.clone()),
+                _ => None,
+            };
+            (named, base)
+        });
+        self.registry.value_only = mode == 1;
+        let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
+            Ok(program) => program,
+            Err(said) => { let row = self.registry.stopped_at; return Err(self.text_syntax(said, &file, row)); }
+        };
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        let mut mine = values;
+        mine.resize(program.idents.len().max(mine.len()), Value::Blank);
+        let (was_written_in, was_on) = (self.source.clone(), self.line);
+        self.source = file;
+        let base = self.data.len();
+        let ran = self.run_instrs(&program, &mut mine);
+        self.source = was_written_in;
+        self.line = was_on;
+        match ran {
+            Ok(()) => {}
+            Err(Fault::Note(told)) => { self.data.truncate(base); return Err(told); }
+            Err(fled) => { self.data.truncate(base); self.carried = Some(fled); return Err(String::new()); }
+        }
+        let answer = if mode == 1 && self.data.len() > base { self.drop_top()? } else { Value::Null };
+        self.data.truncate(base);
+        Ok(answer)
     }
 
     /// Text run in dictionaries of its own: its names are given slots
@@ -12530,15 +12918,20 @@ impl Engine<'_> {
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
     fn text_program(&mut self, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>) -> Res<(Rc<Routine>, bool)> {
-        let syntax = self.lang.source_syntax.clone().unwrap_or_default();
-        let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
-        if mode == 2 {
-            registry.value_only = true;
-            if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+        let amiss;
+        {
+            let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
+            if mode == 2 {
+                registry.value_only = true;
+                if let Ok(program) = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) { return Ok((program, true)); }
+            }
+            registry.value_only = mode == 1;
+            match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
+                Ok(program) => return Ok((program, false)),
+                Err(said) => amiss = (said, registry.stopped_at),
+            }
         }
-        registry.value_only = mode == 1;
-        let program = crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())).map_err(|_| syntax)?;
-        Ok((program, false))
+        Err(self.text_syntax(amiss.0, file, amiss.1))
     }
 
     /// Run a text's program as standing in its file, and answer what it
