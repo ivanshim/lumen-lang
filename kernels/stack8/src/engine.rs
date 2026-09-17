@@ -4746,6 +4746,16 @@ impl<'a> Engine<'a> {
         Ok(None)
     }
 
+    /// The kind a value is held to when it is asked whether it stands in
+    /// order beside another. It is the core kind, save that a row of
+    /// bytes and a row of bytes that can be written into are one family
+    /// here, as they are for equality: either stands in order beside the
+    /// other, though a refusal still names each of them apart.
+    fn order_family(value: &Value) -> String {
+        let kind = value.core_kind();
+        match kind.as_str() { "bytearray" => "bytes".to_string(), _ => kind }
+    }
+
     /// The complaint that two values stand in no order, with the sign
     /// that was asked for and both kinds named as the language names them.
     fn orderless_fault(&self, op: &Action, a: &Value, b: &Value) -> String {
@@ -7575,7 +7585,7 @@ impl<'a> Engine<'a> {
             // Two of one kind may order themselves further on, as sets and
             // rows do; two of different kinds, or of a kind with no order
             // at all, cannot.
-            let orderless = a.core_kind() != b.core_kind() || matches!(a, Value::Null | Value::Map(_));
+            let orderless = Self::order_family(a) != Self::order_family(b) || matches!(a, Value::Null | Value::Map(_));
             if orderless && !(numeric(a) && numeric(b)) && !matches!((a, b), (Value::Text(_), Value::Text(_))) && arith::order_values(a, b).is_none() {
                 let sign = match op { Action::Lt => "<", Action::Le => "<=", Action::Gt => ">", _ => ">=" };
                 let words = &self.lang.order_unsupported;
