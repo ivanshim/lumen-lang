@@ -589,12 +589,32 @@ impl<'a> Machine<'a> {
             if self.table.spells("ext.stmt.class.builtin",word) {
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
+                // Read as a class the kind stands on the root and on
+                // nothing further, which is the whole of its line.
+                if key==self.detail("mro")||key==self.detail("order"){
+                    let listed=key==self.detail("order");
+                    let word=word.to_string();
+                    let kind=self.native_kind(&word);
+                    let root=self.common_ancestor();
+                    let line=Value::Tuple(Rc::new(vec![Value::Blueprint(kind),Value::Blueprint(root)]));
+                    return Ok(if listed {Self::wrap(0,vec![line])} else {line});
+                }
             }
         }
         if let Value::Blueprint(b)=&value {
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
             if key==self.detail("qualified"){return Ok(self.inherited_entry(b,key).unwrap_or_else(||Value::text(&b.name)));}
-            if key==self.detail("namespace"){return Ok(Self::member_map(&b.shared.borrow()));}
+            if key==self.detail("namespace"){
+                // A blueprint standing for a native kind keeps no
+                // entries of its own; what it names are the ones a
+                // value of that kind answers to.
+                if let Some(word)=Self::native_word(b) {
+                    let named=self.kind_member_names(&word);
+                    let pairs=named.iter().map(|n|(Value::text(n),Value::text(&format!("<slot wrapper '{n}' of '{word}' objects>")))).collect();
+                    return Ok(Value::Dict(Rc::new(pairs)));
+                }
+                return Ok(Self::member_map(&b.shared.borrow()));
+            }
             if key==self.detail("bases"){return Ok(Value::Tuple(Rc::new(b.parents.iter().map(|p|Value::Blueprint(p.clone())).collect())));}
             if key==self.detail("mro")||key==self.detail("order"){
                 let mut all=Vec::new();all.push(value.clone());all.extend(b.ancestry.iter().map(|p|Value::Blueprint(p.clone())));
@@ -799,7 +819,23 @@ impl<'a> Machine<'a> {
         }
         Err(self.class_unready())
     }
-    fn is_beneath(&self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+    /// A class whose metaclass keeps the entry for one of these
+    /// questions answers it itself: the entry is read from the
+    /// metaclass bound to the class, called with the value, and its
+    /// word is taken. A class no metaclass of its own built says
+    /// nothing, and the plain reading stands, so the everyday question
+    /// costs no more than a look through the constants.
+    pub(super) fn builder_answers(&mut self,choice:&Value,given:&Value,class_only:bool)->Result<Option<bool>,Escape>{
+        let Value::Blueprint(class)=choice else{return Ok(None);};
+        let Some(builder)=Self::builder_over(class) else{return Ok(None);};
+        let Some(key)=self.table.strings("ext.stmt.class.special").get(if class_only{77}else{76}).cloned() else{return Ok(None);};
+        let Some(entry)=self.inherited_entry(&builder,&key) else{return Ok(None);};
+        let bound=self.member_binding(entry,Some(choice.clone()),builder)?;
+        let told=self.apply_class_member(bound,vec![given.clone()])?;
+        Ok(Some(told.is_true()))
+    }
+    fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
+        if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
         // The byte kinds are values in their own right rather than
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)])), choice, class_only); }

@@ -2526,7 +2526,9 @@
     "__format__",
     "__round__",
     "__complex__",
-    "__dir__"
+    "__dir__",
+    "__instancecheck__",
+    "__subclasscheck__"
   ],
   "ext.stmt.class.special.amiss": [
     "TypeError: special method returned an invalid value"

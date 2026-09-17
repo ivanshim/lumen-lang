@@ -3434,6 +3434,22 @@ impl<'a> Engine<'a> {
         match self.special_value(value, place) { Some(Value::Routine(routine)) => Some(routine), _ => None }
     }
 
+    /// The names a value of a builtin kind answers to, for the kind
+    /// read as a class: a sample of the kind is asked, so the namespace
+    /// of the kind and the members of a value of it never part ways.
+    pub(super) fn kind_special_names(&self, word: &str) -> Vec<String> {
+        let sample = match self.lang.builtins.get(word) {
+            Some(Builtin::ToText) => Value::text(""),
+            Some(Builtin::List) => Value::array(Vec::new()),
+            Some(Builtin::Tuple) => Value::Tuple(Rc::new(Vec::new())),
+            Some(Builtin::Dict) => Value::Map(Rc::new(Vec::new())),
+            Some(Builtin::Set) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
+            Some(Builtin::Bytes(mutable)) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
+            _ => return Vec::new(),
+        };
+        self.lang.class_special.iter().filter(|name| self.native_special(&sample, name)).cloned().collect()
+    }
+
     /// Whether a value of a builtin kind answers this special name as a
     /// member of its own. A walk hands over its next member and itself;
     /// anything walked over hands over a walk of it; and the containers
@@ -3441,7 +3457,7 @@ impl<'a> Engine<'a> {
     /// membership, each where that kind has the member in the language.
     /// A window upon a map is looked at before its contents, which read
     /// as a plain row, so that it keeps the members a window has.
-    fn native_special(&self, subject: &Value, name: &str) -> bool {
+    pub(super) fn native_special(&self, subject: &Value, name: &str) -> bool {
         let named = |at: usize| self.lang.class_special.get(at).map_or(false, |word| word == name);
         let mut held = subject.clone();
         while let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = held {
@@ -5303,9 +5319,11 @@ impl<'a> Engine<'a> {
                     _ => false,
                 };
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
-                // A builtin kind's word has a maker, where a class may stand on it.
+                // A builtin kind's word has a maker, a name and a line
+                // of forebears, where a class may stand on it.
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
-                    && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref()));
+                    && (name.as_ref() == self.class_word("allocate") || name.as_ref() == self.class_word("name") || self.lang.class_name.as_deref() == Some(name.as_ref())
+                        || name.as_ref() == self.class_word("mro") || name.as_ref() == self.class_word("order"));
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
@@ -11266,12 +11284,15 @@ impl Engine<'_> {
         }
     }
 
-    fn core_isinstance(&self, value: &Value, kind: &Value) -> Res<bool> {
+    fn core_isinstance(&mut self, value: &Value, kind: &Value) -> Res<bool> {
         if let Value::Tuple(types) = kind {
+            let types = types.clone();
             for t in types.iter() { if self.core_isinstance(value, t)? { return Ok(true); } }
             return Ok(false);
         }
         if let Value::Class(class) = kind {
+            // A class whose metaclass speaks for the kind is asked first.
+            if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.

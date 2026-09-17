@@ -1,5 +1,6 @@
 # Ratios are kept as two whole numbers with a positive denominator.
 from math import inf
+import numbers
 def _gcd(a, b):
     if a < 0:
         a = -a
@@ -314,3 +315,9 @@ class Fraction:
         if distance2 <= distance1:
             return bound2
         return bound1
+
+
+# CPython has a ratio stand under numbers.Rational outright; here it is
+# claimed for that kind instead, which puts it in the numeric tower all
+# the same.
+numbers.Rational.register(Fraction)

@@ -4662,6 +4662,26 @@ impl<'a> Machine<'a> {
         class.program(named).cloned()
     }
 
+    /// What a value of a native kind answers to by name, gathered for
+    /// the kind read as a class: a sample of the kind is asked, so what
+    /// the kind names and what a value of it answers stay one thing.
+    pub(super) fn kind_member_names(&self, word: &str) -> Vec<String> {
+        let sample = match self.table.prims.get(word) {
+            Some(Prim::AsText) => Value::text(""),
+            Some(Prim::Listed) => Value::Vector(Rc::new(Vec::new())),
+            Some(Prim::Tupling) => Value::Tuple(Rc::new(Vec::new())),
+            Some(Prim::Dictionary) => Value::Dict(Rc::new(Vec::new())),
+            Some(Prim::Uniques) => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
+            Some(Prim::Octets(kind)) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
+            _ => return Vec::new(),
+        };
+        let mut gathered = Vec::new();
+        for name in self.table.strings("ext.stmt.class.special") {
+            if self.native_member(&sample, name) { gathered.push(name.clone()); }
+        }
+        gathered
+    }
+
     /// Whether a value of a native kind answers this special name as a
     /// member of its own. A walk hands over its next member and itself;
     /// whatever is walked over hands over a walk of it; and the holders
@@ -4669,7 +4689,7 @@ impl<'a> Machine<'a> {
     /// membership, each where the kind has the member in the table. A
     /// window upon a map is looked at before it settles, since settling
     /// leaves a plain row with none of a window's ways.
-    fn native_member(&self, value: &Value, name: &str) -> bool {
+    pub(super) fn native_member(&self, value: &Value, name: &str) -> bool {
         let names = self.table.strings("ext.stmt.class.special");
         let called = |at: usize| names.get(at).map_or(false, |word| word == name);
         let mut held = value.clone();
@@ -8363,7 +8383,8 @@ impl<'a> Machine<'a> {
                 if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(_)) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
                 if let Value::Intrinsic(kind) = &v[0] {
-                    if self.table.spells("ext.stmt.class.builtin", kind) && (word == self.detail("allocate") || word == self.detail("name") || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
+                    let lined = word == self.detail("mro") || word == self.detail("order");
+                    if self.table.spells("ext.stmt.class.builtin", kind) && (lined || word == self.detail("allocate") || word == self.detail("name") || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
                 }
                 let (class, own) = match &v[0] {
                     Value::Complex(_) => (None, self.table.spells("ext.builtin.complex.real", &word) || self.table.spells("ext.builtin.complex.imag", &word)),
@@ -12645,13 +12666,18 @@ impl Machine<'_> {
         }
     }
 
-    fn core_belongs(&self, item: &Value, expected: &Value) -> Result<bool, String> {
+    fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
         match expected {
             Value::Tuple(kinds) => {
+                let kinds = kinds.clone();
                 for kind in kinds.iter() { if self.core_belongs(item, kind)? { return Ok(true); } }
                 Ok(false)
             }
-            Value::Blueprint(class) => Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false))),
+            Value::Blueprint(class) => {
+                // A class whose metaclass speaks for the kind is asked first.
+                if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
+                Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false)))
+            }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             Value::Intrinsic(word) => {
                 // A thing of a blueprint standing on the native kind is of that kind.
