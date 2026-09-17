@@ -562,6 +562,17 @@ impl<'a> Machine<'a> {
         if parts.len()<3{return self.class_unready();}
         format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
     }
+    /// An entry a thing reads but will neither write over nor let go:
+    /// its blueprint names the entries its things hold and holds an
+    /// entry of its own under this name, which no write to a thing
+    /// reaches.
+    fn readonly_attribute(&self,value:&Value,member:&str)->Escape {
+        let parts=self.table.strings("ext.stmt.class.detail.attribute.readonly");
+        if parts.len()<3{return self.unwritable_attribute(value,member);}
+        let kind;
+        let name=match value{Value::Thing(t)=>t.of.name.as_str(),other=>{kind=other.kind_word();&kind}};
+        format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
+    }
     /// An entry a value will not take: it keeps no namespace of its own
     /// to hold one, its blueprint naming the entries it holds or the
     /// value being of a builtin kind.
@@ -772,6 +783,12 @@ impl<'a> Machine<'a> {
         }
         Err(self.absent_attribute(&value,key))
     }
+    /// Whether the blueprint, or one it stands on, names the entries its
+    /// things may hold. Such a thing keeps no namespace of its own.
+    fn slots_named(&self,b:&Blueprint)->bool {
+        if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
+        b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
+    }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
         let Some(slots)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
         let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
@@ -835,6 +852,14 @@ impl<'a> Machine<'a> {
                 if self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
                     if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
+                }
+                // A blueprint naming the entries its things hold, and
+                // holding one of its own under a name not among them,
+                // has that name read-only: no write to a thing reaches
+                // the blueprint's own holding, and the thing keeps no
+                // namespace to put an entry of its own in.
+                if self.slots_named(&t.of)&&!self.allowed_slot(&t.of,key)&&self.inherited_entry(&t.of,key).is_some() {
+                    return Err(self.readonly_attribute(&subject,key));
                 }
                 if replacement.is_some()&&!self.allowed_slot(&t.of,key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }

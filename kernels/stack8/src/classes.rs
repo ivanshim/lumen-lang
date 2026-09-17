@@ -562,6 +562,18 @@ impl<'a> Engine<'a> {
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
     }
 
+    /// A member a thing may read but neither write over nor take away:
+    /// its class names the members its things hold, and holds a value
+    /// of its own under this name, which a write to a thing does not
+    /// reach.
+    fn readonly_member(&self, subject: &Value, name: &str) -> Fault {
+        let pieces = self.lang.class_details.get("attribute.readonly").cloned().unwrap_or_default();
+        if pieces.len() != 3 { return self.unwritable_member(subject, name); }
+        let held;
+        let class = match subject { Value::Object(o)=>o.class.name.as_str(), other=>{held=other.contents().core_kind();&held} };
+        format!("{}{class}{}{name}{}", pieces[0], pieces[1], pieces[2]).into()
+    }
+
     /// A member a thing cannot take: it keeps no namespace of its own
     /// to put one in, whether because its class names the members it
     /// holds or because it is a value of a builtin kind.
@@ -815,6 +827,14 @@ impl<'a> Engine<'a> {
                     if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
                 }
                 if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
+                // A class naming the members its things hold, and holding
+                // a value of its own under a name not among them, has
+                // that name read-only: the class's own holding is not
+                // what a write to a thing reaches, and the thing keeps
+                // no namespace to put one of its own in.
+                if self.slots_named(&o.class) && !self.slots_allow(&o.class,name) && self.class_value(&o.class,name).is_some() {
+                    return Err(self.readonly_member(&subject,name));
+                }
                 if value.is_some() && !self.slots_allow(&o.class,name) {return Err(self.unwritable_member(&subject,name));}
                 // A module's members are its own bindings, written through
                 // so that its routines see the new value; a thing's member
@@ -854,6 +874,12 @@ impl<'a> Engine<'a> {
                 (Value::Bond(cell),_) if through=>{*cell.borrow_mut()=v;},
                 _=>members[i].1=v },
             (None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
+    }
+    /// Whether the class, or one it stands on, names the members its
+    /// things may hold. Such a thing keeps no namespace of its own.
+    fn slots_named(&self,c:&Class)->bool {
+        Self::own_class_value(c,self.class_word("slots")).is_some()
+            || c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         let own=Self::own_class_value(c,self.class_word("slots"));

@@ -2338,6 +2338,11 @@
     "' object has no attribute '",
     "'"
   ],
+  "ext.stmt.class.detail.attribute.readonly": [
+    "AttributeError: '",
+    "' object attribute '",
+    "' is read-only"
+  ],
   "ext.stmt.class.detail.bases": [
     "__bases__"
   ],
