@@ -812,9 +812,18 @@ divergence).
 
 Pull request #492 merged into main at a6ec218 with every check green
 on cbd0553. Its first run on 1f0ea37 was red on the scratch job for
-the two params records §1n describes, and nothing else. A count of
-cbd0553 is being taken as this is written and follows here when it
-lands.
+the two params records §1n describes, and nothing else. The count at
+cbd0553, checked method by method against 29052e3 with no pass
+turning into an error or failure: stack8 1,114 of 2,536 across 50
+files with 3 running nothing (was 1,050 of 2,463), microcode7 1,047 of
+2,394 with 4 running nothing (was 991 of 2,321). Eleven files that
+ran nothing at 29052e3 now run on stack8 (test_binop, test_builtin,
+test_cmath, test_complex, test_dict, test_enumerate, test_float,
+test_fractions, test_grammar, test_list, test_set) and ten on
+microcode7 (the same list without test_dict, plus test_long), which
+is the metaclass, generator and subscript work of batches 5 and 6
+letting their imports and class bodies through; test_syntax shows
+fewer passes only because `@cpython_only` now skips what it should.
 
 Batch 7 opens with the Fraction formatting work: `Fraction.__format__`
 after CPython 3.14's fractions module, in Python under
