@@ -2881,6 +2881,12 @@ only. The extension labels so far, all from PHP:
   over twice while the run goes, and `ext.syntax.call.amiss.keyword`
   words that in three pieces, standing before the routine's name,
   between it and the keyword, and after.
+  `ext.syntax.call.amiss.positional` words the nearer mishap of a place
+  filled twice over, once by an argument standing in order and once by
+  one naming it, and it too takes three pieces about the routine's name
+  and the place's. Where a definition leaves it unsaid the plainer
+  `ext.syntax.call.amiss.duplicate` is said instead, so the complaint
+  names the place alone.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. With
@@ -4883,6 +4889,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.positional` | - | - | `TypeError: ` `() got multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |

@@ -2246,6 +2246,17 @@ impl<'a> Engine<'a> {
         format!("{}{}{}{}{}", words[0], called, words[1], name, words[2])
     }
 
+    /// The words for a place filled twice over: once by an argument
+    /// standing in order and once by one naming it. The reference names
+    /// the routine the call was meant for, by the name it goes by where
+    /// it was written, and the words carry that name before the place.
+    fn place_twice(&self, program: &Routine, name: &str) -> String {
+        match self.lang.call_place_twice.as_slice() {
+            [opening, between, closing] => format!("{}{}{}{}{}", opening, program.qualified, between, name, closing),
+            _ => Self::named_fault(&self.lang.call_duplicate, name),
+        }
+    }
+
     /// A counted row's complaint carries the class it belongs to in the
     /// words themselves, so it is marked as told whole and the language
     /// puts no further naming over it.
@@ -2290,7 +2301,7 @@ impl<'a> Engine<'a> {
             let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
             match slot {
                 Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
-                Some(_) => return Err(Self::named_fault(&self.lang.call_duplicate, &name).into()),
+                Some(_) => return Err(self.place_twice(program, &name).into()),
                 None if pairs.is_some() => keywords.push((Value::text(&name), value)),
                 None => return Err(Self::named_fault(&self.lang.call_unknown, &name).into()),
             }

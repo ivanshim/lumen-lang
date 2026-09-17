@@ -6312,7 +6312,13 @@ impl<'a> Machine<'a> {
         let mut spare_names = Vec::new();
         let mut already = std::collections::HashSet::new();
         for (key, worth) in named {
-            let duplicate = || self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key));
+            // A place given twice over, once in order and once by name,
+            // is worded with the routine the call was meant for, under
+            // the name it goes by where it was written.
+            let duplicate = || match self.table.strings("ext.syntax.call.amiss.positional") {
+                [opening, between, closing] => opening.clone() + &program.qualification + between + &key + closing,
+                _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)),
+            };
             if !already.insert(key.clone()) { return Err(self.keyword_twice(program, &key).into()); }
             let found = program.formals.iter().enumerate()
                 .find(|(at, name)| **name == key && matches!(manners[*at], 'b' | 'n'));

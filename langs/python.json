@@ -2846,6 +2846,11 @@
     "TypeError: missing required argument '",
     "'"
   ],
+  "ext.syntax.call.amiss.positional": [
+    "TypeError: ",
+    "() got multiple values for argument '",
+    "'"
+  ],
   "ext.syntax.call.amiss.unknown": [
     "TypeError: unexpected keyword argument '",
     "'"
