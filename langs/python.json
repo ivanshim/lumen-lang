@@ -510,6 +510,9 @@
   "ext.builtin.bytes.fromhex": [
     "bytes.fromhex"
   ],
+  "ext.builtin.bytearray.fromhex": [
+    "bytearray.fromhex"
+  ],
   "ext.builtin.bytes.hex": [
     "hex"
   ],
@@ -518,6 +521,10 @@
   ],
   "ext.builtin.bytes.lower": [
     "lower"
+  ],
+  "ext.builtin.bytes.maketrans": [
+    "bytes.maketrans",
+    "bytearray.maketrans"
   ],
   "ext.builtin.bytes.replace": [
     "replace"
@@ -2926,6 +2933,17 @@
   ],
   "ext.system.bytes.index": [
     "IndexError: index out of range"
+  ],
+  "ext.system.bytes.subscript": [
+    "TypeError: byte indices must be integers or slices, not ",
+    "TypeError: bytearray indices must be integers or slices, not "
+  ],
+  "ext.system.bytes.concat": [
+    "TypeError: can't concat ",
+    " to "
+  ],
+  "ext.system.bytes.missing": [
+    "ValueError: subsection not found"
   ],
   "ext.system.bytes.negative": [
     "ValueError: negative count"

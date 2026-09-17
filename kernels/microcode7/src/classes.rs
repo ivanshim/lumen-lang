@@ -695,10 +695,17 @@ impl<'a> Machine<'a> {
                     }
                     return Ok(Value::Member(Rc::new(under),operation));
                 }
-                // A set and a row of bytes answer some of their methods
-                // with primitives that take the receiver first, so one
-                // read through the thing is tied to the worth it keeps.
-                if matches!(self.table.prims.get(key),Some(Prim::SetCall(1..=17)|Prim::Octets(2..=15))) {
+                // A row of bytes answers to the methods its kind keeps,
+                // which the worth beneath the thing carries out.
+                if matches!(under.settled(),Value::Octets{..}) {
+                    if let Some(working)=self.octet_member(key) {
+                        return Ok(Value::Member(Rc::new(under),working.to_string()));
+                    }
+                }
+                // A set answers some of its methods with primitives that
+                // take the receiver first, so one read through the thing
+                // is tied to the worth it keeps.
+                if matches!(self.table.prims.get(key),Some(Prim::SetCall(1..=17))) {
                     return Ok(Self::wrap(3,vec![Value::text(key),under]));
                 }
             }
