@@ -15,6 +15,32 @@ pub struct Request<'a> {
     pub named: &'a [(String, Value)],
     pub names: Names<'a>,
     pub complaint: &'a dyn Fn(&str) -> String,
+    /// The words for a name the receiver's kind does not answer to,
+    /// which name the kind and the member both.
+    pub unanswered: &'a dyn Fn(&Value, &str) -> String,
+}
+
+/// The names each builtin kind answers to, a line of words to a kind:
+/// what CPython keeps in the type's own namespace. A kind answers its
+/// own alone, so a tuple has no append however a list has one.
+const KIND_MEMBERS: &[(&str, &str)] = &[
+    ("str", "upper lower title capitalize strip lstrip rstrip split rsplit join replace find rfind index count startswith endswith \
+             isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
+    ("list", "append extend insert pop remove sort reverse copy clear index count"),
+    ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
+    ("tuple", "index count"),
+    ("range", "index count"),
+    ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
+    ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
+    ("float", "real imag conjugate as_integer_ratio is_integer hex"),
+    ("complex", "real imag conjugate"),
+];
+
+/// Whether a value of this kind answers to a member of that name.
+pub fn answers_to(value: &Value, operation: &str) -> bool {
+    let kind = value.settled().kind_word();
+    KIND_MEMBERS.iter().find(|(named, _)| *named == kind)
+        .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
 }
 
 pub fn gather(source: &Value, bad: &dyn Fn(&str)->String) -> Result<Vec<Value>,String> {
@@ -45,6 +71,7 @@ fn place(number:i64,size:usize)->usize {
 
 impl Request<'_> {
     fn fail(&self,key:&str)->String{(self.complaint)(key)}
+    fn unknown(&self)->String{(self.unanswered)(self.target,self.operation)}
     fn takes(&self,minimum:usize,maximum:usize)->Result<(),String>{
         if (minimum..=maximum).contains(&self.given.len()){Ok(())}else{Err(self.fail("arguments"))}
     }
@@ -84,8 +111,10 @@ impl Request<'_> {
             Value::Text(chars)=>self.on_text(&chars),
             Value::Vector(items)=>self.on_list(items.to_vec()),
             Value::Dict(entries)=>self.on_map(entries.to_vec()),
-            number @ (Value::Small(_)|Value::Huge(_)|Value::Frac(_))=>self.on_number(number),
-            _=>Err(self.fail("attribute")),
+            // A flag counts as the whole number it stands for, and so
+            // answers the members a whole number answers.
+            number @ (Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Flag(_))=>self.on_number(number),
+            _=>Err(self.unknown()),
         }
     }
     fn on_number(&self,value:Value)->ResultValue{
@@ -101,7 +130,7 @@ impl Request<'_> {
         if self.operation=="bit_count" && !real{return Ok(Value::Small(value.as_big()?.magnitude().count_ones() as i64));}
         if (self.operation=="numerator"||self.operation=="__index__") && !real{return Ok(Value::from_big(value.as_big()?));}
         if self.operation=="denominator" && !real{return Ok(Value::Small(1));}
-        if self.operation=="real"||self.operation=="conjugate"{return Ok(value);}
+        if self.operation=="real"||self.operation=="conjugate"{return Ok(if matches!(value,Value::Flag(_)){Value::from_big(value.as_big()?)}else{value});}
         if self.operation=="imag"{return Ok(if real{crate::data::worth_of_binary(0.0,crate::math::DEFAULT_PLACES).keeping_point(true)}else{Value::Small(0)});}
         if self.operation=="bit_length" && !real{return Ok(Value::Small(value.as_big()?.bits() as i64));}
         if self.operation=="is_integer"{return Ok(Value::Flag(match &value{Value::Frac(r)=>!r.past_numbers()&&(&r.above%&r.beneath).is_zero(),_=>true}));}
@@ -124,7 +153,7 @@ impl Request<'_> {
                 format!("{}0x{}.{:013x}p{:+}",sign,integer,encoding&((1u64<<52)-1),power)
             };return Ok(Value::text(&output));
         }
-        Err(self.fail("attribute"))
+        Err(self.unknown())
     }
     fn on_text(&self,s:&str)->ResultValue{
         let op=self.operation;
@@ -196,7 +225,7 @@ impl Request<'_> {
             }
             return Ok(Value::text(&answer));
         }
-        Err(self.fail("attribute"))
+        Err(self.unknown())
     }
     fn split_text(&self,s:&str)->ResultValue{
         self.takes(0,2)?;let reverse=self.operation=="rsplit";let bound=self.number(1,-1)?;
@@ -262,7 +291,7 @@ impl Request<'_> {
                 let at=first.ok_or_else(||self.fail(if self.operation=="remove"{"remove"}else{"list_index"}))?;
                 if self.operation=="index"{return Ok(Value::Small(at as i64));}values.remove(at);
             }
-            _=>return Err(self.fail("attribute")),
+            _=>return Err(self.unknown()),
         }
         self.replace(Value::Vector(Rc::new(values)))
     }
@@ -319,7 +348,7 @@ impl Request<'_> {
                 self.replace(Value::Dict(Rc::new(entries)))?;
                 return match stopped{Some(words)=>Err(words),None=>Ok(Value::Nil)};
             }
-            _=>return Err(self.fail("attribute")),
+            _=>return Err(self.unknown()),
         }
         self.replace(Value::Dict(Rc::new(entries)))
     }

@@ -31,6 +31,8 @@ impl Value {
             Value::Set(_) => "set",
             Value::Map(_) => "dict",
             Value::Counted(_) => "range",
+            Value::Bytes(_, mutable, _) => if *mutable { "bytearray" } else { "bytes" },
+            Value::Generator(_) => "generator",
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
             // A cursor is known by what it walks, as CPython names it.

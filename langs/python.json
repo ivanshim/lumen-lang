@@ -881,11 +881,26 @@
     "AttributeError: object has no attribute '",
     "'"
   ],
+  "ext.builtin.member.absent.class": [
+    "AttributeError: type object '",
+    "' has no attribute '",
+    "'"
+  ],
+  "ext.builtin.member.absent.module": [
+    "AttributeError: module '",
+    "' has no attribute '",
+    "'"
+  ],
   "ext.builtin.member.get": [
     "getattr"
   ],
   "ext.builtin.member.set": [
     "setattr"
+  ],
+  "ext.builtin.member.unwritable": [
+    "AttributeError: '",
+    "' object has no attribute '",
+    "' and no __dict__ for setting new attributes"
   ],
   "ext.builtin.method.append": [
     "append"
@@ -924,7 +939,9 @@
     "TypeError: invalid method arguments"
   ],
   "ext.builtin.method.error.attribute": [
-    "AttributeError: value has no such method"
+    "AttributeError: '",
+    "' object has no attribute '",
+    "'"
   ],
   "ext.builtin.method.error.bytes": [
     "NotImplementedError: bytes are not available"

@@ -4159,15 +4159,7 @@ impl<'a> Machine<'a> {
                 Prim::BindValueMethod => {
                     let receiver = self.value_of(&args[0], frame)?.keep(false);
                     let operation = self.value_of(&args[1], frame)?.bare();
-                    // The parts of a number are members read, not methods called.
-                    if ["numerator", "denominator", "real", "imag"].contains(&operation.as_str()) {
-                        match receiver.settled() {
-                            Value::Complex(pair) => return Ok(crate::complex::decimal_value(if operation == "real" { pair.0 } else { pair.1 })),
-                            Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_) => return self.value_member(&receiver, &operation, Vec::new(), Vec::new()),
-                            _ => {}
-                        }
-                    }
-                    Ok(Value::Member(Rc::new(receiver), operation))
+                    self.method_of_value(receiver, &operation)
                 }
                 Prim::SortedValues => {
                     let raw = self.value_list(args, frame)?;
@@ -5146,6 +5138,14 @@ impl<'a> Machine<'a> {
         self.native_working(work, name, pair.to_vec())
     }
 
+    /// The working a value's method of this name stands for, where the
+    /// table gives one a builtin kind answers to.
+    fn value_method_named(&self, name: &str) -> Option<String> {
+        crate::table::BUILTIN_LABELS.iter()
+            .find(|(label, prim)| *prim == Prim::ValueMethod && self.table.spells(label, name))
+            .map(|(label, _)| label.strip_prefix("ext.builtin.method.").unwrap_or(label).to_string())
+    }
+
     /// A pair of a thing and a method's name, standing where a routine
     /// would: that method of that thing, the thing handed over first.
     /// A class in the first place names a method of the class itself.
@@ -5178,6 +5178,22 @@ impl<'a> Machine<'a> {
         // A walk, a row, a map or a set hands over the walking pair and
         // the holder's members as a method bound to it.
         if self.native_member(value, name) { return Some(Value::Member(Rc::new(value.clone()), name.to_string())); }
+        // So does a value of a builtin kind with the methods its kind
+        // gives it, and a set or a row of bytes with the builtins that
+        // take the receiver first.
+        if let Some(operation) = self.value_method_named(name) {
+            if crate::members::answers_to(value, &operation) {
+                return Some(Value::Member(Rc::new(value.clone()), operation));
+            }
+        }
+        // Of the bytes primitives only those a row of bytes stands
+        // before are members of one: making bytes out of text belongs
+        // to text, and making a row out of a number or out of written
+        // hexadecimal belongs to no row at all.
+        if matches!((value.settled(), self.table.prims.get(name)),
+            (Value::Set(_), Some(Prim::SetCall(1..=17))) | (Value::Octets { .. }, Some(Prim::Octets(3 | 6..=13)))) {
+            return Some(Value::Wrapped(3, Rc::new(vec![Value::text(name), value.settled()])));
+        }
         let class = match value {
             Value::Thing(thing) => {
                 let fields = thing.holds.borrow();
@@ -5387,6 +5403,84 @@ impl<'a> Machine<'a> {
 
     fn method_fault(&self, kind: &str) -> String {
         self.table.single(&format!("ext.builtin.method.error.{kind}")).unwrap_or_default().to_string()
+    }
+
+    /// Three words about a member and what it was sought on: what that
+    /// goes by stands between the first two, the member's name between
+    /// the last two. Nothing where the table gives no such words.
+    fn member_worded(parts: &[String], called: &str, name: &str) -> String {
+        if parts.len() != 3 { return String::new(); }
+        format!("{}{}{}{}{}", parts[0], called, parts[1], name, parts[2])
+    }
+
+    /// The name a namespace was read in under, where this value is that
+    /// very namespace and nothing else.
+    fn namespace_holding(&self, value: &Value) -> Option<String> {
+        let Value::Thing(thing) = value else { return None };
+        self.imported.iter().find(|(_, held)| matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing))).map(|(path, _)| path.clone())
+    }
+
+    /// The word a value goes by as a kind: a blueprint its own name, a
+    /// builtin kind the word spelling it. Nothing where the value is no
+    /// kind at all.
+    fn kind_word_of(&self, value: &Value) -> Option<String> {
+        match value {
+            Value::Blueprint(class) => Some(class.name.clone()),
+            Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_string()),
+            Value::OctetKind { changeable, .. } => Some(self.octet_kind_word(*changeable).to_string()),
+            Value::Intrinsic(word) if self.table.prims.get(word.as_ref()).map_or(false, Self::names_a_kind) => Some(word.to_string()),
+            other => self.kind_spelling(other).map(|word| word.to_string()),
+        }
+    }
+
+    /// The complaint for a member sought on a namespace or on a kind.
+    /// CPython names each by its own name rather than by the kind it is
+    /// of, and words the two differently. Nothing for anything else.
+    pub(super) fn member_named_missing(&self, value: &Value, name: &str) -> String {
+        let settled = value.settled();
+        if let Some(path) = self.namespace_holding(&settled) {
+            return Self::member_worded(self.table.strings("ext.builtin.member.absent.module"), &path, name);
+        }
+        match self.kind_word_of(&settled) {
+            Some(word) => Self::member_worded(self.table.strings("ext.builtin.member.absent.class"), &word, name),
+            None => String::new(),
+        }
+    }
+
+    /// The complaint for a member sought on a value of a builtin kind
+    /// that answers to no such name.
+    pub(super) fn member_missing(&self, value: &Value, name: &str) -> String {
+        let told = self.member_named_missing(value, name);
+        if !told.is_empty() { return told; }
+        Self::member_worded(self.table.strings("ext.builtin.method.error.attribute"), &value.settled().kind_word(), name)
+    }
+
+    /// The complaint for a member written on such a value, or taken
+    /// away: it keeps no namespace of its own to hold one.
+    pub(super) fn member_unwritable(&self, value: &Value, name: &str) -> String {
+        let told = Self::member_worded(self.table.strings("ext.builtin.member.unwritable"), &value.settled().kind_word(), name);
+        if told.is_empty() { return self.member_missing(value, name); }
+        told
+    }
+
+    /// What a member standing for a value's method comes to: the method
+    /// bound to the value, save that the parts of a number are members
+    /// read rather than methods left standing to be called.
+    fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+        if ["numerator", "denominator", "real", "imag"].contains(&operation) {
+            match receiver.settled() {
+                Value::Complex(pair) => return Ok(crate::complex::decimal_value(if operation == "real" { pair.0 } else { pair.1 })),
+                Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_) => return self.value_member(&receiver, operation, Vec::new(), Vec::new()),
+                _ => {}
+            }
+        }
+        Ok(Value::Member(Rc::new(receiver), operation.to_string()))
+    }
+
+    /// How the table spells a value's method, so that a complaint names
+    /// the member the way a program writes it.
+    fn member_spelling(&self, operation: &str) -> String {
+        self.table.single(&format!("ext.builtin.method.{operation}")).unwrap_or(operation).to_string()
     }
 
     /// The starred clauses of a try. Each takes from the raised gatherer
@@ -5614,7 +5708,8 @@ impl<'a> Machine<'a> {
         } else { keywords };
         if name != "sort" {
             let says = |kind: &str| self.method_fault(kind);
-            return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says }.answer().map_err(Escape::from);
+            let unanswered = |value: &Value, word: &str| self.member_missing(value, &self.member_spelling(word));
+            return crate::members::Request { target: receiver, operation: name, given: arguments, named: &keywords, names: self.wording(), complaint: &says, unanswered: &unanswered }.answer().map_err(Escape::from);
         }
         if !arguments.is_empty() || !matches!(receiver.settled(), Value::Vector(_)) { return Err(self.method_fault("arguments").into()); }
         let Value::Mutable(place, _) = receiver else { return Err(self.method_fault("unready").into()) };
@@ -8411,7 +8506,10 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { return Err(self.method_fault("arguments")); }
                 return self.value_member(&v[0], &operation, v[1..].to_vec(), Vec::new()).map_err(|fault| self.suspension_fault(fault));
             }
-            Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => return Err(self.method_fault("attribute")),
+            Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => {
+                let subject = v.first().cloned().unwrap_or(Value::Nil);
+                return Err(self.member_missing(&subject, name));
+            }
             Prim::SetAssign(operation) => {
                 n(2)?;
                 let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
@@ -8917,12 +9015,21 @@ impl<'a> Machine<'a> {
                             }
                             None => {
                                 self.sought_in_vain = Some((called.clone(), Value::Thing(thing.clone())));
+                                // A namespace names itself and the
+                                // member it has not, where the table
+                                // words that.
+                                let told = self.member_named_missing(&Value::Thing(thing.clone()), &called);
+                                if !told.is_empty() { return Err(told); }
                                 return Err(format!("Undefined property: {}::${}", thing.of.name, called));
                             }
                         }
                     }
+                    // A value of a builtin kind names its kind and the
+                    // member it has not got, where the table words that.
                     other => {
                         self.sought_in_vain = Some((called.clone(), other.clone()));
+                        let told = self.member_missing(other, &called);
+                        if !told.is_empty() { return Err(told); }
                         return Err(format!("Cannot read property '{}' of {}", called, other.bare()));
                     }
                 }
@@ -13248,6 +13355,10 @@ impl Machine<'_> {
         // iter is handed is looked at before it is settled into a copy.
         let live = if op == Prim::Iterator && input.len() == 1 { Self::live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
+        // A member read by name is bound to the value as it stands, so
+        // that a method which writes into the value is handed the very
+        // one; the value is kept before it settles into a copy.
+        let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
         if op != Prim::IdentityOf { for item in &mut input { *item = item.settled(); } }
         if keywords.is_empty() {
             if op == Prim::Hashed && matches!(input.first(), Some(Value::Octets { .. })) { return self.octet_routine(17, &input); }
@@ -13672,9 +13783,28 @@ impl Machine<'_> {
                 require(count, if matches!(op, GetMember | SetMember) { 3 } else { count })?;
                 if op != MembersOf && !matches!(input[1], Value::Text(_)) { return Err(self.core_complaint("core.attribute.name", &input[1].kind_word())); }
                 let Value::Thing(thing) = &input[0] else {
-                    if op == HasAttribute { return Ok(Value::Flag(false)); }
-                    if op == GetMember && input.len() == 3 { return Ok(input[2].clone()); }
-                    return Err(self.core_complaint(if op == MembersOf { "core.vars" } else { "core.unready" }, if op == MembersOf { "" } else { name }));
+                    // A value of a builtin kind answers the members its
+                    // kind gives it. It keeps no namespace of its own,
+                    // so nothing may be written into it or taken out.
+                    if op == MembersOf { return Err(self.core_complaint("core.vars", "")); }
+                    let word = input[1].bare();
+                    if matches!(op, SetMember | DropMember) {
+                        let told = self.member_unwritable(&input[0], &word);
+                        if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
+                        return Err(told);
+                    }
+                    let found = self.attribute(standing.as_ref().unwrap_or(&input[0]), &word);
+                    if op == HasAttribute { return Ok(Value::Flag(found.is_some())); }
+                    if let Some(member) = found {
+                        return match member {
+                            Value::Member(receiver, operation) => self.method_of_value(receiver.as_ref().clone().keep(false), &operation).map_err(|fault| self.suspension_fault(fault)),
+                            settled => Ok(settled),
+                        };
+                    }
+                    if input.len() == 3 { return Ok(input[2].clone()); }
+                    let told = self.member_missing(&input[0], &word);
+                    if told.is_empty() { return Err(self.core_complaint("core.unready", name)); }
+                    return Err(told);
                 };
                 let mut members = thing.holds.borrow_mut();
                 if op == MembersOf { return Err(self.core_complaint("core.unready", name)); }

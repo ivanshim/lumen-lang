@@ -44,6 +44,19 @@ pub struct Lang {
     pub method_keywords: HashMap<String, String>,
     pub value_methods: HashMap<String, String>,
     pub method_errors: HashMap<String, String>,
+    /// The words for a member a value of a builtin kind does not
+    /// answer to: the kind's name between the first two, the member's
+    /// name between the last two.
+    pub member_amiss: Option<(String, String, String)>,
+    /// The same, for a member written or taken away rather than read,
+    /// which a value with no namespace of its own cannot take.
+    pub member_unwritable: Option<(String, String, String)>,
+    /// The same, for a member sought on a kind rather than on a value
+    /// of it: the kind's own name stands between the first two.
+    pub member_absent_class: Option<(String, String, String)>,
+    /// The same, for a member sought on a module, which is named by
+    /// the name it was read in under.
+    pub member_absent_module: Option<(String, String, String)>,
     pub fmt_text_format_zero_string: Vec<String>,
     pub fmt_text_format_zero_integer: Vec<String>,
     pub fmt_op_rem_format_infinity: Vec<String>,
@@ -1198,7 +1211,7 @@ w ext.builtin.copy
 w ext.syntax.map.resized | w ext.syntax.map.unhashable | b ext.syntax.map.value_keys | w ext.builtin.method.popitem | w ext.builtin.method.fromkeys | w ext.builtin.method.error.popitem
 w ext.stmt.with.enter | w ext.stmt.with.leave
 w ext.system.module.cache
-w ext.builtin.module.helper.amiss | w ext.builtin.member.absent
+w ext.builtin.module.helper.amiss | w ext.builtin.member.absent | w ext.builtin.member.unwritable | w ext.builtin.member.absent.class | w ext.builtin.member.absent.module
 b ext.builtin.math.floating
 w ext.builtin.class.derive
 w ext.builtin.call.outcome
@@ -2288,7 +2301,7 @@ impl Lang {
             monadic: unary,
             method_keywords: [("ext.builtin.method.sort.key", "key"), ("ext.builtin.method.sort.reverse", "reverse"), ("ext.builtin.method.split.sep", "sep"), ("ext.builtin.method.split.maxsplit", "maxsplit")].into_iter().map(|(label, purpose)| Ok((purpose, r.strings(label)?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(purpose, words)| words.into_iter().map(move |word| (word, purpose.to_string()))).collect(),
             value_methods: ["indices", "slice_hash", "bit_count", "numerator", "denominator", "real", "imag", "__index__", "__truediv__", "fromhex", "conjugate", "upper", "lower", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "startswith", "endswith", "find", "rfind", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "title", "capitalize", "center", "ljust", "rjust", "zfill", "format", "encode", "append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "get", "keys", "values", "items", "setdefault", "update", "popitem", "fromkeys", "bit_length", "is_integer", "hex", "as_integer_ratio"].into_iter().map(|n| Ok((n, r.strings(&format!("ext.builtin.method.{n}"))?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(n, words)| words.into_iter().map(move |word| (word, n.to_string()))).collect(),
-            method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "attribute", "key", "missing", "mixed", "fill", "hex", "hex_overflow", "popitem"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
+            method_errors: ["unready", "bytes", "arguments", "separator", "substring", "pop", "index", "remove", "list_index", "format", "spec", "unicode", "key", "missing", "mixed", "fill", "hex", "hex_overflow", "popitem"].into_iter().map(|n| Ok((n.to_string(), r.head(&format!("ext.builtin.method.error.{n}"))?.unwrap_or_default()))).collect::<Result<_, String>>()?,
             pipe_words: pipes,
             range_marks: ranges,
             precedence: syntax_tiers,
@@ -2520,6 +2533,10 @@ impl Lang {
             math_floating: r.flag("ext.builtin.math.floating")?,
             module_helper_amiss: r.head("ext.builtin.module.helper.amiss")?.unwrap_or_default(),
             member_absent: r.strings("ext.builtin.member.absent")?,
+            member_amiss: r.about_two("ext.builtin.method.error.attribute")?,
+            member_unwritable: r.about_two("ext.builtin.member.unwritable")?,
+            member_absent_class: r.about_two("ext.builtin.member.absent.class")?,
+            member_absent_module: r.about_two("ext.builtin.member.absent.module")?,
             module_cache: r.strings("ext.system.module.cache")?,
             module_names: r.strings("ext.system.module.name")?,
             module_doc: r.strings("ext.system.module.doc")?,
