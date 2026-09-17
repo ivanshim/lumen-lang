@@ -5173,6 +5173,16 @@ impl<'a> Engine<'a> {
                     _ => named,
                 };
                 let at = self.key_quietly(&named);
+                // A row of bytes carries the places it holds itself, so
+                // it is shortened where it stands and wants no cell to
+                // be written back into. That is what lets a row reached
+                // through a place in something else give a place up.
+                if matches!(target.contents(), Value::Bytes(..)) {
+                    self.drop_top()?;
+                    self.byte_erase(&target.contents(), &at)?;
+                    self.data.push(Value::Null);
+                    return Ok(());
+                }
                 let holder = self.drop_top()?;
                 let Value::Bond(cell) = holder else {
                     return Err("Cannot take a place out of something that is not an array".into());
@@ -5248,25 +5258,8 @@ impl<'a> Engine<'a> {
                     }
                     // A changeable row of bytes gives a place up where
                     // it stands, and a run of places with it; a fixed
-                    // row gives up none and is named in the words for
-                    // a sequence that cannot be shortened.
-                    Value::Bytes(content, mutable, spelling) => {
-                        let row = Value::Bytes(content.clone(), *mutable, spelling.clone());
-                        if !*mutable { return Err(self.sequence_delete_fault(&row).into()); }
-                        {
-                            let mut held = content.borrow_mut();
-                            match &at {
-                                Value::Slice(bounds) if self.lang.slice_values() => {
-                                    let (_, _, _, mut picked) = self.slice_places(bounds, held.len())?;
-                                    picked.sort_unstable();
-                                    picked.dedup();
-                                    for place in picked.into_iter().rev() { held.remove(place); }
-                                }
-                                key => { let place = self.byte_position(key, held.len(), true)?; held.remove(place); }
-                            }
-                        }
-                        row
-                    }
+                    // row gives up none.
+                    held if matches!(held.contents(), Value::Bytes(..)) => self.byte_erase(&held.contents(), &at)?,
                     Value::Array(items) | Value::Tuple(items) => {
                         let i = as_index(&at)?;
                         Value::Map(Rc::new(
@@ -9825,6 +9818,27 @@ impl<'a> Engine<'a> {
         Ok(self.byte_make(table, false))
     }
 
+    /// A row of bytes shortened at a place, or over a run of places.
+    /// The row is handed back as it stands, since it is written where
+    /// it lies; a fixed row gives up nothing and is named in the words
+    /// for a sequence that cannot be shortened.
+    fn byte_erase(&self, row: &Value, at: &Value) -> Res<Value> {
+        let Value::Bytes(content, mutable, _) = row else { return Err(self.byte_fault("unready")); };
+        if !mutable { return Err(self.sequence_delete_fault(row)); }
+        let mut held = content.borrow_mut();
+        match at {
+            Value::Slice(bounds) if self.lang.slice_values() => {
+                let (_, _, _, mut picked) = self.slice_places(bounds, held.len())?;
+                picked.sort_unstable();
+                picked.dedup();
+                for place in picked.into_iter().rev() { held.remove(place); }
+            }
+            key => { let place = self.byte_position(key, held.len(), true)?; held.remove(place); }
+        }
+        drop(held);
+        Ok(row.clone())
+    }
+
     fn byte_make(&self, row: Vec<u8>, mutable: bool) -> Value {
         Value::Bytes(Rc::new(RefCell::new(row)), mutable, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][usize::from(mutable)].as_str()))
     }
@@ -11500,6 +11514,10 @@ impl<'a> Engine<'a> {
                             .collect();
                         Value::Map(Rc::new(kept))
                     }
+                    // A row of bytes reached through a place in
+                    // something else is shortened where it lies, as one
+                    // standing under a name of its own is.
+                    row if matches!(row.contents(), Value::Bytes(..)) => self.byte_erase(&row.contents(), &at)?,
                     Value::Map(pairs) => {
                         if let Some(told) = self.unkeyable(&at) { return Err(told); }
                         if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| self.keys_alike(k, &at)) {
