@@ -13209,6 +13209,9 @@ impl Machine<'_> {
             Value::Tuple(_) | Value::Row(_) => "tuple_iterator",
             Value::Text(text) => if text.is_ascii() { "str_ascii_iterator" } else { "str_iterator" },
             Value::Set(_) => "set_iterator",
+            // What a map gives up when walked are its keys, so a walk of
+            // the map itself is a walk of the keys and named as one.
+            Value::Dict(_) => "dict_keyiterator",
             Value::Octets { changeable, .. } => if *changeable { "bytearray_iterator" } else { "bytes_iterator" },
             _ => return None,
         };
@@ -13741,7 +13744,15 @@ impl Machine<'_> {
                     return self.core_primitive(Prim::Iterator, name, vec![Value::Progression(Rc::new(backwards))], Vec::new());
                 }
                 let walked = self.core_collect(&input[0])?;
-                Ok(cursor(walked.into_iter().rev().collect()))
+                let backwards = cursor(walked.into_iter().rev().collect());
+                // Only a row has a word of its own for the walk that
+                // goes through it the other way; for everything else the
+                // reference says the name of the builtin itself.
+                if let Value::Iterator(state) = &backwards {
+                    let word = if matches!(input[0], Value::Vector(_)) { "list_reverseiterator" } else { name };
+                    state.borrow_mut().walks = Some(Rc::from(word));
+                }
+                Ok(backwards)
             }
             Numbered => {
                 require(1, 2)?;

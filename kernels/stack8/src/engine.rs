@@ -11797,6 +11797,9 @@ impl Engine<'_> {
             Value::Tuple(_) => "tuple_iterator",
             Value::Text(s) => if s.is_ascii() { "str_ascii_iterator" } else { "str_iterator" },
             Value::Set(_) => "set_iterator",
+            // A map walked as it stands hands over the keys it holds, so
+            // that walk is of the same kind as a walk of its keys.
+            Value::Map(_) => "dict_keyiterator",
             Value::Bytes(_, mutable, _) => if *mutable { "bytearray_iterator" } else { "bytes_iterator" },
             _ => return None,
         }))
@@ -12320,7 +12323,15 @@ impl Engine<'_> {
                     return self.core_iterator(&Value::Counted(Rc::new(backwards)));
                 }
                 let mut items = self.core_members(&source)?; items.reverse();
-                Self::core_cursor(CursorSource::Items(items, 0))
+                let walk = Self::core_cursor(CursorSource::Items(items, 0));
+                // A row walked backwards has a word of its own; anything
+                // else walked backwards the reference names after the
+                // builtin that turned it about.
+                if let Value::Cursor(state) = &walk {
+                    let word = match &source { Value::Array(_) | Value::Words(..) => "list_reverseiterator", _ => name };
+                    state.borrow_mut().walked = Some(Rc::from(word));
+                }
+                walk
             }
             Builtin::Enumerate => {
                 arity(1, 2)?;
