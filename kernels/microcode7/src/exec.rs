@@ -4498,6 +4498,15 @@ impl<'a> Machine<'a> {
                             return Ok(Value::Nil);
                         }
                         if let (Some(index), Some(cell)) = (&key, &worth_cell) {
+                            // The worth beneath a thing is written into
+                            // by the rules of its own kind: a row takes
+                            // no key but a whole number or a run of
+                            // places, and refuses any other by the two
+                            // kinds rather than becoming a map.
+                            if self.works_sequences() && !matches!(index, Value::Span(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                                let beneath = cell.borrow().settled();
+                                if matches!(beneath, Value::Vector(_)) { return Err(self.key_refused(&beneath, index).into()); }
+                            }
                             let letter = self.letter_places.then(|| value.render(self.wording()));
                             written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
                             return Ok(Value::Nil);
@@ -4562,6 +4571,13 @@ impl<'a> Machine<'a> {
                             let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                             if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&standing).into()); }
                             key = Some(Value::Small(position));
+                        } else if let (Value::Vector(_), Some(named)) = (&standing, key.as_ref()) {
+                            // A key of some other kind names no place in
+                            // a row. Writing at one is refused by the two
+                            // kinds, as reading at one is, and the row
+                            // stays a row rather than becoming a map
+                            // whose keys are its places.
+                            if !matches!(named, Value::Span(_)) { return Err(self.key_refused(&standing, named).into()); }
                         }
                     }
                     if let Some(Value::Span(bounds)) = &key {
@@ -9093,6 +9109,13 @@ impl<'a> Machine<'a> {
                 // words for a place written into.
                 if let (true, Value::Vector(items)) = (self.works_sequences(), &v[0]) {
                     let offset = match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None };
+                    // A key of some other kind names no place in a row.
+                    // Writing at one is refused by the two kinds, as
+                    // reading at one is, and the row stays a row
+                    // instead of becoming a map keyed by its places.
+                    if offset.is_none() && !matches!(&v[1], Value::Span(_)) {
+                        return Err(self.key_refused(&v[0], &v[1]));
+                    }
                     if let Some(offset) = offset {
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&v[0])); }

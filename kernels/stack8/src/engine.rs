@@ -10711,6 +10711,14 @@ impl<'a> Engine<'a> {
                 if self.lang.sequence_values {
                     if let Value::Array(items) = &target {
                         let counted = match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(t) => Some(i64::from(*t)), _ => None };
+                        // A key of another kind names no place in a row,
+                        // and a row written at one stays a row: the
+                        // write is refused by both kinds, as the reading
+                        // of such a key is, rather than turning the row
+                        // into a map whose keys are its places.
+                        if counted.is_none() && !matches!(&at, Value::Slice(_)) {
+                            return Err(self.sequence_subscript_fault(&target, &at));
+                        }
                         if let Some(counted) = counted {
                             let place = if counted < 0 { counted + items.len() as i64 } else { counted };
                             if place < 0 || place as usize >= items.len() { return Err(self.sequence_written_fault(&target)); }
