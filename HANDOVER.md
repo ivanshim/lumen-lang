@@ -883,6 +883,12 @@ still running when c9766bd was pushed, finished with two programs
 timed out under load (fibonacci_iterative and sieve) that print the
 same output on stream35, stack8 and microcode7 when run alone.
 
+The count at 6348f05, taken with a copied binary over the fifty
+reference files: stack8 1,127 pass of 2,536 ran, microcode7 1,059 of
+2,394, no pass lost against cbd0553. test_fractions rose from 12 to 17
+on both kernels with `Fraction.__format__`, test_list by four, and
+test_bool, test_builtin and test_index by one or two each.
+
 Batch 8 opens with the wording of a missing member. A missing
 attribute on a builtin value said "value has no such method"; it now
 says what CPython says, naming the kind and the member (`'tuple'
