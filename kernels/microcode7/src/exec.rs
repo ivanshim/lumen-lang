@@ -8768,8 +8768,10 @@ impl<'a> Machine<'a> {
         // readings below, as it would were there no such language.
         // A row of bytes joined to what is no row of bytes keeps words
         // of its own, which are asked for ahead of the sequence workings
-        // so that a row standing on the left is named by them.
-        if op == Prim::Plus && v.iter().any(|item| matches!(item, Value::Octets { .. })) {
+        // so that a row standing on the left is named by them. A row
+        // laid down again asks the same question there, so that the
+        // count, and not the row, is the side those words name.
+        if matches!(op, Prim::Plus | Prim::Times) && v.iter().any(|item| matches!(item, Value::Octets { .. })) {
             if let Some(words) = self.kinds_refused(op, v) { return Err(words); }
         }
         if self.works_sequences() {
@@ -8824,8 +8826,7 @@ impl<'a> Machine<'a> {
             if has_octets && op == Prim::Times {
                 let (bytes, times) = if matches!(&v[0], Value::Octets { .. }) { (&v[0], &v[1]) } else { (&v[1], &v[0]) };
                 let Value::Octets { cell, changeable, .. } = bytes else { unreachable!() };
-                let n = self.octet_whole(times)?;
-                let quantity = if n < BigInt::zero() { 0 } else { n.to_usize().ok_or_else(|| self.octet_error("unready"))? };
+                let quantity = self.repeat_count(times)?;
                 let cell = cell.borrow();
                 let mut result = Vec::new();
                 let size = quantity.checked_mul(cell.len()).ok_or_else(|| self.octet_error("unready"))?;
@@ -11485,9 +11486,19 @@ impl<'a> Machine<'a> {
         let [left, right] = v else { return None };
         let worded = |item: &Value| matches!(item, Value::Text(_));
         let of_bytes = |item: &Value| matches!(item, Value::Octets { .. });
-        // Bytes hold refusals of their own for all but a joining, and
-        // two rows of bytes join as they will.
+        // Bytes hold refusals of their own for all but a joining and a
+        // laying down again, and two rows of bytes join as they will.
         if of_bytes(left) || of_bytes(right) {
+            // A row of bytes laid down again asks for a whole count, and
+            // is refused in the words every sequence holds for a count
+            // that is none. Those words name the side that is no
+            // sequence, or, where both are, the one on the right.
+            if op == Prim::Times {
+                let sequenced = |item: &Value| matches!(item, Value::Text(_) | Value::Octets { .. } | Value::Vector(_) | Value::Tuple(_));
+                let by = if sequenced(left) { right } else { left };
+                if matches!(by, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return None; }
+                return Some(self.repeating_refused(by));
+            }
             if op != Prim::Plus || of_bytes(left) && of_bytes(right) { return None; }
             // A row of bytes on the left names in its own words what was
             // handed to it; text or a row on the left names both kinds

@@ -4273,9 +4273,24 @@ impl<'a> Engine<'a> {
         if !matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power) { return None; }
         let texted = |v: &Value| matches!(v, Value::Text(_));
         let byted = |v: &Value| matches!(v, Value::Bytes(..));
-        // Bytes keep refusals of their own for everything but a joining,
-        // and two rows of bytes join as they please.
+        // Bytes keep refusals of their own for everything but a joining
+        // and a laying down again, and two rows of bytes join as they
+        // please.
         if byted(a) || byted(b) {
+            // A value still held in a cell is asked about again once the
+            // cell is opened, so leave it to the reading below: the kind
+            // these words would name is the cell's and not its own.
+            if [a, b].iter().any(|v| matches!(v, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))) { return None; }
+            // A row of bytes laid down again asks for a whole count, and
+            // is refused in the words every sequence keeps for a count
+            // that is none. Those words name the side that is no
+            // sequence, or, where both are, the one on the right.
+            if matches!(op, Action::Mul) {
+                let sequenced = |v: &Value| matches!(v, Value::Text(_) | Value::Bytes(..) | Value::Array(_) | Value::Tuple(_));
+                let by = if sequenced(a) { b } else { a };
+                if matches!(by, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return None; }
+                return Some(self.sequence_repeat_fault(by));
+            }
             if !matches!(op, Action::Add) || byted(a) && byted(b) { return None; }
             // A row of bytes on the left names what was handed to it in
             // its own words; text or a row on the left names both kinds
@@ -7577,9 +7592,7 @@ impl<'a> Engine<'a> {
         if matches!(op, Action::Mul) {
             let pair = match (a, b) { (Value::Bytes(row, mutable, _), n) | (n, Value::Bytes(row, mutable, _)) => Some((row, mutable, n)), _ => None };
             if let Some((row, mutable, n)) = pair {
-                if !matches!(n, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
-                let n = n.as_big()?;
-                let count = if n.is_negative() { 0 } else { n.to_usize().ok_or_else(|| self.byte_fault("unready"))? };
+                let count = self.sequence_count(n)?;
                 let row = row.borrow();
                 let size = row.len().checked_mul(count).ok_or_else(|| self.byte_fault("unready"))?;
                 let mut out = Vec::new(); out.try_reserve(size).map_err(|_| self.byte_fault("unready"))?;
