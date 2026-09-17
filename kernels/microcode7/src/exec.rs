@@ -293,6 +293,11 @@ pub struct Machine<'a> {
     /// The same for a piece the program silenced outright: nothing at
     /// all is said of it, not even a word about how it is written.
     silenced: usize,
+    /// How many compound writes are working out their plain working
+    /// here. A refusal raised under one names the sign as the program
+    /// wrote it, compound and all. Counted, since such a write may
+    /// reach another.
+    landed: usize,
     /// The class each call runs inside, innermost last: what a class
     /// holds alone is reached from there and from nowhere else.
     inside: Vec<Option<Rc<str>>>,
@@ -854,6 +859,7 @@ impl<'a> Machine<'a> {
             entering: None,
             quieted: 0,
             silenced: 0,
+            landed: 0,
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
             afterward: RefCell::new(Vec::new()),
@@ -4490,6 +4496,15 @@ impl<'a> Machine<'a> {
                             return Ok(Value::Nil);
                         }
                         if let (Some(index), Some(cell)) = (&key, &worth_cell) {
+                            // The worth beneath a thing is written into
+                            // by the rules of its own kind: a row takes
+                            // no key but a whole number or a run of
+                            // places, and refuses any other by the two
+                            // kinds rather than becoming a map.
+                            if self.works_sequences() && !matches!(index, Value::Span(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                                let beneath = cell.borrow().settled();
+                                if matches!(beneath, Value::Vector(_)) { return Err(self.key_refused(&beneath, index).into()); }
+                            }
                             let letter = self.letter_places.then(|| value.render(self.wording()));
                             written_into(&mut cell.borrow_mut(), Some(index.clone()), value, &self.no_places(), self.builds_places, letter, !self.names_in_calls)?;
                             return Ok(Value::Nil);
@@ -4554,6 +4569,13 @@ impl<'a> Machine<'a> {
                             let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                             if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&standing).into()); }
                             key = Some(Value::Small(position));
+                        } else if let (Value::Vector(_), Some(named)) = (&standing, key.as_ref()) {
+                            // A key of some other kind names no place in
+                            // a row. Writing at one is refused by the two
+                            // kinds, as reading at one is, and the row
+                            // stays a row rather than becoming a map
+                            // whose keys are its places.
+                            if !matches!(named, Value::Span(_)) { return Err(self.key_refused(&standing, named).into()); }
                         }
                     }
                     if let Some(Value::Span(bounds)) = &key {
@@ -8314,7 +8336,12 @@ impl<'a> Machine<'a> {
             if let [held, by] = v {
                 if let Some(kept) = self.native_written_over(plain, held, by)? { return Ok(kept); }
             }
-            return self.prim_values(plain, name, v);
+            // Whatever the plain working refuses is refused under the
+            // compound sign the program wrote.
+            self.landed += 1;
+            let done = self.prim_values(plain, name, v);
+            self.landed -= 1;
+            return done;
         }
         if Self::is_core_primitive(op) { return self.core_primitive(op, name, v.to_vec(), Vec::new()); }
         // Building octets asks for the numbers they are to keep. A
@@ -8359,6 +8386,12 @@ impl<'a> Machine<'a> {
                 return Err(self.octet_error("unready"));
             }
         }
+        // Where the table holds arithmetic to the kinds it means
+        // something for, a working over kinds it means nothing for is
+        // refused here: before a flag counts as a number, before text
+        // is read for a number it spells, and before nothing counts as
+        // nought.
+        if let Some(words) = self.kinds_refused(op, v) { return Err(words); }
         if self.table.flag("ext.op.arithmetic.flags") && v.iter().any(|x| matches!(x, Value::Flag(_))) {
             let arithmetic = matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Negate | Prim::AsReal);
             if arithmetic {
@@ -9200,6 +9233,13 @@ impl<'a> Machine<'a> {
                 // words for a place written into.
                 if let (true, Value::Vector(items)) = (self.works_sequences(), &v[0]) {
                     let offset = match &v[1] { Value::Flag(b) => Some(i64::from(*b)), Value::Small(i) => Some(*i), Value::Huge(n) => n.to_i64(), _ => None };
+                    // A key of some other kind names no place in a row.
+                    // Writing at one is refused by the two kinds, just
+                    // as reading at one is, and the row stays a row
+                    // instead of becoming a map keyed by its places.
+                    if offset.is_none() && !matches!(&v[1], Value::Span(_)) {
+                        return Err(self.key_refused(&v[0], &v[1]));
+                    }
                     if let Some(offset) = offset {
                         let position = if offset >= 0 { offset } else { offset + items.len() as i64 };
                         if !(0..items.len() as i64).contains(&position) { return Err(self.place_written_beyond(&v[0])); }
@@ -10960,6 +11000,49 @@ impl<'a> Machine<'a> {
             self.sequence_piece("concat", 2), left.kind_word())
     }
 
+    /// How a working's sign is named in a refusal. Under a compound
+    /// write it is the compound spelling the program used, and not the
+    /// plain working that spelling falls back to.
+    fn sign_named(&self, op: Prim) -> String {
+        if self.landed > 0 {
+            let alike = |one: &Prim| std::mem::discriminant(one) == std::mem::discriminant(&op);
+            let mut spellings: Vec<&str> = self.table.compound.iter().filter(|(_, p)| alike(p)).map(|(sign, _)| sign.as_str()).collect();
+            spellings.sort_by(|one, other| one.len().cmp(&other.len()).then_with(|| one.cmp(other)));
+            if let Some(sign) = spellings.first() { return (*sign).to_string(); }
+        }
+        self.written_as(&op)
+    }
+
+    /// The refusal of a working whose operands are of kinds it means
+    /// nothing for, where the table holds arithmetic to its kinds;
+    /// nothing at all for a working the kernel answers for. Text takes
+    /// part only where it joins with text, stands laid down a whole
+    /// number of times, or is given values to write into it; nothing
+    /// takes no part whatever. Neither is read here for a number it
+    /// might stand for. Repeating and writing into text keep the
+    /// refusals of their own, which name what they were handed, and
+    /// octets keep theirs until their wording is settled.
+    fn kinds_refused(&self, op: Prim, v: &[Value]) -> Option<String> {
+        if !self.table.flag("ext.op.arithmetic.strict") { return None; }
+        if !matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power) { return None; }
+        let [left, right] = v else { return None };
+        if [left, right].iter().any(|item| matches!(item, Value::Octets { .. })) { return None; }
+        let worded = |item: &Value| matches!(item, Value::Text(_));
+        let amiss = if worded(left) || worded(right) {
+            let text_alone = op == Prim::Times || (op == Prim::Mod && worded(left));
+            !text_alone && !(op == Prim::Plus && worded(left) && worded(right))
+        } else {
+            matches!(left, Value::Nil) || matches!(right, Value::Nil)
+        };
+        if !amiss { return None; }
+        Some(match (op, left) {
+            // Only a sequence is joined to, and those words name its
+            // kind on either side of what it was handed.
+            (Prim::Plus, Value::Text(_) | Value::Vector(_) | Value::Tuple(_)) => self.joining_refused(left, right),
+            _ => self.operands_refused(&self.sign_named(op), left, right),
+        })
+    }
+
     /// The refusal of a repetition asked for by something that is no
     /// whole number, naming what was handed over instead.
     fn repeating_refused(&self, by: &Value) -> String {
@@ -11055,7 +11138,11 @@ impl<'a> Machine<'a> {
                 match (left, right) {
                     (Value::Vector(_), Value::Vector(_)) => { row.extend(inside(right)); Ok(Some(Value::Vector(Rc::new(row)))) }
                     (Value::Tuple(_), Value::Tuple(_)) => { row.extend(inside(right)); Ok(Some(Value::Tuple(Rc::new(row)))) }
-                    _ => Err(self.joining_refused(left, right)),
+                    // Only a sequence is joined to; where the left
+                    // side is none, both kinds are named instead, as a
+                    // working neither side answers for.
+                    _ if matches!(left, Value::Vector(_) | Value::Tuple(_) | Value::Text(_)) => Err(self.joining_refused(left, right)),
+                    _ => Err(self.operands_refused(&self.sign_named(op), left, right)),
                 }
             }
             Prim::Times if strung(left) || strung(right) => {

@@ -136,6 +136,11 @@ pub struct Engine<'a> {
     /// The same for a piece the program silenced outright: nothing at
     /// all is said of it, not even what is said of how it is written.
     muted: std::cell::Cell<usize>,
+    /// How many compound writes are working out their plain dyad here.
+    /// A complaint raised under one names the sign in its compound
+    /// spelling, which is how the program wrote it. Counted, since one
+    /// such write may reach another.
+    landing: std::cell::Cell<usize>,
     /// The class each call is running inside, innermost last: what a
     /// class keeps to itself is reached from there and nowhere else.
     inside: Vec<Option<Rc<str>>>,
@@ -765,6 +770,7 @@ impl<'a> Engine<'a> {
             ceiling: std::cell::Cell::new(0),
             hushed: std::cell::Cell::new(0),
             muted: std::cell::Cell::new(0),
+            landing: std::cell::Cell::new(0),
             inside: Vec::new(),
             holding: RefCell::new(Vec::new()),
             when_done: RefCell::new(Vec::new()),
@@ -4238,10 +4244,47 @@ impl<'a> Engine<'a> {
         match value { Value::Object(o) => o.class.name.clone(), other => other.core_kind() }
     }
 
-    /// The sign the language writes a dyadic action with.
+    /// The sign the language writes a dyadic action with. Under a
+    /// compound write the sign named is the compound one the program
+    /// wrote, and not the plain working it falls back to.
     fn sign_of(&self, op: &Action) -> String {
         let wanted = std::mem::discriminant(op);
+        if self.landing.get() > 0 {
+            let mut spellings: Vec<&String> = self.lang.compound.iter()
+                .filter(|(_, act)| std::mem::discriminant(*act) == wanted).map(|(sign, _)| sign).collect();
+            spellings.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            if let Some(sign) = spellings.first() { return (*sign).clone(); }
+        }
         self.lang.dyadic.iter().find(|(_, spelled)| std::mem::discriminant(&spelled.action) == wanted).map(|(sign, _)| sign.clone()).unwrap_or_default()
+    }
+
+    /// The words refusing a working whose operands are of kinds it has
+    /// no meaning for, where the definition holds arithmetic to its
+    /// kinds; nothing at all for a working it answers for. Text joins
+    /// only with text, and nothing takes no part in arithmetic: neither
+    /// is read for the number it might stand for. Repetition and
+    /// writing into text are text's own workings and keep their own
+    /// refusals, which name what they were handed rather than both
+    /// sides. Octets are left as they were until their own words are
+    /// settled.
+    fn unworkable_kinds(&self, op: &Action, a: &Value, b: &Value) -> Option<String> {
+        if !self.lang.strict_arithmetic { return None; }
+        if !matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power) { return None; }
+        if matches!(a, Value::Bytes(..)) || matches!(b, Value::Bytes(..)) { return None; }
+        let texted = |v: &Value| matches!(v, Value::Text(_));
+        let amiss = if texted(a) || texted(b) {
+            let text_own = matches!(op, Action::Mul) || (matches!(op, Action::Mod) && texted(a));
+            !text_own && !(matches!(op, Action::Add) && texted(a) && texted(b))
+        } else {
+            matches!(a, Value::Null) || matches!(b, Value::Null)
+        };
+        if !amiss { return None; }
+        Some(match (op, a) {
+            // Only a sequence can be joined to, and the words for that
+            // name its kind on both sides of what it was handed.
+            (Action::Add, Value::Text(_) | Value::Array(_) | Value::Tuple(_)) => self.sequence_concat_fault(a, b),
+            _ => self.operands_complaint(&self.sign_of(op), a, b),
+        })
     }
 
     /// The words for a dyad neither operand's methods would take, its
@@ -5722,7 +5765,12 @@ impl<'a> Engine<'a> {
                     None => {
                         self.data.push(held);
                         self.data.push(by);
-                        return self.perform(inner, 2);
+                        // A complaint from here names the sign the way
+                        // the program wrote it, compound and all.
+                        self.landing.set(self.landing.get() + 1);
+                        let worked = self.perform(inner, 2);
+                        self.landing.set(self.landing.get() - 1);
+                        return worked;
                     }
                 }
             }
@@ -7207,7 +7255,11 @@ impl<'a> Engine<'a> {
                         row.extend(items(b));
                         Value::Tuple(Rc::new(row))
                     }
-                    _ => return Err(self.sequence_concat_fault(a, b)),
+                    // Only a sequence can be joined to; where the
+                    // left side is none, both kinds are named instead,
+                    // as a working neither side answers for.
+                    _ if matches!(a, Value::Array(_) | Value::Tuple(_) | Value::Text(_)) => return Err(self.sequence_concat_fault(a, b)),
+                    _ => return Err(self.operands_complaint(&self.sign_of(op), a, b)),
                 };
                 Ok(Some(joined))
             }
@@ -7335,6 +7387,12 @@ impl<'a> Engine<'a> {
                 return Err(format!("{}{}{}{}{}{}{}", words[0], sign, words[1], a.core_kind(), words[2], b.core_kind(), words[3]));
             }
         }
+        // Where a language holds arithmetic to the kinds it means
+        // something for, a working over kinds it means nothing for is
+        // refused here, before text is read for a number it might spell
+        // or nothing is counted as nought. A value held in a cell is
+        // asked about again once the cell is opened below.
+        if let Some(told) = self.unworkable_kinds(op, a, b) { return Err(told); }
         // A view of a map's keys or pairs meets a set, or another view,
         // as a set does under the set signs; elsewhere it stands for
         // its items.
@@ -10856,6 +10914,14 @@ impl<'a> Engine<'a> {
                 if self.lang.sequence_values {
                     if let Value::Array(items) = &target {
                         let counted = match &at { Value::Small(n) => Some(*n), Value::Huge(n) => n.to_i64(), Value::Flag(t) => Some(i64::from(*t)), _ => None };
+                        // A key of another kind names no place in a row,
+                        // and a row written at one stays a row: the
+                        // write is refused by both kinds, as the reading
+                        // of such a key is, rather than turning the row
+                        // into a map whose keys are its places.
+                        if counted.is_none() && !matches!(&at, Value::Slice(_)) {
+                            return Err(self.sequence_subscript_fault(&target, &at));
+                        }
                         if let Some(counted) = counted {
                             let place = if counted < 0 { counted + items.len() as i64 } else { counted };
                             if place < 0 || place as usize >= items.len() { return Err(self.sequence_written_fault(&target)); }

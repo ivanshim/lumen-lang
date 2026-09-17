@@ -1939,6 +1939,7 @@
   ],
   "ext.op.arithmetic.binary": true,
   "ext.op.arithmetic.flags": true,
+  "ext.op.arithmetic.strict": true,
   "ext.op.assign.compound": true,
   "ext.op.assign.expression": [
     ":="
