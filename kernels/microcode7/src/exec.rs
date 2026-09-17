@@ -1715,9 +1715,10 @@ impl<'a> Machine<'a> {
         Ok(format!("{}{}{}", delimiter, middle, delimiter))
     }
 
-    fn text_remainder(&self, pattern: &str, rhs: &Value) -> Result<String, String> {
+    fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
         if self.table.has_any("ext.builtin.format") {
-            return crate::formatting::Layout { table: self.table, names: self.wording() }.remainder(pattern, rhs);
+            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+            return layout.remainder(pattern, rhs, self);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -4396,7 +4397,8 @@ impl<'a> Machine<'a> {
                         if let Value::Text(pattern) = &subject {
                             let (positions, keywords) = self.open_arguments(values)?;
                             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-                            return Ok(Value::text(&layout.interpolate(pattern, &positions, &keywords)?));
+                            let filled = layout.interpolate(pattern, &positions, &keywords, self)?;
+                            return Ok(Value::text(&filled));
                         }
                     }
                     if self.has_class_order() && matches!(&subject, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..)){let target=self.read_class_member(subject,&called,false)?;return self.apply_class_member(target,values);}
@@ -7471,6 +7473,13 @@ impl<'a> Machine<'a> {
         format!("{}{sign}{}{}{}{}{}", pieces[0], pieces[1], left.kind_word(), pieces[2], right.kind_word(), pieces[3])
     }
 
+    /// Whether a value is one the machine has words of its own for: a
+    /// thing built from a blueprint, in a language that names the
+    /// special methods at all.
+    pub(super) fn speaks_for(&self, item: &Value) -> bool {
+        Self::carries_instance(item) && !self.table.strings("ext.stmt.class.special").is_empty()
+    }
+
     /// A thing written to a specification: by its own method, by the
     /// worth beneath it, or as its text where nothing was specified.
     pub(super) fn thing_in_spec(&mut self, item: &Value, spec: &str) -> Result<String, String> {
@@ -7503,6 +7512,14 @@ impl<'a> Machine<'a> {
         }
         if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
+        // Text before the remainder sign lays its own marks out, which
+        // is the working the left side's own method names. The value on
+        // the right gives the marks its words and is never asked for the
+        // turned-about answer, which it has no business giving.
+        if let (Prim::Mod, [Value::Text(pattern), right], true) = (operation, operands, self.table.flag("ext.op.rem.formats_text")) {
+            let (pattern, right) = (pattern.clone(), right.clone());
+            return self.text_remainder(&pattern, &right).map(|filled| Some(Value::text(&filled)));
+        }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),
             Prim::Over | Prim::OverReal => Some((21, 29)), Prim::IntDiv => Some((22, 30)),
@@ -13748,5 +13765,25 @@ impl Machine<'_> {
         }
     }
 }
+/// The machine answers for the fields a layout cannot lay out: a thing
+/// of the program's own is written by its own methods, and the layout
+/// keeps everything else.
+impl crate::formatting::Elsewhere for Machine<'_> {
+    fn field_laid(&mut self, item: &Value, pattern: &str, convert: &str) -> Result<Option<String>, String> {
+        let held = item.settled();
+        if !self.speaks_for(&held) { return Ok(None); }
+        if convert.is_empty() { return self.thing_in_spec(&held, pattern).map(Some); }
+        let said = Value::text(&self.object_words(&held, convert != "s")?);
+        let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+        layout.present(&said, pattern, "").map(Some)
+    }
+
+    fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String> {
+        let held = item.settled();
+        if !self.speaks_for(&held) { return Ok(None); }
+        self.object_words(&held, quoted).map(Some)
+    }
+}
+
 #[path = "classes.rs"]
 mod classes;

@@ -4268,6 +4268,14 @@ impl<'a> Engine<'a> {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, a, &Value::Map(Rc::new(entries)));
         }
+        // Text on the left of the remainder sign fills its own marks,
+        // which is what the left side's own method does in the
+        // language. The thing on the right is shown by its words and is
+        // never asked for a turned-about answer it has no place giving.
+        if let (Action::Mod, Value::Text(pattern), true) = (op, a, self.lang.rem_formats_text) {
+            let pattern = pattern.clone();
+            return Ok(Value::text(&self.rem_filled(&pattern, b)?));
+        }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
             Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
@@ -6101,9 +6109,10 @@ impl<'a> Engine<'a> {
                 }
                 if let Value::Text(text) = &subject {
                     if Lang::spells(&self.lang.format_method, name) {
+                        let text = text.clone();
                         let args = self.call_items(args)?;
-                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                        self.data.push(Value::text(&writer.template(text, &args)?));
+                        let filled = self.filled_template(&text, &args)?;
+                        self.data.push(Value::text(&filled));
                         return Ok(());
                     }
                 }
@@ -6750,11 +6759,42 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// A template filled by the method a text is asked for. The writer
+    /// keeps the grammar of the fields; a thing of the program's own
+    /// takes the road a formatted string's field takes, so that the two
+    /// ways of writing a field say the same words.
+    fn filled_template(&mut self, text: &str, args: &[(Option<String>, Value)]) -> Res<String> {
+        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+        let mut offered = |value: &Value, spec: &str, conversion: &str| -> Res<Option<String>> {
+            let thing = value.contents();
+            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
+            if conversion.is_empty() { return self.special_format(&thing, spec).map(Some); }
+            let said = Value::text(&self.special_text(&thing, conversion != "s")?);
+            let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+            inner.field(&said, spec, "").map(Some)
+        };
+        writer.template(text, args, &mut offered)
+    }
+
+    /// Text on the left of the remainder sign, filled mark by mark. A
+    /// thing of the program's own gives the marks that show a value its
+    /// own words, as its show and its representation.
+    fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
+        if self.lang.format_builtin.is_empty() { return self.rem_text(template, arguments); }
+        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+        let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
+            let thing = value.contents();
+            if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
+            self.special_text(&thing, code != 's').map(Some)
+        };
+        writer.percent(template, arguments, &mut offered)
+    }
+
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         if !self.lang.format_builtin.is_empty() {
-            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments);
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None));
         }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();

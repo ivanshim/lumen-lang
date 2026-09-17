@@ -7,6 +7,14 @@ use crate::value::{Value, Wording};
 
 type Result<T> = std::result::Result<T, String>;
 
+/// What the engine is asked before a field of a template is written:
+/// the answer stands in the field, and nothing hands it back.
+pub type Offer<'a> = dyn FnMut(&Value, &str, &str) -> Result<Option<String>> + 'a;
+
+/// The same offer for a text mark, which asks only for the words of a
+/// value: the show, the representation or the ascii of it.
+pub type Words<'a> = dyn FnMut(&Value, char) -> Result<Option<String>> + 'a;
+
 pub struct Writer<'a> {
     pub lang: &'a Lang,
     pub words: Wording<'a>,
@@ -38,6 +46,7 @@ impl Writer<'_> {
             "ext.text.format.key" => &self.lang.fmt_text_format_key,
             "ext.text.format.brace.open" => &self.lang.fmt_text_format_brace_open,
             "ext.text.format.brace.close" => &self.lang.fmt_text_format_brace_close,
+            "ext.text.format.brace.single" => &self.lang.fmt_text_format_brace_single,
             "ext.text.format.conversion" => &self.lang.fmt_text_format_conversion,
             "ext.text.format.recursion" => &self.lang.fmt_text_format_recursion,
             "ext.op.rem.format.few" => &self.lang.fmt_op_rem_format_few,
@@ -191,6 +200,15 @@ impl Writer<'_> {
         Ok(rule.pad(&head, &body, '>'))
     }
 
+    /// The complaint for a name nothing was given under. Where the
+    /// language names its exceptions, the name is handed back whole, so
+    /// that the fault raised takes it for its own value and puts the
+    /// quotes round it once and not twice.
+    fn key_missing(&self, key: &str) -> String {
+        if self.lang.exceptions.is_empty() { return self.fault("ext.text.format.key", &[key]); }
+        format!("\0key-text:{key}")
+    }
+
     fn representation_plain(&self, value: &Value) -> Result<String> {
         match value { Value::Text(s) => Ok(s.to_string()), Value::Real(_) => Ok(value.display(&self.words)), _ => self.representation(value, false) }
     }
@@ -239,11 +257,15 @@ impl Writer<'_> {
         Ok((*at != begin).then_some(total))
     }
 
-    pub fn template(&self, text: &str, args: &[(Option<String>, Value)]) -> Result<String> {
-        self.fill_template(text, args, &mut 0, &mut false, 0)
+    /// A template filled field by field. The caller is offered every
+    /// field before the writer takes it, because a thing of the
+    /// program's own is written by methods only the caller can run; a
+    /// caller that hands the field back gets the writer's own marks.
+    pub fn template(&self, text: &str, args: &[(Option<String>, Value)], offered: &mut Offer<'_>) -> Result<String> {
+        self.fill_template(text, args, &mut 0, &mut false, 0, offered)
     }
 
-    fn fill_template(&self, text: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool, depth: usize) -> Result<String> {
+    fn fill_template(&self, text: &str, args: &[(Option<String>, Value)], next: &mut usize, manual: &mut bool, depth: usize, offered: &mut Offer<'_>) -> Result<String> {
         if depth > 2 { return Err(self.fault("ext.text.format.recursion", &[])); }
         let chars: Vec<char> = text.chars().collect();
         let mut at = 0;
@@ -262,7 +284,12 @@ impl Writer<'_> {
                 if !brackets && matches!(c, '!' | ':' | '}') { break; }
                 at += 1;
             }
-            if at == chars.len() { return Err(self.fault("ext.text.format.brace.open", &[])); }
+            // An opening brace that is the last letter of the text is a
+            // lone brace; one with a field begun after it wanted a close.
+            if at == chars.len() {
+                let key = if at == from { "ext.text.format.brace.single" } else { "ext.text.format.brace.open" };
+                return Err(self.fault(key, &[]));
+            }
             let name: String = chars[from..at].iter().collect();
             let value = self.lookup(&name, args, next, manual)?;
             let mut conversion = String::new();
@@ -282,11 +309,14 @@ impl Writer<'_> {
                     if c == '}' { nested -= 1; }
                     at += 1;
                 }
-                spec = self.fill_template(&chars[from..at].iter().collect::<String>(), args, next, manual, depth + 1)?;
+                spec = self.fill_template(&chars[from..at].iter().collect::<String>(), args, next, manual, depth + 1, offered)?;
             }
             if chars.get(at) != Some(&'}') { return Err(self.fault("ext.text.format.brace.open", &[])); }
             at += 1;
-            out.push_str(&self.field(&value, &spec, &conversion)?);
+            match offered(&value, &spec, &conversion)? {
+                Some(written) => out.push_str(&written),
+                None => out.push_str(&self.field(&value, &spec, &conversion)?),
+            }
         }
         Ok(out)
     }
@@ -307,7 +337,7 @@ impl Writer<'_> {
                 .ok_or_else(|| self.fault("ext.text.format.index", &[&n.to_string()]))?
         } else {
             args.iter().find(|(key, _)| key.as_deref() == Some(first)).map(|(_, v)| v.clone())
-                .ok_or_else(|| self.fault("ext.text.format.key", &[first]))?
+                .ok_or_else(|| self.key_missing(first))?
         };
         let mut rest = &name[end..];
         while !rest.is_empty() {
@@ -333,14 +363,17 @@ impl Writer<'_> {
                     Value::Text(s) => index.and_then(|n| s.chars().nth(n)).map(|c| Value::text(&c.to_string())),
                     _ => None,
                 };
-                value = found.ok_or_else(|| self.fault("ext.text.format.key", &[key]))?;
+                value = found.ok_or_else(|| self.key_missing(key))?;
                 rest = &tail[end + 1..];
             } else { return Err(self.fault("ext.text.format.invalid", &[])); }
         }
         Ok(value)
     }
 
-    pub fn percent(&self, text: &str, argument: &Value) -> Result<String> {
+    /// Marks filled one at a time. As with a template, the caller is
+    /// offered every value a text mark is to show, and hands back the
+    /// ones it has no words of its own for.
+    pub fn percent(&self, text: &str, argument: &Value, offered: &mut Words<'_>) -> Result<String> {
         let settled = argument.contents();
         let argument = &settled;
         let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
@@ -368,7 +401,7 @@ impl Writer<'_> {
                 let key: String = chars[begin..at].iter().collect(); at += 1;
                 let Value::Map(pairs) = argument else { return Err(self.fault("ext.op.rem.format.mapping", &[])); };
                 keyed = Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
-                    .ok_or_else(|| self.fault("ext.text.format.key", &[&key]))?);
+                    .ok_or_else(|| self.key_missing(&key))?);
                 mapped = true;
                 used = args.len();
             }
@@ -409,7 +442,11 @@ impl Writer<'_> {
                 return Err(self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &(at - 1).to_string()]));
             }
             let result = if matches!(code, 's' | 'r' | 'a') {
-                let shown = if code == 's' && matches!(value, Value::Text(_)) { self.representation_plain(value)? } else { self.representation(value, code == 'a')? };
+                let shown = match offered(value, code)? {
+                    Some(said) => said,
+                    None if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
+                    None => self.representation(value, code == 'a')?,
+                };
                 let shown: String = shown.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
                 rule.pad("", &shown, '>')
@@ -591,6 +628,7 @@ pub fn names_fault(lang: &Lang, text: &str) -> bool {
         &lang.fmt_text_format_key,
         &lang.fmt_text_format_brace_open,
         &lang.fmt_text_format_brace_close,
+        &lang.fmt_text_format_brace_single,
         &lang.fmt_text_format_conversion,
         &lang.fmt_text_format_recursion,
         &lang.fmt_op_rem_format_few,

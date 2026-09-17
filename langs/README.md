@@ -3430,9 +3430,14 @@ only. The extension labels so far, all from PHP:
 - `ext.text.format.numbered.auto` and `.numbered.manual`: what is said of
   changing from manual to automatic field numbering, or the other way.
   `ext.text.format.index` encloses a missing positional index;
-  `ext.text.format.key` encloses a missing map or keyword name.
-- `ext.text.format.brace.open` and `.brace.close`: complaints for an
-  unfinished field or a lone closing brace. `ext.text.format.conversion`
+  `ext.text.format.key` encloses a missing map or keyword name. Where the
+  language names its exceptions, the absent name is carried by the fault
+  itself, as a lookup on a map carries it, and these words stand only
+  where it names none.
+- `ext.text.format.brace.open`, `.brace.single` and `.brace.close`:
+  complaints for a field left unfinished, for an opening brace that is
+  the last letter of the text, and for a lone closing brace.
+  `ext.text.format.conversion`
   precedes an unknown conversion letter. `ext.text.format.recursion` says
   that nested specifications have gone deeper than two levels.
 - `ext.op.rem.format.few`, `.many` and `.mapping`: complaints for too few
@@ -4976,6 +4981,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.alternate.string` | - | - | `ValueError: Alternate form (#) not allowed in string format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.close` | - | - | `ValueError: Single '}' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.open` | - | - | `ValueError: expected '}' before end of string` | - | - | - | - | - | - | - |
+| `ext.text.format.brace.single` | - | - | `ValueError: Single '{' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.character` | - | - | `OverflowError: %c arg not in range(0x110000)` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
