@@ -1232,6 +1232,30 @@ impl<'a> Machine<'a> {
         holds.iter().position(|(k, x)| k == called && kept(x))
     }
 
+    /// The cell a class keeps for a value of its own. The value is made
+    /// a cell where it still lies bare, so that the class and every name
+    /// reaching it stand for the one holding; the class along the line
+    /// that keeps the name answers for it, and a line keeping none takes
+    /// the name as the class's own.
+    fn own_cell(&self, class: &Rc<Blueprint>, called: &str) -> Rc<RefCell<Value>> {
+        let keeper = class.keeper(called).unwrap_or(class);
+        let mut shared = keeper.shared.borrow_mut();
+        let at = match shared.iter().position(|(k, _)| k.as_str() == called) {
+            Some(at) => at,
+            None => {
+                shared.push((called.to_string(), Value::Nil));
+                shared.len() - 1
+            }
+        };
+        if let Value::Shared(cell) = &shared[at].1 {
+            return cell.clone();
+        }
+        let was = std::mem::replace(&mut shared[at].1, Value::Nil);
+        let cell = Rc::new(RefCell::new(was));
+        shared[at].1 = Value::Shared(cell.clone());
+        cell
+    }
+
     /// Whether a class shares what it holds for itself and those along
     /// its line with the class the run stands in: the two lie along one
     /// line when either is built on the other.
@@ -3281,6 +3305,13 @@ impl<'a> Machine<'a> {
                 if self.has_class_order() && called.as_ref() == self.detail("namespace") && matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Thing(_)) {
                     return self.read_class_member(thing, called, false);
                 }
+                // A class named outright holds its own values where a
+                // thing holds its properties, so a write within one goes
+                // through the cell the class keeps, which is the very
+                // holding that reading the name gives out.
+                if let (true, Value::Blueprint(class)) = (self.has_class_order(), &thing) {
+                    return Ok(Value::Shared(self.own_cell(class, called)));
+                }
                 let Value::Thing(thing) = thing else {
                     if matches!(thing, Value::Routine(_) | Value::Bound(..) | Value::Method(..)) && self.table.has_any("ext.system.scope.unready") {
                         return Err(self.table.single("ext.system.scope.unready").unwrap_or_default().to_string().into());
@@ -3288,7 +3319,16 @@ impl<'a> Machine<'a> {
                     return Err(format!("Cannot share property '{}' of {}", called, thing.bare()).into());
                 };
                 let mut holds = thing.holds.borrow_mut();
-                let at = match self.member_place(&holds, called) {
+                let found = self.member_place(&holds, called);
+                // A thing holding nothing of that name reads the class's
+                // own value, and a write within it is a write within
+                // that shared holding rather than a property made on the
+                // thing, which a write of the name itself would make.
+                if found.is_none() && self.has_class_order() && thing.of.keeper(called).is_some() {
+                    drop(holds);
+                    return Ok(Value::Shared(self.own_cell(&thing.of, called)));
+                }
+                let at = match found {
                     Some(at) => at,
                     None => {
                         holds.push((called.to_string(), Value::Nil));
@@ -3313,25 +3353,7 @@ impl<'a> Machine<'a> {
                 let Value::Blueprint(class) = class else {
                     return Err(format!("Cannot share '{}' in {}", called, class.bare()).into());
                 };
-                let keeper = class.keeper(called).unwrap_or(&class);
-                let mut shared = keeper.shared.borrow_mut();
-                let at = match shared.iter().position(|(k, _)| k.as_str() == called.as_ref()) {
-                    Some(at) => at,
-                    None => {
-                        shared.push((called.to_string(), Value::Nil));
-                        shared.len() - 1
-                    }
-                };
-                if let Value::Shared(cell) = &shared[at].1 {
-                    let cell = cell.clone();
-                    drop(shared);
-                    return Ok(Value::Shared(cell));
-                }
-                let was = std::mem::replace(&mut shared[at].1, Value::Nil);
-                let cell = Rc::new(RefCell::new(was));
-                shared[at].1 = Value::Shared(cell.clone());
-                drop(shared);
-                return Ok(Value::Shared(cell));
+                return Ok(Value::Shared(self.own_cell(&class, called)));
             }
             Form::ShareCalled(spells) => {
                 let spelled = self.value_of(spells, frame)?;
