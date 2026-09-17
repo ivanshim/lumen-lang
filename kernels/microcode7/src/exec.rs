@@ -10167,6 +10167,9 @@ impl<'a> Machine<'a> {
                     (Value::Refusal(_), Value::Refusal(_)) => true,
                     (Value::Intrinsic(a), Value::Intrinsic(b)) => a == b,
                     (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
+                    // A bare kind is held as the kind and nothing more,
+                    // so one kind read twice is the selfsame value.
+                    (Value::KindOf(x), Value::KindOf(y)) => x == y,
                     (Value::Octets { cell: x, .. }, Value::Octets { cell: y, .. }) => Rc::ptr_eq(x, y),
                     (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b),
                     (Value::Set(a), Value::Set(b)) => Rc::ptr_eq(a, b),

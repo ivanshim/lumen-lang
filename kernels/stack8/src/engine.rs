@@ -7715,6 +7715,10 @@ impl<'a> Engine<'a> {
                     (Value::Native(x, v), Value::Native(y, w)) => x == y && v == w,
                     (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
                     (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
+                    // The worth a plain kind goes by is the kind itself
+                    // and nothing else, so two readings of one kind are
+                    // one value however each was come by.
+                    (Value::SortOf(x), Value::SortOf(y)) => x == y,
                     (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
