@@ -90,6 +90,119 @@ def _number(value):
         raise 'TypeError: unsupported operand type for Fraction'
     return Fraction(value)
 
+_DIGITS = '0123456789'
+_ALIGNS = '<>=^'
+
+def _spec_fill(spec):
+    # The opening fill and alignment marks. A mark of alignment in second
+    # place claims whatever stands before it, whatever that character is.
+    if len(spec) > 1 and spec[1] in _ALIGNS:
+        return spec[0], spec[1], 2
+    if len(spec) > 0 and spec[0] in _ALIGNS:
+        return None, spec[0], 1
+    return None, None, 0
+
+def _spec_run(spec, at):
+    digits = ''
+    while at < len(spec) and spec[at] in _DIGITS:
+        digits += spec[at]
+        at += 1
+    return digits, at
+
+def _spec_plain(spec):
+    # The shape a ratio keeps for itself: fill, alignment, sign, the
+    # alternate mark, a width and a grouping mark, and nothing else.
+    # Nothing here asks for a rounded reading, so the ratio stays exact.
+    fill, align, at = _spec_fill(spec)
+    sign = ''
+    if at < len(spec) and spec[at] in '+- ':
+        sign = spec[at]
+        at += 1
+    alternate = False
+    if at < len(spec) and spec[at] == '#':
+        alternate = True
+        at += 1
+    width, at = _spec_run(spec, at)
+    if len(width) > 1 and width[0] == '0':
+        return None
+    grouping = ''
+    if at < len(spec) and spec[at] in ',_':
+        grouping = spec[at]
+        at += 1
+    if at != len(spec):
+        return None
+    return [fill, align, sign, alternate, width, grouping]
+
+def _spec_rounded(spec):
+    # The shape a real number keeps, ending in one of the presentation
+    # marks. A lone zero before the width is a width of its own; a zero
+    # with a digit behind it asks for zero padding.
+    fill, align, at = _spec_fill(spec)
+    sign = ''
+    if at < len(spec) and spec[at] in '+- ':
+        sign = spec[at]
+        at += 1
+    no_minus_zero = False
+    if at < len(spec) and spec[at] == 'z':
+        no_minus_zero = True
+        at += 1
+    alternate = False
+    if at < len(spec) and spec[at] == '#':
+        alternate = True
+        at += 1
+    zeropad = False
+    if at + 1 < len(spec) and spec[at] == '0' and spec[at + 1] in _DIGITS:
+        zeropad = True
+        at += 1
+    width, at = _spec_run(spec, at)
+    grouping = ''
+    if at < len(spec) and spec[at] in ',_':
+        grouping = spec[at]
+        at += 1
+    precision = ''
+    fraction_mark = ''
+    if at < len(spec) and spec[at] == '.':
+        at += 1
+        precision, at = _spec_run(spec, at)
+        if at < len(spec) and spec[at] in ',_':
+            fraction_mark = spec[at]
+            at += 1
+        elif len(precision) == 0:
+            return None
+    if at + 1 != len(spec) or spec[at] not in 'eEfFgG%':
+        return None
+    return [fill, align, sign, no_minus_zero, alternate, zeropad, width, grouping, precision, fraction_mark, spec[at]]
+
+def _spec_pad(fill, align, width, sign, body):
+    room = width - len(sign) - len(body)
+    padding = ''
+    if room > 0:
+        padding = fill * room
+    if align == '<':
+        return sign + body + padding
+    if align == '^':
+        half = len(padding) // 2
+        return padding[:half] + sign + body + padding[half:]
+    if align == '=':
+        return sign + padding + body
+    return padding + sign + body
+
+def _spec_group(digits, mark, from_left):
+    # Digits parted into runs of three by a grouping mark, counted from
+    # the left for the fractional side and from the right for the whole.
+    if len(mark) == 0 or len(digits) == 0:
+        return digits
+    first = 3 if from_left else 1 + (len(digits) - 1) % 3
+    grouped = digits[:first]
+    at = first
+    while at < len(digits):
+        grouped += mark + digits[at:at + 3]
+        at += 3
+    return grouped
+
+def _spec_amiss(spec, detail):
+    raise 'ValueError: Invalid format specifier ' + repr(spec) + " for object of type 'Fraction'" + detail
+
 class Fraction:
     def __init__(self, numerator=0, denominator=None):
         n, d = _ratio(numerator)
@@ -292,6 +405,159 @@ class Fraction:
                 return True
         right = _number(other)
         return self.numerator * right.denominator >= right.numerator * self.denominator
+
+    def _round_to_exponent(self, exponent, no_minus_zero=False):
+        # The nearest whole multiple of ten to the given power, ties
+        # going to the even multiple. The answer is given as a sign, a
+        # count of units and the power those units stand in.
+        if exponent >= 0:
+            top = self.numerator
+            bottom = self.denominator * 10 ** exponent
+        else:
+            top = self.numerator * 10 ** (-exponent)
+            bottom = self.denominator
+        whole, left = divmod(top, bottom)
+        if 2 * left > bottom or (2 * left == bottom and abs(whole) % 2 == 1):
+            whole += 1
+        if whole != 0:
+            return whole < 0, abs(whole), exponent
+        return self.numerator < 0 and not no_minus_zero, 0, exponent
+
+    def _round_to_figures(self, figures):
+        # The same rounding, but counted in significant figures. The
+        # answer carries exactly that many figures unless it is zero.
+        if self.numerator == 0:
+            return False, 0, 1 - figures
+        top = str(abs(self.numerator))
+        bottom = str(self.denominator)
+        reach = len(top) - len(bottom)
+        if bottom <= top:
+            reach += 1
+        sign, units, exponent = self._round_to_exponent(reach - figures)
+        if len(str(units)) == figures + 1:
+            units //= 10
+            exponent += 1
+        return sign, units, exponent
+
+    def _write_plain(self, shape):
+        # A ratio written whole, with no rounding anywhere: the two sides
+        # keep every digit they have and only the trimmings are honoured.
+        fill = shape[0]
+        if fill is None:
+            fill = ' '
+        align = shape[1]
+        if align is None:
+            align = '>'
+        plus = shape[2]
+        if plus == '-':
+            plus = ''
+        alternate = shape[3]
+        width = 0
+        if len(shape[4]):
+            width = int(shape[4])
+        grouping = shape[5]
+        body = format(abs(self.numerator), grouping)
+        if self.denominator > 1 or alternate:
+            body += '/' + format(self.denominator, grouping)
+        sign = plus
+        if self.numerator < 0:
+            sign = '-'
+        return _spec_pad(fill, align, width, sign, body)
+
+    def _write_rounded(self, shape):
+        # A ratio written the way a real number is written, rounded to
+        # the asked places or figures and then dressed the same way.
+        fill = shape[0]
+        if fill is None:
+            fill = ' '
+        align = shape[1]
+        if align is None:
+            align = '>'
+        plus = shape[2]
+        if plus == '-':
+            plus = ''
+        no_minus_zero = shape[3]
+        alternate = shape[4]
+        # Zero padding is asked for by the padding mark, and equally by a
+        # fill of zero that is told to sit between the sign and the digits.
+        zeropad = shape[5] or (fill == '0' and align == '=')
+        width = 0
+        if len(shape[6]):
+            width = int(shape[6])
+        grouping = shape[7]
+        precision = 6
+        if len(shape[8]):
+            precision = int(shape[8])
+        fraction_mark = shape[9]
+        kind = shape[10]
+        trim_zeros = kind in 'gG' and not alternate
+        trim_point = not alternate
+        marker = 'e'
+        if kind in 'EFG':
+            marker = 'E'
+        if kind in 'fF%':
+            exponent = -precision
+            if kind == '%':
+                exponent -= 2
+            negative, units, exponent = self._round_to_exponent(exponent, no_minus_zero)
+            scientific = False
+            place = precision
+        else:
+            if kind in 'gG':
+                figures = precision
+                if figures < 1:
+                    figures = 1
+            else:
+                figures = precision + 1
+            negative, units, exponent = self._round_to_figures(figures)
+            scientific = kind in 'eE' or exponent > 0 or exponent + figures <= -4
+            place = -exponent
+            if scientific:
+                place = figures - 1
+        if kind == '%':
+            suffix = '%'
+        elif scientific:
+            reach = exponent + place
+            shown = str(abs(reach))
+            while len(shown) < 2:
+                shown = '0' + shown
+            suffix = marker + ('-' if reach < 0 else '+') + shown
+        else:
+            suffix = ''
+        digits = str(units)
+        while len(digits) < place + 1:
+            digits = '0' + digits
+        sign = plus
+        if negative:
+            sign = '-'
+        leading = digits[:len(digits) - place]
+        fraction = digits[len(digits) - place:]
+        if trim_zeros:
+            fraction = fraction.rstrip('0')
+        point = '.'
+        if trim_point and len(fraction) == 0:
+            point = ''
+        trailing = point + _spec_group(fraction, fraction_mark, True) + suffix
+        if zeropad:
+            room = width - len(sign) - len(trailing)
+            # Grouping marks land in the padding too, so fewer digits
+            # are needed to reach the asked width.
+            if len(grouping) and room > 0:
+                room = 3 * room // 4 + 1
+            while len(leading) < room:
+                leading = '0' + leading
+        return _spec_pad(fill, align, width, sign, _spec_group(leading, grouping, False) + trailing)
+
+    def __format__(self, format_spec):
+        shape = _spec_plain(format_spec)
+        if shape is not None:
+            return self._write_plain(shape)
+        shape = _spec_rounded(format_spec)
+        if shape is None:
+            _spec_amiss(format_spec, '')
+        if shape[1] is not None and shape[5]:
+            _spec_amiss(format_spec, "; can't use explicit alignment when zero-padding")
+        return self._write_rounded(shape)
 
     def limit_denominator(self, max_denominator=1000000):
         if max_denominator < 1:
