@@ -1686,11 +1686,42 @@ impl<'a> Compiler<'a> {
         answer
     }
 
+    /// Whether the group opening here stands for the thing a place is
+    /// read out of rather than for a list of targets: what closes the
+    /// group is followed by the member mark or by an index, the way
+    /// `del (a).b` and `del (a)[0]` are written.
+    fn grouped_holder(&self) -> bool {
+        let Some(group) = self.lang.grouping.as_ref().filter(|pair| self.at_symbol(&pair.open)) else { return false };
+        let mut depth = 0i32;
+        let mut ahead = 0;
+        loop {
+            let word = self.look_ahead(ahead);
+            if word.shape == Shape::Finish { return false; }
+            if word.is_lexeme(Shape::Sign, &group.open) { depth += 1; }
+            if word.is_lexeme(Shape::Sign, &group.close) {
+                depth -= 1;
+                if depth == 0 { break; }
+            }
+            ahead += 1;
+        }
+        let after = self.look_ahead(ahead + 1);
+        if after.shape != Shape::Sign { return false; }
+        Lang::spells(&self.lang.pipe_words, &after.lexeme)
+            || self.lang.index_brackets.as_ref().map_or(false, |pair| pair.open == after.lexeme)
+    }
+
     /// A place in a binding or deletion; the pipe's mark names a field
     /// here, since no method is being called.
     fn block_place(&mut self) -> Res<()> {
-        let name = self.want_name("as a binding target")?;
-        self.read(&name);
+        if self.grouped_holder() {
+            let close = self.lang.grouping.as_ref().expect("group marks").close.clone();
+            self.take();
+            self.expr(0)?;
+            self.want_sign(&close, "after the bracketed target")?;
+        } else {
+            let name = self.want_name("as a binding target")?;
+            self.read(&name);
+        }
         self.called_on_value()?;
         // Whether the chain so far ends on a call. What a call gave back
         // is no place a binding can reach, but a member of it is: the
@@ -7054,7 +7085,7 @@ impl<'a> Compiler<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", call.close));
             }
-            if targets {
+            if targets && !self.grouped_holder() {
                 let pair = self.lang.grouping.clone().filter(|p| self.at_symbol(&p.open))
                     .or_else(|| self.lang.array_brackets.clone().filter(|p| self.at_symbol(&p.open)));
                 if let Some(mut pair) = pair {

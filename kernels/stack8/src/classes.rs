@@ -817,7 +817,11 @@ impl<'a> Engine<'a> {
                 let at=self.function_storage(&subject);
                 Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
-            _ => return Err(self.unwritable_member(&subject,name)),
+            // A value of a builtin kind keeps no namespace: a write
+            // says so outright, while a taking-away only reports the
+            // member that was never there.
+            _ if value.is_some() => return Err(self.unwritable_member(&subject,name)),
+            _ => return Err(self.missing_member(&subject,name)),
         }
         Ok(Value::Null)
     }

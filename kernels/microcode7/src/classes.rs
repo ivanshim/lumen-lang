@@ -837,10 +837,11 @@ impl<'a> Machine<'a> {
         if success{return Ok(Value::Nil);}
         // A thing whose blueprint names the entries it holds, and a
         // value of a builtin kind, have nowhere to put a new entry.
+        // Only a write says so; a taking-away names the member that
+        // was never there and no more.
         let nowhere=match &subject {
-            Value::Thing(_)=>writing,
             Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)=>false,
-            _=>true,
+            _=>writing,
         };
         if nowhere{return Err(self.unwritable_attribute(&subject,key));}
         Err(self.absent_attribute(&subject,key))
