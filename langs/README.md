@@ -1145,6 +1145,19 @@ only. The extension labels so far, all from PHP:
   one in arithmetic, numeric comparison and conversion to a real.
   Identity keeps the kinds apart, and bit operations keep their own
   rule for two flags.
+- `ext.op.arithmetic.strict`: a switch holding arithmetic to the kinds
+  it has a meaning for. With it on, text takes part in arithmetic only
+  where it joins with text, stands repeated a whole number of times, or
+  is given values to write into it, and nothing at all takes no part
+  whatever; text is no longer read for the number it might spell when a
+  number is wanted, and nothing no longer counts as nought. A joining
+  whose left side is a sequence is refused in `ext.op.sequence.concat`'s
+  words, which name that side's kind twice; every other refusal is told
+  in `ext.stmt.class.binary.amiss`'s, which name the sign and both
+  kinds, and a compound write names the sign in its compound spelling.
+  Repetition and writing into text keep their own refusals, which name
+  what they were handed. With the switch off a kernel reads both as it
+  always did.
 - Python keeps the shared arithmetic at this stage: `//` truncates toward
   zero and `%` is `a - b * (a // b)`. Thus `-17 // 5` is `-3` and
   `-17 % 5` is `-2`, unlike CPython's `-4` and `3`. The shared library's
@@ -4491,6 +4504,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.literal.unimplemented` | - | - | `NotImplemented` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.binary` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.arithmetic.flags` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.op.arithmetic.strict` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.op.assign.compound` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.op.assign.expression` | - | - | `:=` | - | - | - | - | - | - | - |
 | `ext.op.assign.value` | - | - | `true` | - | `true` | - | - | - | - | - |
