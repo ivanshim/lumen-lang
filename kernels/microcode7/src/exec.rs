@@ -11759,6 +11759,17 @@ impl<'a> Machine<'a> {
     /// A value placed in a set at the address it takes there, a thing
     /// kept beside its hash as a map's keys are kept.
     fn set_include(&mut self, store: &Rc<RefCell<crate::data::SetStore>>, item: Value) -> Result<(), String> {
+        // An item addressed by its worth alone has no use for the
+        // entries: its address is what it is whoever else lies there.
+        // Only a thing, whose hash and equality the program answers
+        // for, is placed against the entries, so they are copied out
+        // for that alone and a store is gathered in a single pass
+        // rather than in one pass for every entry it gains.
+        if !matches!(item, Value::Thing(_) | Value::Keyed(..)) {
+            let address = self.hash_for_set(&item)?;
+            store.borrow_mut().put(address, item);
+            return Ok(());
+        }
         let entries = store.borrow().entries.clone();
         let address = self.set_address(&entries, &item)?;
         let kept = if matches!(item, Value::Thing(_)) { self.hash_key(&item)? } else { item };

@@ -3736,7 +3736,7 @@ impl<'a> Engine<'a> {
             Builtin::List => Value::array(Vec::new()),
             Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
             Builtin::Dict => Value::Map(Rc::new(Vec::new())),
-            Builtin::Set | Builtin::Frozen => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), self.lang.builtins.get(word) == Some(&Builtin::Frozen))))),
+            kind @ (Builtin::Set | Builtin::Frozen) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), *kind == Builtin::Frozen)))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
                 start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
@@ -8788,6 +8788,17 @@ impl<'a> Engine<'a> {
     /// A value put into a set at the address it takes there. A thing is
     /// kept beside its hash, as a map's keys are.
     fn set_put(&mut self, cell: &Rc<RefCell<crate::value::Members>>, value: Value) -> Res<()> {
+        // A value addressed by its worth alone wants none of the
+        // members: its address is the same whoever else is there. Only
+        // a thing, whose hash and equality the program itself answers,
+        // is placed against the members, so the members are taken out
+        // for it alone and a set is gathered in one pass and not in as
+        // many passes as it has members.
+        if !matches!(value, Value::Object(_) | Value::Hashed(_)) {
+            let key = self.set_key(&value)?;
+            cell.borrow_mut().insert(key, value);
+            return Ok(());
+        }
         let members = Self::set_pairs(cell);
         let key = self.set_place(&members, &value)?;
         let kept = if matches!(value, Value::Object(_)) { self.special_key(&value)? } else { value };
