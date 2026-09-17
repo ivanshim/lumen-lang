@@ -1692,11 +1692,10 @@ impl<'a> Compiler<'a> {
         let name = self.want_name("as a binding target")?;
         self.read(&name);
         self.called_on_value()?;
-        // What a call gave back is no place a binding can reach: the
-        // whole target is still read, and the run refuses it.
-        if matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _))) {
-            self.awkward_place = true;
-        }
+        // Whether the chain so far ends on a call. What a call gave back
+        // is no place a binding can reach, but a member of it is: the
+        // mark is carried along and only the last step decides.
+        let mut on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
         let mut keyed = Vec::new();
         loop {
             if self.on_any(&self.lang.pipe_words) {
@@ -1705,6 +1704,7 @@ impl<'a> Compiler<'a> {
                 let member = self.want_name("after the member mark")?;
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
                 self.called_on_value()?;
+                on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
             } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
                 self.take();
                 let at = self.mark();
@@ -1763,6 +1763,12 @@ impl<'a> Compiler<'a> {
                 keyed.push(at);
                 self.act(Action::At, 2);
             } else { break; }
+        }
+        // A chain still standing on a call has no cell to be reached
+        // through: the whole target is read all the same, and the run
+        // refuses it.
+        if on_call {
+            self.awkward_place = true;
         }
         self.keyed = keyed;
         Ok(())
