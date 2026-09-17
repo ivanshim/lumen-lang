@@ -585,8 +585,10 @@ only. The extension labels so far, all from PHP:
   conversion complaints; the encoding, offending characters or bytes,
   their positions and the cause follow in the run's account.
 - `ext.system.bytes.unready`: the plain complaint for a byte operation
-  read whole whose running cannot yet be honoured. Taking a builtin byte
-  method as a value, without calling it, is such a form at present.
+  read whole whose running cannot yet be honoured, among them an
+  argument form a method does not take. A method of a row of bytes taken
+  as a value, without calling it, is no longer such a form: it stands as
+  the method bound to that row, as a value method of any other kind does.
 
 - `ext.lexical.string.long`: the quote marks that enclose text over
   lines. The whole mark ends the string; a shorter run and the other

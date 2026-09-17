@@ -8766,6 +8766,12 @@ impl<'a> Machine<'a> {
         // Rows, tuples and text as a language of sequences works them.
         // Anything the sequences have no say in falls through to the
         // readings below, as it would were there no such language.
+        // A row of bytes joined to what is no row of bytes keeps words
+        // of its own, which are asked for ahead of the sequence workings
+        // so that a row standing on the left is named by them.
+        if op == Prim::Plus && v.iter().any(|item| matches!(item, Value::Octets { .. })) {
+            if let Some(words) = self.kinds_refused(op, v) { return Err(words); }
+        }
         if self.works_sequences() {
             if let Some(answer) = self.sequence_working(op, v)? { return Ok(answer); }
         }
@@ -8826,12 +8832,6 @@ impl<'a> Machine<'a> {
                 result.try_reserve_exact(size).map_err(|_| self.octet_error("unready"))?;
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
-            }
-            // A row of bytes joined to what is no row of bytes has its
-            // own words, which are asked for before the rest of these
-            // are refused for want of a wording.
-            if has_octets && op == Prim::Plus {
-                if let Some(words) = self.kinds_refused(op, v) { return Err(words); }
             }
             if has_octets && matches!(op, Prim::Plus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Mod | Prim::Join) {
                 return Err(self.octet_error("unready"));
