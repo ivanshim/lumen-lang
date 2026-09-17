@@ -719,6 +719,67 @@ answers False for any member of a builtin value; the example sieve.py
 takes thirteen seconds alone in a debug build and times out at
 thirty under load.
 
+### 1n. Batch 5 merged as #491; batch 6 is four branches
+
+Pull request #491 merged into main at 41e88c7 with every check green.
+The count at 29052e3, the head of batch 4 and before batch 5, checked
+method by method against eec8af3 with no pass turning into an error or
+failure: stack8 1,050 of 2,463 across 50 files (was 998), microcode7
+991 of 2,321 (was 939). Two files ran nothing on that head that had
+run before, test_generators and test_unpack, and both were hangs the
+generator branch below removes: a `throw` into a `yield from` over an
+iterator the program wrote, and `x, y, z = thing` where the thing
+answers `__getitem__` and lies about its length. The denominators are
+smaller for that reason, not because a test went away.
+
+Batch 6 folds four branches, each probed against python3 on both
+kernels before merging, ten commits on 41e88c7:
+
+- **A write through a subscript on a global inside a function**
+  (`table[k] = v` in a function body, `table` a module global not
+  declared `global`) wrote into a fresh local on both kernels; the
+  write now reaches the name where it lives, as CPython does since the
+  statement binds no name. The same branch guards a callable whose
+  `__call__` is itself an instance (`A.__call__ = A(); A()()`), which
+  looped without limit; it is refused at the same recursion depth as
+  any other call, as CPython's RecursionError is.
+- **The two generator hangs above.** A `yield from` over the program's
+  own iterator is stepped a member at a time, so a `throw` or `close`
+  reaches the inner generator and a `StopIteration` from it ends the
+  walk; and unpacking asks a `__getitem__`-only thing for one member at
+  a time until IndexError, rather than gathering it first through a
+  `__len__` it may not honour.
+- **A write within a class's own value** (`C.table[k] = v` on a class
+  attribute, and `self.rows[i] = v` where `rows` is shared by the
+  class) reached a copy on microcode7 ("Cannot share property") and
+  lost the write; it now reaches the value the class keeps.
+- **`isinstance` and `issubclass` ask the metaclass first**, so
+  `ABCMeta.__instancecheck__` and `__subclasscheck__` run and
+  `register()` on an abstract class answers as CPython does;
+  `langs/lib_python/modules/abc.py` grows the registry and the two
+  hooks, and `collections/abc.py` and `numbers.py` lean on it rather
+  than on lists of their own.
+
+No record moves: the 190 scratch programs the batch touches print what
+their fixtures hold on both kernels, the sixteen unittest fixtures
+that have moved since d669238 are unchanged, and the Python and PHP
+example sweeps pass alone what they timed out on under load (sieve.py,
+and four PHP programs on stack8, all with empty output at thirty
+seconds and their expected output when run alone).
+
+Gaps this round records, beyond §1m's: on microcode7 a generator
+writing into a subscript of a name from an enclosing scope
+(`def g(): d[k] = yield` inside a function) is refused with "First
+argument to () must be an array variable name", being fixed on the
+subscript branch; a `del` through a class attribute (`del D.table["z"]`)
+panics stack8 when the class body defines `__delitem__`, on its own
+branch; the `conjoin` doctest in test_generators passes on stack8 and
+fails on microcode7, one method that the two kernels disagree on;
+`lst.__setitem__(i, v)` called by name is not found on either kernel;
+and unreferenced generators are never finalised, so a `finally:` in a
+generator that is dropped mid-walk does not run (generators-run/8
+records this as a known divergence).
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
