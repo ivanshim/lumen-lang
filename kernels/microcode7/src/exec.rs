@@ -3646,6 +3646,15 @@ impl<'a> Machine<'a> {
                     asked?;
                     return Ok(Value::Nil);
                 }
+                // A thing whose blueprint appoints no such method parts
+                // with no place, and the kind that will not is named, as
+                // a tuple's and a text's are. A thing keeping a native
+                // worth parts with the place out of that worth, which is
+                // what the thing holds.
+                if matches!(&target, Value::Thing(_)) && self.table.has_any("ext.op.sequence.delete")
+                    && !matches!(Self::underlying(&target), Some(Value::Mutable(..))) {
+                    return Err(self.deletion_refused(&target).into());
+                }
                 // A thing standing for a whole number is that number
                 // where a row or a text is shortened at a place.
                 let named = if matches!(target, Value::Vector(_) | Value::Text(_)) && matches!(named, Value::Thing(_)) {
@@ -3680,9 +3689,19 @@ impl<'a> Machine<'a> {
                 // collection itself is in hand.
                 let mut cell = cell;
                 loop {
-                    let within = match &*cell.borrow() {
-                        Value::Mutable(inner, _) | Value::Shared(inner) => Some(inner.clone()),
-                        _ => None,
+                    let within = {
+                        let inside = cell.borrow();
+                        match &*inside {
+                            Value::Mutable(inner, _) | Value::Shared(inner) => Some(inner.clone()),
+                            // A thing of a blueprint standing on a
+                            // native kind is stepped into as its worth,
+                            // which is where its places live.
+                            thing @ Value::Thing(_) => match Self::underlying(thing) {
+                                Some(Value::Mutable(inner, _)) => Some(inner),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
                     };
                     match within { Some(inner) => cell = inner, None => break }
                 }

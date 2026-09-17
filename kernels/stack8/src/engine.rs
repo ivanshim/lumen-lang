@@ -4728,6 +4728,15 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
+                // A thing whose class answers no such method gives up no
+                // place, and the kind that will not is named, as a
+                // tuple's and a text's are. A thing keeping a worth of
+                // the builtin kind its class stands on gives the place
+                // up out of that worth, which is the thing's own.
+                if matches!(&target, Value::Object(_)) && !self.lang.sequence_delete.is_empty()
+                    && !matches!(Self::worth_of(&target), Some(Value::Collection(..))) {
+                    return Err(self.sequence_delete_fault(&target).into());
+                }
                 let named = match &named {
                     Value::Slice(bounds) if self.lang.slice_values() => Value::Slice(Rc::new(self.slice_settled(bounds)?)),
                     // A thing standing for a whole number is that number
@@ -4751,9 +4760,19 @@ impl<'a> Engine<'a> {
                 // until one holds the collection and not another cell.
                 let mut cell = cell;
                 loop {
-                    let deeper = match &*cell.borrow() {
-                        Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
-                        _ => None,
+                    let deeper = {
+                        let inside = cell.borrow();
+                        match &*inside {
+                            Value::Collection(held, _) | Value::Bond(held) | Value::Binding(held) => Some(held.clone()),
+                            // A thing of a class standing on a builtin
+                            // kind is stepped into as its worth, which
+                            // is where its places live.
+                            thing @ Value::Object(_) => match Self::worth_of(thing) {
+                                Some(Value::Collection(held, _)) => Some(held),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
                     };
                     match deeper { Some(held) => cell = held, None => break }
                 }
@@ -5505,7 +5524,10 @@ impl<'a> Engine<'a> {
                 Value::Null
             }
             Action::HasMember(name) => {
-                let held = self.drop_top()?;
+                // What a shared cell holds is what the member is looked
+                // for on, as reading one is: a name a place was taken
+                // out of stands for its cell from then on.
+                let held = { let top = self.drop_top()?; if let Value::Bond(cell) = &top { cell.borrow().clone() } else { top } };
                 let class = match &held {
                     Value::Object(o) => Some(&o.class),
                     Value::Class(c) => Some(c),
