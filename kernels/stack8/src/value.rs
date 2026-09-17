@@ -342,14 +342,21 @@ pub struct Members {
     /// so that whoever holds the members knows which kind they are of
     /// without asking the definition for the word again.
     pub fixed: bool,
+    /// The fold of a fixed set's members, once it has been reckoned.
+    /// Nothing may alter such a set, so the fold never goes stale and
+    /// is reckoned but once however often it is asked for. A set of
+    /// sets would otherwise fold its members afresh at every level and
+    /// cost what the whole nesting beneath it costs.
+    pub folded: std::cell::Cell<Option<i64>>,
 }
 
 impl Members {
     pub fn empty(word: String, fixed: bool) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::new(), word, fixed }
+        Self { row: Vec::new(), held: std::collections::HashMap::new(), word, fixed, folded: std::cell::Cell::new(None) }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
+        self.folded.set(None);
         if !self.held.contains_key(&key) {
             self.row.push(key.clone());
             self.held.insert(key, value);
@@ -357,6 +364,7 @@ impl Members {
     }
 
     pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.folded.set(None);
         let found = self.held.remove(key);
         if found.is_some() { self.row.retain(|k| k != key); }
         found
@@ -401,14 +409,21 @@ impl Members {
         format!("{{{apart}}}")
     }
 
-    /// The address the whole of these members takes where a set or a
-    /// map holds them: the addresses of the members themselves, put in
-    /// order so that two sets of the same members share the one
-    /// address however either was gathered.
+    /// The address the whole of these members takes where a set holds
+    /// them: the addresses of the members themselves, put in order and
+    /// then folded into one number, so that two sets of the same
+    /// members share the one address however either was gathered. The
+    /// addresses are folded rather than written one after another
+    /// because a set of sets would double the writing at every level:
+    /// the numbers built out of sets alone reach a length no machine
+    /// could hold, whilst the fold stays one number wide however deep
+    /// the nesting goes.
     pub fn address(&self) -> String {
-        let mut places = self.row.clone();
-        places.sort();
-        format!("frozen:{places:?}")
+        let mut places: Vec<&str> = self.row.iter().map(String::as_str).collect();
+        places.sort_unstable();
+        let mut state = std::collections::hash_map::DefaultHasher::new();
+        for place in places { std::hash::Hash::hash(place, &mut state); }
+        format!("frozen:{:x}", std::hash::Hasher::finish(&state))
     }
 }
 

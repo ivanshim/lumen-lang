@@ -153,6 +153,7 @@ impl Value {
             Value::Set(members) => {
                 let held = members.try_borrow().ok()?;
                 if !held.fixed { return None; }
+                if let Some(already) = held.folded.get() { return Some(already); }
                 let mut folded = 0u64;
                 for place in &held.row {
                     let member = &held.held[place];
@@ -162,7 +163,9 @@ impl Value {
                 folded ^= (held.row.len() as u64).wrapping_add(1).wrapping_mul(1927868237u64);
                 folded ^= (folded >> 11) ^ (folded >> 25);
                 folded = folded.wrapping_mul(69069u64).wrapping_add(907133923u64);
-                Some(if folded == u64::MAX { 590923713 } else { folded as i64 })
+                let whole = if folded == u64::MAX { 590923713 } else { folded as i64 };
+                held.folded.set(Some(whole));
+                Some(whole)
             }
             Value::Tuple(items) => {
                 let mut h = 2870177450012600261u64;

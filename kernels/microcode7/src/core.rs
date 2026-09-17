@@ -168,6 +168,7 @@ impl Value {
             Self::Set(store) => {
                 let held = store.try_borrow().ok()?;
                 if !held.sealed { return None; }
+                if let Some(worked) = held.reckoned.get() { return Some(worked); }
                 let mut folded: u64 = 0;
                 for (_, entry) in &held.entries {
                     let lane = match entry { Self::Keyed(_, hash) => hash.hash_number()?, plain => plain.hash_number()? } as u64;
@@ -176,7 +177,9 @@ impl Value {
                 folded ^= (held.entries.len() as u64).wrapping_add(1).wrapping_mul(1_927_868_237u64);
                 folded ^= (folded >> 11) ^ (folded >> 25);
                 folded = folded.wrapping_mul(69_069u64).wrapping_add(907_133_923u64);
-                return Some(if folded == u64::MAX { 590_923_713 } else { folded as i64 });
+                let entire = if folded == u64::MAX { 590_923_713 } else { folded as i64 };
+                held.reckoned.set(Some(entire));
+                return Some(entire);
             }
             Self::Tuple(parts) => {
                 let mut accum: u64 = 2_870_177_450_012_600_261;

@@ -260,27 +260,41 @@ pub struct SetStore {
     /// kept here, beside the entries, so that whoever holds the store
     /// knows the kind without going back to the table for the word.
     pub sealed: bool,
+    /// A sealed store's fold, once it has been worked out. Nothing may
+    /// alter such a store, so the fold cannot go stale and is worked
+    /// out once however often it is wanted; a store of stores would
+    /// otherwise fold every level beneath it over again each time.
+    pub reckoned: std::cell::Cell<Option<i64>>,
 }
 
 impl SetStore {
     pub fn new(spelling: &str, sealed: bool) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed }
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None) }
     }
 
-    /// The address the whole store takes where a set or a map holds it:
-    /// the addresses of its entries, ordered, so that two stores of the
-    /// same entries take the one address however either was gathered.
+    /// The address the whole store takes where a set holds it: the
+    /// addresses of its entries, ordered and then gathered into a
+    /// single number, so that two stores of the same entries take the
+    /// one address however either was gathered. They are gathered
+    /// rather than written end to end because a store of stores would
+    /// double the writing at every level: the numbers built from sets
+    /// alone grow past any length a machine could hold, whereas one
+    /// number stays one number however deep the nesting runs.
     pub fn whole_address(&self) -> String {
         let mut places: Vec<&str> = self.entries.iter().map(|(address, _)| address.as_str()).collect();
         places.sort_unstable();
-        format!("sealed:{places:?}")
+        let mut gathering = std::collections::hash_map::DefaultHasher::new();
+        for place in places { std::hash::Hash::hash(place, &mut gathering); }
+        format!("sealed:{:x}", std::hash::Hasher::finish(&gathering))
     }
 
     pub fn put(&mut self, address: String, item: Value) {
+        self.reckoned.set(None);
         if self.keys.insert(address.clone()) { self.entries.push((address, item)); }
     }
 
     pub fn take(&mut self, address: &str) -> Option<Value> {
+        self.reckoned.set(None);
         if !self.keys.remove(address) { return None; }
         let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
         Some(self.entries.remove(place).1)
