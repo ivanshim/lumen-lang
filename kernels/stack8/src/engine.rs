@@ -1626,6 +1626,30 @@ impl<'a> Engine<'a> {
         held.iter().position(|(n, v)| n == name && standing(v))
     }
 
+    /// The cell a class keeps for a value of its own, made where the
+    /// value still lies bare so that the class and every name that
+    /// reaches it stand for the one holding. The class along the line
+    /// that keeps the name answers for it, and a line keeping none takes
+    /// the name as this class's own.
+    fn own_cell(class: &Class, name: &str) -> Rc<RefCell<Value>> {
+        let keeper = class.holder(name).unwrap_or(class);
+        let mut own = keeper.shared.borrow_mut();
+        let at = match own.iter().position(|(n, _)| n == name) {
+            Some(at) => at,
+            None => {
+                own.push((name.to_string(), Value::Null));
+                own.len() - 1
+            }
+        };
+        if let Value::Bond(shared) = &own[at].1 {
+            return shared.clone();
+        }
+        let was = std::mem::replace(&mut own[at].1, Value::Null);
+        let shared = Rc::new(RefCell::new(was));
+        own[at].1 = Value::Bond(shared.clone());
+        shared
+    }
+
     /// The method a class answers with for a property the thing does
     /// not hold, and the one it takes such a write with, where the
     /// language names them and the class is written with them.
@@ -4448,28 +4472,7 @@ impl<'a> Engine<'a> {
                     self.class_it_spells(top)
                 };
                 match stands {
-                    Value::Class(c) => {
-                        let holder = c.holder(&name).unwrap_or(&c);
-                        let mut own = holder.shared.borrow_mut();
-                        let at = match own.iter().position(|(n, _)| n == name.as_ref()) {
-                            Some(at) => at,
-                            None => {
-                                own.push((name.to_string(), Value::Null));
-                                own.len() - 1
-                            }
-                        };
-                        if let Value::Bond(shared) = &own[at].1 {
-                            let shared = shared.clone();
-                            drop(own);
-                            Value::Bond(shared)
-                        } else {
-                            let was = std::mem::replace(&mut own[at].1, Value::Null);
-                            let shared = Rc::new(RefCell::new(was));
-                            own[at].1 = Value::Bond(shared.clone());
-                            drop(own);
-                            Value::Bond(shared)
-                        }
-                    }
+                    Value::Class(c) => Value::Bond(Self::own_cell(&c, name)),
                     v => {
                         let told = self.no_such_class(&v).unwrap_or_else(|| format!("Cannot reach '{}' in {}", name, v.plain()));
                         return Err(told.into());
@@ -5430,9 +5433,25 @@ impl<'a> Engine<'a> {
             // write both see.
             Action::BondField(name) => {
                 match self.drop_top()? {
+                    // A class named outright keeps its own values where
+                    // a thing keeps its properties, so a place within one
+                    // is reached through the cell the class holds, which
+                    // is the very holding that reading the name gives.
+                    Value::Class(c) if self.lang.member_pipes => Value::Bond(Self::own_cell(&c, name)),
                     Value::Object(o) => {
                         let mut held = o.fields.borrow_mut();
-                        let at = match self.member_at(&held, name) {
+                        let found = self.member_at(&held, name);
+                        // A thing holding nothing of that name reads its
+                        // class's own value, so a write within the place
+                        // lands in that shared holding rather than making
+                        // a property only the thing would see, as a write
+                        // of the name itself still does.
+                        if found.is_none() && self.lang.member_pipes && o.class.holder(name).is_some() {
+                            drop(held);
+                            self.data.push(Value::Bond(Self::own_cell(&o.class, name)));
+                            return Ok(());
+                        }
+                        let at = match found {
                             Some(at) => at,
                             None => {
                                 held.push((name.to_string(), Value::Null));
