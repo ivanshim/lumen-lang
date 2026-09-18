@@ -232,6 +232,10 @@ pub struct CursorState {
     pub pending: Option<Value>,
     pub finished: bool,
     pub busy: bool,
+    /// The word the reference gives a walk of the very thing this one
+    /// was made from. A walk gathered into a row of members has lost
+    /// what it was gathered from, and this keeps that much of it.
+    pub walked: Option<Rc<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -732,7 +736,10 @@ impl Value {
             (Value::Complex(z), other) | (other, Value::Complex(z)) => z.imag == 0.0 && crate::complex::real(z.real).equals(&if let Value::Flag(b) = other { Value::Small(i64::from(*b)) } else { other.clone() }),
             (Value::Imaginary(a, _), Value::Imaginary(b, _)) => a == b,
             (Value::Imaginary(a, _), b) | (b, Value::Imaginary(a, _)) => *a == 0.0 && (matches!(b, Value::Flag(false)) || b.equals(&Value::Small(0))),
-            (Value::Native(a,_), Value::Native(b,_)) => a == b,
+            // Two builtin words are one value only where the word is
+            // the same word: a definition may spell two kinds with one
+            // piece of work beneath them, and they are not each other.
+            (Value::Native(a,x), Value::Native(b,y)) => a == b && x == y,
             (Value::Slice(a), Value::Slice(b)) => a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::Cursor(a), Value::Cursor(b)) => Rc::ptr_eq(a,b),
             (Value::Set(a), Value::Set(b)) => {
