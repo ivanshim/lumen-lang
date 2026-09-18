@@ -7192,16 +7192,12 @@ impl<'a> Builder<'a> {
                         args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
                         return Ok(sequence(args));
                     }
-                    // The receiver's kind answers to no such name: the
-                    // call is a pipe into a routine the program binds by
-                    // that name, and where it binds none the value is
-                    // told it has no such member.
+                    // The receiver's kind answers to no such name, and
+                    // a table wording that complaint has no pipe to fall
+                    // into: the value is told it has no such member,
+                    // whatever a name of that spelling holds.
                     if table.prims.get(&named).is_none() && table.strings("ext.builtin.method.error.attribute").len() == 3 {
-                        if let Form::Read(slot) = r.read(&named) {
-                            let amiss = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
-                            let piped = invoke(Form::Read(slot.clone()), args);
-                            return Ok(r.choose(Form::Missing(slot), amiss, piped));
-                        }
+                        return Ok(prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]));
                     }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
