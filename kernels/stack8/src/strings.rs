@@ -90,6 +90,20 @@ pub fn quoted(s: &str) -> String {
     result
 }
 
+/// Words with every letter outside ASCII put into the escape that
+/// stands for it. This is what the ascii builtin lays over the words
+/// the quoting builtin gives, and what an ascii field lays over them.
+pub fn ascii_escaped(said: &str) -> String {
+    let mut out = String::new();
+    for c in said.chars() {
+        if c.is_ascii() { out.push(c); continue; }
+        let n = c as u32;
+        out.push_str(&if n <= 255 { format!("\\x{n:02x}") }
+            else if n <= 65535 { format!("\\u{n:04x}") } else { format!("\\U{n:08x}") });
+    }
+    out
+}
+
 pub fn row(items: &[String], tuple: bool) -> String {
     let joined = items.iter().map(|s| quoted(s)).collect::<Vec<_>>().join(", ");
     if tuple { format!("({}{})", joined, if items.len() == 1 { "," } else { "" }) }

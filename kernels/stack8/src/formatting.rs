@@ -113,7 +113,14 @@ impl Writer<'_> {
             }
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Null | Value::Ellipsis => Ok(value.display(&self.words)),
             Value::Bond(cell) => self.representation(&cell.borrow(), ascii),
-            _ => Err(self.lang.format_unsupported.clone().unwrap_or_default()),
+            // A value the writer has no marks of its own for is
+            // written as the quoting builtin writes it, so that a field
+            // says of it what a plain quoting says rather than refusing
+            // it outside the road a raised value travels.
+            other => {
+                let said = other.core_repr(self.words.shortest_reals);
+                Ok(if ascii { crate::strings::ascii_escaped(&said) } else { said })
+            }
         }
     }
 
