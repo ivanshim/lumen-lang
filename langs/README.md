@@ -566,7 +566,12 @@ only. The extension labels so far, all from PHP:
   even when the literal stands in a routine never called.
 - `ext.system.bytes.arguments`, `.range`, `.negative` and `.index`: plain
   complaints for arguments of the wrong kind, a byte outside its bounds,
-  a negative count and an index beyond the row.
+  a negative count and an index beyond the row. `.range` words the bound
+  twice: first of the bytes a whole row is built from, then of one byte
+  written into a row that stands already. `.index` words the place
+  beyond the row three times over: first of a place read or written,
+  then of a place taken out of a row and handed back, and last of such a
+  place asked of an empty row.
 - `ext.system.bytes.subscript`: the words refusing a key of a kind a row
   of bytes cannot be read at, the first for the fixed kind and the second
   for the mutable one, with the key's kind written after them. A row of
@@ -574,7 +579,9 @@ only. The extension labels so far, all from PHP:
   being spoken of in the singular. `ext.system.bytes.concat` names, before
   and between, what was handed to a row of bytes to join to it and then
   the row's own kind. `ext.system.bytes.missing` is the whole complaint
-  for a sequence sought in a row and not standing there.
+  for a sequence sought in a row and not standing there, and then the
+  whole complaint for one byte sought in a changeable row and not
+  standing there.
 - `ext.system.bytes.immutable` and `.unhashable`: plain complaints for
   writing into immutable bytes and hashing mutable bytes.
 - `ext.system.bytes.separator`, `.overflow`, `.unsigned` and `.bad_order`:
@@ -4963,12 +4970,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
 | `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
-| `ext.system.bytes.index` | - | - | `IndexError: index out of range` | - | - | - | - | - | - | - |
-| `ext.system.bytes.missing` | - | - | `ValueError: subsection not found` | - | - | - | - | - | - | - |
+| `ext.system.bytes.index` | - | - | `IndexError: index out of range` `IndexError: pop index out of range` `IndexError: pop from empty bytearray` | - | - | - | - | - | - | - |
+| `ext.system.bytes.missing` | - | - | `ValueError: subsection not found` `ValueError: value not found in bytearray` | - | - | - | - | - | - | - |
 | `ext.system.bytes.negative` | - | - | `ValueError: negative count` | - | - | - | - | - | - | - |
 | `ext.system.bytes.order` | - | - | `big` `little` | - | - | - | - | - | - | - |
 | `ext.system.bytes.overflow` | - | - | `OverflowError: int too big to convert` | - | - | - | - | - | - | - |
-| `ext.system.bytes.range` | - | - | `ValueError: bytes must be in range(0, 256)` | - | - | - | - | - | - | - |
+| `ext.system.bytes.range` | - | - | `ValueError: bytes must be in range(0, 256)` `ValueError: byte must be in range(0, 256)` | - | - | - | - | - | - | - |
 | `ext.system.bytes.repr` | - | - | `b` `bytearray(b` | - | - | - | - | - | - | - |
 | `ext.system.bytes.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
 | `ext.system.bytes.strict` | - | - | `strict` | - | - | - | - | - | - | - |

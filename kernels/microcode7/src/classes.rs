@@ -697,8 +697,8 @@ impl<'a> Machine<'a> {
                 }
                 // A row of bytes answers to the methods its kind keeps,
                 // which the worth beneath the thing carries out.
-                if matches!(under.settled(),Value::Octets{..}) {
-                    if let Some(working)=self.octet_member(key) {
+                if let Value::Octets{changeable,..}=under.settled() {
+                    if let Some(working)=self.octet_member(key,changeable) {
                         return Ok(Value::Member(Rc::new(under),working.to_string()));
                     }
                 }

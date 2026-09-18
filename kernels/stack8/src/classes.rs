@@ -695,8 +695,8 @@ impl<'a> Engine<'a> {
                     }
                     // A row of bytes answers to the methods its kind
                     // keeps, which the worth beneath the thing works.
-                    if matches!(worth.contents(),Value::Bytes(..)) {
-                        if let Some(working)=self.byte_member(name) {
+                    if let Value::Bytes(_,changeable,_)=worth.contents() {
+                        if let Some(working)=self.byte_member(name,changeable) {
                             return Ok(Value::ValueMethod(Rc::new((worth,working.to_string()))));
                         }
                     }

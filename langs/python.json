@@ -2937,7 +2937,9 @@
     "TypeError: 'bytes' object does not support item assignment"
   ],
   "ext.system.bytes.index": [
-    "IndexError: index out of range"
+    "IndexError: index out of range",
+    "IndexError: pop index out of range",
+    "IndexError: pop from empty bytearray"
   ],
   "ext.system.bytes.subscript": [
     "TypeError: byte indices must be integers or slices, not ",
@@ -2948,7 +2950,8 @@
     " to "
   ],
   "ext.system.bytes.missing": [
-    "ValueError: subsection not found"
+    "ValueError: subsection not found",
+    "ValueError: value not found in bytearray"
   ],
   "ext.system.bytes.negative": [
     "ValueError: negative count"
@@ -2961,7 +2964,8 @@
     "OverflowError: int too big to convert"
   ],
   "ext.system.bytes.range": [
-    "ValueError: bytes must be in range(0, 256)"
+    "ValueError: bytes must be in range(0, 256)",
+    "ValueError: byte must be in range(0, 256)"
   ],
   "ext.system.bytes.repr": [
     "b",
