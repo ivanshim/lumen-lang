@@ -97,7 +97,14 @@ impl Layout<'_> {
                 if r.past_numbers() || said.contains(['.', 'e', 'E']) { said } else { said + ".0" }
             }
             Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil | Value::Ellipsis => item.render(self.names),
-            _ => return Err(self.table.single("ext.op.rem.format.unsupported").unwrap_or_default().to_string()),
+            // A value the layout has no marks of its own for is laid
+            // out as the quoting builtin writes it, so that a field
+            // says of it what a plain quoting says rather than refusing
+            // it outside the road a raised value travels.
+            other => {
+                let said = other.quoted(self.names.brief_reals);
+                if escaped { crate::text::ascii_escaped(&said) } else { said }
+            }
         })
     }
 

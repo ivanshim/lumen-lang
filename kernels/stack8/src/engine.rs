@@ -166,6 +166,11 @@ pub struct Engine<'a> {
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
+    /// The key last found absent, where the words of the fault could
+    /// not carry it: the complaint for a key names the key itself, and
+    /// a key of any other kind than a text or a whole number is kept
+    /// here whole rather than written into those words and read back.
+    absent_key: RefCell<Option<Value>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints waiting to be handed
     /// over, since one may be raised where the run cannot reach back
@@ -805,6 +810,7 @@ impl<'a> Engine<'a> {
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
             absent_member: None,
+            absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             any_waiting: std::cell::Cell::new(false),
@@ -1509,6 +1515,14 @@ impl<'a> Engine<'a> {
             let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
             let number = key.parse::<BigInt>().ok()?;
             return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
+        }
+        // A key of any other kind was kept whole when it was found
+        // absent, and stands as the fault's one argument.
+        if told == "\0key-value:" {
+            let held = self.absent_key.borrow_mut().take()?;
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            return Some(self.exception_instance(class, vec![held], Value::Null));
         }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
@@ -3859,9 +3873,22 @@ impl<'a> Engine<'a> {
     /// Nothing where the kind has no such member. The value stands
     /// behind the method as it was handed over, cell and all, so that
     /// a method which writes into the value writes into the very one.
-    fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+    /// The member a builtin kind carries, sought on the kind's own word
+    /// and not on a value of it. Such a member stands loose: the value
+    /// it works upon is the first thing it is called with, the way an
+    /// unbound method is called. Nothing where the word names no
+    /// builtin kind, or where that kind carries no such member.
+    pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
+        let Value::Native(_, word) = value else { return None };
+        let sample = self.kind_sample(word)?;
+        if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
+        Some(Self::adapter(29, vec![Value::text(word), Value::text(name)]))
+    }
+
+    pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
         let held = value.contents();
         if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
+        if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
         if self.native_special(&held, name) { return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), name.to_string()))))); }
         if let Value::Complex(z) = &held {
             if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { return Ok(Some(crate::complex::real(z.real))); }
@@ -4816,7 +4843,7 @@ impl<'a> Engine<'a> {
         let places: &[usize] = match op {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
-            Builtin::ToText => &[0, 1], Builtin::Repr => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
+            Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
             Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
             Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
@@ -4828,7 +4855,7 @@ impl<'a> Engine<'a> {
                 // A kind that names itself before its worth is written
                 // by the thing's own class, so the worth cannot stand
                 // in for the thing where the writing is what is asked.
-                Some(worth) if matches!(op, Builtin::Repr | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
+                Some(worth) if matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
                 Some(worth) => { settled.push(worth); changed = true; }
                 None => settled.push(value.clone()),
             }
@@ -4841,6 +4868,13 @@ impl<'a> Engine<'a> {
         let first = if changed { args.first() } else { first };
         let answer = match op {
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
+            // The ascii builtin writes what the quoting builtin writes
+            // and then puts every letter outside ASCII into the escape
+            // that stands for it.
+            Builtin::Ascii if args.len() == 1 => {
+                let said = self.special_text(&args[0], true)?;
+                Value::text(&crate::strings::ascii_escaped(&said))
+            }
             Builtin::ToText if args.len() == 1 => {
                 self.digits_shown(&args[0])?;
                 Value::text(&self.special_text(&args[0], false)?)
@@ -5020,7 +5054,7 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
                 Value::Flag(matches!(&args[0], Value::Object(o) if o.class.named(&class.name, false)))
             }
-            Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
+            Builtin::Repr | Builtin::Ascii | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
             _ => return Ok(None),
         };
         Ok(Some(answer))
@@ -6133,7 +6167,9 @@ impl<'a> Engine<'a> {
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
-                Value::Flag(kind_named || kind_maker || text_method || byte_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                // A builtin kind also carries the members its own values answer to.
+                let kind_carries = self.loose_kind_member(&held, name).is_some();
+                Value::Flag(kind_named || kind_maker || kind_carries || text_method || byte_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -7293,7 +7329,10 @@ impl<'a> Engine<'a> {
         match at.contents() {
             Value::Text(key) => format!("\0key-text:{key}"),
             Value::Small(_) | Value::Huge(_) => format!("\0key-number:{}", at.plain()),
-            _ => self.lang.exception_unready.clone().unwrap_or_default(),
+            // A key of any other kind is kept whole beside the words,
+            // since writing it into them would not give back the key
+            // that was asked for.
+            held => { *self.absent_key.borrow_mut() = Some(held); "\0key-value:".to_string() }
         }
     }
 
@@ -9314,7 +9353,7 @@ impl<'a> Engine<'a> {
         self.builtin(builtin, name, &mut args)
     }
 
-    fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+    pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         // A row lengthened where it lies, instead of copied out, added
         // to, and written back. It stands ahead of the reading below
         // because that reading would hold the row a second time, and a
@@ -11248,7 +11287,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -11479,12 +11518,13 @@ impl<'a> Engine<'a> {
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {
                     return Ok(Value::text(word));
                 }
+                // Every kind left over is one the definition spells no
+                // builtin word for, and a definition that asks after
+                // kinds at all is answered with the class named for it:
+                // the bare kind value carries no name of its own, and a
+                // class stands where the reference has a class.
+                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                 let Some(kind) = args[0].sort() else {
-                    // Every other kind a program can hold is of no kind
-                    // the core knows, and a definition that asks after
-                    // kinds at all is answered with a class named for
-                    // it rather than refused.
-                    if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                     return Err(format!("{}(): unknown value type", name));
                 };
                 // Some languages say a kind in words rather than hand
@@ -12395,7 +12435,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -12700,6 +12740,12 @@ impl Engine<'_> {
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             // Every value whatever is of the class every other one is of.
             if class.name == self.class_word("root") { return Ok(true); }
+            // A class standing for a builtin kind the definition spells
+            // no word of its own for is asked about by the kind's own
+            // name, there being no builtin word to ask in its place.
+            if let Some(kind) = Self::kind_beneath(class) {
+                if !self.lang.builtins.contains_key(&kind) { return Ok(value.core_kind() == kind); }
+            }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.
@@ -12804,6 +12850,15 @@ impl Engine<'_> {
                 }
                 if let Some(portion) = window { return Ok(Value::text(&format!("dict_{}({})", portion, args[0].core_repr(self.lang.shortest_reals)))); }
                 Value::text(&args[0].core_repr(self.lang.shortest_reals))
+            }
+            // The ascii builtin writes what the quoting builtin
+            // writes and then puts every letter outside ASCII into the
+            // escape that stands for it.
+            Builtin::Ascii => {
+                arity(1, 1)?;
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::Repr).map(|(w, _)| w.clone()).unwrap_or_default();
+                let written = self.core_call(Builtin::Repr, &word, args.clone(), Vec::new())?;
+                Value::text(&crate::strings::ascii_escaped(&written.plain()))
             }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])))?) }
             Builtin::Identity => {

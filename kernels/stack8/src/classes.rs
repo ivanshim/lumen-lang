@@ -416,10 +416,13 @@ impl<'a> Engine<'a> {
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
         Self::own_class_value(c,name).or_else(|| c.lineage.iter().find_map(|b| Self::own_class_value(b,name)))
     }
-    fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
+    pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
         match callable {
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
+            // A method bound to a value of a builtin kind, reached as a
+            // value in its own right and then called.
+            Value::ValueMethod(bound) => Ok(self.value_method(&bound.0,&bound.1,args,Vec::new())?),
             Value::Method(o,p) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls
@@ -444,6 +447,17 @@ impl<'a> Engine<'a> {
                     self.thing_of_kind(c, &word, args)
                 }
                 3 => { args.insert(0,w.1[1].clone()); self.class_apply(w.1[0].clone(),args) }
+                // A member a builtin kind carries, standing loose: the
+                // first value it is called with is the one it works
+                // upon, and the rest are what the member itself takes.
+                29 if !args.is_empty() => {
+                    let subject = args.remove(0);
+                    let member = w.1[1].plain();
+                    match self.builtin_member(&subject,&member)? {
+                        Some(bound) => self.class_apply(bound,args),
+                        None => Err(self.missing_member(&subject,&member)),
+                    }
+                }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
                 13 if args.len() == 1 => {
                     let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
@@ -548,6 +562,18 @@ impl<'a> Engine<'a> {
         format!("{}{class}{}{name}{}",pieces[0],pieces[1],pieces[2]).into()
     }
 
+    /// A member a thing may read but neither write over nor take away:
+    /// its class names the members its things hold, and holds a value
+    /// of its own under this name, which a write to a thing does not
+    /// reach.
+    fn readonly_member(&self, subject: &Value, name: &str) -> Fault {
+        let pieces = self.lang.class_details.get("attribute.readonly").cloned().unwrap_or_default();
+        if pieces.len() != 3 { return self.unwritable_member(subject, name); }
+        let held;
+        let class = match subject { Value::Object(o)=>o.class.name.as_str(), other=>{held=other.contents().core_kind();&held} };
+        format!("{}{class}{}{name}{}", pieces[0], pieces[1], pieces[2]).into()
+    }
+
     /// A member a thing cannot take: it keeps no namespace of its own
     /// to put one in, whether because its class names the members it
     /// holds or because it is a value of a builtin kind.
@@ -627,6 +653,10 @@ impl<'a> Engine<'a> {
                     let line=Value::Tuple(Rc::new(vec![Value::Class(kind),Value::Class(root)]));
                     return Ok(if listed {Self::adapter(0,vec![line])} else {line});
                 }
+                // Whatever a value of the kind answers to is carried by
+                // the kind itself, standing loose: the value it works
+                // upon is the first it is called with.
+                if let Some(loose)=self.loose_kind_member(&subject,name) { return Ok(loose); }
             }
             Value::Class(c) => {
                 if name==self.class_word("name") { return Ok(Value::text(&c.name)); }
@@ -804,6 +834,14 @@ impl<'a> Engine<'a> {
                     if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
                 }
                 if name==self.class_word("kind") || name==self.class_word("namespace"){return Err(self.class_refusal());}
+                // A class naming the members its things hold, and holding
+                // a value of its own under a name not among them, has
+                // that name read-only: the class's own holding is not
+                // what a write to a thing reaches, and the thing keeps
+                // no namespace to put one of its own in.
+                if self.slots_named(&o.class) && !self.slots_allow(&o.class,name) && self.class_value(&o.class,name).is_some() {
+                    return Err(self.readonly_member(&subject,name));
+                }
                 if value.is_some() && !self.slots_allow(&o.class,name) {return Err(self.unwritable_member(&subject,name));}
                 // A module's members are its own bindings, written through
                 // so that its routines see the new value; a thing's member
@@ -824,7 +862,11 @@ impl<'a> Engine<'a> {
                 let at=self.function_storage(&subject);
                 Self::write_members(&mut self.function_members[at].1.fields.borrow_mut(),name,value,false).map_err(|_|absent)?;
             }
-            _ => return Err(self.unwritable_member(&subject,name)),
+            // A value of a builtin kind keeps no namespace: a write
+            // says so outright, while a taking-away only reports the
+            // member that was never there.
+            _ if value.is_some() => return Err(self.unwritable_member(&subject,name)),
+            _ => return Err(self.missing_member(&subject,name)),
         }
         Ok(Value::Null)
     }
@@ -839,6 +881,12 @@ impl<'a> Engine<'a> {
                 (Value::Bond(cell),_) if through=>{*cell.borrow_mut()=v;},
                 _=>members[i].1=v },
             (None,Some(v))=>members.push((name.into(),v)),(Some(i),None)=>{members.remove(i);},_=>return Err(())} Ok(())
+    }
+    /// Whether the class, or one it stands on, names the members its
+    /// things may hold. Such a thing keeps no namespace of its own.
+    fn slots_named(&self,c:&Class)->bool {
+        Self::own_class_value(c,self.class_word("slots")).is_some()
+            || c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
     }
     fn slots_allow(&self,c:&Class,name:&str)->bool {
         let own=Self::own_class_value(c,self.class_word("slots"));
@@ -893,12 +941,7 @@ impl<'a> Engine<'a> {
     /// of work. Only one of these stands as a class where `issubclass`
     /// and `isinstance` ask for one; every other builtin word is as
     /// much a refusal there as a number would be.
-    pub(super) fn kind_builtin(op:&Builtin)->bool {
-        matches!(op,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::SortOf|Builtin::List|Builtin::Dict
-            |Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Span
-            |Builtin::Enumerate|Builtin::Zip|Builtin::Map|Builtin::Filter|Builtin::Reversed|Builtin::MakeSlice
-            |Builtin::ClassTool(9..=11))
-    }
+    pub(super) fn kind_builtin(op:&Builtin)->bool { op.names_kind() }
     /// The word a value names a builtin kind by, where it names one.
     pub(super) fn kind_spelled(&self,value:&Value)->Option<Rc<str>> {
         let Value::Adapter(w)=value else{return None};
@@ -1028,7 +1071,7 @@ impl<'a> Engine<'a> {
                 let word=self.lang.builtins.iter().find(|(_,b)|**b==Builtin::ClassTool(which)).map(|(n,_)|n.clone()).unwrap_or_default();
                 Err(self.arity_told(&word,2,args.len()))
             }
-            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
+            2 if args.len()==1=>Ok(Value::Flag(matches!(one,Value::Class(_)|Value::Routine(_)|Value::Method(..))||matches!(&one,Value::Adapter(w) if matches!(w.0,0..=4|8..=12|15|17..=27|29))||matches!(&one,Value::Object(o) if self.class_value(&o.class,self.class_word("call")).is_some()))),
             3|6 if args.len()>=2=>{let Value::Text(name)=&args[1]else{return Err(self.class_refusal());};match self.class_get(one,name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{Ok(Value::Flag(false))}else if args.len()==3{Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
                 if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)])?;return self.drop_top().map_err(|words|Fault::Note(words));}}

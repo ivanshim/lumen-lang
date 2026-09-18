@@ -2033,10 +2033,43 @@ impl<'a> Builder<'a> {
         Ok(vec![written?])
     }
 
+    /// Whether the brackets opening here hold what a place is reached
+    /// through rather than a list of targets: past the bracket that
+    /// closes them stands the member mark or an index, as in the
+    /// writing `del (a).b` and `del (a)[0]`.
+    fn bracketed_holder(&self) -> bool {
+        if !self.on_any("syntax.group.open") { return false; }
+        let (open, close) = match (self.table.single("syntax.group.open"), self.table.single("syntax.group.close")) {
+            (Some(open), Some(close)) => (open.to_string(), close.to_string()),
+            _ => return false,
+        };
+        let mut still = 0usize;
+        for step in self.pos..self.tokens.len() {
+            let word = &self.tokens[step];
+            if word.shape != Shape::Sign { continue; }
+            if word.lexeme == open { still += 1; continue; }
+            if word.lexeme != close { continue; }
+            still -= 1;
+            if still > 0 { continue; }
+            let past = match self.tokens.get(step + 1) { Some(past) => past, None => return false };
+            return past.shape == Shape::Sign
+                && (self.table.spells("op.pipe", &past.lexeme) || self.table.spells("op.index.open", &past.lexeme));
+        }
+        false
+    }
+
     fn deletion_place(&mut self) -> Res<Form> {
-        let name = self.need_word("as a binding target")?;
-        let read = self.read(&name);
-        let mut place = self.called_on_value(read)?;
+        let reached = if self.bracketed_holder() {
+            let close = self.table.single("syntax.group.close").unwrap_or_default().to_string();
+            self.advance();
+            let inner = self.expr(0)?;
+            self.need_sign(&close, "after the bracketed target")?;
+            inner
+        } else {
+            let name = self.need_word("as a binding target")?;
+            self.read(&name)
+        };
+        let mut place = self.called_on_value(reached)?;
         loop {
             if self.on_any("op.pipe") {
                 self.advance();
@@ -6549,7 +6582,7 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
-            if targets {
+            if targets && !self.bracketed_holder() {
                 let closes = if self.on_any("syntax.group.open") { table.single("syntax.group.close") }
                     else if self.on_any("syntax.array.open") { table.single("syntax.array.close") } else { None };
                 if let Some(closes) = closes {

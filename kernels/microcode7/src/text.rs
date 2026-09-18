@@ -83,6 +83,23 @@ pub fn quotation(word: &str) -> String {
     pieces.concat()
 }
 
+/// Words with every letter outside ASCII put into the escape standing
+/// for it. The ascii builtin lays this over the words the quoting
+/// builtin gives, and an ascii field lays it over them too.
+pub fn ascii_escaped(said:&str)->String {
+    let mut out=String::new();
+    for letter in said.chars() {
+        if letter.is_ascii() {out.push(letter); continue;}
+        let number=letter as u32;
+        out.push_str(&match number {
+            0..=255=>format!("\\x{:02x}",number),
+            256..=65535=>format!("\\u{:04x}",number),
+            _=>format!("\\U{:08x}",number),
+        });
+    }
+    out
+}
+
 pub fn written_row(values: &[String], fixed: bool) -> String {
     let mut out=String::from(if fixed {"("} else {"["});
     for (i,value) in values.iter().enumerate() {

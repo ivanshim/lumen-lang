@@ -1380,7 +1380,10 @@ only. The extension labels so far, all from PHP:
   Where `root` is spelled, all direct bases take part in the C3 ordering;
   `mro.amiss` gives the words for an ordering that cannot be made.
   `attribute.amiss` gives three pieces enclosing the class and member
-  names in a complaint; `unready` refuses a working not yet furnished.
+  names in a complaint; `attribute.readonly` gives three pieces around
+  the same two, for a write or a removal upon a thing whose class names
+  the members it holds and holds a value of its own under that name;
+  `unready` refuses a working not yet furnished.
 - `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
   `descriptor.delete` and `descriptor.name`: the words a class member
   answers the descriptor protocol with, each a list of words. With
@@ -3169,6 +3172,9 @@ only. The extension labels so far, all from PHP:
   the fuller account of special methods.
 - `ext.builtin.repr`: a builtin showing text within quotes and exceptions
   as their class followed by their arguments within parentheses.
+- `ext.builtin.ascii`: a builtin writing what `ext.builtin.repr` writes,
+  with every letter outside ASCII put into the escape that stands for
+  it.
 - `ext.system.fault.class.index`, `.key`, `.name`, `.attribute` and `.stop`:
   classes for an index beyond the row, an absent key, an unbound name,
   an absent member and a walk that has ended. These extend the fault
@@ -4053,6 +4059,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count.outside` | - | - | - | - | `func_num_args() must be called from a function context` | - | - | - | - | - |
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
+| `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
@@ -4763,6 +4770,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
