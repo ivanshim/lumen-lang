@@ -1085,6 +1085,16 @@ an AttributeError. Gaps: `type(gen())`, `type(f)`, `type(module)` and
 empty; stack8 evaluates a call's arguments before raising the
 missing-member fault, microcode7 after.
 
+The batch-9 count, taken at c862af4 with the sweep binary copied
+aside, stands at stack8 1,214 of 2,536 and microcode7 1,157 of 2,394,
+against 1,211 and 1,155 at bb4ad6e; no file lost a pass, test_compare's
+first position and test_generators' fortieth on stack8 are dots
+again, and test_enumerate gained one on both kernels. The scratch
+check on the same tree found one record made by the old missing-member
+pipe: scratch/file-list/10 held `[1, 2]` for a `.seq` read off a
+number that CPython refuses, and now records the AttributeError all
+three agree on.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
