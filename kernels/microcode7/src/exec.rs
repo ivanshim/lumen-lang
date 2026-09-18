@@ -1730,7 +1730,7 @@ impl<'a> Machine<'a> {
     fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
         if self.table.has_any("ext.builtin.format") {
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-            return layout.remainder(pattern, rhs, self);
+            return layout.remainder(pattern, rhs, self, false);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -3766,21 +3766,7 @@ impl<'a> Machine<'a> {
                     // with a run of them, where it stands; a fixed row
                     // parts with none and is named in the words for a
                     // sequence that cannot be shortened.
-                    Value::Octets { cell, changeable, lead } => {
-                        let row = Value::Octets { cell: cell.clone(), changeable: *changeable, lead: lead.clone() };
-                        if !*changeable { return Err(self.deletion_refused(&row).into()); }
-                        let mut numbers = cell.borrow_mut();
-                        match &at {
-                            Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
-                                let (_, picked, _) = self.span_selection(bounds, numbers.len())?;
-                                let kept = numbers.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, n)| *n).collect();
-                                *numbers = kept;
-                            }
-                            key => { let place = self.octet_at(key, numbers.len(), true)?; numbers.remove(place); }
-                        }
-                        drop(numbers);
-                        row
-                    }
+                    row @ Value::Octets { .. } => self.octets_shortened(row, &at)?,
                     Value::Vector(items) | Value::Tuple(items) => {
                         let i = as_index(&at)?;
                         Value::Dict(Rc::new(
@@ -4631,7 +4617,7 @@ impl<'a> Machine<'a> {
                     let held = if let Value::Shared(cell) = held { cell.borrow().clone() } else { held };
                     if let Value::Octets { cell, changeable, .. } = held {
                         if !changeable { return Err(self.octet_error("immutable").into()); }
-                        let byte = self.octet_item(&value)?;
+                        let byte = self.octet_item(&value, false)?;
                         if let Some(index) = key {
                             let index = self.octet_at(&index, cell.borrow().len(), changeable)?;
                             cell.borrow_mut()[index] = byte;
@@ -5086,10 +5072,10 @@ impl<'a> Machine<'a> {
             9 => counts,
             10 => holds || "WV".contains(mark),
             11 => holds && mark != 'e',
-            // A run of bytes is written into place by place, but no
-            // kernel here takes a place out of one, by sign or by name.
+            // A run of bytes is written into place by place and gives
+            // a place up again, as a row does.
             12 => "ldB".contains(mark),
-            13 => "ld".contains(mark),
+            13 => "ldB".contains(mark),
             14 => holds || mark == 'W',
             15 => holds || "wWV".contains(mark),
             16 => mark == 'w',
@@ -5099,7 +5085,7 @@ impl<'a> Machine<'a> {
             22 | 30 | 60 | 61 => counts && mark != 'c',
             23 | 31 => counts && mark != 'c' || "sbB".contains(mark),
             43 | 44 | 62 | 63 | 67 | 68 => mark == 'n',
-            47 | 49 => mark == 'l',
+            47 | 49 => "lB".contains(mark),
             48 | 57 | 59 => mark == 'e',
             58 => "ed".contains(mark),
             64 | 66 | 69 | 71 => "ne".contains(mark),
@@ -5336,8 +5322,8 @@ impl<'a> Machine<'a> {
         // A row of bytes answers to the methods its kind keeps, whose
         // words are the ones text goes by, each of them being a text
         // working read byte by byte.
-        if matches!(value.settled(), Value::Octets { .. }) {
-            if let Some(working) = self.octet_member(name) {
+        if let Value::Octets { changeable, .. } = value.settled() {
+            if let Some(working) = self.octet_member(name, changeable) {
                 return Some(Value::Member(Rc::new(value.clone()), working.to_string()));
             }
         }
@@ -5798,14 +5784,22 @@ impl<'a> Machine<'a> {
             options.truncate(1); options.insert(0, actual);
             return self.octet_routine(2, &options).map_err(Escape::from);
         }
-        if let Value::Octets { cell, changeable: true, .. } = &actual {
-            if name == "append" && arguments.len() == 1 && keywords.is_empty() { cell.borrow_mut().push(self.octet_item(&arguments[0])?); return Ok(Value::Nil); }
-        }
         if matches!(&actual, Value::Octets { .. }) || name == "encode" && matches!(&actual, Value::Text(_)) {
-            let operation = if name == "encode" { Some(2) } else { self.octet_member(name).and_then(Self::octet_operation) };
+            // A working that writes where the row lies is asked of a
+            // changeable row alone; a fixed row has no such member.
+            let changeable = matches!(&actual, Value::Octets { changeable: true, .. });
+            let operation = if name == "encode" { Some(2) } else { self.octet_member(name, changeable).and_then(Self::octet_operation) };
             if let Some(operation) = operation {
                 if !keywords.is_empty() { return Err(self.octet_error("unready").into()); }
                 let mut values = vec![actual]; values.extend(arguments);
+                // A row lengthened by a walk takes the walk's members
+                // for its bytes, so the walk is drawn out into a row
+                // first, as the maker of a row of bytes draws one out.
+                if operation == 53 && values.len() == 2
+                    && !matches!(values[1].settled(), Value::Octets { .. } | Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Text(_)) {
+                    let source = values[1].settled();
+                    if let Ok(members) = self.core_collect(&source) { values[1] = Value::Vector(Rc::new(members)); }
+                }
                 return self.octet_routine(operation, &values).map_err(Escape::from);
             }
         }
@@ -6964,7 +6958,35 @@ impl<'a> Machine<'a> {
     // ---------- operations
 
     fn octet_error(&self, reason: &str) -> String {
-        self.table.single(&format!("ext.system.bytes.{reason}")).unwrap_or("").to_owned()
+        self.octet_worded(reason, 0)
+    }
+
+    /// One of the complaints a bytes label spells, by its place among
+    /// them: a label wording the same fault of a whole row and of one
+    /// byte, or of a place read and a place taken out, keeps each
+    /// wording in its own place.
+    /// A changeable row of bytes parts with a place, or with a run of
+    /// them, where it stands; a fixed row parts with none and is named
+    /// in the words for a sequence that cannot be shortened. The row is
+    /// handed back as it stands, since it is written where it lies.
+    fn octets_shortened(&self, row: &Value, at: &Value) -> Result<Value, String> {
+        let Value::Octets { cell, changeable, .. } = row else { return Err(self.octet_error("unready")); };
+        if !*changeable { return Err(self.deletion_refused(row)); }
+        let mut numbers = cell.borrow_mut();
+        match at {
+            Value::Span(bounds) if self.table.has_any("ext.builtin.slice") => {
+                let (_, picked, _) = self.span_selection(bounds, numbers.len())?;
+                let kept = numbers.iter().enumerate().filter(|(j, _)| !picked.contains(j)).map(|(_, n)| *n).collect();
+                *numbers = kept;
+            }
+            key => { let place = self.octet_at(key, numbers.len(), true)?; numbers.remove(place); }
+        }
+        drop(numbers);
+        Ok(row.clone())
+    }
+
+    fn octet_worded(&self, reason: &str, at: usize) -> String {
+        self.table.strings(&format!("ext.system.bytes.{reason}")).get(at).map_or_else(String::new, String::clone)
     }
 
     /// The workings a row of bytes answers to by name, each beside the
@@ -6983,17 +7005,27 @@ impl<'a> Machine<'a> {
         ("upper", 6), ("zfill", 32),
     ];
 
+    /// The workings a changeable row of bytes answers to besides those,
+    /// each beside its own bytes primitive. Each writes where the row
+    /// lies, so a fixed row answers to none of them; their words are
+    /// the ones a row's own methods go by.
+    const OCTET_CHANGERS: &'static [(&'static str, u8)] = &[
+        ("append", 52), ("clear", 57), ("copy", 59), ("extend", 53), ("insert", 54),
+        ("pop", 55), ("remove", 56), ("reverse", 58),
+    ];
+
     /// The working a row of bytes answers to under this spelling, where
     /// the table spells one for it. The words are sought in the bytes
     /// family, then among text's, whose words a row of bytes shares,
     /// and last among the value methods. A word written with its kind
     /// ahead of it answers by its bare tail as well, which is the name
     /// a row of bytes keeps the method under.
-    pub(super) fn octet_member(&self, spelling: &str) -> Option<&'static str> {
+    pub(super) fn octet_member(&self, spelling: &str, changeable: bool) -> Option<&'static str> {
         let carries = |label: String| self.table.loose_strings(&label).iter()
             .any(|word| word == spelling || word.rsplit('.').next() == Some(spelling));
         let among = self.value_method_named(spelling);
-        Self::OCTET_MEMBERS.iter().map(|(word, _)| *word).find(|word| {
+        let changers: &[(&str, u8)] = if changeable { Self::OCTET_CHANGERS } else { &[] };
+        Self::OCTET_MEMBERS.iter().chain(changers).map(|(word, _)| *word).find(|word| {
             carries(format!("ext.builtin.bytes.{word}")) || carries(format!("ext.builtin.text.{word}"))
                 || among.as_deref() == Some(*word)
         })
@@ -7001,7 +7033,8 @@ impl<'a> Machine<'a> {
 
     /// The primitive that carries out a working of that name.
     fn octet_operation(word: &str) -> Option<u8> {
-        Self::OCTET_MEMBERS.iter().find(|(named, _)| *named == word).map(|(_, code)| *code)
+        Self::OCTET_MEMBERS.iter().chain(Self::OCTET_CHANGERS)
+            .find(|(named, _)| *named == word).map(|(_, code)| *code)
     }
 
     /// The refusal of a key of a kind a row of bytes cannot be read at.
@@ -7019,6 +7052,17 @@ impl<'a> Machine<'a> {
         let pieces = self.table.strings("ext.system.bytes.concat");
         let at = |i: usize| pieces.get(i).map_or("", String::as_str);
         format!("{}{}{}{}", at(0), right.kind_word(), at(1), left.kind_word())
+    }
+
+    /// A row of bytes filled mark by mark.
+    fn octet_filled(&self, pattern: &str, supplied: &Value) -> Result<Vec<u8>, String> {
+        let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+        let mut marks = OctetMarks {
+            layout: crate::formatting::Layout { table: self.table, names: self.wording() },
+            refusal: self.table.strings("ext.op.rem.format.byte"),
+        };
+        let filled = layout.remainder(pattern, supplied, &mut marks, true)?;
+        filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.octet_error("unready"))).collect()
     }
 
     /// The bytes that written hexadecimal stands for: two figures to a
@@ -7133,16 +7177,51 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn octet_item(&self, value: &Value) -> Result<u8, String> {
-        self.octet_whole(value)?.to_u8().ok_or_else(|| self.octet_error("range"))
+    /// One byte read off a value. A value of a kind no whole number
+    /// can be read from is named by the words every builtin names it
+    /// by; a whole number outside a byte's bounds is refused in the
+    /// words for a whole row where the row is being built, and in those
+    /// for one byte everywhere else.
+    fn octet_item(&self, value: &Value, whole_row: bool) -> Result<u8, String> {
+        if !matches!(value.kind(), Some(Kind::Whole | Kind::Truth)) {
+            return Err(self.core_complaint("core.integer", &value.kind_word()));
+        }
+        value.as_big()?.to_u8().ok_or_else(|| self.octet_worded("range", usize::from(!whole_row)))
+    }
+
+    /// A whole number a row of bytes is handed as a place. CPython
+    /// names the kind that cannot stand for one.
+    fn octet_place(&self, value: &Value) -> Result<i64, String> {
+        if !matches!(value.kind(), Some(Kind::Whole | Kind::Truth)) {
+            return Err(self.core_complaint("core.integer", &value.kind_word()));
+        }
+        let number = value.as_big()?;
+        Ok(number.to_i64().unwrap_or(if number < BigInt::zero() { i64::MIN } else { i64::MAX }))
+    }
+
+    /// The bytes a value gives up to a row being lengthened: another
+    /// row hands over its own, and a row of numbers or a text hands
+    /// over one byte for each of its members.
+    fn octet_lengthening(&self, source: &Value) -> Result<Vec<u8>, String> {
+        match &source.settled() {
+            Value::Octets { cell, .. } => Ok(cell.borrow().to_vec()),
+            Value::Vector(items) | Value::Tuple(items) | Value::Row(items) =>
+                items.iter().map(|item| self.octet_item(item, false)).collect(),
+            Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
+            other => Err(self.core_complaint("core.uniterable", &other.kind_word())),
+        }
     }
 
     fn octet_contents(&self, source: &Value, iterable: bool) -> Result<Vec<u8>, String> {
+        self.octet_gathered(source, iterable, false)
+    }
+
+    fn octet_gathered(&self, source: &Value, iterable: bool, whole_row: bool) -> Result<Vec<u8>, String> {
         if let Value::Octets { cell, .. } = source { return Ok(cell.borrow().to_vec()); }
         if iterable {
             if let Value::Vector(items) = source {
                 let mut result = Vec::with_capacity(items.len());
-                for item in items.iter() { result.push(self.octet_item(item)?); }
+                for item in items.iter() { result.push(self.octet_item(item, whole_row)?); }
                 return Ok(result);
             }
         }
@@ -7331,7 +7410,7 @@ impl<'a> Machine<'a> {
         // readily as a row of bytes.
         let looked_for = |value: &Value| -> Result<Vec<u8>, String> {
             match value.kind() {
-                Some(Kind::Whole | Kind::Truth) => Ok(vec![self.octet_item(value)?]),
+                Some(Kind::Whole | Kind::Truth) => Ok(vec![self.octet_item(value, false)?]),
                 _ => self.octet_contents(value, false),
             }
         };
@@ -7588,7 +7667,7 @@ impl<'a> Machine<'a> {
                         content.try_reserve(length).map_err(|_| refusal())?;
                         content.resize(length, 0); content
                     }
-                    1 => self.octet_contents(&values[0], true)?,
+                    1 => self.octet_gathered(&values[0], true, operation == 0)?,
                     2 => {
                         let Value::Text(s) = &values[0] else { return Err(wrong()); };
                         self.octets_from_text(s, self.octet_encoding(values.get(1))?)?
@@ -7614,6 +7693,48 @@ impl<'a> Machine<'a> {
                 let [from, onto] = values else { return Err(wrong()); };
                 return self.octet_mapping(&self.octet_contents(from, false)?, &self.octet_contents(onto, false)?);
             }
+            // The workings that change a changeable row where it lies.
+            // The row itself stands first, so the cell the row lives in
+            // takes the change and every name for the row sees it. None
+            // of them is worth anything but the one handing a byte back
+            // and the one handing a fresh row back.
+            52..=59 => {
+                let Some(Value::Octets { cell, changeable: true, .. }) = values.first() else { return Err(refusal()); };
+                let rest = &values[1..];
+                let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(wrong()) };
+                match operation {
+                    52 => { counted(1)?; let byte = self.octet_item(&rest[0], false)?; cell.borrow_mut().push(byte); }
+                    53 => { counted(1)?; let more = self.octet_lengthening(&rest[0])?; cell.borrow_mut().extend(more); }
+                    54 => {
+                        counted(2)?;
+                        let asked = self.octet_place(&rest[0])?;
+                        let byte = self.octet_item(&rest[1], false)?;
+                        let mut held = cell.borrow_mut();
+                        let index = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
+                        held.insert(index, byte);
+                    }
+                    55 => {
+                        if rest.len() > 1 { return Err(wrong()); }
+                        let asked = match rest.first() { Some(value) => self.octet_place(value)?, None => -1 };
+                        let mut held = cell.borrow_mut();
+                        if held.is_empty() { return Err(self.octet_worded("index", 2)); }
+                        let index = if asked < 0 { asked.saturating_add(held.len() as i64) } else { asked };
+                        if index < 0 || index as usize >= held.len() { return Err(self.octet_worded("index", 1)); }
+                        return Ok(Value::Small(i64::from(held.remove(index as usize))));
+                    }
+                    56 => {
+                        counted(1)?;
+                        let byte = self.octet_item(&rest[0], false)?;
+                        let mut held = cell.borrow_mut();
+                        let Some(index) = held.iter().position(|kept| *kept == byte) else { return Err(self.octet_worded("missing", 1)); };
+                        held.remove(index);
+                    }
+                    57 => { counted(0)?; cell.borrow_mut().clear(); }
+                    58 => { counted(0)?; cell.borrow_mut().reverse(); }
+                    _ => { counted(0)?; let copy = cell.borrow().clone(); return Ok(self.octets(copy, true)); }
+                }
+                return Ok(Value::Nil);
+            }
             14 | 15 => {
                 let maximum = if operation == 14 { 3 } else { 2 };
                 if values.is_empty() || values.len() > maximum { return Err(refusal()); }
@@ -7625,7 +7746,7 @@ impl<'a> Machine<'a> {
                     _ => return Err(self.octet_error("bad_order")),
                 };
                 if operation == 15 {
-                    let mut content = self.octet_contents(&values[0], true)?;
+                    let mut content = self.octet_gathered(&values[0], true, true)?;
                     if reversed { content.reverse(); }
                     let value = if negative_allowed { BigInt::from_signed_bytes_be(&content) }
                         else { BigInt::from_bytes_be(num_bigint::Sign::Plus, &content) };
@@ -8992,6 +9113,17 @@ impl<'a> Machine<'a> {
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
             }
+            // A row of bytes on the left of the remainder sign fills
+            // its own marks, byte for byte: each byte of the pattern
+            // stands for the character that carries it, and the filled
+            // text is read back into a row of the pattern's own kind.
+            if op == Prim::Mod && self.table.flag("ext.op.rem.formats_text") {
+                if let Value::Octets { cell, changeable, .. } = &v[0] {
+                    let (pattern, changeable) = (cell.borrow().iter().copied().map(char::from).collect::<String>(), *changeable);
+                    let filled = self.octet_filled(&pattern, &v[1])?;
+                    return Ok(self.octets(filled, changeable));
+                }
+            }
             if has_octets && matches!(op, Prim::Plus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Mod | Prim::Join) {
                 return Err(self.octet_error("unready"));
             }
@@ -9605,7 +9737,7 @@ impl<'a> Machine<'a> {
                 if self.carried_by_kind(&v[0], &word).is_some() { return Ok(Value::Flag(true)); }
                 let native = matches!(v[0], Value::Text(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
                 // A row of bytes answers to the methods its kind keeps.
-                let of_octets = matches!(v[0].settled(), Value::Octets { .. }) && self.octet_member(&word).is_some();
+                let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some());
                 Value::Flag(native || of_octets || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
@@ -9862,7 +9994,7 @@ impl<'a> Machine<'a> {
                     Value::Octets { cell, changeable, .. } => {
                         if !changeable { return Err(self.octet_error("immutable")); }
                         let index = self.octet_at(&v[1], cell.borrow().len(), *changeable)?;
-                        let byte = self.octet_item(&v[2])?;
+                        let byte = self.octet_item(&v[2], false)?;
                         cell.borrow_mut()[index] = byte;
                         v[0].clone()
                     }
@@ -10496,6 +10628,7 @@ impl<'a> Machine<'a> {
                         let kept: Vec<(Value, Value)> = self.without_key(entries, &wanted)?;
                         Value::Dict(Rc::new(kept))
                     }
+                    row @ Value::Octets { .. } => self.octets_shortened(row, &v[1])?,
                     other => return Err(format!("{}() cannot take a place out of {}", name, other.bare())),
                 }
             }
@@ -10702,7 +10835,7 @@ impl<'a> Machine<'a> {
                         if let Value::Octets { cell: needle, .. } = item {
                             let needle = needle.borrow();
                             (0..=numbers.len()).any(|i| numbers[i..].starts_with(&needle))
-                        } else { numbers.contains(&self.octet_item(item)?) }
+                        } else { numbers.contains(&self.octet_item(item, false)?) }
                     }
                     (needle, Value::TextRow(words, _)) => words.iter().any(|s| needle.equals(&Value::text(s))),
                     (Value::Text(part), Value::Text(text)) => text.contains(part.as_ref()),
@@ -14711,6 +14844,34 @@ impl Machine<'_> {
         }
     }
 }
+/// The marks of a pattern read off a row of bytes. A mark that shows a
+/// value is handed a row of bytes and nothing else, whichever of its
+/// two letters it is written with, and a mark that words a value writes
+/// the ascii of its representation, so that nothing beyond seven bits
+/// can stand in the answer.
+struct OctetMarks<'a> {
+    layout: crate::formatting::Layout<'a>,
+    refusal: &'a [String],
+}
+
+impl crate::formatting::Elsewhere for OctetMarks<'_> {
+    fn field_laid(&mut self, _item: &Value, _pattern: &str, _convert: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String> {
+        let held = item.settled();
+        if quoted { return self.layout.quote(&held, true).map(Some); }
+        match &held {
+            Value::Octets { cell, .. } => Ok(Some(cell.borrow().iter().copied().map(char::from).collect())),
+            other => {
+                let at = |i: usize| self.refusal.get(i).map_or("", String::as_str);
+                Err(format!("{}{}{}", at(0), other.kind_word(), at(1)))
+            }
+        }
+    }
+}
+
 /// The machine answers for the fields a layout cannot lay out: a thing
 /// of the program's own is written by its own methods, and the layout
 /// keeps everything else.

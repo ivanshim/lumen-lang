@@ -56,6 +56,7 @@ impl Writer<'_> {
             "ext.op.rem.format.integer" => &self.lang.fmt_op_rem_format_integer,
             "ext.op.rem.format.real" => &self.lang.fmt_op_rem_format_real,
             "ext.op.rem.format.character" => &self.lang.fmt_op_rem_format_character,
+            "ext.op.rem.format.byte" => &self.lang.fmt_op_rem_format_byte,
             "ext.op.rem.format.star" => &self.lang.fmt_op_rem_format_star,
             "ext.op.rem.format.incomplete" => &self.lang.fmt_op_rem_format_incomplete,
             "ext.op.rem.format.code" => &self.lang.fmt_op_rem_format_code,
@@ -209,7 +210,7 @@ impl Writer<'_> {
                 if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.character", &[])); }
                 if rule.alternate { return Err(self.fault("ext.text.format.alternate.character", &[])); }
                 if rule.group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
-                return Ok(rule.pad("", &self.character(value)?, '>'));
+                return Ok(rule.pad("", &self.character(value, false)?, '>'));
             }
             let base = match kind { 'b' => 2, 'o' => 8, 'x' | 'X' => 16, _ => 10 };
             if rule.fraction_group != '\0' || rule.group == ',' && base != 10 { return Err(self.fault("ext.text.format.invalid", &[])); }
@@ -436,8 +437,11 @@ impl Writer<'_> {
 
     /// Marks filled one at a time. As with a template, the caller is
     /// offered every value a text mark is to show, and hands back the
-    /// ones it has no words of its own for.
-    pub fn percent(&self, text: &str, argument: &Value, offered: &mut Words<'_>) -> Result<String> {
+    /// ones it has no words of its own for. A template read off a row
+    /// of bytes says so: it knows the mark that shows a row of bytes,
+    /// it seeks a keyed mark's name among keys that are rows of bytes,
+    /// and a character mark holds one byte alone.
+    pub fn percent(&self, text: &str, argument: &Value, offered: &mut Words<'_>, of_bytes: bool) -> Result<String> {
         let settled = argument.contents();
         let argument = &settled;
         let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
@@ -464,7 +468,12 @@ impl Writer<'_> {
                 if chars.get(at).is_none() { return Err(self.fault("ext.op.rem.format.incomplete", &[])); }
                 let key: String = chars[begin..at].iter().collect(); at += 1;
                 let Value::Map(pairs) = argument else { return Err(self.fault("ext.op.rem.format.mapping", &[])); };
-                keyed = Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
+                let named = |k: &Value| match k {
+                    Value::Text(s) => !of_bytes && s.as_ref() == key,
+                    Value::Bytes(row, ..) => of_bytes && row.borrow().iter().copied().map(char::from).eq(key.chars()),
+                    _ => false,
+                };
+                keyed = Some(pairs.iter().find(|(k, _)| named(k)).map(|(_, v)| v)
                     .ok_or_else(|| self.key_missing(&key))?);
                 mapped = true;
                 used = args.len();
@@ -502,10 +511,11 @@ impl Writer<'_> {
                 used += 1; v
             }};
             rule.code = code;
-            if !"srad iuoxXeEfFgGc".replace(' ', "").contains(code) {
+            let letters = if of_bytes { "sbrad iuoxXeEfFgGc" } else { "srad iuoxXeEfFgGc" };
+            if !letters.replace(' ', "").contains(code) {
                 return Err(self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &(at - 1).to_string()]));
             }
-            let result = if matches!(code, 's' | 'r' | 'a') {
+            let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match offered(value, code)? {
                     Some(said) => said,
                     None if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
@@ -516,8 +526,9 @@ impl Writer<'_> {
                 rule.pad("", &shown, '>')
             } else if code == 'c' {
                 let shown = match value {
-                    Value::Text(s) if s.chars().count() == 1 => s.to_string(),
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value)?,
+                    Value::Bytes(row, ..) if of_bytes && row.borrow().len() == 1 => char::from(row.borrow()[0]).to_string(),
+                    Value::Text(s) if !of_bytes && s.chars().count() == 1 => s.to_string(),
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value, of_bytes)?,
                     _ => return Err(self.fault("ext.op.rem.format.character", &[])),
                 };
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
@@ -557,8 +568,9 @@ impl Writer<'_> {
         Ok(out)
     }
 
-    fn character(&self, value: &Value) -> Result<String> {
-        let n = value.as_big()?.to_u32().filter(|n| *n <= 0x10ffff)
+    fn character(&self, value: &Value, of_bytes: bool) -> Result<String> {
+        let most = if of_bytes { 0xff } else { 0x10ffff };
+        let n = value.as_big()?.to_u32().filter(|n| *n <= most)
             .ok_or_else(|| self.fault("ext.text.format.character", &[]))?;
         char::from_u32(n).map(|c| c.to_string()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))
     }
