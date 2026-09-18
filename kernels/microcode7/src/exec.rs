@@ -8228,7 +8228,7 @@ impl<'a> Machine<'a> {
         }
         let free_at: &[usize] = match operation {
             Prim::Length => &[10], Prim::Hashed => &[8], Prim::Truthful | Prim::AsTruth => &[9, 10], Prim::NextItem => &[16],
-            Prim::AsText => &[0, 1], Prim::Quoted => &[1], Prim::AsInt => &[38], Prim::AsReal => &[39], Prim::Magnitude => &[40],
+            Prim::AsText => &[0, 1], Prim::Quoted | Prim::Asciied => &[1], Prim::AsInt => &[38], Prim::AsReal => &[39], Prim::Magnitude => &[40],
             Prim::Contains | Prim::Absent => &[14],
             Prim::Iterator | Prim::Listed | Prim::Ordered | Prim::Tupling | Prim::Uniques | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue | Prim::Least | Prim::Greatest => &[15],
             Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary => &[],
@@ -8248,7 +8248,7 @@ impl<'a> Machine<'a> {
                     // Where a kind leads with its own name the thing is
                     // written by its blueprint, so there the worth is
                     // not allowed to stand in for the thing.
-                    Some(worth) if matches!(operation, Prim::Quoted | Prim::AsText) && Self::worth_leads_with_name(&worth) => settled.push(operand.clone()),
+                    Some(worth) if matches!(operation, Prim::Quoted | Prim::Asciied | Prim::AsText) && Self::worth_leads_with_name(&worth) => settled.push(operand.clone()),
                     Some(worth) => { settled.push(worth); changed = true; }
                     None => settled.push(operand.clone()),
                 }
@@ -8468,6 +8468,13 @@ impl<'a> Machine<'a> {
             (Prim::Invert, [one]) => Value::Flag(!self.object_truth(one)?),
             (Prim::Negate, [one]) if self.appointed(one, 25).is_some() => self.ask_special(one, 25, &[])?.unwrap(),
             (Prim::Quoted, [one]) => Value::text(&self.object_words(one, true)?),
+            // The ascii builtin writes what the quoting builtin writes
+            // and then puts every letter outside ASCII into the escape
+            // that stands for it.
+            (Prim::Asciied, [one]) => {
+                let said = self.object_words(one, true)?;
+                Value::text(&crate::text::ascii_escaped(&said))
+            }
             (Prim::AsText, [one]) => {
                 self.figures_allowed(one)?;
                 Value::text(&self.object_words(one, false)?)
@@ -8562,7 +8569,7 @@ impl<'a> Machine<'a> {
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
                 Value::Flag(matches!(one, Value::Thing(t) if t.of.goes_by(&class.name, false)))
             }
-            (Prim::Quoted | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
+            (Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
             _ => return Ok(None),
         };
         Ok(Some(value))
@@ -11121,7 +11128,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::Tuple(Rc::new(Vec::new())) }
                 else { n(1)?; Value::Tuple(Rc::new(self.gathered_members(&v[0])?)) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(Rc::new(Vec::new())),
@@ -13797,7 +13804,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
+        matches!(op, Belongs | Tupling | Uniques | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -14222,6 +14229,15 @@ impl Machine<'_> {
                     Some(letter) => format!("dict_{}({})", match letter { 'k' => "keys", 'v' => "values", _ => "items" }, quoted),
                     None => quoted,
                 }))
+            }
+            // The ascii builtin writes what the quoting builtin
+            // writes and then puts every letter outside ASCII into the
+            // escape that stands for it.
+            Asciied => {
+                require(1, 1)?;
+                let word = self.table.prim_words.iter().find(|(p, _)| *p == Prim::Quoted).map(|(_, w)| w.clone()).unwrap_or_default();
+                let quoted = self.core_primitive(Prim::Quoted, &word, input.clone(), Vec::new())?;
+                Ok(Value::text(&crate::text::ascii_escaped(&quoted.bare())))
             }
             Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
             CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }

@@ -4830,7 +4830,7 @@ impl<'a> Engine<'a> {
         let places: &[usize] = match op {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
-            Builtin::ToText => &[0, 1], Builtin::Repr => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
+            Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
             Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
             Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
@@ -4842,7 +4842,7 @@ impl<'a> Engine<'a> {
                 // A kind that names itself before its worth is written
                 // by the thing's own class, so the worth cannot stand
                 // in for the thing where the writing is what is asked.
-                Some(worth) if matches!(op, Builtin::Repr | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
+                Some(worth) if matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
                 Some(worth) => { settled.push(worth); changed = true; }
                 None => settled.push(value.clone()),
             }
@@ -4855,6 +4855,13 @@ impl<'a> Engine<'a> {
         let first = if changed { args.first() } else { first };
         let answer = match op {
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
+            // The ascii builtin writes what the quoting builtin writes
+            // and then puts every letter outside ASCII into the escape
+            // that stands for it.
+            Builtin::Ascii if args.len() == 1 => {
+                let said = self.special_text(&args[0], true)?;
+                Value::text(&crate::strings::ascii_escaped(&said))
+            }
             Builtin::ToText if args.len() == 1 => {
                 self.digits_shown(&args[0])?;
                 Value::text(&self.special_text(&args[0], false)?)
@@ -5034,7 +5041,7 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
                 Value::Flag(matches!(&args[0], Value::Object(o) if o.class.named(&class.name, false)))
             }
-            Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
+            Builtin::Repr | Builtin::Ascii | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
             _ => return Ok(None),
         };
         Ok(Some(answer))
@@ -11265,7 +11272,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -12413,7 +12420,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -12828,6 +12835,15 @@ impl Engine<'_> {
                 }
                 if let Some(portion) = window { return Ok(Value::text(&format!("dict_{}({})", portion, args[0].core_repr(self.lang.shortest_reals)))); }
                 Value::text(&args[0].core_repr(self.lang.shortest_reals))
+            }
+            // The ascii builtin writes what the quoting builtin
+            // writes and then puts every letter outside ASCII into the
+            // escape that stands for it.
+            Builtin::Ascii => {
+                arity(1, 1)?;
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::Repr).map(|(w, _)| w.clone()).unwrap_or_default();
+                let written = self.core_call(Builtin::Repr, &word, args.clone(), Vec::new())?;
+                Value::text(&crate::strings::ascii_escaped(&written.plain()))
             }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])))?) }
             Builtin::Identity => {

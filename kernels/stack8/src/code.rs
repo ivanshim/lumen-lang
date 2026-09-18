@@ -459,7 +459,7 @@ pub enum Builtin {
     Tuple,
     ValueMethod,
     Sorted,
-    InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
+    InstanceOf, Set, Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Ascii, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
     SetMake,
     SetAdd,
     SetRemove,
