@@ -912,7 +912,12 @@ impl Value {
             Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Mutable(place, _) => within_cell(place, Value::bare),
-            Value::Member(..) => String::from("<built-in method>"),
+            // A method of a builtin's own, handed over bound to what
+            // it was read from, is written by its name, the kind of the
+            // thing it was read from and where that thing is kept. One
+            // read from the kind itself is bound to no thing at all and
+            // is named with the kind it belongs to instead.
+            Value::Member(held, word) => method_written(held, word, Rc::as_ptr(held) as *const u8 as usize),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             // A word naming a kind stands for the kind itself, and is
@@ -926,7 +931,7 @@ impl Value {
             Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
             Value::Octets { cell, changeable, lead } => octets_shown(&cell.borrow(), lead, *changeable),
             Value::OctetKind { shown, .. } => shown.to_string(),
-            Value::TextCall { name, .. } => format!("<built-in method {}>", name),
+            Value::TextCall { subject, name, .. } => method_written(&Value::Text(subject.clone()), name, subject.as_ptr() as usize),
             Value::TextRow(words, closed) => crate::text::written_row(words, *closed),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
@@ -1015,6 +1020,51 @@ impl Value {
 }
 
 /// The whole part, then fraction places while the significant places last.
+/// The word a worth goes by as a kind, where it stands for one and not
+/// merely for something of one: the reference's own name for that
+/// kind. Nothing for a worth that is one of a kind.
+impl Value {
+    pub fn kind_it_names(&self) -> Option<String> {
+        match self {
+            Value::Blueprint(b) => Some(b.name.clone()),
+            Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_owned()),
+            Value::OctetKind { changeable, .. } => Some(String::from(if *changeable { "bytearray" } else { "bytes" })),
+            Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),
+            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().kind_it_names(),
+            _ => None,
+        }
+    }
+
+    /// Where the thing behind a worth is kept: the cell a collection
+    /// lives in, else the place its own members or letters stand at.
+    /// This is what the reference writes after a bound method's kind.
+    /// Nothing for a worth kept in no place of its own.
+    pub fn standing(&self) -> Option<usize> {
+        Some(match self {
+            Value::Shared(cell) | Value::Mutable(cell, _) => Rc::as_ptr(cell) as *const u8 as usize,
+            Value::Vector(items) | Value::Tuple(items) | Value::Row(items) => Rc::as_ptr(items) as *const u8 as usize,
+            Value::Dict(entries) => Rc::as_ptr(entries) as *const u8 as usize,
+            Value::Set(members) => Rc::as_ptr(members) as *const u8 as usize,
+            Value::Octets { cell, .. } => Rc::as_ptr(cell) as *const u8 as usize,
+            Value::Text(letters) => letters.as_ptr() as usize,
+            Value::Thing(thing) => Rc::as_ptr(thing) as *const u8 as usize,
+            Value::Iterator(state) => Rc::as_ptr(state) as *const u8 as usize,
+            _ => return None,
+        })
+    }
+}
+
+/// How a method of a builtin's own is written: the name it answers to,
+/// and either the kind of the thing it was read from with where that
+/// thing is kept, or, where it was read from the kind itself and so is
+/// bound to nothing, the name of that kind. Where the thing is kept in
+/// no place of its own, the method's own place stands for it.
+fn method_written(subject: &Value, word: &str, elsewhere: usize) -> String {
+    let held = subject.settled();
+    if let Some(kind) = held.kind_it_names() { return format!("<method '{word}' of '{kind}' objects>"); }
+    format!("<built-in method {word} of {} object at 0x{:x}>", held.kind_word(), subject.standing().unwrap_or(elsewhere))
+}
+
 pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String {
     let whole = above / beneath;
     let mut left = (above - &whole * beneath).abs();
