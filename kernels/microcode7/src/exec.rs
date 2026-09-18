@@ -11852,6 +11852,9 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
+            // Copying a sealed set answers with that set: a second
+            // could hold nothing the first does not.
+            6 if values[0].set_sealed() => Ok(values[0].clone()),
             4 => {
                 let first = target.borrow().entries.first().map(|(k, _)| k.clone());
                 match first {
@@ -13804,6 +13807,15 @@ impl Machine<'_> {
             }
             Tupling | Uniques | Unchanging => {
                 require(0, 1)?;
+                // A sealed set given to the maker of its own kind comes
+                // straight back: nothing may alter it, so a second
+                // would be the first under another name, and the
+                // reference answers with the very one it was handed.
+                if op == Unchanging {
+                    if let Some(standing) = input.first().filter(|v| matches!(v, Value::Set(_)) && v.set_sealed()) {
+                        return Ok(standing.clone());
+                    }
+                }
                 let entries = match input.first() { Some(v) => self.core_collect(v)?, None => Vec::new() };
                 if op == Tupling { return Ok(Value::Tuple(Rc::new(entries))); }
                 // A thing among the entries goes in as the set literal puts

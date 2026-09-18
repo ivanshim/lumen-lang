@@ -8870,6 +8870,9 @@ impl<'a> Engine<'a> {
             }
             return Ok(Value::Null);
         }
+        // Copying a set that cannot be changed answers with the set
+        // itself, there being nothing a second one could hold apart.
+        if op == SetCopy && args[0].set_fixed() { return Ok(args[0].clone()); }
         if op == SetPop {
             let key = cell.borrow().row.first().cloned().ok_or_else(|| self.set_said(".empty", ""))?;
             return Ok(cell.borrow_mut().remove(&key).unwrap());
@@ -12389,6 +12392,16 @@ impl Engine<'_> {
             }
             Builtin::Tuple | Builtin::Set | Builtin::Frozen => {
                 arity(0, 1)?;
+                // A set that cannot be changed, handed to the maker of
+                // its own kind, is handed straight back: nothing may
+                // alter it, so a fresh one would be the same set under
+                // another name, and the reference hands back the one it
+                // was given.
+                if b == Builtin::Frozen {
+                    if let Some(standing) = args.first().filter(|v| matches!(v, Value::Set(_)) && v.set_fixed()) {
+                        return Ok(standing.clone());
+                    }
+                }
                 let items = args.first().map(|v| self.core_members(v)).transpose()?.unwrap_or_default();
                 if matches!(b, Builtin::Set | Builtin::Frozen) {
                     // A thing among the members is keyed as the set literal
