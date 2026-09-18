@@ -1040,6 +1040,51 @@ bytearray's own mutators (`extend`, `insert`, `pop`, `remove`,
 2}])` says `sum needs numbers`; a bound builtin method's repr is
 `<member wrapper>`; stack8 cannot `del d["k"][1]` inside a function.
 
+Asking a value its kind answers for every kind a program can hold:
+`type(slice(1, 3))`, `type(b"b").__name__` and `type(f).__name__` used
+to stop the run; both kernels now give CPython's name for the builtin
+kinds, `NoneType`, `function`, `builtin_function_or_method`, `method`,
+`type`, `module`, `generator`, `complex`, `ellipsis`,
+`NotImplementedType` and the iterator kinds (`list_iterator`,
+`dict_keyiterator`, `list_reverseiterator`, `set_iterator`,
+`range_iterator`, and `enumerate`, `zip`, `map`, `filter`, `reversed`
+as the builtins spell them), and two readings of one plain kind are the
+selfsame value under `is`. A call that fills a place twice names the
+routine it was meant for (`f() got multiple values for argument 'a'`,
+with the class, method and nested forms) under
+`ext.syntax.call.amiss.positional`. Records: params/9 takes the new
+wording; file-iter/14 gains test_range_optimization; file-builtin/28
+turns one error into a failure; reader-tail/4, re-measured on the
+folded tree, gains eight against main with none lost. Gaps: `reversed(d)`
+on a dict answers `generator` where CPython names
+dict_reverse*iterator; `repr(type(int))` prints `<built-in function
+int>` and `repr(type(None))` prints `NULL`; `type(f).__qualname__` and
+`__module__` raise; `type({}.keys()).__name__` is `list`;
+scratch/file-dict/11 records `multiple values for argument 'x'` for
+`dict(**{"x": 1}, **{"x": 2})` where CPython says `dict() got multiple
+values for keyword argument 'x'`.
+
+The two passes batch 8 lost are back. A writable row of bytes had
+gained its own kind word, so the check that two values stand in some
+order no longer saw bytes and bytearray as one family; each kernel now
+has an ordering family that folds the two, and test_compare's
+test_bytes passes again on both kernels. A member a builtin value has
+not got was glanced for as a name nearby and called with the value in
+front, a pipe CPython has no notion of; on stack8, where a module's
+function locals leak into the module's namespace (`hasattr(marshal,
+"start")` is True there and False on microcode7, a pre-existing
+divergence), the pickler's own blank local `start` was found and
+invoked, ending the run outside any except. A definition that words
+the missing-member complaint now raises it and nothing else, so
+`pickle.dumps(gen())` is a catchable PicklingError again (CPython's
+`TypeError: cannot pickle 'generator' object` would mean rewording the
+library's own marshal refusal) and `(1).x` with an `x` bound nearby is
+an AttributeError. Gaps: `type(gen())`, `type(f)`, `type(module)` and
+`type(C)` as values stop with "unknown value type" on both kernels
+(their `__name__` is right); `dir(gen())` and `dir(fn)` are nearly
+empty; stack8 evaluates a call's arguments before raising the
+missing-member fault, microcode7 after.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
