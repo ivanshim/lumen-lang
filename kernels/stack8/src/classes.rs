@@ -134,7 +134,7 @@ impl<'a> Engine<'a> {
                 let listed = Value::Tuple(Rc::new(bases.iter().cloned().map(Value::Class).collect()));
                 let pairs: Vec<(Value, Value)> = members.iter().filter(|(_, v)| !matches!(v, Value::Blank))
                     .map(|(n, v)| (Value::text(n), v.clone())).collect();
-                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs)))), true);
+                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into())))), true);
                 let mut given = vec![Value::Class(m.clone()), Value::text(&name), listed.clone(), namespace.clone()];
                 given.extend(carried.iter().cloned());
                 let made = self.class_apply(f, given)?;

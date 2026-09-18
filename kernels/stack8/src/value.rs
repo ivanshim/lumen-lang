@@ -302,7 +302,7 @@ pub enum Value {
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
-    Map(Rc<Vec<(Value, Value)>>),
+    Map(Rc<KeyedPairs>),
     /// A cell two or more names share: a write through any of them is a
     /// write all of them see. Where calls bind by name, it also holds
     /// a collection whose items may change whilst its names stay apart.
@@ -391,6 +391,91 @@ impl Members {
     pub fn show(&self, shown: impl Fn(&Value) -> String) -> String {
         if self.row.is_empty() { return format!("{}()", self.word); }
         format!("{{{}}}", self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// A map's rows, in the order a program wrote them, paired with a
+/// lookup from a key's own text (`member_key`) to the row it sits at.
+/// The lookup is worked out the first time something asks for it, from
+/// every row already present, and answered without doing that walk
+/// again afterwards. It belongs only to the rows it was drawn from:
+/// `Deref` reaches those rows for reading, unchanged, while `DerefMut`
+/// throws the lookup away before handing out a way to change the rows,
+/// so nothing that adds, drops, reorders or overwrites a row by hand
+/// can leave the lookup pointing at rows that moved out from under it.
+/// `set_by_key`, the one road that does not pass through `DerefMut`,
+/// keeps the rows and the lookup growing side by side instead, so a
+/// map built one key at a time never has its lookup thrown away and
+/// walked afresh for the next key.
+#[derive(Debug)]
+pub struct KeyedPairs {
+    rows: Vec<(Value, Value)>,
+    lookup: RefCell<Option<std::collections::HashMap<String, usize>>>,
+}
+
+impl KeyedPairs {
+    /// The row standing under a key's own text, worked out from
+    /// scratch across every row the first time this is asked, and
+    /// answered straight from the lookup on every ask after that.
+    pub fn locate(&self, keytext: &str) -> Option<usize> {
+        let mut lookup = self.lookup.borrow_mut();
+        if lookup.is_none() {
+            let mut fresh = std::collections::HashMap::with_capacity(self.rows.len());
+            for (at, (key, _)) in self.rows.iter().enumerate() {
+                if let Ok(text) = key.member_key() { fresh.insert(text, at); }
+            }
+            *lookup = Some(fresh);
+        }
+        lookup.as_ref().unwrap().get(keytext).copied()
+    }
+
+    /// Set a key already known by its own text — never one a program's
+    /// own `__eq__` or `__hash__` must be asked about — over the row
+    /// already there, or onto a fresh one at the end, keeping the
+    /// lookup caught up with the rows either way, so that building a
+    /// map key by key never re-walks what it has already placed.
+    pub fn set_by_key(&mut self, key: Value, keytext: String, value: Value) {
+        match self.locate(&keytext) {
+            Some(at) => self.rows[at].1 = value,
+            None => {
+                let at = self.rows.len();
+                self.rows.push((key, value));
+                self.lookup.borrow_mut().as_mut().expect("locate just filled it").insert(keytext, at);
+            }
+        }
+    }
+}
+
+impl From<Vec<(Value, Value)>> for KeyedPairs {
+    fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
+        KeyedPairs { rows, lookup: RefCell::new(None) }
+    }
+}
+
+/// A copy carries only the rows onward; its lookup is left for
+/// whatever next asks for it to work out again, over the copy's own
+/// rows and never the rows it was copied from.
+impl Clone for KeyedPairs {
+    fn clone(&self) -> KeyedPairs {
+        KeyedPairs { rows: self.rows.clone(), lookup: RefCell::new(None) }
+    }
+}
+
+impl std::iter::FromIterator<(Value, Value)> for KeyedPairs {
+    fn from_iter<I: IntoIterator<Item = (Value, Value)>>(iter: I) -> KeyedPairs {
+        KeyedPairs::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl std::ops::Deref for KeyedPairs {
+    type Target = Vec<(Value, Value)>;
+    fn deref(&self) -> &Vec<(Value, Value)> { &self.rows }
+}
+
+impl std::ops::DerefMut for KeyedPairs {
+    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        *self.lookup.borrow_mut() = None;
+        &mut self.rows
     }
 }
 
