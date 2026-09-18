@@ -970,8 +970,7 @@ impl Value {
             Value::Refusal(word) => word.to_string(),
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
             Value::Routine(p) | Value::Bound(p, _) => {
-                let mut title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
-                if title.ends_with("{closure}") { title.truncate(title.len() - "{closure}".len()); title.push_str("<lambda>"); }
+                let title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
                 format!("<function {title} at 0x1>")
             }
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
