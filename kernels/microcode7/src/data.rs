@@ -9,7 +9,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
-use crate::form::Routine;
+use crate::form::{Prim, Routine};
 
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
@@ -193,7 +193,7 @@ pub enum Value {
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
-    Intrinsic(Rc<str>),
+    Intrinsic(Prim, Rc<str>),
     Iterator(Rc<RefCell<IteratorState>>),
     Backtrace(Rc<str>),
     Keyed(Rc<Value>, Rc<Value>),
@@ -544,7 +544,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Wrapped(..) | Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::TextCall { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::TextCall { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
     }
@@ -594,7 +594,7 @@ impl Value {
             Value::TextCall { .. } | Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -648,7 +648,7 @@ impl Value {
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
-            (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
+            (Value::Intrinsic(_, left), Value::Intrinsic(_, right)) => left == right,
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
             // The arguments a fault was made with are a tuple in their
@@ -915,7 +915,11 @@ impl Value {
             Value::Member(..) => String::from("<built-in method>"),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
-            Value::Intrinsic(name) => format!("<built-in function {}>", name),
+            // A word naming a kind stands for the kind itself, and is
+            // written as the reference writes a class; every other
+            // intrinsic word is written as work waiting to be done.
+            Value::Intrinsic(op, name) if op.names_a_kind() => format!("<class '{}'>", name),
+            Value::Intrinsic(_, name) => format!("<built-in function {}>", name),
             Value::Iterator(_) => String::from("<iterator>"),
             Value::SetCursor { .. } => String::from("<set walk>"),
             Value::Set(items) => items.borrow().written(Value::bare),

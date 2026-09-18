@@ -4042,9 +4042,9 @@ impl<'a> Machine<'a> {
                         // The kind primitive, built on: what is being
                         // made is a metaclass, and the things it makes
                         // are classes rather than objects.
-                        Some(Value::Intrinsic(word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => Some(self.builder_blueprint()),
+                        Some(Value::Intrinsic(_,word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => Some(self.builder_blueprint()),
                         // A native kind the table lets a class stand on.
-                        Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
+                        Some(Value::Intrinsic(_,word)) if self.table.spells("ext.stmt.class.builtin", &word) => Some(self.native_kind(&word)),
                         // The byte kinds are values in their own right,
                         // so each is looked up by the word spelling it.
                         Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
@@ -4053,7 +4053,7 @@ impl<'a> Machine<'a> {
                         }
                         // The property builtin, stood on as a class.
                         Some(named) if self.has_class_order() && self.spells_property_kind(&named) => Some(self.property_blueprint()),
-                        Some(Value::Intrinsic(word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
+                        Some(Value::Intrinsic(_,word)) if self.table.spells("ext.builtin.bool", &word) && self.table.has_any("ext.builtin.bool.base") => {
                             return Err(self.table.single("ext.builtin.bool.base").unwrap_or_default().to_owned().into());
                         }
                         _ => return Err(if self.has_class_order(){self.detail("unready").to_owned()}else{format!("Class {} cannot be built on that", plan.name)}.into()),
@@ -4063,8 +4063,8 @@ impl<'a> Machine<'a> {
                 for _ in 0..plan.answers {
                     match given.next() {
                         Some(Value::Blueprint(b)) => answers.push(b),
-                        Some(Value::Intrinsic(word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
-                        Some(Value::Intrinsic(word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
+                        Some(Value::Intrinsic(_,word)) if self.has_class_order() && self.table.prims.get(word.as_ref())==Some(&Prim::SortOf) => { let kind = self.builder_blueprint(); answers.push(kind); }
+                        Some(Value::Intrinsic(_,word)) if self.table.spells("ext.stmt.class.builtin", &word) => { let kind = self.native_kind(&word); answers.push(kind); }
                         Some(Value::OctetKind { changeable, .. }) if self.table.spells("ext.stmt.class.builtin", self.octet_kind_word(changeable)) => {
                             let word = self.octet_kind_word(changeable).to_owned();
                             let kind = self.native_kind(&word); answers.push(kind);
@@ -4753,7 +4753,7 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()==3 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
-                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.of.presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some()) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
+                            Prim::Of if values.len()==2 && (matches!(&values[0], Value::Thing(t) if t.of.presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some()) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
                             Prim::Onto if values.len()==3=>{ self.context_hushed_by(&values[0],&values[1].bare()); return self.alter_class_member(values[0].clone(),&values[1].bare(),Some(values[2].clone()),false) },
                             Prim::Pluck if values.len()==2=>return self.alter_class_member(values[0].clone(),&values[1].bare(),None,false),
                             _=>{}
@@ -4928,13 +4928,13 @@ impl<'a> Machine<'a> {
     }
 
     fn word_it_spells(&mut self, stands: &Value, args: &[Form], frame: &Rc<Env>) -> Option<Res<Value>> {
-        let word = match stands { Value::Text(word) | Value::Intrinsic(word) => word, _ => return None };
+        let word = match stands { Value::Text(word) | Value::Intrinsic(_, word) => word, _ => return None };
         let op = self.table.prims.get(word.as_ref()).copied()?;
         let name = word.to_string();
         Some((|| {
             let mut values = self.value_list(args, frame)?;
             if op == Prim::ClassWork(11) && self.has_class_order() && !self.detail("descriptor.get").is_empty() { return self.work_on_class(11, values); }
-            if matches!(stands, Value::Intrinsic(_)) && self.names_in_calls {
+            if matches!(stands, Value::Intrinsic(..)) && self.names_in_calls {
                 let (mut positions, names) = self.open_arguments(values)?;
                 if let Some(answer) = self.builtin_names(op, &name, &mut positions, names)? { return Ok(answer); }
                 values = positions;
@@ -5286,7 +5286,7 @@ impl<'a> Machine<'a> {
         }
         if self.table.single("ext.builtin.class.name") == Some(name) {
             if let Value::Blueprint(kind) = value { return Some(Value::text(&kind.name)); }
-            if let Value::Intrinsic(word) = value { return Some(Value::text(word)); }
+            if let Value::Intrinsic(_, word) = value { return Some(Value::text(word)); }
             if let Value::KindOf(kind) = value { return Some(Value::text(Value::word_for_kind(*kind))); }
             // Either octet kind is a worth of its own rather than an
             // intrinsic word, so it answers for its name here.
@@ -5558,7 +5558,7 @@ impl<'a> Machine<'a> {
             Value::Blueprint(class) => Some(class.name.clone()),
             Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_string()),
             Value::OctetKind { changeable, .. } => Some(self.octet_kind_word(*changeable).to_string()),
-            Value::Intrinsic(word) if self.table.prims.get(word.as_ref()).map_or(false, Self::names_a_kind) => Some(word.to_string()),
+            Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),
             other => self.kind_spelling(other).map(|word| word.to_string()),
         }
     }
@@ -9553,9 +9553,9 @@ impl<'a> Machine<'a> {
                 let word = v[1].bare();
                 // A kind value and an intrinsic are each named, where the
                 // table has a member for a name.
-                if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(_) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
+                if matches!(&v[0], Value::KindOf(_) | Value::Intrinsic(..) | Value::OctetKind { .. }) && self.table.spells("ext.builtin.class.name", &word) { return Ok(Value::Flag(true)); }
                 // A native kind's word has a maker and a name, where a class may stand on it.
-                if let Value::Intrinsic(kind) = &v[0] {
+                if let Value::Intrinsic(_, kind) = &v[0] {
                     let lined = word == self.detail("mro") || word == self.detail("order");
                     if self.table.spells("ext.stmt.class.builtin", kind) && (lined || word == self.detail("allocate") || word == self.detail("name") || self.table.spells("ext.builtin.class.name", &word)) { return Ok(Value::Flag(true)); }
                 }
@@ -10711,7 +10711,7 @@ impl<'a> Machine<'a> {
                     (Value::Iterator(a), Value::Iterator(b)) => Rc::ptr_eq(a, b),
                     (Value::Generator(a), Value::Generator(b)) => Rc::ptr_eq(a, b),
                     (Value::Refusal(_), Value::Refusal(_)) => true,
-                    (Value::Intrinsic(a), Value::Intrinsic(b)) => a == b,
+                    (Value::Intrinsic(_, a), Value::Intrinsic(_, b)) => a == b,
                     (Value::OctetKind { changeable: x, .. }, Value::OctetKind { changeable: y, .. }) => x == y,
                     // A bare kind is held as the kind and nothing more,
                     // so one kind read twice is the selfsame value.
@@ -11396,7 +11396,7 @@ impl<'a> Machine<'a> {
                         Value::Progression(_) => Some(Prim::Span), Value::Span(_) => Some(Prim::SpanOf), _ => None,
                     };
                     if let Some(operation) = wanted {
-                        if let Some((_,word)) = self.table.prim_words.iter().find(|(p,_)| *p == operation) { return Ok(Value::Intrinsic(Rc::from(word.as_str()))); }
+                        if let Some((_,word)) = self.table.prim_words.iter().find(|(p,_)| *p == operation) { return Ok(Value::Intrinsic(operation, Rc::from(word.as_str()))); }
                     }
                 }
                 if let Value::Octets { changeable, .. } = &v[0] { return Ok(self.octet_type(*changeable)); }
@@ -11414,12 +11414,13 @@ impl<'a> Machine<'a> {
                 if let (Value::Thing(_), Some(word)) = (&v[0], self.table.single("ext.system.kind.object")) {
                     return Ok(Value::text(word));
                 }
+                // Every kind left over is one the table spells no
+                // intrinsic word for. A table that asks after kinds at
+                // all is answered with the blueprint named for it: the
+                // bare kind worth carries no name of its own, and a
+                // class stands where the reference has a class.
+                if self.table.has_any("ext.builtin.isinstance") { return Ok(self.kind_named_after(&v[0])); }
                 let Some(sort) = v[0].kind() else {
-                    // Every other kind a program can hold is of no kind
-                    // the core knows. A table that asks after kinds at
-                    // all is answered with a blueprint named for it
-                    // rather than refused outright.
-                    if self.table.has_any("ext.builtin.isinstance") { return Ok(self.kind_named_after(&v[0])); }
                     return Err(format!("{}(): unknown value type", name));
                 };
                 // Where a language says a kind in words, the word it
@@ -13218,7 +13219,7 @@ impl Machine<'_> {
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
                 let initial = match self.table.strings("ext.system.module.name").contains(name) {
-                    true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or_else(|| if self.table.prims.contains_key(name) { Value::Intrinsic(Rc::from(name.as_str())) } else { Value::Unset }),
+                    true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
                 members.push((name.clone(), link.clone()));
@@ -13347,7 +13348,7 @@ impl<'a> Machine<'a> {
     /// never written — so that it goes on being read from the cell.
     fn passed_over(&self, name: &str, held: &Value) -> bool {
         match held {
-            Value::Intrinsic(word) => word.as_ref() == name,
+            Value::Intrinsic(_, word) => word.as_ref() == name,
             Value::Blueprint(kind) => kind.name == name && (self.fault_kinds.contains_key(name) || name == self.detail("root")),
             Value::KindOf(_) | Value::Unset => true,
             _ => false,
@@ -13358,7 +13359,7 @@ impl<'a> Machine<'a> {
     /// the root class.
     fn native_of(&self, name: &str) -> Option<Value> {
         if let Some(kind) = self.fault_kinds.get(name) { return Some(kind.clone()); }
-        if self.table.prims.contains_key(name) { return Some(Value::Intrinsic(Rc::from(name))); }
+        if let Some(op) = self.table.prims.get(name) { return Some(Value::Intrinsic(*op, Rc::from(name))); }
         if self.has_class_order() && name == self.detail("root") { return self.ancestor.clone().map(Value::Blueprint); }
         None
     }
@@ -14076,10 +14077,7 @@ impl Machine<'_> {
     fn core_run(&mut self, callable: &Value, values: Vec<Value>) -> Result<Value, String> {
         match callable {
             Value::Member(receiver, name) => self.value_member(receiver, name, values, Vec::new()).map_err(|fault| self.suspension_fault(fault)),
-            Value::Intrinsic(word) => {
-                let op = *self.table.prims.get(word.as_ref()).ok_or_else(|| self.core_complaint("core.uncallable", &callable.kind_word()))?;
-                self.prim(op, word, &values)
-            }
+            Value::Intrinsic(op, word) => self.prim(*op, word, &values),
             Value::Bound(program, frame) => match self.invoke(program.clone(), frame.clone(), values) {
                 Ok(answer) => Ok(answer),
                 Err(escape) => { self.got_away = Some(escape); Err(self.core_complaint("core.unready", &program.ident)) }
@@ -14107,15 +14105,21 @@ impl Machine<'_> {
                 if let Some(told) = self.builder_answers(expected, item, false).map_err(|e| self.suspension_fault(e))? { return Ok(told); }
                 // Every value at all is of the class every value is of.
                 if class.name == self.detail("root") { return Ok(true); }
+                // A blueprint standing for a native kind the table
+                // spells no word of its own for is asked about by the
+                // kind's own name, no word standing in its place.
+                if let Some(word) = Self::native_beneath(class) {
+                    if !self.table.prims.contains_key(&word) { return Ok(item.kind_word() == word); }
+                }
                 Ok(matches!(item, Value::Thing(t) if t.of.goes_by(&class.name, false)))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),
             // A kind is asked after by the word naming it, whether the
             // word arrived as an intrinsic of its own or as the plain
             // reading of the name; nothing else names a kind.
-            Value::Intrinsic(_) | Value::Wrapped(8, _) => {
+            Value::Intrinsic(..) | Value::Wrapped(8, _) => {
                 let word = match expected {
-                    Value::Intrinsic(word) => word.clone(),
+                    Value::Intrinsic(_, word) => word.clone(),
                     Value::Wrapped(_, parts) => match &parts[0] { Value::Text(word) => word.clone(), _ => return Err(self.core_complaint("core.isinstance.amiss", "")) },
                     _ => unreachable!(),
                 };
@@ -14220,7 +14224,7 @@ impl Machine<'_> {
                 }))
             }
             Truthful => { require(0, 1)?; Ok(Value::Flag(input.first().map_or(false, |v| self.stands_true(v)))) }
-            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(_) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
+            CallableValue => { require(1, 1)?; Ok(Value::Flag(matches!(input[0], Value::Intrinsic(..) | Value::Bound(..) | Value::Routine(_) | Value::Blueprint(_) | Value::Member(..) | Value::Method(..)))) }
             Hashed => {
                 require(1, 1)?;
                 input[0].hash_number().map(Value::Small).ok_or_else(|| self.core_complaint("core.unhashable", &Self::unhashable_kind(&input[0])))
@@ -14242,7 +14246,7 @@ impl Machine<'_> {
                     Value::Nil => 0, Value::Flag(false) => 1, Value::Flag(true) => 2,
                     Value::Small(n) => (*n as u64).wrapping_mul(16).wrapping_add(3),
                     Value::Vector(p) | Value::Tuple(p) => Rc::as_ptr(p) as usize as u64,
-                    Value::Intrinsic(word) => {
+                    Value::Intrinsic(_, word) => {
                         let mut words: Vec<_> = self.table.prims.keys().collect(); words.sort();
                         words.iter().position(|w| w.as_str() == word.as_ref()).unwrap_or(0) as u64 + 16
                     }

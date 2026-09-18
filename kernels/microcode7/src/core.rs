@@ -47,7 +47,7 @@ impl Value {
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
-            Self::Intrinsic(_) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
         };
         word.to_owned()

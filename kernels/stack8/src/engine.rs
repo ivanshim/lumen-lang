@@ -11496,12 +11496,13 @@ impl<'a> Engine<'a> {
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {
                     return Ok(Value::text(word));
                 }
+                // Every kind left over is one the definition spells no
+                // builtin word for, and a definition that asks after
+                // kinds at all is answered with the class named for it:
+                // the bare kind value carries no name of its own, and a
+                // class stands where the reference has a class.
+                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                 let Some(kind) = args[0].sort() else {
-                    // Every other kind a program can hold is of no kind
-                    // the core knows, and a definition that asks after
-                    // kinds at all is answered with a class named for
-                    // it rather than refused.
-                    if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                     return Err(format!("{}(): unknown value type", name));
                 };
                 // Some languages say a kind in words rather than hand
@@ -12717,6 +12718,12 @@ impl Engine<'_> {
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             // Every value whatever is of the class every other one is of.
             if class.name == self.class_word("root") { return Ok(true); }
+            // A class standing for a builtin kind the definition spells
+            // no word of its own for is asked about by the kind's own
+            // name, there being no builtin word to ask in its place.
+            if let Some(kind) = Self::kind_beneath(class) {
+                if !self.lang.builtins.contains_key(&kind) { return Ok(value.core_kind() == kind); }
+            }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.

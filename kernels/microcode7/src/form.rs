@@ -457,6 +457,19 @@ pub enum Prim {
     Resume,
 }
 
+impl Prim {
+    /// Whether this operation names a kind of value rather than a piece
+    /// of work. Only such a word stands for a class where `issubclass`
+    /// and `isinstance` want one, and only such a word is written as
+    /// the kind it stands for rather than as work waiting to be done.
+    pub fn names_a_kind(self) -> bool {
+        matches!(self, Self::AsInt | Self::AsText | Self::AsReal | Self::SortOf | Self::Listed | Self::Dictionary
+            | Self::Tupling | Self::Uniques | Self::Truthful | Self::ComplexMade | Self::Octets(0 | 1) | Self::Span
+            | Self::Numbered | Self::Zipped | Self::Mapped | Self::Filtered | Self::Backwards | Self::SpanOf
+            | Self::ClassWork(9..=11))
+    }
+}
+
 /// The shape a case asks for; names are kept apart from their addresses.
 #[derive(Debug, Clone)]
 pub enum CaseTest {

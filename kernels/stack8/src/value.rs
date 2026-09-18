@@ -982,6 +982,10 @@ impl Value {
             Value::Collection(cell, _) => shown_once(cell, "[...]", |held| held.plain()),
             Value::ValueMethod(_) => "<built-in method>".to_string(),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
+            // A builtin word naming a kind stands for the kind itself,
+            // and is written as the reference writes a class; every
+            // other builtin word is written as work to be done.
+            Value::Native(op, word) if op.names_kind() => format!("<class '{}'>", word),
             Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::SetWalk(..) => "<set walk>".into(),
