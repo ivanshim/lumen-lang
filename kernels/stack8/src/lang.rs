@@ -101,6 +101,12 @@ pub struct Lang {
     pub text_repeat: bool,
     pub text_negative_index: bool,
     pub class_details: HashMap<String, Vec<String>>,
+    /// Whether classes stand fuller than the plain kinds alone: reckoned
+    /// once here, from the very same word `class_details` keeps under
+    /// "root", since that word never changes once the language is read.
+    /// Every step of every program asks this, so it is a field read
+    /// rather than a hashmap looked into afresh at each one.
+    pub fuller_classes: bool,
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
@@ -2566,6 +2572,11 @@ impl Lang {
             source_place: r.strings("ext.builtin.source.syntax.place")?,
             source_unready: r.head("ext.builtin.source.unready")?,
             class_details: ["call", "locals", "root", "mro", "order", "name", "qualified", "bases", "namespace", "kind", "allocate", "subclass", "slots", "set", "remove", "get", "getitem", "doc", "module", "defaults", "code", "argcount", "varnames", "receiver", "function", "main", "mro.amiss", "attribute.amiss", "attribute.readonly", "unready", "descriptor.get", "descriptor.set", "descriptor.delete", "descriptor.name", "descriptor.foreign", "property.fget", "property.fset", "property.fdel", "property.getter", "property.deleter", "property.doc", "property.readonly", "property.unreadable", "property.unwritable", "property.undeletable"].into_iter().map(|part| Ok((part.to_string(), r.strings(&format!("ext.stmt.class.detail.{}", part))?))).collect::<Result<_, String>>()?,
+            // The very word `class_word("root")` would answer, read here
+            // once rather than through a hashmap at every single step of
+            // every program: nothing about a language's own class detail
+            // words changes once the language is read.
+            fuller_classes: r.strings("ext.stmt.class.detail.root")?.first().map_or(false, |s| !s.is_empty()),
             decorator_words: r.strings("ext.stmt.decorator")?,
             decorator_amiss: r.head("ext.stmt.decorator.amiss")?,
             const_words: r.strings("ext.stmt.const")?,

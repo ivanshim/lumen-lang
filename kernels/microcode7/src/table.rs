@@ -30,12 +30,60 @@ pub struct Infix {
     pub right_assoc: bool,
 }
 
+/// A stand-in for the standard library's own scattering, which guards
+/// against an adversary choosing keys on purpose -- a guard this label
+/// roster, read once from the language's own definition and never
+/// written from outside it, has no need of. Every value a program reads
+/// asks after some label here, so the scattering is asked for many
+/// times over for every one time a key is written, and a plainer
+/// scattering, quicker for it, costs nothing this roster does not
+/// already pay for safety it does not need.
+#[derive(Default)]
+pub struct FxHasher {
+    hash: usize,
+}
+
+impl FxHasher {
+    const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
+    #[inline]
+    fn add(&mut self, word: usize) {
+        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, mut bytes: &[u8]) {
+        while bytes.len() >= 8 {
+            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
+            bytes = &bytes[8..];
+        }
+        if bytes.len() >= 4 {
+            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
+            bytes = &bytes[4..];
+        }
+        if bytes.len() >= 2 {
+            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
+            bytes = &bytes[2..];
+        }
+        if let Some(&last) = bytes.first() {
+            self.add(last as usize);
+        }
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash as u64
+    }
+}
+
+type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
+
 pub struct Table {
     pub ident: String,
     pub blocks: Blocks,
     /// Reverse Polish: words over one stack, no expressions.
     pub rpn: bool,
-    cells: HashMap<&'static str, Entry>,
+    cells: HashMap<&'static str, Entry, FxBuildHasher>,
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
@@ -50,6 +98,12 @@ pub struct Table {
     given: HashSet<String>,
     pub keywords: HashSet<String>,
     pub signs: Vec<String>,
+    /// Whether classes stand fuller than the plain kinds alone: reckoned
+    /// once here from the very word `detail("root")` reads, since that
+    /// word never changes once the roster is read. Every value read
+    /// asks this, so it is a field rather than a name built afresh and
+    /// looked into at each one.
+    pub has_class_order: bool,
 }
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.
@@ -377,7 +431,7 @@ fn strings_at(key: &str, json: &Json) -> Result<Vec<String>, String> {
 impl Table {
     pub fn parse(text: &str) -> Result<Table, String> {
         let map = top_object(text)?;
-        let mut cells = HashMap::new();
+        let mut cells: HashMap<&'static str, Entry, FxBuildHasher> = HashMap::default();
         let mut known = tag_shapes(TAGS);
         for (key, shape) in &known {
             let json = map.get(*key).ok_or_else(|| format!("missing label '{key}'"))?;
@@ -411,7 +465,9 @@ impl Table {
             given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
             signs: Vec::new(),
+            has_class_order: false,
         };
+        table.has_class_order = table.single("ext.stmt.class.detail.root").map_or(false, |s| !s.is_empty());
         if !matches!(table.lone("system.real.render"), Some("library" | "shortest")) {
             return Err(String::from("The real rendering is neither 'library' nor 'shortest'"));
         }

@@ -1860,14 +1860,23 @@ impl<'a> Engine<'a> {
     fn load_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Res<Value> {
         for &s in &slot.near {
             if let Value::Binding(shared) = &frame[s] {
-                let value = shared.borrow().clone();
+                // A taking read of a name closed-over locals still box
+                // leaves its cell in the same shape a plain slot's does:
+                // the value moves out and a gap stands where it stood,
+                // rather than a clone of everything held paid for a
+                // read about to be overwritten anyway.
+                let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
                 if self.lang.closes_over && matches!(value, Value::Blank) {
                     return Err(Self::named_fault(if slot.free { &self.lang.free_unbound } else { &self.lang.local_unbound }, &slot.ident));
                 }
                 return Ok(value);
             }
             if let Value::Bond(shared) = &frame[s] {
-                return Ok(if self.lang.bind_names { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
+                return Ok(match () {
+                    _ if self.lang.bind_names => Value::Bond(shared.clone()),
+                    _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                    _ => shared.borrow().clone(),
+                });
             }
             if !matches!(frame[s], Value::Blank) {
                 return Ok(if slot.moving { std::mem::replace(&mut frame[s], Value::Gap) } else { frame[s].clone() });
@@ -1880,7 +1889,11 @@ impl<'a> Engine<'a> {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) { return found; }
         }
         if let Value::Bond(shared) = &self.world[slot.far] {
-            return Ok(if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") { Value::Bond(shared.clone()) } else { shared.borrow().clone() });
+            return Ok(match () {
+                _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
+                _ if slot.moving => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                _ => shared.borrow().clone(),
+            });
         }
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
@@ -5869,9 +5882,13 @@ impl<'a> Engine<'a> {
                     }
                     Value::Map(Rc::new(pairs))
                 } else {
-                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a.as_ref().clone(), _ => unreachable!() };
-                    if *spread { items.extend(self.comprehension_items(&next)?); } else { items.push(next); }
-                    Value::array(items)
+                    // A literal grown one item at a time keeps the same
+                    // row throughout when nothing else shares it, so an
+                    // item joins in one push rather than a clone of
+                    // everything gathered so far for every item added.
+                    let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a, _ => unreachable!() };
+                    if *spread { Rc::make_mut(&mut items).extend(self.comprehension_items(&next)?); } else { Rc::make_mut(&mut items).push(next); }
+                    Value::Array(items)
                 }
             }
             Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
@@ -12505,7 +12522,7 @@ impl Engine<'_> {
             }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
-        let walk = Self::core_cursor(CursorSource::Items(self.core_members(source)?, 0));
+        let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         Ok(walk)
     }
@@ -12552,6 +12569,40 @@ impl Engine<'_> {
             if state.busy { return Err(self.core_fault("core.unready", "next")); }
             if let Some(value) = state.pending.take() { return Ok(Some(value)); }
             if state.finished { return Ok(None); }
+            // A walk that reaches nothing beyond its own row, its own
+            // count or its own cell -- calling no callable of the
+            // program's and asking no other cursor -- steps in the one
+            // borrow already open on it, since nothing it does could
+            // ever reach this same cursor again meanwhile. The row a
+            // counted walk stands on is a great number even where the
+            // walk itself is small, and cloning the whole of the state
+            // to set the walk free, where the walk was never taken up
+            // by anything that needed it free, paid for that number
+            // twice at every single step for nothing gained by it.
+            match &mut state.source {
+                CursorSource::Items(values, place) => {
+                    let found = values.get(*place).cloned();
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Counted(row, place) => {
+                    let found = row.at(place.clone());
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Living(home, place) => {
+                    let found = match home.borrow().contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                CursorSource::Viewed(window, place, size) => {
+                    if Self::window_size(window) != *size { return Err(self.core_fault("core.dict.changed", "")); }
+                    let found = match window.contents() { Value::Array(items) => items.get(*place).cloned(), _ => None };
+                    if found.is_some() { *place += 1; } else { state.finished = true; }
+                    return Ok(found);
+                }
+                _ => {}
+            }
             state.busy = true;
             state.source.clone()
         };
@@ -13012,7 +13063,7 @@ impl Engine<'_> {
                     return self.core_iterator(&Value::Counted(Rc::new(backwards)));
                 }
                 let mut items = self.core_members(&source)?; items.reverse();
-                let walk = Self::core_cursor(CursorSource::Items(items, 0));
+                let walk = Self::core_cursor(CursorSource::Items(Rc::new(items), 0));
                 // A row walked backwards has a word of its own; anything
                 // else walked backwards the reference names after the
                 // builtin that turned it about.
@@ -13070,7 +13121,7 @@ impl Engine<'_> {
                 // must be and the key is asked in the order they come.
                 // The one standing keeps its place against an equal, so
                 // that the first of several alike is the one answered.
-                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(args.clone(), 0)) };
+                let walk = if args.len() == 1 { self.core_iterator(&args[0])? } else { Self::core_cursor(CursorSource::Items(Rc::new(args.clone()), 0)) };
                 let wanted = if b == Builtin::Maximum { Action::Gt } else { Action::Lt };
                 let mut standing: Option<(Value, Value)> = None;
                 while let Some(value) = self.core_step(&walk)? {
