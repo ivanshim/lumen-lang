@@ -427,6 +427,9 @@ impl<'a> Machine<'a> {
         match f {
             Value::Bound(code,environment)=>self.invoke(code,environment,values),
             Value::Routine(code)=>self.invoke(code,self.outermost.clone(),values),
+            // A method tied to a value of a native kind, reached as a
+            // value of its own and then called.
+            Value::Member(receiver,operation)=>self.value_member(&receiver,&operation,values,Vec::new()),
             Value::Method(code,thing)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
             // A thing called stands on its own call member, which may
             // be a thing again. Reaching through one makes no frame, so
@@ -449,6 +452,20 @@ impl<'a> Machine<'a> {
                         self.thing_over_native(c,&word,values)
                     }
                     3=>{values.insert(0,kept[1].clone());self.apply_class_member(kept[0].clone(),values)},
+                    // An entry a native kind carries, standing loose:
+                    // the first value handed to it is the one it works
+                    // upon, the rest being what the entry itself takes.
+                    60 if !values.is_empty()=>{
+                        // The value comes in as the cell that holds
+                        // it, so a member that writes writes into the
+                        // very one the caller named.
+                        let subject=values.remove(0).keep(false);
+                        let entry=kept[1].bare();
+                        match self.attribute(&subject,&entry) {
+                            Some(bound)=>self.apply_class_member(bound,values),
+                            None=>Err(self.absent_attribute(&subject,&entry)),
+                        }
+                    }
                     4|8=>self.apply_class_member(kept[0].clone(),values),
                     // The root's formatting of a thing to a specification.
                     59 if values.len()==2=>{
@@ -545,6 +562,17 @@ impl<'a> Machine<'a> {
         if parts.len()<3{return self.class_unready();}
         format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
     }
+    /// An entry a thing reads but will neither write over nor let go:
+    /// its blueprint names the entries its things hold and holds an
+    /// entry of its own under this name, which no write to a thing
+    /// reaches.
+    fn readonly_attribute(&self,value:&Value,member:&str)->Escape {
+        let parts=self.table.strings("ext.stmt.class.detail.attribute.readonly");
+        if parts.len()<3{return self.unwritable_attribute(value,member);}
+        let kind;
+        let name=match value{Value::Thing(t)=>t.of.name.as_str(),other=>{kind=other.kind_word();&kind}};
+        format!("{}{name}{}{member}{}",parts[0],parts[1],parts[2]).into()
+    }
     /// An entry a value will not take: it keeps no namespace of its own
     /// to hold one, its blueprint naming the entries it holds or the
     /// value being of a builtin kind.
@@ -633,6 +661,10 @@ impl<'a> Machine<'a> {
                     return Ok(if listed {Self::wrap(0,vec![line])} else {line});
                 }
             }
+            // Everything a value of the kind answers to the kind itself
+            // carries, standing loose: the value worked upon is the
+            // first the entry is handed when it is called.
+            if let Some(carried)=self.carried_by_kind(&value,key) { return Ok(carried); }
         }
         if let Value::Blueprint(b)=&value {
             if key==self.detail("name"){return Ok(Value::text(&b.name));}
@@ -758,6 +790,12 @@ impl<'a> Machine<'a> {
         }
         Err(self.absent_attribute(&value,key))
     }
+    /// Whether the blueprint, or one it stands on, names the entries its
+    /// things may hold. Such a thing keeps no namespace of its own.
+    fn slots_named(&self,b:&Blueprint)->bool {
+        if Self::own_entry(b,self.detail("slots")).is_some(){return true;}
+        b.parents.iter().any(|p|p.name!=self.detail("root")&&self.slots_named(p))
+    }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
         let Some(slots)=Self::own_entry(b,self.detail("slots"))else{return Self::native_word(b).is_none();};
         let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
@@ -822,6 +860,14 @@ impl<'a> Machine<'a> {
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
                     if let (Some(link), Some(v)) = (link, replacement.clone()) { *link.borrow_mut() = v; return Ok(Value::Nil); }
                 }
+                // A blueprint naming the entries its things hold, and
+                // holding one of its own under a name not among them,
+                // has that name read-only: no write to a thing reaches
+                // the blueprint's own holding, and the thing keeps no
+                // namespace to put an entry of its own in.
+                if self.slots_named(&t.of)&&!self.allowed_slot(&t.of,key)&&self.inherited_entry(&t.of,key).is_some() {
+                    return Err(self.readonly_attribute(&subject,key));
+                }
                 if replacement.is_some()&&!self.allowed_slot(&t.of,key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
             }
             Value::Blueprint(b)=>{
@@ -844,10 +890,11 @@ impl<'a> Machine<'a> {
         if success{return Ok(Value::Nil);}
         // A thing whose blueprint names the entries it holds, and a
         // value of a builtin kind, have nowhere to put a new entry.
+        // Only a write says so; a taking-away names the member that
+        // was never there and no more.
         let nowhere=match &subject {
-            Value::Thing(_)=>writing,
             Value::Blueprint(_)|Value::Routine(_)|Value::Bound(..)=>false,
-            _=>true,
+            _=>writing,
         };
         if nowhere{return Err(self.unwritable_attribute(&subject,key));}
         Err(self.absent_attribute(&subject,key))
@@ -1033,7 +1080,7 @@ impl<'a> Machine<'a> {
             let word=self.table.prims.iter().find(|(_,p)|**p==Prim::ClassWork(op)).map(|(w,_)|w.to_string()).unwrap_or_default();
             return Err(self.wrong_count(&word,2,values.len()));
         }
-        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
+        if op==2 && values.len()==1{return Ok(Value::Flag(matches!(&values[0],Value::Routine(_)|Value::Bound(..)|Value::Method(..)|Value::Blueprint(_))||matches!(&values[0],Value::Wrapped(tag,_) if matches!(tag,0..=4|8..=12|31|33|34|50..=57|59|60))||matches!(&values[0],Value::Thing(t) if self.inherited_entry(&t.of,self.detail("call")).is_some())));}
         if (op==3||op==6)&&values.len()>=2{
             let Value::Text(key)=&values[1]else{return Err(self.class_unready());};
             // Asking whether a name is there, or reading it with something

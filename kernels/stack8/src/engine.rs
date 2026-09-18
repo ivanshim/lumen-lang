@@ -3859,9 +3859,22 @@ impl<'a> Engine<'a> {
     /// Nothing where the kind has no such member. The value stands
     /// behind the method as it was handed over, cell and all, so that
     /// a method which writes into the value writes into the very one.
-    fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+    /// The member a builtin kind carries, sought on the kind's own word
+    /// and not on a value of it. Such a member stands loose: the value
+    /// it works upon is the first thing it is called with, the way an
+    /// unbound method is called. Nothing where the word names no
+    /// builtin kind, or where that kind carries no such member.
+    pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
+        let Value::Native(_, word) = value else { return None };
+        let sample = self.kind_sample(word)?;
+        if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
+        Some(Self::adapter(29, vec![Value::text(word), Value::text(name)]))
+    }
+
+    pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
         let held = value.contents();
         if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
+        if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
         if self.native_special(&held, name) { return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), name.to_string()))))); }
         if let Value::Complex(z) = &held {
             if Lang::spells(&self.lang.complex_words["ext.builtin.complex.real"], name) { return Ok(Some(crate::complex::real(z.real))); }
@@ -6133,7 +6146,9 @@ impl<'a> Engine<'a> {
                 // A kind value and a builtin each have a name, where the
                 // language has a member for one.
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
-                Value::Flag(kind_named || kind_maker || text_method || byte_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                // A builtin kind also carries the members its own values answer to.
+                let kind_carries = self.loose_kind_member(&held, name).is_some();
+                Value::Flag(kind_named || kind_maker || kind_carries || text_method || byte_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
@@ -9314,7 +9329,7 @@ impl<'a> Engine<'a> {
         self.builtin(builtin, name, &mut args)
     }
 
-    fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+    pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         // A row lengthened where it lies, instead of copied out, added
         // to, and written back. It stands ahead of the reading below
         // because that reading would hold the row a second time, and a

@@ -1380,7 +1380,10 @@ only. The extension labels so far, all from PHP:
   Where `root` is spelled, all direct bases take part in the C3 ordering;
   `mro.amiss` gives the words for an ordering that cannot be made.
   `attribute.amiss` gives three pieces enclosing the class and member
-  names in a complaint; `unready` refuses a working not yet furnished.
+  names in a complaint; `attribute.readonly` gives three pieces around
+  the same two, for a write or a removal upon a thing whose class names
+  the members it holds and holds a value of its own under that name;
+  `unready` refuses a working not yet furnished.
 - `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
   `descriptor.delete` and `descriptor.name`: the words a class member
   answers the descriptor protocol with, each a list of words. With
@@ -4763,6 +4766,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
