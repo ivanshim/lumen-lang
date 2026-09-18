@@ -35,21 +35,27 @@ impl Value {
             Value::Generator(_) => "generator",
             Value::Slice(_) => "slice",
             Value::Ellipsis => "ellipsis",
-            // A cursor is known by what it walks, as CPython names it.
-            Value::Cursor(state) => return state.try_borrow().map_or("iterator", |held| match &held.source {
-                CursorSource::Living(..) => "list_iterator",
-                CursorSource::Counted(..) => "range_iterator",
-                CursorSource::Viewed(Value::View(window), ..) => match window.1.as_str() { "keys" => "dict_keyiterator", "values" => "dict_valueiterator", _ => "dict_itemiterator" },
-                CursorSource::Called(..) => "callable_iterator",
-                CursorSource::Numbered(..) => "enumerate",
-                CursorSource::Combined(_, Some(_), _) => "map",
-                CursorSource::Combined(_, None, _) => "zip",
-                CursorSource::Selected(..) => "filter",
-                CursorSource::Items(..) | CursorSource::Indexed(..) | CursorSource::Handed(..) | CursorSource::Viewed(..) => "iterator",
-            }).to_string(),
-            Value::Native(..) => "builtin_function_or_method",
+            Value::Declined(_) => "NotImplementedType",
+            // A cursor is known by what it walks, as CPython names it:
+            // by the walk's own making where that says enough, and
+            // otherwise by the word kept of the thing it was made from.
+            Value::Cursor(state) => return state.try_borrow().map_or("iterator".to_string(), |held| match &held.source {
+                CursorSource::Living(..) => "list_iterator".to_string(),
+                CursorSource::Counted(..) => "range_iterator".to_string(),
+                CursorSource::Viewed(Value::View(window), ..) => match window.1.as_str() { "keys" => "dict_keyiterator", "values" => "dict_valueiterator", _ => "dict_itemiterator" }.to_string(),
+                CursorSource::Called(..) => "callable_iterator".to_string(),
+                CursorSource::Numbered(..) => "enumerate".to_string(),
+                CursorSource::Combined(_, Some(_), _) => "map".to_string(),
+                CursorSource::Combined(_, None, _) => "zip".to_string(),
+                CursorSource::Selected(..) => "filter".to_string(),
+                _ => held.walked.as_deref().unwrap_or("iterator").to_string(),
+            }),
+            // A member of a row, a map or a text, handed over bound to
+            // what it was read from, is one of the builtin's own.
+            Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             Value::Routine(_) => "function",
-            Value::Class(_) | Value::SortOf(_) => "type",
+            Value::Method(..) => "method",
+            Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => return o.class.name.clone(),
             Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => return c.borrow().core_kind(),
             _ => "object",

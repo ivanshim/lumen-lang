@@ -1002,6 +1002,99 @@ bound `bytearray(b'ab').decode` called through a spread still refuses;
 fifteen names, the set methods and `bytes.decode` among them, refuse a
 bare unbound read though they work when called.
 
+### 1q. Batch 8 merged as #495; batch 9 begins
+
+Pull request #495 merged into main at 83ae1ad with every job green on
+bb4ad6e. The count at bb4ad6e, taken with a copied binary over the
+fifty reference files: stack8 1,211 pass of 2,536 ran, microcode7
+1,155 of 2,394 (from 1,127 and 1,059 at 6348f05). test_set rose from
+362 to 395 on both kernels, test_str from 27 to 59 on stack8 and 73 on
+microcode7, test_with by six, test_dict by three on stack8, and
+test_bool, test_class, test_contains, test_float, test_list,
+test_long, test_range and test_slice by one or two each. Two passes
+were LOST and are batch 9's first duty: test_compare's test_bytes on
+both kernels, because the strict-kinds check now refuses `b"a" <
+bytearray(b"b")`, which CPython allows (bytes and bytearray are one
+family for ordering); and test_generators' test_pickle on stack8
+alone, because `pickle.dumps(gen())` now aborts the run with `'start'
+is not a function` where it used to raise a catchable PicklingError
+(CPython: `TypeError: cannot pickle 'generator' object`). The lesson:
+the count sweep is the only check that sees a pass lost in a file no
+fixture covers, so read it before the next push, not after.
+
+Batch 9 opens with bytes. A row of bytes answers to all 42 non-dunder
+members of its kind, on bytes and bytearray alike and through
+getattr, where members sharing a name with a global builtin word
+(`hex`, `count`, `index`, `rsplit`, `endswith`, `rfind`, `lstrip`,
+`rstrip`, the `is*` family, `fromhex`) used to stop with a missing
+member or reach the text builtin of that name; the faults are worded
+as CPython words them (`byte indices must be integers or slices, not
+str`, `bytearray indices ...`, `can't concat str to bytes`, `can only
+concatenate str (not "bytes") to str`, `unsupported operand type(s)
+for +: 'dict' and 'dict'`, a subclass named by its own class, a
+repetition naming the side that is no sequence); `del ba[i]` and `del
+ba[i:j]` shorten a bytearray. Five labels join the definition. Gaps
+that fold records: bytes `%`-formatting is not implemented;
+bytearray's own mutators (`extend`, `insert`, `pop`, `remove`,
+`clear`, `reverse`, `copy`, `__iadd__`) do not resolve; `sum([{1:
+2}])` says `sum needs numbers`; a bound builtin method's repr is
+`<member wrapper>`; stack8 cannot `del d["k"][1]` inside a function.
+
+Asking a value its kind answers for every kind a program can hold:
+`type(slice(1, 3))`, `type(b"b").__name__` and `type(f).__name__` used
+to stop the run; both kernels now give CPython's name for the builtin
+kinds, `NoneType`, `function`, `builtin_function_or_method`, `method`,
+`type`, `module`, `generator`, `complex`, `ellipsis`,
+`NotImplementedType` and the iterator kinds (`list_iterator`,
+`dict_keyiterator`, `list_reverseiterator`, `set_iterator`,
+`range_iterator`, and `enumerate`, `zip`, `map`, `filter`, `reversed`
+as the builtins spell them), and two readings of one plain kind are the
+selfsame value under `is`. A call that fills a place twice names the
+routine it was meant for (`f() got multiple values for argument 'a'`,
+with the class, method and nested forms) under
+`ext.syntax.call.amiss.positional`. Records: params/9 takes the new
+wording; file-iter/14 gains test_range_optimization; file-builtin/28
+turns one error into a failure; reader-tail/4, re-measured on the
+folded tree, gains eight against main with none lost. Gaps: `reversed(d)`
+on a dict answers `generator` where CPython names
+dict_reverse*iterator; `repr(type(int))` prints `<built-in function
+int>` and `repr(type(None))` prints `NULL`; `type(f).__qualname__` and
+`__module__` raise; `type({}.keys()).__name__` is `list`;
+scratch/file-dict/11 records `multiple values for argument 'x'` for
+`dict(**{"x": 1}, **{"x": 2})` where CPython says `dict() got multiple
+values for keyword argument 'x'`.
+
+The two passes batch 8 lost are back. A writable row of bytes had
+gained its own kind word, so the check that two values stand in some
+order no longer saw bytes and bytearray as one family; each kernel now
+has an ordering family that folds the two, and test_compare's
+test_bytes passes again on both kernels. A member a builtin value has
+not got was glanced for as a name nearby and called with the value in
+front, a pipe CPython has no notion of; on stack8, where a module's
+function locals leak into the module's namespace (`hasattr(marshal,
+"start")` is True there and False on microcode7, a pre-existing
+divergence), the pickler's own blank local `start` was found and
+invoked, ending the run outside any except. A definition that words
+the missing-member complaint now raises it and nothing else, so
+`pickle.dumps(gen())` is a catchable PicklingError again (CPython's
+`TypeError: cannot pickle 'generator' object` would mean rewording the
+library's own marshal refusal) and `(1).x` with an `x` bound nearby is
+an AttributeError. Gaps: `type(gen())`, `type(f)`, `type(module)` and
+`type(C)` as values stop with "unknown value type" on both kernels
+(their `__name__` is right); `dir(gen())` and `dir(fn)` are nearly
+empty; stack8 evaluates a call's arguments before raising the
+missing-member fault, microcode7 after.
+
+The batch-9 count, taken at c862af4 with the sweep binary copied
+aside, stands at stack8 1,214 of 2,536 and microcode7 1,157 of 2,394,
+against 1,211 and 1,155 at bb4ad6e; no file lost a pass, test_compare's
+first position and test_generators' fortieth on stack8 are dots
+again, and test_enumerate gained one on both kernels. The scratch
+check on the same tree found one record made by the old missing-member
+pipe: scratch/file-list/10 held `[1, 2]` for a `.seq` read off a
+number that CPython refuses, and now records the AttributeError all
+three agree on.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

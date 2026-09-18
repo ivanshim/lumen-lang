@@ -29,22 +29,27 @@ impl Value {
             Self::Nil => "NoneType", Self::Progression(_) => "range",
             Self::Octets { changeable, .. } => if *changeable { "bytearray" } else { "bytes" },
             Self::Generator(_) => "generator",
-            // An iterator takes the name CPython gives what it walks.
-            Self::Iterator(cell) => return cell.try_borrow().map_or("iterator", |state| match &state.kind {
+            // An iterator takes the name CPython gives what it walks:
+            // the making of the walk where that says enough, and else
+            // the word kept of the thing the members came from.
+            Self::Iterator(cell) => return cell.try_borrow().map_or("iterator".to_owned(), |state| String::from(match &state.kind {
                 IteratorKind::Living(..) => "list_iterator",
                 IteratorKind::Stepping(..) => "range_iterator",
                 IteratorKind::Watching { window: Value::Window(_, portion), .. } => match portion { 'k' => "dict_keyiterator", 'v' => "dict_valueiterator", _ => "dict_itemiterator" },
                 IteratorKind::Summoned { .. } => "callable_iterator",
                 IteratorKind::Count(..) => "enumerate",
-                IteratorKind::Handed(..) => "iterator",
                 IteratorKind::Parallel { mapper: Some(_), .. } => "map",
                 IteratorKind::Parallel { .. } => "zip",
                 IteratorKind::Select(..) => "filter",
-                _ => "iterator",
-            }).to_owned(),
-            Self::Span(_) => "slice", Self::Ellipsis => "ellipsis",
-            Self::Blueprint(_) | Self::KindOf(_) => "type", Self::Intrinsic(_) => "builtin_function_or_method",
-            Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
+                _ => state.walks.as_deref().unwrap_or("iterator"),
+            })),
+            Self::Span(_) => "slice", Self::Ellipsis => "ellipsis", Self::Refusal(_) => "NotImplementedType",
+            Self::Blueprint(_) | Self::KindOf(_) | Self::OctetKind { .. } => "type",
+            // A member of a row, a map or a text, handed over bound to
+            // what it was read from, is one of the builtin's own; a
+            // method of a thing the program laid out is not.
+            Self::Intrinsic(_) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
         };
         word.to_owned()
     }

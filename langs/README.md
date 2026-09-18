@@ -515,7 +515,15 @@ only. The extension labels so far, all from PHP:
   remain wanting.
 - `ext.builtin.bytes.hex` and `.fromhex`: the method spelling each byte
   with two hexadecimal figures, and the maker reading those figures back.
-  White space may stand between pairs of figures.
+  White space may stand between pairs of figures. A mark given to `.hex`
+  stands between the bytes, every so many of them as a second argument
+  asks: counted back from the end where that number is above nought,
+  forward from the start where it is below, and nowhere where it is
+  nought. `ext.builtin.bytearray.fromhex` is the same maker for the
+  mutable kind, and `ext.builtin.bytes.maketrans` is the maker of a
+  mapping table of two hundred and fifty six bytes, in which every byte
+  stands for itself but for the ones the first row names, which stand
+  for the bytes the second row holds in the same places.
 - `ext.builtin.bytes.upper` and `.lower`: methods changing the case of
   letters in the seven-bit alphabet. All other bytes stand unchanged.
 - `ext.builtin.bytes.split` and `.join`: methods parting a row at a byte
@@ -524,7 +532,20 @@ only. The extension labels so far, all from PHP:
 - `ext.builtin.bytes.startswith`, `.replace`, `.strip` and `.find`: methods
   testing a beginning, replacing a byte sequence, trimming bytes from both
   ends, and finding a sequence's first place. Replacement may be bounded
-  by a count. Other argument forms stop where reached.
+  by a count. A beginning may be tested against a tuple of sequences, and
+  a place may be sought between bounds counted from either end.
+- A row of bytes answers besides to the rest of the methods text answers
+  to, under the very words `ext.builtin.text.*` spells for text and, for
+  the ones text does not hold, under `ext.builtin.method.*`: an ending
+  tested, a sequence counted or sought from either end or named where it
+  is wanting, a row cut from the right or about a separator or into its
+  lines, blank taken off either end alone, a row filled out to a width,
+  tabs opened, letters cased anew, a leading or trailing part dropped,
+  every byte read through a mapping table, and the questions asking what
+  the bytes are. Each of them is the text working read byte by byte:
+  the count is in bytes, and only the seven-bit letters are letters. A
+  word the definition spells with its kind ahead of it, such as the
+  maker of a table, is answered to by its bare tail as well.
 - `ext.builtin.bytes.from_int` and `.to_int`: an integer's method making
   bytes and the integer maker's method reading bytes. `ext.system.bytes.order`
   names the order with the greatest byte first, then that with the least
@@ -546,6 +567,14 @@ only. The extension labels so far, all from PHP:
 - `ext.system.bytes.arguments`, `.range`, `.negative` and `.index`: plain
   complaints for arguments of the wrong kind, a byte outside its bounds,
   a negative count and an index beyond the row.
+- `ext.system.bytes.subscript`: the words refusing a key of a kind a row
+  of bytes cannot be read at, the first for the fixed kind and the second
+  for the mutable one, with the key's kind written after them. A row of
+  bytes is worded apart from every other sequence here, the fixed kind
+  being spoken of in the singular. `ext.system.bytes.concat` names, before
+  and between, what was handed to a row of bytes to join to it and then
+  the row's own kind. `ext.system.bytes.missing` is the whole complaint
+  for a sequence sought in a row and not standing there.
 - `ext.system.bytes.immutable` and `.unhashable`: plain complaints for
   writing into immutable bytes and hashing mutable bytes.
 - `ext.system.bytes.separator`, `.overflow`, `.unsigned` and `.bad_order`:
@@ -556,8 +585,10 @@ only. The extension labels so far, all from PHP:
   conversion complaints; the encoding, offending characters or bytes,
   their positions and the cause follow in the run's account.
 - `ext.system.bytes.unready`: the plain complaint for a byte operation
-  read whole whose running cannot yet be honoured. Taking a builtin byte
-  method as a value, without calling it, is such a form at present.
+  read whole whose running cannot yet be honoured, among them an
+  argument form a method does not take. A method of a row of bytes taken
+  as a value, without calling it, is no longer such a form: it stands as
+  the method bound to that row, as a value method of any other kind does.
 
 - `ext.lexical.string.long`: the quote marks that enclose text over
   lines. The whole mark ends the string; a shorter run and the other
@@ -1349,7 +1380,10 @@ only. The extension labels so far, all from PHP:
   Where `root` is spelled, all direct bases take part in the C3 ordering;
   `mro.amiss` gives the words for an ordering that cannot be made.
   `attribute.amiss` gives three pieces enclosing the class and member
-  names in a complaint; `unready` refuses a working not yet furnished.
+  names in a complaint; `attribute.readonly` gives three pieces around
+  the same two, for a write or a removal upon a thing whose class names
+  the members it holds and holds a value of its own under that name;
+  `unready` refuses a working not yet furnished.
 - `ext.stmt.class.detail.descriptor.get`, `descriptor.set`,
   `descriptor.delete` and `descriptor.name`: the words a class member
   answers the descriptor protocol with, each a list of words. With
@@ -2905,6 +2939,12 @@ only. The extension labels so far, all from PHP:
   over twice while the run goes, and `ext.syntax.call.amiss.keyword`
   words that in three pieces, standing before the routine's name,
   between it and the keyword, and after.
+  `ext.syntax.call.amiss.positional` words the nearer mishap of a place
+  filled twice over, once by an argument standing in order and once by
+  one naming it, and it too takes three pieces about the routine's name
+  and the place's. Where a definition leaves it unsaid the plainer
+  `ext.syntax.call.amiss.duplicate` is said instead, so the complaint
+  names the place alone.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. With
@@ -4036,6 +4076,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bool.base` | - | - | `TypeError: type 'bool' is not an acceptable base type` | - | - | - | - | - | - | - |
 | `ext.builtin.bool.result` | - | - | `TypeError: __bool__ should return bool, returned ` | - | - | - | - | - | - | - |
 | `ext.builtin.bytearray` | - | - | `bytearray` | - | - | - | - | - | - | - |
+| `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
@@ -4045,6 +4086,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.hex` | - | - | `hex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.join` | - | - | `join` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.maketrans` | - | - | `bytes.maketrans` `bytearray.maketrans` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.split` | - | - | `split` | - | - | - | - | - | - | - |
@@ -4739,6 +4781,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.allocate` | - | - | `__new__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.argcount` | - | - | `co_argcount` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.attribute.amiss` | - | - | `AttributeError: '` `' object has no attribute '` `'` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.attribute.readonly` | - | - | `AttributeError: '` `' object attribute '` `' is read-only` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.bases` | - | - | `__bases__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.call` | - | - | `__call__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
@@ -4911,6 +4954,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.amiss.duplicate` | - | - | `TypeError: multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.keyword` | - | - | `TypeError: ` `() got multiple values for keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.missing` | - | - | `TypeError: missing required argument '` `'` | - | - | - | - | - | - | - |
+| `ext.syntax.call.amiss.positional` | - | - | `TypeError: ` `() got multiple values for argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.repeated` | - | - | `SyntaxError: keyword argument repeated: ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.amiss.unknown` | - | - | `TypeError: unexpected keyword argument '` `'` | - | - | - | - | - | - | - |
 | `ext.syntax.call.bare` | - | - | - | - | `true` | - | - | - | - | - |
@@ -4932,12 +4976,14 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.args.list` | - | - | `__program_argv` | - | `$argv` | - | - | - | - | - |
 | `ext.system.bytes.arguments` | - | - | `TypeError: invalid bytes arguments` | - | - | - | - | - | - | - |
 | `ext.system.bytes.bad_order` | - | - | `ValueError: byteorder must be either 'little' or 'big'` | - | - | - | - | - | - | - |
+| `ext.system.bytes.concat` | - | - | `TypeError: can't concat ` ` to ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.decode` | - | - | `UnicodeDecodeError: ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.encode` | - | - | `UnicodeEncodeError: ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
 | `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
 | `ext.system.bytes.index` | - | - | `IndexError: index out of range` | - | - | - | - | - | - | - |
+| `ext.system.bytes.missing` | - | - | `ValueError: subsection not found` | - | - | - | - | - | - | - |
 | `ext.system.bytes.negative` | - | - | `ValueError: negative count` | - | - | - | - | - | - | - |
 | `ext.system.bytes.order` | - | - | `big` `little` | - | - | - | - | - | - | - |
 | `ext.system.bytes.overflow` | - | - | `OverflowError: int too big to convert` | - | - | - | - | - | - | - |
@@ -4945,6 +4991,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.repr` | - | - | `b` `bytearray(b` | - | - | - | - | - | - | - |
 | `ext.system.bytes.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
 | `ext.system.bytes.strict` | - | - | `strict` | - | - | - | - | - | - | - |
+| `ext.system.bytes.subscript` | - | - | `TypeError: byte indices must be integers or slices, not ` `TypeError: bytearray indices must be integers or slices, not ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.type` | - | - | `<class '` `'>` | - | - | - | - | - | - | - |
 | `ext.system.bytes.unhashable` | - | - | `TypeError: unhashable type: 'bytearray'` | - | - | - | - | - | - | - |
 | `ext.system.bytes.unready` | - | - | `NotImplementedError: this bytes operation is not supported` | - | - | - | - | - | - | - |
