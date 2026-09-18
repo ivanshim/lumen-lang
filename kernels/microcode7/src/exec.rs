@@ -4520,6 +4520,32 @@ impl<'a> Machine<'a> {
                         if let (Some(key), Value::Dict(entries)) = (&key, &target) {
                             if let Some(words) = self.cannot_key(key) { return Err(words.into()); }
                             let key = self.hash_key(key)?;
+                            // A map living alone in the cell every name for
+                            // it shares is grown there in place, rather
+                            // than copied whole for every key: the
+                            // ordinary way one is built up key by key.
+                            // Only a key whose address needs no help from
+                            // the program's own code takes this road,
+                            // since the cell is held open while it runs
+                            // and a call back into the program could
+                            // reach the very map being written.
+                            let cell_here = match (&worth_cell, &original) {
+                                (Some(cell), _) => Some(cell.clone()),
+                                (None, Value::Shared(cell) | Value::Mutable(cell, _)) => Some(cell.clone()),
+                                _ => None,
+                            };
+                            let direct = cell_here.as_ref().map_or(false, |cell| matches!(&*cell.borrow(), Value::Dict(_)));
+                            if let (Some(cell), true, Ok(address)) = (&cell_here, direct, key.hash_address()) {
+                                // The clone above is let go before the
+                                // cell is opened, so the entries the cell
+                                // holds are this call's only claim on
+                                // them and are grown without copying.
+                                drop(target);
+                                let mut held = cell.borrow_mut();
+                                let Value::Dict(rc) = &mut *held else { unreachable!("checked just above") };
+                                dict_place_indexed(rc, key, address, value);
+                                return Ok(Value::Nil);
+                            }
                             let mut entries = entries.to_vec();
                             let mut position = 0;
                             while position < entries.len() && !self.keys_agree(&entries[position].0, &key)? { position += 1; }
@@ -8395,8 +8421,14 @@ impl<'a> Machine<'a> {
                 // and the language says so rather than answering no.
                 if let Some(words) = self.cannot_key(needle) { return Err(words); }
                 let key = self.hash_key(needle)?;
-                let mut found = false;
-                for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
+                let found = match key.hash_address().ok().and_then(|address| dict_indexed_position(entries, &address)) {
+                    Some(at) => at.is_some(),
+                    None => {
+                        let mut found = false;
+                        for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
+                        found
+                    }
+                };
                 Value::Flag(found != (operation == Prim::Absent))
             }
             (Prim::Placed, [Value::Dict(entries), key, value]) => {
@@ -8474,6 +8506,11 @@ impl<'a> Machine<'a> {
             (Prim::Length, [Value::Attributes(t)]) => Value::Small(t.holds.borrow().iter().filter(|(n, x)| !matches!(x, Value::Unset) && !n.starts_with('\0')).count() as i64),
             (Prim::At | Prim::Fetch, [Value::Dict(entries), key]) => {
                 let hashed = self.hash_key(key)?;
+                if let Some(address) = hashed.hash_address().ok() {
+                    if let Some(at) = dict_indexed_position(entries, &address) {
+                        return Ok(at.map(|pos| entries[pos].1.clone()));
+                    }
+                }
                 for (candidate, value) in entries.iter() {
                     if self.keys_agree(candidate, &hashed)? { return Ok(Some(value.clone())); }
                 }
@@ -12615,6 +12652,107 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
         },
         None => entries.push((key, value)),
     }
+}
+
+// A map is kept as entries in the order they were written, walked to
+// find a key exactly as a program grew to expect from a small one. A
+// map grown to many thousands of keys is walked just as far for its
+// last key as for its first, so building one key at a time costs the
+// square of how many it ends with. An index kept beside the entries —
+// never inside the map itself, and never answered for when it might
+// be wrong — turns the walk for a key already indexed into a single
+// look, without changing which key a walk finds first should two
+// ever agree by address and disagree by the program's own equality:
+// that walk is untouched, kept for exactly the keys this index is not
+// asked to answer for.
+//
+// The index is addressed by where a map's entries presently live
+// (the entries Vec's own address, stable while it is grown in place
+// and never reused for another map while this index still names it),
+// and is only ever consulted for the map that address named when the
+// index was last brought up to date; anything else is a miss, worked
+// out the slow way and left for a later call to index again.
+thread_local! {
+    static DICT_INDEX: RefCell<HashMap<usize, DictIndexEntry>> = RefCell::new(HashMap::new());
+}
+
+struct DictIndexEntry {
+    /// How many of the entries, counted from the first, this index
+    /// already accounts for.
+    indexed: usize,
+    /// The address of the key this index last found at `indexed - 1`
+    /// (or that there was none, for an index built from an empty
+    /// map): a map grown any other way than through this index no
+    /// longer has that key there, and neither, all but certainly,
+    /// does some other map that happens to have come to occupy the
+    /// same room since. A holder of a live `Rc` is never handed a
+    /// `Weak` to the entries it keeps growing in place, since asking
+    /// for one, even to check by, is what would stop them growing in
+    /// place at all; this check answers the same question in entries
+    /// already at hand instead.
+    boundary: Option<String>,
+    by_address: HashMap<String, usize>,
+}
+
+/// Whether an index still describes the entries it is asked about:
+/// short enough to have grown no further than they have, and naming,
+/// where it claims to have caught up to some of them, the very key
+/// that stands at the place it caught up to.
+fn dict_index_matches(entry: &DictIndexEntry, entries: &[(Value, Value)]) -> bool {
+    if entry.indexed > entries.len() { return false; }
+    match (entry.indexed, &entry.boundary) {
+        (0, None) => true,
+        (n, Some(address)) if n >= 1 => entries[n - 1].0.hash_address().ok().as_deref() == Some(address.as_str()),
+        _ => false,
+    }
+}
+
+/// Where a key of a given address stands among a map's entries,
+/// answered from the index when the index is caught up with every
+/// entry the map now holds and still describes them — `Some(None)`
+/// when it is caught up and says the key is nowhere in the map,
+/// `Some(Some(pos))` where it is, and plain `None` when the index
+/// cannot say, leaving the caller to walk the entries as it always did.
+fn dict_indexed_position(entries: &Rc<Vec<(Value, Value)>>, address: &str) -> Option<Option<usize>> {
+    DICT_INDEX.with(|cache| {
+        let cache = cache.borrow();
+        let entry = cache.get(&(Rc::as_ptr(entries) as usize))?;
+        if entry.indexed != entries.len() || !dict_index_matches(entry, entries) { return None; }
+        Some(entry.by_address.get(address).copied())
+    })
+}
+
+/// Set a key already known by its own address — never one the
+/// program's own code must be asked to hash or compare, so never one
+/// that could call back into the very map this holds open — into a
+/// map that lives alone in the cell handed to it. The entries grow in
+/// place, without being copied whole first, and the index beside them
+/// grows with them; a map grown some other way since the index last
+/// looked, or a different map now standing where it once stood, is
+/// caught by `dict_index_matches` and the index is built fresh from
+/// what is actually there before this key is placed.
+fn dict_place_indexed(rc: &mut Rc<Vec<(Value, Value)>>, key: Value, address: String, value: Value) {
+    let ptr = Rc::as_ptr(rc) as usize;
+    let vec = Rc::make_mut(rc);
+    DICT_INDEX.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let stale = cache.get(&ptr).map_or(true, |entry| !dict_index_matches(entry, vec));
+        if stale { cache.insert(ptr, DictIndexEntry { indexed: 0, boundary: None, by_address: HashMap::new() }); }
+        let entry = cache.get_mut(&ptr).expect("just inserted or already present");
+        while entry.indexed < vec.len() {
+            if let Ok(addr) = vec[entry.indexed].0.hash_address() { entry.by_address.insert(addr, entry.indexed); }
+            entry.indexed += 1;
+        }
+        match entry.by_address.get(&address).copied() {
+            Some(pos) if pos < vec.len() => vec[pos].1 = value,
+            _ => {
+                entry.by_address.insert(address, vec.len());
+                vec.push((key, value));
+                entry.indexed = vec.len();
+            }
+        }
+        entry.boundary = vec.last().and_then(|(k, _)| k.hash_address().ok());
+    });
 }
 
 /// A value over lines the way PHP's print_r writes it: a scalar on its
