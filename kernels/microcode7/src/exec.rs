@@ -5104,6 +5104,10 @@ impl<'a> Machine<'a> {
             58 => "ed".contains(mark),
             64 | 66 | 69 | 71 => "ne".contains(mark),
             65 | 70 => "ned".contains(mark),
+            // Every worth is laid out to a specification, the layout
+            // having marks of its own for each kind or words against
+            // the kinds that take none.
+            72 => true,
             _ => false,
         }
     }
@@ -5172,7 +5176,7 @@ impl<'a> Machine<'a> {
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         let wanted = match at {
             12 => 2,
-            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=71 => 1,
+            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=72 => 1,
             _ => 0,
         };
         if !keywords.is_empty() || arguments.len() != wanted { return Err(self.method_fault("arguments").into()); }
@@ -5191,6 +5195,15 @@ impl<'a> Machine<'a> {
             40 => Some(Prim::Magnitude), 41 => Some(Prim::Positive), 44 => Some(Prim::BitsOver),
             _ => None,
         } { return self.native_working(work, name, vec![receiver.clone()]); }
+        // The specification a worth is laid out to, asked for under the
+        // name the protocol gives it. The layout is the one a field of
+        // a template is given, and so are the refusals.
+        if at == 72 {
+            let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+            let given = arguments[0].settled();
+            let Value::Text(spec) = &given else { return Err(layout.complain("ext.text.format.spec.type", &[layout.typename(&given)]).into()) };
+            return Ok(Value::text(&layout.present(&receiver.settled(), spec, "")?));
+        }
         // A whole and a remainder answered together, either way about.
         if matches!(at, 60 | 61) {
             let pair = if at == 60 { [receiver.clone(), arguments[0].clone()] } else { [arguments[0].clone(), receiver.clone()] };

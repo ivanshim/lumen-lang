@@ -76,6 +76,8 @@ pub struct Lang {
     pub fmt_text_format_sign_character: Vec<String>,
     pub fmt_text_format_alternate_character: Vec<String>,
     pub fmt_text_format_character: Vec<String>,
+    pub fmt_text_format_complex_zero: Vec<String>,
+    pub fmt_text_format_complex_align: Vec<String>,
     pub fmt_text_format_spec_type: Vec<String>,
     pub fmt_text_format_numbered_auto: Vec<String>,
     pub fmt_text_format_numbered_manual: Vec<String>,
@@ -1285,7 +1287,7 @@ w ext.system.real.figures | w ext.system.real.figures.shown
 w ext.stmt.class.bases.open | w ext.stmt.class.bases.close | b ext.stmt.class.this.explicit | b ext.op.member.pipes | w ext.stmt.class.unready | b ext.stmt.function.own_names | b ext.stmt.static.read_in | w ext.stmt.with.unready | w ext.op.tuple.unready | w ext.lexical.string.prefix.bytes.unready | w ext.lexical.string.prefix.format.unready | b ext.stmt.assign.chain | w ext.lexical.escape.deferred | b ext.stmt.function.closes_over | w ext.stmt.function.local.unbound | w ext.stmt.function.free.unbound | w ext.stmt.nonlocal.amiss | w ext.stmt.nonlocal.module | w ext.stmt.class.static | w ext.stmt.class.classmethod | w ext.stmt.class.property | w ext.stmt.class.property.setter
  | w ext.builtin.complex | w ext.builtin.complex.real | w ext.builtin.complex.imag | w ext.builtin.method.conjugate | w ext.builtin.complex.invalid | w ext.builtin.complex.integer | w ext.builtin.complex.order | w ext.builtin.complex.floor | w ext.builtin.complex.zero | w ext.builtin.complex.power.zero | w ext.builtin.complex.unready
 w ext.builtin.core.unsized | w ext.builtin.core.dict.changed | w ext.builtin.zip.strict | w ext.builtin.zip.short | w ext.builtin.zip.long
-w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.syntax.place | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | w ext.system.names.module | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign  | w ext.builtin.ascii ";
+w ext.builtin.globals | w ext.builtin.locals | w ext.builtin.exec | w ext.builtin.compile | w ext.builtin.compile.modes | w ext.builtin.compile.parameters | w ext.builtin.compile.kind | w ext.builtin.source.syntax | w ext.builtin.source.syntax.place | w ext.builtin.source.unready | w ext.builtin.import | w ext.system.module.doc | w ext.system.module.builtins | w ext.system.names.module | b ext.op.sequence.values | w ext.op.sequence.concat | w ext.op.sequence.repeat | w ext.op.sequence.index | w ext.op.sequence.delete | w ext.op.sequence.subscript | w ext.op.sequence.missing | w ext.op.sequence.assign  | w ext.builtin.ascii  | w ext.text.format.complex.zero | w ext.text.format.complex.align ";
 
 fn shapes_of(table: &'static str) -> Vec<(char, &'static str)> {
     table
@@ -2140,6 +2142,8 @@ impl Lang {
             fmt_text_format_sign_character: r.strings("ext.text.format.sign.character")?,
             fmt_text_format_alternate_character: r.strings("ext.text.format.alternate.character")?,
             fmt_text_format_character: r.strings("ext.text.format.character")?,
+            fmt_text_format_complex_zero: r.strings("ext.text.format.complex.zero")?,
+            fmt_text_format_complex_align: r.strings("ext.text.format.complex.align")?,
             fmt_text_format_spec_type: r.strings("ext.text.format.spec.type")?,
             fmt_text_format_numbered_auto: r.strings("ext.text.format.numbered.auto")?,
             fmt_text_format_numbered_manual: r.strings("ext.text.format.numbered.manual")?,

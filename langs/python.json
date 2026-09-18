@@ -3104,6 +3104,12 @@
   "ext.text.format.character": [
     "OverflowError: %c arg not in range(0x110000)"
   ],
+  "ext.text.format.complex.align": [
+    "ValueError: '=' alignment flag is not allowed in complex format specifier"
+  ],
+  "ext.text.format.complex.zero": [
+    "ValueError: Zero padding is not allowed in complex format specifier"
+  ],
   "ext.text.format.conversion": [
     "ValueError: Unknown conversion specifier "
   ],
@@ -3126,7 +3132,14 @@
     "list",
     "dict",
     "NoneType",
-    "object"
+    "object",
+    "complex",
+    "tuple",
+    "set",
+    "range",
+    "bytes",
+    "bytearray",
+    "type"
   ],
   "ext.text.format.numbered.auto": [
     "ValueError: cannot switch from manual field specification to automatic field numbering"

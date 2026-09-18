@@ -47,7 +47,13 @@ impl Layout<'_> {
         let position = match item {
             Value::Text(_) => 2, Value::Small(_) | Value::Huge(_) => 0,
             Value::Frac(_) => 1, Value::Flag(_) => 3,
-            Value::Nil => 6, Value::Dict(_) => 5, Value::Vector(_) => 4, _ => 7,
+            Value::Nil => 6, Value::Dict(_) => 5, Value::Vector(_) => 4,
+            Value::Complex(_) | Value::Imaginary { .. } => 8,
+            Value::Tuple(_) | Value::Row(_) => 9, Value::Set(_) => 10, Value::Progression(_) => 11,
+            Value::Octets { changeable: false, .. } => 12,
+            Value::Octets { changeable: true, .. } => 13,
+            Value::Blueprint(_) | Value::OctetKind { .. } => 14,
+            _ => 7,
         };
         self.table.strings("ext.text.format.kinds").get(position).map_or("", String::as_str)
     }
@@ -172,8 +178,18 @@ impl Layout<'_> {
             return self.plain(item);
         }
         let mut shape = self.description(pattern)?;
+        // The locale presentation writes the figures the plain ones
+        // write, this run keeping a single locale: a whole number
+        // stays with the tens and everything else takes the general
+        // form. Text has no such presentation and says so. The
+        // grouping belongs to the locale, so none may stand beside it.
+        if shape.letter == Some('n') {
+            if shape.separator.is_some() || shape.fraction_separator.is_some() { return Err(self.invalid()); }
+            if !matches!(item, Value::Text(_)) {
+                shape.letter = Some(match item { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => 'd', _ => 'g' });
+            }
+        }
         let unknown = || self.complain("ext.text.format.unknown", &[&shape.letter.unwrap_or('\0').to_string(), self.typename(item)]);
-        if shape.letter == Some('n') { return Err(self.refused()); }
         if let Value::Text(text) = item {
             if shape.letter.is_some() && shape.letter != Some('s') { return Err(unknown()); }
             let bad = if shape.polarity.is_some() { Some("sign") }
@@ -185,9 +201,40 @@ impl Layout<'_> {
             let kept: String = text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect();
             return Ok(shape.padded(String::new(), kept, '<'));
         }
+        // A complex worth is laid out as two real parts with the
+        // second always under a sign, and the pair stands in brackets
+        // where no presentation was named. Nought padding and the '='
+        // justification carry no meaning across two numbers.
+        if let Some((re, im)) = complex_parts(item) {
+            if shape.padding == '0' { return Err(self.complain("ext.text.format.complex.zero", &[])); }
+            if shape.justify == Some('=') { return Err(self.complain("ext.text.format.complex.align", &[])); }
+            if shape.letter.map_or(false, |c| !"eEfFgG".contains(c)) { return Err(unknown()); }
+            // Nothing named is the writing the representation gives:
+            // the figures that read back again, in brackets, with a
+            // real part that is a plain nought left out of them. A
+            // precision named beside it asks the general form instead.
+            let bare = shape.letter.is_none() && re == 0.0 && !re.is_sign_negative();
+            let brackets = shape.letter.is_none() && !bare;
+            let mut form = shape;
+            if form.letter.is_none() && form.digits.is_some() { form.letter = Some('g'); }
+            let mut laid = String::new();
+            if !bare { laid.push_str(&side(re, &form, form.polarity)); }
+            laid.push_str(&side(im, &form, if bare { form.polarity } else { Some('+') }));
+            laid.push('j');
+            if brackets { laid = format!("({laid})"); }
+            let room = Presentation { padding: form.padding, justify: form.justify, extent: form.extent, ..Presentation::new() };
+            return Ok(room.padded(String::new(), laid, '>'));
+        }
         let integer = matches!(item, Value::Small(_) | Value::Huge(_) | Value::Flag(_));
         let real = matches!(item, Value::Frac(n) if n.places.is_some());
-        if !integer && !real { return Err(self.refused()); }
+        // A kind with no figures to write takes no specification of
+        // any sort, which is told against the name the protocol would
+        // have asked under. A number this layout has no figures for is
+        // another matter, and says what it said.
+        if !integer && !real {
+            if matches!(item, Value::Frac(_)) { return Err(self.refused()); }
+            return Err(self.complain("ext.stmt.class.format.amiss", &[self.typename(item)]));
+        }
         if integer && shape.letter.map_or(true, |c| "dboxXc".contains(c)) {
             if shape.no_minus_zero { return Err(self.complain("ext.text.format.zero.integer", &[])); }
             if shape.digits.is_some() { return Err(self.complain("ext.text.format.precision.integer", &[])); }
@@ -477,6 +524,7 @@ impl Layout<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Presentation {
     padding: char,
     justify: Option<char>,
@@ -595,8 +643,43 @@ impl Presentation {
     }
 }
 
+/// The two real parts of a worth that keeps them, and nothing at all
+/// for a worth that does not.
+fn complex_parts(item: &Value) -> Option<(f64, f64)> {
+    match item {
+        Value::Complex(pair) => Some((pair.0, pair.1)),
+        Value::Imaginary { coefficient, .. } => Some((0.0, *coefficient)),
+        _ => None,
+    }
+}
+
+/// One part of a complex worth: the figures the presentation asks for,
+/// under the sign this part is to stand with. The pair is padded once
+/// over, after both parts are laid out, so the extent belongs to the
+/// whole of it and not to either number.
+fn side(number: f64, form: &Presentation, polarity: Option<char>) -> String {
+    let size = number.abs();
+    let body = if form.letter.is_none() && form.digits.is_none() {
+        if size.is_nan() { "nan".to_owned() } else if size.is_infinite() { "inf".to_owned() } else { crate::data::brief_decimal(size) }
+    } else { form.real_digits(size) };
+    // A part that rounds to nought loses its minus where the
+    // presentation asks for no signed nought.
+    let nought = form.no_minus_zero && body.parse::<f64>().ok() == Some(0.0);
+    let front = match (number.is_sign_negative() && !number.is_nan() && !nought, polarity) {
+        (true, _) => String::from("-"),
+        (false, Some(c @ ('+' | ' '))) => c.to_string(),
+        _ => String::new(),
+    };
+    let body = match size.is_finite() {
+        true => Presentation { letter: form.letter, separator: form.separator, fraction_separator: form.fraction_separator, ..Presentation::new() }
+            .grouped(body, front.len(), 3),
+        false => body,
+    };
+    front + &body
+}
+
 pub fn is_complaint(table: &Table, message: &str) -> bool {
-    let labels = "ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
+    let labels = "ext.text.format.complex.zero ext.text.format.complex.align ext.text.format.zero.integer ext.text.format.zero.string ext.op.rem.format.nan ext.op.rem.format.infinity ext.text.format.invalid ext.text.format.unknown ext.text.format.unready ext.text.format.precision.integer ext.text.format.precision.missing ext.text.format.sign.string ext.text.format.alternate.string ext.text.format.align.string ext.text.format.sign.character ext.text.format.alternate.character ext.text.format.character ext.text.format.spec.type ext.text.format.numbered.auto ext.text.format.numbered.manual ext.text.format.index ext.text.format.key ext.text.format.brace.open ext.text.format.brace.single ext.text.format.brace.close ext.text.format.conversion ext.text.format.recursion ext.op.rem.format.few ext.op.rem.format.many ext.op.rem.format.mapping ext.op.rem.format.number ext.op.rem.format.integer ext.op.rem.format.real ext.op.rem.format.character ext.op.rem.format.star ext.op.rem.format.incomplete ext.op.rem.format.code";
     labels.split_whitespace().filter_map(|label| table.single(label))
         .any(|opening| !opening.is_empty() && message.starts_with(opening))
 }
