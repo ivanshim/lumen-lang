@@ -980,15 +980,24 @@ impl Value {
             Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Collection(cell, _) => shown_once(cell, "[...]", |held| held.plain()),
-            Value::ValueMethod(_) => "<built-in method>".to_string(),
+            // A method of a builtin's own, handed over bound to what
+            // it was read from, is written by its name, the kind of the
+            // thing it was read from and where that thing is kept. One
+            // read from the kind itself is bound to no thing at all and
+            // is named with the kind it belongs to instead.
+            Value::ValueMethod(pair) => method_written(&pair.0, &pair.1, Rc::as_ptr(pair) as *const u8 as usize),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
+            // A builtin word naming a kind stands for the kind itself,
+            // and is written as the reference writes a class; every
+            // other builtin word is written as work to be done.
+            Value::Native(op, word) if op.names_kind() => format!("<class '{}'>", word),
             Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::SetWalk(..) => "<set walk>".into(),
             Value::Set(s) => s.borrow().show(Value::plain),
             Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
             Value::ByteKind(_, text) => text.to_string(),
-            Value::TextMethod(_, _, name) => format!("<built-in method {}>", name),
+            Value::TextMethod(text, _, name) => method_written(&Value::Text(text.clone()), name, text.as_ptr() as usize),
             Value::Words(row, fixed) => crate::strings::row(row, *fixed),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
@@ -1019,7 +1028,12 @@ impl Value {
             Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
-            Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) => {
+                let named = if p.qualified.is_empty() { p.ident.as_str() } else { p.qualified.as_str() };
+                let named = named.strip_suffix("{closure}").map_or_else(|| named.to_string(), |head| format!("{head}<lambda>"));
+                format!("<function {named} at 0x1>")
+            }
+            Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
             Value::Adapter(_) => "<member wrapper>".to_string(),
@@ -1027,6 +1041,38 @@ impl Value {
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
+    }
+
+    /// The word a value goes by as a kind, where it stands for one and
+    /// not merely for something of one: the reference's own name for
+    /// that kind. Nothing for a value that is one of a kind.
+    pub fn kind_it_names(&self) -> Option<String> {
+        match self {
+            Value::Class(c) => Some(c.name.clone()),
+            Value::SortOf(sort) => Some(Value::sort_called(*sort).to_string()),
+            Value::ByteKind(mutable, _) => Some(if *mutable { "bytearray" } else { "bytes" }.to_string()),
+            Value::Native(b, word) if b.names_kind() => Some(word.to_string()),
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().kind_it_names(),
+            _ => None,
+        }
+    }
+
+    /// Where the thing behind a value is kept: the cell a collection
+    /// lives in, else the place its own members or letters stand at.
+    /// This is what the reference writes after a bound method's kind.
+    /// Nothing for a value that is kept nowhere of its own.
+    pub fn standing(&self) -> Option<usize> {
+        Some(match self {
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Rc::as_ptr(cell) as *const u8 as usize,
+            Value::Array(items) | Value::Tuple(items) => Rc::as_ptr(items) as *const u8 as usize,
+            Value::Map(pairs) => Rc::as_ptr(pairs) as *const u8 as usize,
+            Value::Set(members) => Rc::as_ptr(members) as *const u8 as usize,
+            Value::Bytes(row, ..) => Rc::as_ptr(row) as *const u8 as usize,
+            Value::Text(letters) => letters.as_ptr() as usize,
+            Value::Object(thing) => Rc::as_ptr(thing) as *const u8 as usize,
+            Value::Cursor(state) => Rc::as_ptr(state) as *const u8 as usize,
+            _ => return None,
+        })
     }
 
     /// A key for the call cache: kind and content, nested for arrays.
@@ -1080,6 +1126,17 @@ impl Value {
 
 /// p/q to `places` significant digits: the whole part in full, then the
 /// fraction digits the precision leaves, none of them padding.
+/// How a method of a builtin's own is written: the name it answers to,
+/// and either the kind of the thing it was read from with where that
+/// thing is kept, or, where it was read from the kind itself and so is
+/// bound to nothing, the name of that kind. Where the thing is kept in
+/// no place of its own, the method's own place stands for it.
+fn method_written(subject: &Value, word: &str, elsewhere: usize) -> String {
+    let held = subject.contents();
+    if let Some(kind) = held.kind_it_names() { return format!("<method '{word}' of '{kind}' objects>"); }
+    format!("<built-in method {word} of {} object at 0x{:x}>", held.core_kind(), subject.standing().unwrap_or(elsewhere))
+}
+
 pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
     let int_part = p / q;
     let mut remainder = (p - &int_part * q).abs();

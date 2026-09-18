@@ -477,6 +477,9 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.ascii": [
+    "ascii"
+  ],
   "ext.builtin.bin": [
     "bin"
   ],

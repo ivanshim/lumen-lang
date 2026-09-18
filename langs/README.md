@@ -3172,6 +3172,9 @@ only. The extension labels so far, all from PHP:
   the fuller account of special methods.
 - `ext.builtin.repr`: a builtin showing text within quotes and exceptions
   as their class followed by their arguments within parentheses.
+- `ext.builtin.ascii`: a builtin writing what `ext.builtin.repr` writes,
+  with every letter outside ASCII put into the escape that stands for
+  it.
 - `ext.system.fault.class.index`, `.key`, `.name`, `.attribute` and `.stop`:
   classes for an index beyond the row, an absent key, an unbound name,
   an absent member and a walk that has ended. These extend the fault
@@ -4056,6 +4059,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count.outside` | - | - | - | - | `func_num_args() must be called from a function context` | - | - | - | - | - |
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
+| `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |

@@ -941,12 +941,7 @@ impl<'a> Engine<'a> {
     /// of work. Only one of these stands as a class where `issubclass`
     /// and `isinstance` ask for one; every other builtin word is as
     /// much a refusal there as a number would be.
-    pub(super) fn kind_builtin(op:&Builtin)->bool {
-        matches!(op,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::SortOf|Builtin::List|Builtin::Dict
-            |Builtin::Tuple|Builtin::Set|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Span
-            |Builtin::Enumerate|Builtin::Zip|Builtin::Map|Builtin::Filter|Builtin::Reversed|Builtin::MakeSlice
-            |Builtin::ClassTool(9..=11))
-    }
+    pub(super) fn kind_builtin(op:&Builtin)->bool { op.names_kind() }
     /// The word a value names a builtin kind by, where it names one.
     pub(super) fn kind_spelled(&self,value:&Value)->Option<Rc<str>> {
         let Value::Adapter(w)=value else{return None};
