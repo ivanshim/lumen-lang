@@ -21,7 +21,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee, Clause};
-use crate::data::{Adornment, Among, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
+use crate::data::{Adornment, Among, Found, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
 /// command spelled out instead of a file holding one.
@@ -4536,15 +4536,37 @@ impl<'a> Machine<'a> {
                             };
                             let direct = cell_here.as_ref().map_or(false, |cell| matches!(&*cell.borrow(), Value::Dict(_)));
                             if let (Some(cell), true, Ok(address)) = (&cell_here, direct, key.hash_address()) {
-                                // The clone above is let go before the
-                                // cell is opened, so the entries the cell
-                                // holds are this call's only claim on
-                                // them and are grown without copying.
-                                drop(target);
-                                let mut held = cell.borrow_mut();
-                                let Value::Dict(rc) = &mut *held else { unreachable!("checked just above") };
-                                Rc::make_mut(rc).place_key(key, address, value);
-                                return Ok(Value::Nil);
+                                // A pair's own key carrying no address of
+                                // its own (kept off the place entirely)
+                                // means a miss in the place proves
+                                // nothing: such a pair might still be
+                                // this key by the program's own equality,
+                                // which only the walk below can answer,
+                                // so the road taken here is left for
+                                // that walk rather than risked.
+                                let outcome = { let held = cell.borrow(); let Value::Dict(rc) = &*held else { unreachable!("checked just above") }; rc.locate(&address) };
+                                match outcome {
+                                    Found::Found(at) => {
+                                        // The clone above is let go before
+                                        // the cell is opened, so the
+                                        // entries the cell holds are this
+                                        // call's only claim on them and
+                                        // are grown without copying.
+                                        drop(target);
+                                        let mut held = cell.borrow_mut();
+                                        let Value::Dict(rc) = &mut *held else { unreachable!("checked just above") };
+                                        Rc::make_mut(rc).overwrite_at(at, value);
+                                        return Ok(Value::Nil);
+                                    }
+                                    Found::Absent => {
+                                        drop(target);
+                                        let mut held = cell.borrow_mut();
+                                        let Value::Dict(rc) = &mut *held else { unreachable!("checked just above") };
+                                        Rc::make_mut(rc).insert_known_absent(key, address, value);
+                                        return Ok(Value::Nil);
+                                    }
+                                    Found::Unknown => {}
+                                }
                             }
                             let mut entries = entries.to_vec();
                             let mut position = 0;
@@ -8423,10 +8445,20 @@ impl<'a> Machine<'a> {
                 let key = self.hash_key(needle)?;
                 // A key needing no help from the program's own code is
                 // sought through the store's own place, in one look
-                // rather than a walk of every entry.
-                let found = match key.hash_address() {
-                    Ok(address) => entries.found_at(&address).is_some(),
-                    Err(_) => {
+                // rather than a walk of every entry — unless the place
+                // itself cannot say (some other pair carries no address
+                // of its own), when only the walk can answer.
+                let placed = match key.hash_address() {
+                    Ok(address) => match entries.locate(&address) {
+                        Found::Found(_) => Some(true),
+                        Found::Absent => Some(false),
+                        Found::Unknown => None,
+                    },
+                    Err(_) => None,
+                };
+                let found = match placed {
+                    Some(found) => found,
+                    None => {
                         let mut found = false;
                         for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
                         found
@@ -8438,9 +8470,17 @@ impl<'a> Machine<'a> {
                 if let Some(words) = self.cannot_key(key) { return Err(words); }
                 let keyed = self.hash_key(key)?;
                 let mut result = entries.to_vec();
-                let at = match keyed.hash_address() {
-                    Ok(address) => entries.found_at(&address),
-                    Err(_) => {
+                let placed = match keyed.hash_address() {
+                    Ok(address) => match entries.locate(&address) {
+                        Found::Found(pos) => Some(Some(pos)),
+                        Found::Absent => Some(None),
+                        Found::Unknown => None,
+                    },
+                    Err(_) => None,
+                };
+                let at = match placed {
+                    Some(at) => at,
+                    None => {
                         let mut at = None;
                         for (position, (stored, _)) in result.iter().enumerate() {
                             if self.keys_agree(stored, &keyed)? { at = Some(position); break; }
@@ -8454,9 +8494,17 @@ impl<'a> Machine<'a> {
             (Prim::Erase, [Value::Dict(entries), key]) => {
                 if let Some(words) = self.cannot_key(key) { return Err(words); }
                 let hashed = self.hash_key(key)?;
-                let at = match hashed.hash_address() {
-                    Ok(address) => entries.found_at(&address),
-                    Err(_) => {
+                let placed = match hashed.hash_address() {
+                    Ok(address) => match entries.locate(&address) {
+                        Found::Found(pos) => Some(Some(pos)),
+                        Found::Absent => Some(None),
+                        Found::Unknown => None,
+                    },
+                    Err(_) => None,
+                };
+                let at = match placed {
+                    Some(at) => at,
+                    None => {
                         let mut at = None;
                         for (position, (stored, _)) in entries.iter().enumerate() {
                             if self.keys_agree(stored, &hashed)? { at = Some(position); break; }
@@ -8524,7 +8572,11 @@ impl<'a> Machine<'a> {
             (Prim::At | Prim::Fetch, [Value::Dict(entries), key]) => {
                 let hashed = self.hash_key(key)?;
                 if let Ok(address) = hashed.hash_address() {
-                    return Ok(entries.found_at(&address).map(|position| entries[position].1.clone()));
+                    match entries.locate(&address) {
+                        Found::Found(position) => return Ok(Some(entries[position].1.clone())),
+                        Found::Absent => return Ok(None),
+                        Found::Unknown => {}
+                    }
                 }
                 for (candidate, value) in entries.iter() {
                     if self.keys_agree(candidate, &hashed)? { return Ok(Some(value.clone())); }
@@ -10726,9 +10778,19 @@ impl<'a> Machine<'a> {
                         }
                     },
                     (needle, Value::Vector(hay) | Value::Tuple(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
-                    (key, Value::Dict(entries)) => match key.hash_address() {
-                        Ok(address) => entries.found_at(&address).is_some(),
-                        Err(_) => entries.iter().any(|(k, _)| contained_equal(key, k) || self.keys_match(key, k)),
+                    (key, Value::Dict(entries)) => {
+                        let placed = match key.hash_address() {
+                            Ok(address) => match entries.locate(&address) {
+                                Found::Found(_) => Some(true),
+                                Found::Absent => Some(false),
+                                Found::Unknown => None,
+                            },
+                            Err(_) => None,
+                        };
+                        match placed {
+                            Some(found) => found,
+                            None => entries.iter().any(|(k, _)| contained_equal(key, k) || self.keys_match(key, k)),
+                        }
                     },
                     // Sought through the one routine for the address a
                     // value takes among a set's members, so that a thing

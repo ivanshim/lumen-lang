@@ -311,7 +311,14 @@ impl Request<'_> {
         let found=|entries:&[(Value,Value)],key:&Value|->Option<usize>{
             if !self.names.keys_by_worth {
                 if let (Some(store),Ok(address))=(indexed,key.hash_address()){
-                    return store.found_at(&address);
+                    match store.locate(&address){
+                        crate::data::Found::Found(at)=>return Some(at),
+                        crate::data::Found::Absent=>return None,
+                        // Some pair in the store carries no address of
+                        // its own, so a miss here proves nothing; the
+                        // walk below is the one that can still say.
+                        crate::data::Found::Unknown=>{}
+                    }
                 }
             }
             entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth))

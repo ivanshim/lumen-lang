@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Ending, Instance, Phase, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
+use crate::value::{Descriptor, Class, Ending, Instance, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -4697,9 +4697,15 @@ impl<'a> Engine<'a> {
         }
         if let (Action::At, Value::Map(entries)) = (op, a) {
             let wanted = self.special_key(b)?;
+            let mut settled = false;
             if let Ok(keytext) = wanted.member_key() {
-                if let Some(at) = entries.locate(&keytext) { return Ok(entries[at].1.clone()); }
-            } else {
+                match entries.locate(&keytext) {
+                    Placement::AtRow(at) => return Ok(entries[at].1.clone()),
+                    Placement::NotThere => settled = true,
+                    Placement::Uncertain => {}
+                }
+            }
+            if !settled {
                 for (key, value) in entries.iter() {
                     if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
                 }
@@ -5434,9 +5440,17 @@ impl<'a> Engine<'a> {
                         ))
                     }
                     Value::Map(pairs) => {
-                        let present = match at.member_key() {
-                            Ok(keytext) => pairs.locate(&keytext).is_some(),
-                            Err(_) => pairs.iter().any(|(k, _)| self.keys_alike(k, &at)),
+                        let placed = match at.member_key() {
+                            Ok(keytext) => match pairs.locate(&keytext) {
+                                Placement::AtRow(_) => Some(true),
+                                Placement::NotThere => Some(false),
+                                Placement::Uncertain => None,
+                            },
+                            Err(_) => None,
+                        };
+                        let present = match placed {
+                            Some(present) => present,
+                            None => pairs.iter().any(|(k, _)| self.keys_alike(k, &at)),
                         };
                         if !self.lang.del_words.is_empty() && !present {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) }.into());
@@ -7856,9 +7870,17 @@ impl<'a> Engine<'a> {
                         // map, and the language says so rather than
                         // answering no.
                         if let Some(told) = self.unkeyable(a) { return Err(told); }
-                        match a.member_key() {
-                            Ok(keytext) => items.locate(&keytext).is_some(),
-                            Err(_) => items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a)),
+                        let placed = match a.member_key() {
+                            Ok(keytext) => match items.locate(&keytext) {
+                                Placement::AtRow(_) => Some(true),
+                                Placement::NotThere => Some(false),
+                                Placement::Uncertain => None,
+                            },
+                            Err(_) => None,
+                        };
+                        match placed {
+                            Some(found) => found,
+                            None => items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a)),
                         }
                     }
                     Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
@@ -8532,9 +8554,17 @@ impl<'a> Engine<'a> {
         if !self.lang.exceptions.is_empty() {
             if let Value::Map(pairs) = target {
                 if let Some(told) = self.unkeyable(at) { return Err(told); }
-                let present = match at.member_key() {
-                    Ok(keytext) => pairs.locate(&keytext).is_some(),
-                    Err(_) => pairs.iter().any(|(key, _)| self.keys_alike(key, at)),
+                let placed = match at.member_key() {
+                    Ok(keytext) => match pairs.locate(&keytext) {
+                        Placement::AtRow(_) => Some(true),
+                        Placement::NotThere => Some(false),
+                        Placement::Uncertain => None,
+                    },
+                    Err(_) => None,
+                };
+                let present = match placed {
+                    Some(present) => present,
+                    None => pairs.iter().any(|(key, _)| self.keys_alike(key, at)),
                 };
                 if !present { return Err(self.key_absent(at)); }
             }
@@ -8745,9 +8775,17 @@ impl<'a> Engine<'a> {
         }
         if let Value::Map(pairs) = target {
             let at = &self.key(at);
-            let found = match at.member_key() {
-                Ok(keytext) => pairs.locate(&keytext).map(|position| &pairs[position]),
-                Err(_) => pairs.iter().find(|(k, _)| self.keys_alike(k, at)),
+            let placed = match at.member_key() {
+                Ok(keytext) => match pairs.locate(&keytext) {
+                    Placement::AtRow(position) => Some(Some(&pairs[position])),
+                    Placement::NotThere => Some(None),
+                    Placement::Uncertain => None,
+                },
+                Err(_) => None,
+            };
+            let found = match placed {
+                Some(found) => found,
+                None => pairs.iter().find(|(k, _)| self.keys_alike(k, at)),
             };
             return match found {
                 Some((_, v)) => Ok(v.clone()),
@@ -10476,13 +10514,34 @@ impl<'a> Engine<'a> {
                     let raw_key = self.key(&args[0]);
                     if let Ok(keytext) = raw_key.member_key() {
                         if let Some(told) = self.unkeyable(&raw_key) { return Err(told); }
-                        let cell = cell.clone();
-                        let value = args[1].clone();
-                        let mut held = cell.borrow_mut();
-                        let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
-                        Rc::make_mut(rc).set_by_key(raw_key, keytext, value);
-                        drop(held);
-                        return Ok(Value::Bond(cell));
+                        // A row whose own key went without text of its
+                        // own is left out of the lookup entirely, so a
+                        // miss there proves nothing: such a row might
+                        // still be this key by the program's own
+                        // equality, which only the slow road below can
+                        // settle, so the fast road is left untaken.
+                        let placement = { let held = cell.borrow(); let Value::Map(rc) = &*held else { unreachable!("checked just above") }; rc.locate(&keytext) };
+                        match placement {
+                            Placement::AtRow(at) => {
+                                let cell = cell.clone();
+                                let value = args[1].clone();
+                                let mut held = cell.borrow_mut();
+                                let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
+                                Rc::make_mut(rc).overwrite_row(at, value);
+                                drop(held);
+                                return Ok(Value::Bond(cell));
+                            }
+                            Placement::NotThere => {
+                                let cell = cell.clone();
+                                let value = args[1].clone();
+                                let mut held = cell.borrow_mut();
+                                let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
+                                Rc::make_mut(rc).insert_proven_absent(raw_key, keytext, value);
+                                drop(held);
+                                return Ok(Value::Bond(cell));
+                            }
+                            Placement::Uncertain => {}
+                        }
                     }
                 }
             }
