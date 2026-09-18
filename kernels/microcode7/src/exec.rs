@@ -5273,7 +5273,7 @@ impl<'a> Machine<'a> {
     /// word names no native kind, or where that kind carries nothing
     /// under the name.
     pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
-        let Value::Intrinsic(word) = value else { return None };
+        let Value::Intrinsic(_, word) = value else { return None };
         let stand_in = self.kind_stand_in(word)?;
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
         Some(Value::Wrapped(60, Rc::new(vec![Value::text(word), Value::text(name)])))
