@@ -1028,7 +1028,12 @@ impl Value {
             Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
-            Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) => {
+                let named = if p.qualified.is_empty() { p.ident.as_str() } else { p.qualified.as_str() };
+                let named = named.strip_suffix("{closure}").map_or_else(|| named.to_string(), |head| format!("{head}<lambda>"));
+                format!("<function {named} at 0x1>")
+            }
+            Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
             Value::Adapter(_) => "<member wrapper>".to_string(),

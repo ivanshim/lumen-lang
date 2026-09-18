@@ -969,7 +969,12 @@ impl Value {
             Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
             Value::Refusal(word) => word.to_string(),
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
-            Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) | Value::Bound(p, _) => {
+                let mut title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
+                if title.ends_with("{closure}") { title.truncate(title.len() - "{closure}".len()); title.push_str("<lambda>"); }
+                format!("<function {title} at 0x1>")
+            }
+            Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
             Value::Wrapped(..) => "<member wrapper>".into(),
