@@ -8583,6 +8583,16 @@ impl<'a> Machine<'a> {
         Ok(None)
     }
 
+    /// The kind a value is held to when it is asked whether it stands in
+    /// order beside another. It is the kind's own word, save that a row
+    /// of bytes and one that can be written into are one family here, as
+    /// they are for equality: either stands in order beside the other,
+    /// though a refusal still names each of them apart.
+    fn order_family(value: &Value) -> String {
+        let word = value.kind_word();
+        match word.as_str() { "bytearray" => "bytes".to_owned(), _ => word }
+    }
+
     /// The complaint that two values stand in no order at all, carrying
     /// the sign that was asked for and the name of each of the kinds.
     fn unordered_complaint(&self, op: Prim, one: &Value, two: &Value) -> String {
@@ -8729,7 +8739,7 @@ impl<'a> Machine<'a> {
                 // Two of one kind may still order themselves, as sets and
                 // rows do; two of different kinds, or of a kind without any
                 // order, cannot.
-                let orderless = left.kind_word() != right.kind_word() || matches!(left, Value::Nil | Value::Dict(_));
+                let orderless = Self::order_family(&left) != Self::order_family(&right) || matches!(left, Value::Nil | Value::Dict(_));
                 if orderless && !(counts(&left) && counts(&right)) && !texts && !matches!((&left, &right), (Value::Thing(_), _) | (_, Value::Thing(_))) && math::below(&left, &right).is_none() {
                     let sign = match op { Prim::Lt => "<", Prim::Le => "<=", Prim::Gt => ">", _ => ">=" };
                     return Err(format!("{before}{sign}{between}{}{and}{}{after}", left.kind_word(), right.kind_word()));
