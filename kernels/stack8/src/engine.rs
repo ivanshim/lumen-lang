@@ -7162,14 +7162,14 @@ impl<'a> Engine<'a> {
             if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
             self.special_text(&thing, code != 's').map(Some)
         };
-        writer.percent(template, arguments, &mut offered)
+        writer.percent(template, arguments, &mut offered, false)
     }
 
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         if !self.lang.format_builtin.is_empty() {
-            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None));
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None), false);
         }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
@@ -7720,6 +7720,15 @@ impl<'a> Engine<'a> {
                 if !row.is_empty() { for _ in 0..count { out.extend(row.iter()); } }
                 return Ok(self.byte_make(out, *mutable));
             }
+        }
+        // A row of bytes on the left of the remainder sign fills its
+        // own marks, byte for byte: each byte of the template stands
+        // for the character that carries it, and the filled text is
+        // read back into a row of the same kind as the template.
+        if let (Action::Mod, Value::Bytes(row, mutable, _), true) = (op, a, self.lang.rem_formats_text) {
+            let (template, mutable) = (row.borrow().iter().copied().map(char::from).collect::<String>(), *mutable);
+            let filled = self.byte_filled(&template, b)?;
+            return Ok(self.byte_make(filled, mutable));
         }
         if (matches!(a, Value::Bytes(..)) || matches!(b, Value::Bytes(..)))
             && matches!(op, Action::Add | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Mod | Action::Join) {
@@ -10054,6 +10063,28 @@ impl<'a> Engine<'a> {
         let mut table: Vec<u8> = (0..=u8::MAX).collect();
         for (one, other) in from.iter().zip(to.iter()) { table[usize::from(*one)] = *other; }
         Ok(self.byte_make(table, false))
+    }
+
+    /// A row of bytes filled mark by mark. A mark that shows a value is
+    /// handed a row of bytes and nothing else, whichever of its two
+    /// letters it is written with, and a mark that words a value writes
+    /// the ascii of its representation, so that nothing beyond seven
+    /// bits can stand in the answer.
+    fn byte_filled(&self, template: &str, arguments: &Value) -> Res<Vec<u8>> {
+        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+        let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
+            let held = value.contents();
+            if matches!(code, 'a' | 'r') {
+                let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                return inner.representation(&held, true).map(Some);
+            }
+            match &held {
+                Value::Bytes(row, ..) => Ok(Some(row.borrow().iter().copied().map(char::from).collect())),
+                other => Err(Self::named_fault(&self.lang.fmt_op_rem_format_byte, &other.core_kind())),
+            }
+        };
+        let filled = writer.percent(template, arguments, &mut offered, true)?;
+        filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.byte_fault("unready"))).collect()
     }
 
     /// A row of bytes shortened at a place, or over a run of places.

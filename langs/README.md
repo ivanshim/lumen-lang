@@ -3536,6 +3536,12 @@ only. The extension labels so far, all from PHP:
   without a whole number, and an unfinished percent mark.
   `ext.op.rem.format.code` has three pieces preceding an unknown letter,
   its hexadecimal ordinal, and its place within the format string.
+- `ext.op.rem.format.byte`: the two pieces enclosing the kind of a value
+  handed to a mark which shows a row of bytes. A row of bytes on the left
+  of the remainder sign fills its marks byte for byte: the marks that
+  show a value take a row of bytes alone, whatever letter they are
+  written with, and the marks that word a value write the ascii of its
+  representation.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
@@ -4690,6 +4696,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.byte` | - | - | `TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '` `'` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character` | - | - | `TypeError: %c requires int or char` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string` | - | - | - | - | - | - | - |

@@ -2149,6 +2149,10 @@
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
   ],
+  "ext.op.rem.format.byte": [
+    "TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '",
+    "'"
+  ],
   "ext.op.rem.format.character": [
     "TypeError: %c requires int or char"
   ],

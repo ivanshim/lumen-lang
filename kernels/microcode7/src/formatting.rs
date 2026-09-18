@@ -188,7 +188,7 @@ impl Layout<'_> {
                 if shape.polarity.is_some() { return Err(self.complain("ext.text.format.sign.character", &[])); }
                 if shape.alternative { return Err(self.complain("ext.text.format.alternate.character", &[])); }
                 if shape.separator.is_some() { return Err(self.invalid()); }
-                let text = self.character(item)?;
+                let text = self.character(item, false)?;
                 return Ok(shape.padded(String::new(), text, '>'));
             }
             let radix = match shape.letter { Some('b') => 2, Some('o') => 8, Some('x' | 'X') => 16, _ => 10 };
@@ -216,9 +216,10 @@ impl Layout<'_> {
         Ok(shape.padded(prefix, body, '>'))
     }
 
-    fn character(&self, item: &Value) -> Answer {
+    fn character(&self, item: &Value, of_bytes: bool) -> Answer {
+        let most = if of_bytes { 0xff } else { 0x10ffff };
         match item.as_big()?.to_u32() {
-            Some(n @ 0..=0x10ffff) => char::from_u32(n).map(String::from).ok_or_else(|| self.refused()),
+            Some(n) if n <= most => char::from_u32(n).map(String::from).ok_or_else(|| self.refused()),
             _ => Err(self.complain("ext.text.format.character", &[])),
         }
     }
@@ -333,7 +334,11 @@ impl Layout<'_> {
         Ok(selected)
     }
 
-    pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere) -> Answer {
+    /// Marks filled one at a time. A pattern read off a row of bytes
+    /// says so: it knows the mark that shows a row of bytes, it seeks a
+    /// keyed mark's name among keys that are rows of bytes, and a
+    /// character mark holds one byte alone.
+    pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Answer {
         let stored = supplied.settled();
         let supplied = &stored;
         let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
@@ -358,7 +363,12 @@ impl Layout<'_> {
                 let Value::Dict(pairs) = supplied else { return Err(self.complain("ext.op.rem.format.mapping", &[])); };
                 named_seen = true;
                 used = positional.len();
-                Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
+                let spelt = |k: &Value| match k {
+                    Value::Text(s) => !of_bytes && s.as_ref() == key,
+                    Value::Octets { cell, .. } => of_bytes && cell.borrow().iter().copied().map(char::from).eq(key.chars()),
+                    _ => false,
+                };
+                Some(pairs.iter().find(|(k, _)| spelt(k)).map(|(_, v)| v)
                     .ok_or_else(|| self.name_absent(&key))?)
             } else { None };
             let mut shape = Presentation::new();
@@ -400,9 +410,10 @@ impl Layout<'_> {
             if shape.zero && shape.justify != Some('<') {
                 shape.padding = '0'; shape.justify = Some('=');
             }
+            let shows = matches!(conversion, 'a' | 'r' | 's') || of_bytes && conversion == 'b';
             let (head, body) = match conversion {
-                'a' | 'r' | 's' => {
-                    let text = match asked.value_worded(item, conversion != 's')? {
+                'a' | 'r' | 's' | 'b' if shows => {
+                    let text = match asked.value_worded(item, !matches!(conversion, 's' | 'b'))? {
                         Some(ready) => ready,
                         None if conversion == 's' => self.plain(item)?,
                         None => self.quote(item, conversion == 'a')?,
@@ -415,8 +426,9 @@ impl Layout<'_> {
                     shape.padding = ' ';
                     if shape.justify == Some('=') { shape.justify = Some('>'); }
                     let c = match item {
-                        Value::Text(text) if text.chars().count() == 1 => text.to_string(),
-                        Value::Huge(_) | Value::Small(_) | Value::Flag(_) => self.character(item)?,
+                        Value::Octets { cell, .. } if of_bytes && cell.borrow().len() == 1 => char::from(cell.borrow()[0]).to_string(),
+                        Value::Text(text) if !of_bytes && text.chars().count() == 1 => text.to_string(),
+                        Value::Huge(_) | Value::Small(_) | Value::Flag(_) => self.character(item, of_bytes)?,
                         _ => return Err(self.complain("ext.op.rem.format.character", &[])),
                     };
                     (String::new(), c)

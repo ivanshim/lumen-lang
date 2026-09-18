@@ -1724,7 +1724,7 @@ impl<'a> Machine<'a> {
     fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
         if self.table.has_any("ext.builtin.format") {
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-            return layout.remainder(pattern, rhs, self);
+            return layout.remainder(pattern, rhs, self, false);
         }
         let unsupported = self.table.single("ext.op.rem.format.unsupported").unwrap_or_default();
         let mismatch = self.table.single("ext.op.rem.format.arguments").unwrap_or_default();
@@ -7015,6 +7015,17 @@ impl<'a> Machine<'a> {
         format!("{}{}{}{}", at(0), right.kind_word(), at(1), left.kind_word())
     }
 
+    /// A row of bytes filled mark by mark.
+    fn octet_filled(&self, pattern: &str, supplied: &Value) -> Result<Vec<u8>, String> {
+        let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
+        let mut marks = OctetMarks {
+            layout: crate::formatting::Layout { table: self.table, names: self.wording() },
+            refusal: self.table.strings("ext.op.rem.format.byte"),
+        };
+        let filled = layout.remainder(pattern, supplied, &mut marks, true)?;
+        filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.octet_error("unready"))).collect()
+    }
+
     /// The bytes that written hexadecimal stands for: two figures to a
     /// byte, with blanks allowed to stand between them.
     fn octets_from_hex(&self, spelling: &str) -> Result<Vec<u8>, String> {
@@ -9055,6 +9066,17 @@ impl<'a> Machine<'a> {
                 result.try_reserve_exact(size).map_err(|_| self.octet_error("unready"))?;
                 if cell.len() > 0 { for _ in 0..quantity { result.extend_from_slice(&cell); } }
                 return Ok(self.octets(result, *changeable));
+            }
+            // A row of bytes on the left of the remainder sign fills
+            // its own marks, byte for byte: each byte of the pattern
+            // stands for the character that carries it, and the filled
+            // text is read back into a row of the pattern's own kind.
+            if op == Prim::Mod && self.table.flag("ext.op.rem.formats_text") {
+                if let Value::Octets { cell, changeable, .. } = &v[0] {
+                    let (pattern, changeable) = (cell.borrow().iter().copied().map(char::from).collect::<String>(), *changeable);
+                    let filled = self.octet_filled(&pattern, &v[1])?;
+                    return Ok(self.octets(filled, changeable));
+                }
             }
             if has_octets && matches!(op, Prim::Plus | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Mod | Prim::Join) {
                 return Err(self.octet_error("unready"));
@@ -14761,6 +14783,34 @@ impl Machine<'_> {
         }
     }
 }
+/// The marks of a pattern read off a row of bytes. A mark that shows a
+/// value is handed a row of bytes and nothing else, whichever of its
+/// two letters it is written with, and a mark that words a value writes
+/// the ascii of its representation, so that nothing beyond seven bits
+/// can stand in the answer.
+struct OctetMarks<'a> {
+    layout: crate::formatting::Layout<'a>,
+    refusal: &'a [String],
+}
+
+impl crate::formatting::Elsewhere for OctetMarks<'_> {
+    fn field_laid(&mut self, _item: &Value, _pattern: &str, _convert: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    fn value_worded(&mut self, item: &Value, quoted: bool) -> Result<Option<String>, String> {
+        let held = item.settled();
+        if quoted { return self.layout.quote(&held, true).map(Some); }
+        match &held {
+            Value::Octets { cell, .. } => Ok(Some(cell.borrow().iter().copied().map(char::from).collect())),
+            other => {
+                let at = |i: usize| self.refusal.get(i).map_or("", String::as_str);
+                Err(format!("{}{}{}", at(0), other.kind_word(), at(1)))
+            }
+        }
+    }
+}
+
 /// The machine answers for the fields a layout cannot lay out: a thing
 /// of the program's own is written by its own methods, and the layout
 /// keeps everything else.
