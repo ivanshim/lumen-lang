@@ -105,12 +105,12 @@ impl Request<'_> {
             for key in gather(self.target,self.complaint)?{
                 if entries.iter().all(|e|!same_item(&e.0,&key,self.names.keys_by_worth)){entries.push((key,filling.clone()));}
             }
-            return Ok(Value::Dict(Rc::new(entries)).keep(false));
+            return Ok(Value::Dict(Rc::new(entries.into())).keep(false));
         }
         match self.target.settled(){
             Value::Text(chars)=>self.on_text(&chars),
             Value::Vector(items)=>self.on_list(items.to_vec()),
-            Value::Dict(entries)=>self.on_map(entries.to_vec()),
+            Value::Dict(entries)=>self.on_map(entries.to_vec(),Some(&entries)),
             // A flag counts as the whole number it stands for, and so
             // answers the members a whole number answers.
             number @ (Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Flag(_))=>self.on_number(number),
@@ -302,13 +302,26 @@ impl Request<'_> {
             None=>entries.push((key,value)),
         }
     }
-    fn on_map(&self,mut entries:Vec<(Value,Value)>)->ResultValue{
+    fn on_map(&self,mut entries:Vec<(Value,Value)>,indexed:Option<&crate::data::MapStore>)->ResultValue{
+        // Where the key given asks for no help from the program's own
+        // code, the store's own place is asked first, rather than
+        // walking the entries from the front; a key that does need
+        // help (a value compared by worth, or a Thing with its own
+        // rules) keeps to the walk unchanged.
+        let found=|entries:&[(Value,Value)],key:&Value|->Option<usize>{
+            if !self.names.keys_by_worth {
+                if let (Some(store),Ok(address))=(indexed,key.hash_address()){
+                    return store.found_at(&address);
+                }
+            }
+            entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth))
+        };
         match self.operation{
             // The pair written last comes out, key and value together.
             "popitem"=>{
                 self.takes(0,0)?;
                 let Some((key,value))=entries.pop() else {return Err(self.fail("popitem"));};
-                self.replace(Value::Dict(Rc::new(entries)))?;
+                self.replace(Value::Dict(Rc::new(entries.into())))?;
                 return Ok(Value::Tuple(Rc::new(vec![key,value])));
             }
             "keys"|"values"|"items"=>{
@@ -316,17 +329,17 @@ impl Request<'_> {
                 let portion=if self.operation=="keys"{'k'}else if self.operation=="values"{'v'}else{'i'};
                 return Ok(Value::Window(Rc::new(self.target.clone()),portion));
             }
-            "copy"=>{self.takes(0,0)?;return Ok(Value::Dict(Rc::new(entries)).keep(true));}
+            "copy"=>{self.takes(0,0)?;return Ok(Value::Dict(Rc::new(entries.into())).keep(true));}
             "clear"=>{self.takes(0,0)?;entries.clear();}
             "get"|"setdefault"|"pop"=>{
                 self.takes(1,2)?;let key=&self.given[0];
                 if matches!(key.settled(),Value::Vector(_)|Value::Dict(_)){return Err(self.fail("arguments"));}
-                if let Some(index)=entries.iter().position(|e|same_item(&e.0,key,self.names.keys_by_worth)){
-                    let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
+                if let Some(index)=found(&entries,key){
+                    let answer=entries[index].1.clone();if self.operation=="pop"{entries.remove(index);self.replace(Value::Dict(Rc::new(entries.into())))?;}return Ok(answer);
                 }
                 if self.operation=="pop"&&self.given.len()==1{return Err(self.fail("key")+&key.repr(&self.names));}
                 let answer=self.given.get(1).cloned().unwrap_or(Value::Nil);
-                if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(entries)))?;}return Ok(answer);
+                if self.operation=="setdefault"{entries.push((key.clone(),answer.clone()));self.replace(Value::Dict(Rc::new(entries.into())))?;}return Ok(answer);
             }
             // Each pair goes in as it is met, so that the pairs read before
             // an ill-shaped one are kept when the call stops on it.
@@ -345,12 +358,12 @@ impl Request<'_> {
                     }
                 }
                 if stopped.is_none(){for (key,value) in self.named{self.enter(&mut entries,Value::text(key),value.clone());}}
-                self.replace(Value::Dict(Rc::new(entries)))?;
+                self.replace(Value::Dict(Rc::new(entries.into())))?;
                 return match stopped{Some(words)=>Err(words),None=>Ok(Value::Nil)};
             }
             _=>return Err(self.unknown()),
         }
-        self.replace(Value::Dict(Rc::new(entries)))
+        self.replace(Value::Dict(Rc::new(entries.into())))
     }
     fn fill_fields(&self,template:&str)->Result<String,String>{
         let input:Vec<char>=template.chars().collect();let mut pos=0;let mut ordinal=0;let mut mode=0u8;let mut output=String::new();

@@ -919,7 +919,7 @@ impl<'a> Machine<'a> {
     fn places_with_keys(v: &Value) -> Vec<(Value, Value)> {
         match v {
             Value::Vector(items) | Value::Tuple(items) => items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect(),
-            Value::Dict(pairs) => pairs.as_ref().clone(),
+            Value::Dict(pairs) => pairs.to_vec(),
             _ => Vec::new(),
         }
     }
@@ -4543,14 +4543,14 @@ impl<'a> Machine<'a> {
                                 drop(target);
                                 let mut held = cell.borrow_mut();
                                 let Value::Dict(rc) = &mut *held else { unreachable!("checked just above") };
-                                dict_place_indexed(rc, key, address, value);
+                                Rc::make_mut(rc).place_key(key, address, value);
                                 return Ok(Value::Nil);
                             }
                             let mut entries = entries.to_vec();
                             let mut position = 0;
                             while position < entries.len() && !self.keys_agree(&entries[position].0, &key)? { position += 1; }
                             if position < entries.len() { entries[position].1 = value; } else { entries.push((key, value)); }
-                            let changed = Value::Dict(Rc::new(entries));
+                            let changed = Value::Dict(Rc::new(entries.into()));
                             match (worth_cell, original) {
                                 (Some(cell), _) => { cell.replace(changed); }
                                 (None, Value::Shared(cell) | Value::Mutable(cell, _)) => { cell.replace(changed); }
@@ -5022,7 +5022,7 @@ impl<'a> Machine<'a> {
             })),
             Prim::Listed => Value::Vector(Rc::new(Vec::new())),
             Prim::Tupling => Value::Tuple(Rc::new(Vec::new())),
-            Prim::Dictionary => Value::Dict(Rc::new(Vec::new())),
+            Prim::Dictionary => Value::Dict(Rc::new(Vec::new().into())),
             Prim::Uniques => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
             Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
             _ => return None,
@@ -6477,7 +6477,7 @@ impl<'a> Machine<'a> {
                 return Err(self.argument_fault("ext.syntax.call.amiss.unknown", Some(&key)).into());
             }
         }
-        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names)); }
+        if let Some(slot) = gather_names { fitted[slot] = Value::Dict(Rc::new(spare_names.into())); }
         for at in 0..fitted.len() {
             if matches!(fitted[at], Value::Unset) && !program.carried.contains(&program.formal_slots[at])
                 && !program.local_defaults.contains(&program.formal_slots[at]) {
@@ -8421,9 +8421,12 @@ impl<'a> Machine<'a> {
                 // and the language says so rather than answering no.
                 if let Some(words) = self.cannot_key(needle) { return Err(words); }
                 let key = self.hash_key(needle)?;
-                let found = match key.hash_address().ok().and_then(|address| dict_indexed_position(entries, &address)) {
-                    Some(at) => at.is_some(),
-                    None => {
+                // A key needing no help from the program's own code is
+                // sought through the store's own place, in one look
+                // rather than a walk of every entry.
+                let found = match key.hash_address() {
+                    Ok(address) => entries.found_at(&address).is_some(),
+                    Err(_) => {
                         let mut found = false;
                         for (stored, _) in entries.iter() { if self.keys_agree(stored, &key)? { found = true; break; } }
                         found
@@ -8435,23 +8438,37 @@ impl<'a> Machine<'a> {
                 if let Some(words) = self.cannot_key(key) { return Err(words); }
                 let keyed = self.hash_key(key)?;
                 let mut result = entries.to_vec();
-                let mut at = 0;
-                while at < result.len() && !self.keys_agree(&result[at].0, &keyed)? { at += 1; }
-                if at == result.len() { result.push((keyed, value.clone())); } else { result[at].1 = value.clone(); }
-                Value::Dict(Rc::new(result))
+                let at = match keyed.hash_address() {
+                    Ok(address) => entries.found_at(&address),
+                    Err(_) => {
+                        let mut at = None;
+                        for (position, (stored, _)) in result.iter().enumerate() {
+                            if self.keys_agree(stored, &keyed)? { at = Some(position); break; }
+                        }
+                        at
+                    }
+                };
+                match at { Some(at) => result[at].1 = value.clone(), None => result.push((keyed, value.clone())) };
+                Value::Dict(Rc::new(result.into()))
             }
             (Prim::Erase, [Value::Dict(entries), key]) => {
                 if let Some(words) = self.cannot_key(key) { return Err(words); }
                 let hashed = self.hash_key(key)?;
-                let mut remaining = Vec::new();
-                let mut removed = false;
-                for (old, item) in entries.iter() {
-                    if self.keys_agree(old, &hashed)? { removed = true; } else { remaining.push((old.clone(), item.clone())); }
-                }
-                if !removed {
+                let at = match hashed.hash_address() {
+                    Ok(address) => entries.found_at(&address),
+                    Err(_) => {
+                        let mut at = None;
+                        for (position, (stored, _)) in entries.iter().enumerate() {
+                            if self.keys_agree(stored, &hashed)? { at = Some(position); break; }
+                        }
+                        at
+                    }
+                };
+                let Some(at) = at else {
                     return Err(if self.table.has_any("ext.builtin.exceptions") { self.absent_key(key) } else { self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string() });
-                }
-                Value::Dict(Rc::new(remaining))
+                };
+                let remaining: Vec<(Value, Value)> = entries.iter().enumerate().filter(|(position, _)| *position != at).map(|(_, pair)| pair.clone()).collect();
+                Value::Dict(Rc::new(remaining.into()))
             }
             // A class names the method for membership, or names nothing
             // for it: a class that sets the name to nothing has said
@@ -8506,10 +8523,8 @@ impl<'a> Machine<'a> {
             (Prim::Length, [Value::Attributes(t)]) => Value::Small(t.holds.borrow().iter().filter(|(n, x)| !matches!(x, Value::Unset) && !n.starts_with('\0')).count() as i64),
             (Prim::At | Prim::Fetch, [Value::Dict(entries), key]) => {
                 let hashed = self.hash_key(key)?;
-                if let Some(address) = hashed.hash_address().ok() {
-                    if let Some(at) = dict_indexed_position(entries, &address) {
-                        return Ok(at.map(|pos| entries[pos].1.clone()));
-                    }
+                if let Ok(address) = hashed.hash_address() {
+                    return Ok(entries.found_at(&address).map(|position| entries[position].1.clone()));
                 }
                 for (candidate, value) in entries.iter() {
                     if self.keys_agree(candidate, &hashed)? { return Ok(Some(value.clone())); }
@@ -8736,7 +8751,7 @@ impl<'a> Machine<'a> {
                 result.push((key, value));
             }
         }
-        Ok(Value::Dict(Rc::new(result)))
+        Ok(Value::Dict(Rc::new(result.into())))
     }
 
     fn collection_cell(&self, value: Value) -> Value {
@@ -8896,7 +8911,7 @@ impl<'a> Machine<'a> {
                         None => entries.push((key, value)),
                     }
                 }
-                cell.replace(Value::Dict(Rc::new(entries)));
+                cell.replace(Value::Dict(Rc::new(entries.into())));
                 return match stopped { Some(words) => Err(words), None => Ok(left.clone()) };
             }
         }
@@ -8912,7 +8927,7 @@ impl<'a> Machine<'a> {
                     return Err(if self.table.has_any("ext.builtin.exceptions") { self.absent_key(&at) } else { self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string() });
                 }
                 let kept: Vec<(Value, Value)> = self.without_key(&entries, &wanted)?;
-                cell.replace(Value::Dict(Rc::new(kept)));
+                cell.replace(Value::Dict(Rc::new(kept.into())));
                 return Ok(target.clone());
             }
         }
@@ -9338,7 +9353,7 @@ impl<'a> Machine<'a> {
                         if position == combined.len() { combined.push((key, value)); }
                         else { combined[position].1 = value; }
                     }
-                    Value::Dict(Rc::new(combined))
+                    Value::Dict(Rc::new(combined.into()))
                 }
             }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
@@ -9563,7 +9578,7 @@ impl<'a> Machine<'a> {
                         bindings.push((Value::text(word), value.clone()));
                     }
                 }
-                Value::Dict(Rc::new(bindings))
+                Value::Dict(Rc::new(bindings.into()))
             }
             Prim::ReadMember => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()); }
@@ -9908,7 +9923,7 @@ impl<'a> Machine<'a> {
                         let mut all: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect();
                         set_key(&mut all, v[1].clone(), v[2].clone());
-                        Value::Dict(Rc::new(all))
+                        Value::Dict(Rc::new(all.into()))
                     }
                     Value::Dict(entries) => {
                         let mut all = entries.as_ref().clone();
@@ -10015,7 +10030,7 @@ impl<'a> Machine<'a> {
                 for (key, worth) in std::env::vars_os() {
                     if let (Some(key), Some(worth)) = (key.to_str(), worth.to_str()) { surroundings.push((Value::text(key), Value::text(worth))); }
                 }
-                let row = vec![here, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Dict(Rc::new(surroundings))];
+                let row = vec![here, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Dict(Rc::new(surroundings.into()))];
                 Value::Vector(Rc::new(row))
             }
             // The host's shell, handed a command and asked afterwards
@@ -10195,7 +10210,7 @@ impl<'a> Machine<'a> {
                     }
                     let handed = self.handed_to(call).unwrap_or_default().to_vec();
                     pairs.push((Value::text("args"), Value::Vector(Rc::new(handed))));
-                    told.push(Value::Dict(Rc::new(pairs)));
+                    told.push(Value::Dict(Rc::new(pairs.into())));
                 }
                 Value::Vector(Rc::new(told))
             }
@@ -10508,7 +10523,7 @@ impl<'a> Machine<'a> {
                             .filter(|(at, _)| *at != i)
                             .map(|(at, x)| (Value::Small(at as i64), x.clone()))
                             .collect();
-                        Value::Dict(Rc::new(kept))
+                        Value::Dict(Rc::new(kept.into()))
                     }
                     Value::Dict(entries) => {
                         let at = self.as_key(&v[1]);
@@ -10518,7 +10533,7 @@ impl<'a> Machine<'a> {
                             return Err(if self.table.has_any("ext.builtin.exceptions") { self.absent_key(&at) } else { self.table.single("ext.stmt.del.unrun").unwrap_or_default().to_string() });
                         }
                         let kept: Vec<(Value, Value)> = self.without_key(entries, &wanted)?;
-                        Value::Dict(Rc::new(kept))
+                        Value::Dict(Rc::new(kept.into()))
                     }
                     other => return Err(format!("{}() cannot take a place out of {}", name, other.bare())),
                 }
@@ -10711,7 +10726,10 @@ impl<'a> Machine<'a> {
                         }
                     },
                     (needle, Value::Vector(hay) | Value::Tuple(hay)) => hay.iter().any(|item| contained_equal(needle, item)),
-                    (key, Value::Dict(entries)) => entries.iter().any(|(k, _)| contained_equal(key, k) || self.keys_match(key, k)),
+                    (key, Value::Dict(entries)) => match key.hash_address() {
+                        Ok(address) => entries.found_at(&address).is_some(),
+                        Err(_) => entries.iter().any(|(k, _)| contained_equal(key, k) || self.keys_match(key, k)),
+                    },
                     // Sought through the one routine for the address a
                     // value takes among a set's members, so that a thing
                     // is sought by its own hash and its own equality
@@ -12625,7 +12643,7 @@ fn assembled(values: Vec<Value>, map_wanted: bool, plain_keys: bool) -> Value {
             }
         }
     }
-    Value::Dict(Rc::new(entries))
+    Value::Dict(Rc::new(entries.into()))
 }
 
 /// One past the highest whole-number key, or nought when there is none.
@@ -12652,107 +12670,6 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
         },
         None => entries.push((key, value)),
     }
-}
-
-// A map is kept as entries in the order they were written, walked to
-// find a key exactly as a program grew to expect from a small one. A
-// map grown to many thousands of keys is walked just as far for its
-// last key as for its first, so building one key at a time costs the
-// square of how many it ends with. An index kept beside the entries —
-// never inside the map itself, and never answered for when it might
-// be wrong — turns the walk for a key already indexed into a single
-// look, without changing which key a walk finds first should two
-// ever agree by address and disagree by the program's own equality:
-// that walk is untouched, kept for exactly the keys this index is not
-// asked to answer for.
-//
-// The index is addressed by where a map's entries presently live
-// (the entries Vec's own address, stable while it is grown in place
-// and never reused for another map while this index still names it),
-// and is only ever consulted for the map that address named when the
-// index was last brought up to date; anything else is a miss, worked
-// out the slow way and left for a later call to index again.
-thread_local! {
-    static DICT_INDEX: RefCell<HashMap<usize, DictIndexEntry>> = RefCell::new(HashMap::new());
-}
-
-struct DictIndexEntry {
-    /// How many of the entries, counted from the first, this index
-    /// already accounts for.
-    indexed: usize,
-    /// The address of the key this index last found at `indexed - 1`
-    /// (or that there was none, for an index built from an empty
-    /// map): a map grown any other way than through this index no
-    /// longer has that key there, and neither, all but certainly,
-    /// does some other map that happens to have come to occupy the
-    /// same room since. A holder of a live `Rc` is never handed a
-    /// `Weak` to the entries it keeps growing in place, since asking
-    /// for one, even to check by, is what would stop them growing in
-    /// place at all; this check answers the same question in entries
-    /// already at hand instead.
-    boundary: Option<String>,
-    by_address: HashMap<String, usize>,
-}
-
-/// Whether an index still describes the entries it is asked about:
-/// short enough to have grown no further than they have, and naming,
-/// where it claims to have caught up to some of them, the very key
-/// that stands at the place it caught up to.
-fn dict_index_matches(entry: &DictIndexEntry, entries: &[(Value, Value)]) -> bool {
-    if entry.indexed > entries.len() { return false; }
-    match (entry.indexed, &entry.boundary) {
-        (0, None) => true,
-        (n, Some(address)) if n >= 1 => entries[n - 1].0.hash_address().ok().as_deref() == Some(address.as_str()),
-        _ => false,
-    }
-}
-
-/// Where a key of a given address stands among a map's entries,
-/// answered from the index when the index is caught up with every
-/// entry the map now holds and still describes them — `Some(None)`
-/// when it is caught up and says the key is nowhere in the map,
-/// `Some(Some(pos))` where it is, and plain `None` when the index
-/// cannot say, leaving the caller to walk the entries as it always did.
-fn dict_indexed_position(entries: &Rc<Vec<(Value, Value)>>, address: &str) -> Option<Option<usize>> {
-    DICT_INDEX.with(|cache| {
-        let cache = cache.borrow();
-        let entry = cache.get(&(Rc::as_ptr(entries) as usize))?;
-        if entry.indexed != entries.len() || !dict_index_matches(entry, entries) { return None; }
-        Some(entry.by_address.get(address).copied())
-    })
-}
-
-/// Set a key already known by its own address — never one the
-/// program's own code must be asked to hash or compare, so never one
-/// that could call back into the very map this holds open — into a
-/// map that lives alone in the cell handed to it. The entries grow in
-/// place, without being copied whole first, and the index beside them
-/// grows with them; a map grown some other way since the index last
-/// looked, or a different map now standing where it once stood, is
-/// caught by `dict_index_matches` and the index is built fresh from
-/// what is actually there before this key is placed.
-fn dict_place_indexed(rc: &mut Rc<Vec<(Value, Value)>>, key: Value, address: String, value: Value) {
-    let ptr = Rc::as_ptr(rc) as usize;
-    let vec = Rc::make_mut(rc);
-    DICT_INDEX.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let stale = cache.get(&ptr).map_or(true, |entry| !dict_index_matches(entry, vec));
-        if stale { cache.insert(ptr, DictIndexEntry { indexed: 0, boundary: None, by_address: HashMap::new() }); }
-        let entry = cache.get_mut(&ptr).expect("just inserted or already present");
-        while entry.indexed < vec.len() {
-            if let Ok(addr) = vec[entry.indexed].0.hash_address() { entry.by_address.insert(addr, entry.indexed); }
-            entry.indexed += 1;
-        }
-        match entry.by_address.get(&address).copied() {
-            Some(pos) if pos < vec.len() => vec[pos].1 = value,
-            _ => {
-                entry.by_address.insert(address, vec.len());
-                vec.push((key, value));
-                entry.indexed = vec.len();
-            }
-        }
-        entry.boundary = vec.last().and_then(|(k, _)| k.hash_address().ok());
-    });
 }
 
 /// A value over lines the way PHP's print_r writes it: a scalar on its
@@ -12867,7 +12784,7 @@ fn put_before(held: &mut Value, coming: Vec<Value>, name: &str) -> Result<usize,
     let plain = all.iter().enumerate().all(|(at, (k, _))| matches!(k, Value::Small(n) if *n == at as i64));
     *held = match plain {
         true => Value::Vector(Rc::new(all.into_iter().map(|(_, x)| x).collect())),
-        false => Value::Dict(Rc::new(all)),
+        false => Value::Dict(Rc::new(all.into())),
     };
     Ok(many)
 }
@@ -13597,7 +13514,7 @@ impl<'a> Machine<'a> {
         words.sort();
         words.dedup();
         let entries: Vec<(Value, Value)> = words.into_iter().filter_map(|word| self.native_of(word).map(|worth| (Value::text(word), worth))).collect();
-        let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries))));
+        let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.natives_book = Some(book.clone());
         book
     }
@@ -13620,7 +13537,7 @@ impl<'a> Machine<'a> {
         for word in self.table.strings("ext.system.module.builtins") {
             if !entries.iter().any(|(key, _)| spells_key(key, word)) { entries.push((Value::text(word), Value::Shared(natives.clone()))); }
         }
-        let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries))));
+        let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.world_book = Some(book.clone());
         book
     }
@@ -13668,7 +13585,7 @@ impl<'a> Machine<'a> {
                     if !matches!(held, Value::Unset) { entries.push((Value::text(&slot.ident), held)); }
                 }
             }
-            Rc::new(RefCell::new(Value::Dict(Rc::new(entries))))
+            Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))))
         };
         if op == Prim::ClassWork(8) {
             let mut words: Vec<String> = match &*book.borrow() {
@@ -14487,7 +14404,7 @@ impl Machine<'_> {
                     }
                     match place { Some(index) => entries[index].1 = item, None => entries.push((key, item)) }
                 }
-                Ok(Value::Dict(Rc::new(entries)))
+                Ok(Value::Dict(Rc::new(entries.into())))
             }
             Iterator => {
                 require(1, 2)?;
@@ -14813,7 +14730,7 @@ impl Machine<'_> {
                 for (key, item) in pairs.iter() {
                     copied.push((self.copy_worth(key, true, known), self.copy_worth(item, true, known)));
                 }
-                Value::Dict(Rc::new(copied))
+                Value::Dict(Rc::new(copied.into()))
             }
             _ => value.clone(),
         }

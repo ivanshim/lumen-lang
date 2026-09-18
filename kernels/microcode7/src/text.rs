@@ -202,7 +202,7 @@ fn make_table(input: &[Value], table: &Table) -> Result<Value,String> {
         [_]=>return Err(complaint(table,"mapping")),
         _=>return Err(complaint(table,"arguments")),
     }
-    Ok(Value::Dict(Rc::new(entries)))
+    Ok(Value::Dict(Rc::new(entries.into())))
 }
 
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
