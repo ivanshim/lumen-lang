@@ -977,6 +977,12 @@ impl Value {
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            // A method carried by a native kind and read off the kind's
+            // own word stands loose, and is named with that kind.
+            Value::Wrapped(60, parts) => match parts.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                _ => "<member wrapper>".into(),
+            },
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

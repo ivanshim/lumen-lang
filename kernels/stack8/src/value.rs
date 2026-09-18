@@ -1036,6 +1036,12 @@ impl Value {
             Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
+            // A kind's own method read from the kind itself is bound to
+            // nothing and is written with the kind it belongs to.
+            Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                _ => "<member wrapper>".to_string(),
+            },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
