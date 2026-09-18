@@ -321,6 +321,11 @@ pub struct Machine<'a> {
     /// The member last sought and not found, with what it was sought
     /// on, for the attribute fault that will tell of it.
     sought_in_vain: Option<(String, Value)>,
+    /// The key last found absent, where the words of the fault cannot
+    /// carry it: the complaint for a key names the key itself, and a
+    /// key of any kind but a text or a whole number is kept here whole
+    /// rather than written into those words and read back out.
+    key_in_vain: RefCell<Option<Value>>,
     /// Text read in that would not be read: the words said of it, the
     /// place it counts as standing in, and the line of its own that the
     /// reading stopped on. The reading answers with a plain note, so
@@ -867,6 +872,7 @@ impl<'a> Machine<'a> {
             read_before: RefCell::new(std::collections::HashSet::new()),
             got_away: None,
             sought_in_vain: None,
+            key_in_vain: RefCell::new(None),
             standing: 0,
             would_not_read: None,
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
@@ -1894,6 +1900,9 @@ impl<'a> Machine<'a> {
         }
         let key_value = if let Some(text) = told.strip_prefix("\0absent-text=") { Some(Value::text(text)) }
             else if let Some(number) = told.strip_prefix("\0absent-number=") { number.parse::<BigInt>().ok().map(Value::from_big) }
+            // A key of any other kind was kept whole when it was found
+            // absent, and stands as the fault's one argument.
+            else if told == "\0absent-value=" { self.key_in_vain.borrow_mut().take() }
             else { None };
         if let Some(key) = key_value {
             let kind = self.table.single("ext.system.fault.class.key")?;
@@ -2668,7 +2677,10 @@ impl<'a> Machine<'a> {
         match at.settled() {
             Value::Text(t) => format!("\0absent-text={t}"),
             Value::Small(_) | Value::Huge(_) => format!("\0absent-number={}", at.bare()),
-            _ => self.argument_fault("ext.builtin.exceptions.unready", None),
+            // A key of any other kind is kept whole beside the words,
+            // since writing it into them would not give back the key
+            // that was asked after.
+            held => { *self.key_in_vain.borrow_mut() = Some(held); String::from("\0absent-value=") }
         }
     }
 

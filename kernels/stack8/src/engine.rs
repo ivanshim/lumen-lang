@@ -166,6 +166,11 @@ pub struct Engine<'a> {
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
+    /// The key last found absent, where the words of the fault could
+    /// not carry it: the complaint for a key names the key itself, and
+    /// a key of any other kind than a text or a whole number is kept
+    /// here whole rather than written into those words and read back.
+    absent_key: RefCell<Option<Value>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints waiting to be handed
     /// over, since one may be raised where the run cannot reach back
@@ -805,6 +810,7 @@ impl<'a> Engine<'a> {
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
             absent_member: None,
+            absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             any_waiting: std::cell::Cell::new(false),
@@ -1509,6 +1515,14 @@ impl<'a> Engine<'a> {
             let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
             let number = key.parse::<BigInt>().ok()?;
             return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
+        }
+        // A key of any other kind was kept whole when it was found
+        // absent, and stands as the fault's one argument.
+        if told == "\0key-value:" {
+            let held = self.absent_key.borrow_mut().take()?;
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            return Some(self.exception_instance(class, vec![held], Value::Null));
         }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
@@ -7293,7 +7307,10 @@ impl<'a> Engine<'a> {
         match at.contents() {
             Value::Text(key) => format!("\0key-text:{key}"),
             Value::Small(_) | Value::Huge(_) => format!("\0key-number:{}", at.plain()),
-            _ => self.lang.exception_unready.clone().unwrap_or_default(),
+            // A key of any other kind is kept whole beside the words,
+            // since writing it into them would not give back the key
+            // that was asked for.
+            held => { *self.absent_key.borrow_mut() = Some(held); "\0key-value:".to_string() }
         }
     }
 
