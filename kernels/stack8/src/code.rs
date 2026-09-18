@@ -219,11 +219,12 @@ pub enum Action {
     /// Run the program on top with the arguments under it; a function
     /// pushes its result, a postfix program leaves what it pushed.
     Invoke(Rc<str>),
-    /// The same, for a member call on a value whose kind answers to no
-    /// such name: the call is a pipe into a routine of that name where
-    /// the program binds one, and a member the value has not got where
-    /// it binds nothing.
-    InvokeMember(Rc<str>),
+    /// A member read or called on a value whose kind answers to no such
+    /// name, where the definition words that complaint: the value is
+    /// told it has no such member, whatever a name of that spelling
+    /// holds elsewhere. The arguments under it, where a call wrote any,
+    /// are let go unread.
+    MemberAmiss(Rc<str>),
     /// Run the program on top with no arguments.
     Evaluate,
     /// Run the value on top if it is a program; push it back otherwise.

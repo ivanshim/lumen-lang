@@ -7813,12 +7813,11 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
                     self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
                 } else if native.is_none() && lang.member_amiss.is_some() {
-                    // The receiver's kind answers to no such name: the
-                    // call becomes a pipe into a routine the program
-                    // binds by that name, and where it binds none the
-                    // value is told to have no such member.
-                    self.glance(&named);
-                    self.act(Action::InvokeMember(Rc::from(named.as_str())), argc + 2);
+                    // The receiver's kind answers to no such name, and a
+                    // definition wording that complaint has no pipe to
+                    // fall into: the value is told it has no such
+                    // member, whatever a name of that spelling holds.
+                    self.act(Action::MemberAmiss(Rc::from(named.as_str())), argc + 1);
                 } else { self.call(&named, argc + 1)?; }
                 self.land(finish);
                 continue;

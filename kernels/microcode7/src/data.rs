@@ -155,6 +155,10 @@ pub struct IteratorState {
     pub kind: IteratorKind,
     pub peek: Option<Value>,
     pub done: bool,
+    /// The word the reference gives a walk of the very thing this walk
+    /// was made from. Gathering the members loses which kind of thing
+    /// they came from, and this keeps that much of it.
+    pub walks: Option<Rc<str>>,
 }
 
 #[derive(Clone)]
