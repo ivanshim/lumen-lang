@@ -1095,6 +1095,81 @@ pipe: scratch/file-list/10 held `[1, 2]` for a `.seq` read off a
 number that CPython refuses, and now records the AttributeError all
 three agree on.
 
+### 1r. Batch 9 merged as #496; batch 10 folds the attribute road and the repr work
+
+Pull request #496 merged into main at 65a14a1 with both runs green on
+0cb8dfb. Batch 10 folds two branches. The attribute road: `del (a).b`,
+`del (a)[0]` and `del (1).x` were refused as syntax because a deletion
+target had to begin with a bare name; both kernels now look past the
+matching close bracket, and where a member or an index follows, what
+stands inside is the thing a place is reached through. A class that
+names its slots and holds a plain class attribute under another name
+refuses a write to it as CPython does (`'B' object attribute 'y' is
+read-only`, under ext.stmt.class.detail.attribute.readonly), while a
+plain class and a subclass naming no slots keep their namespace. A
+builtin kind carries what its own values answer to, so
+`list.__setitem__(a, 0, 9)`, `list.append(a, 1)`, `dict.get(d, "k")`,
+`str.upper("a")`, `int.__add__(1, 2)` and a bound `m = list.append`
+all work, and `hasattr(int, "real")`, `getattr(list, "append")` and
+`"real" in dir(int)` answer truthfully. test_class gains
+testObjectAttributeAccessErrorMessages on both kernels; reader-tail/4
+(test_set) gains the thirty-three mutation tests that hand `set.union`
+round as a value. Gaps: `hasattr(range, "start")` and `hasattr(bytes,
+"hex")` are False on the kinds; `exec("a[0] = 7", globals())` refuses
+on microcode7; `type(list.append).__name__`, arity and receiver
+wording wait for a descriptor model.
+
+The repr work: `str(e)` for a KeyError raised on a tuple key stopped
+with "this exception operation cannot run yet"; `ascii()` was an
+undefined name; `repr([].append)` was `<built-in method>` and
+`repr(dict.get)` ended the run with a bare "Unsupported string
+format"; `repr(int)` was `<built-in function int>` and
+`repr(type(None))` was `NULL`; `"%r" % (lambda: 1)` ended the run the
+same way. Now, on both kernels, a caught KeyError's text is the key's
+own repr whatever its kind and its args are a fixed row; `ascii()`
+writes a repr with every character outside ASCII escaped as \x, \u or
+\U (ext.builtin.ascii); a bound builtin method says whose method it is
+with its address, one read off the kind itself says `<method 'get' of
+'dict' objects>` (the attribute road's loose member and the repr
+fold's method writing met here: folded together the loose member
+printed `<member wrapper>` until 43e7e74), a builtin kind is written
+`<class 'int'>`, a `%r` or `{!r}` field writes what a quoting writes
+instead of refusing, and a plain function is written `<function f at
+0x1>` with its qualified name (`C.m`, `outer.<locals>.inner`) or
+`<function <lambda> at 0x1>`, the whole-value address being the one
+figure a record can hold, as `<map object at 0x1>` already is.
+reader-tail/1 and reader-tail/9 gain one each, reader-tail/4 gains
+eight over the attribute road's line (436 of 644 pass, none lost
+against either parent), and expressions/13 records the line CPython
+prints. The two folds did not build together at first: the attribute
+road matched microcode7's builtin word as a one-field value where the
+repr fold had given it a primitive beside the word (ca2bd85). Gaps: a
+lambda's `__name__` answers `{closure}`, the compiler's one name for
+every anonymous routine in every language; a bound method still
+prints `<function(a, b)>`; `dir(f)`, `__qualname__`, `type(gen())` and
+`type(f)` as values are untouched; `ascii("\ud800")` cannot be
+represented, the text kind holding UTF-8; a user class's instance
+prints `<object C>`.
+
+The frozenset branch (fix/frozenset-kind) reported complete in this
+batch's time, with frozenset a kind of its own in both value models
+(ext.builtin.frozenset), its probe identical to python3, and test_set
+gaining fifteen tests, but it is held back: `hash(frozenset(...))`
+answering lets test_hash_effectiveness run, and that walks every
+subset of up to seventeen members twice, which took the debug binary
+2014 s on stack8 and 3115 s on microcode7 for reader-tail/4 against
+70 s and 180 s before, over every 900 s cap this project applies
+(fixture checker, scratch checker, count sweep, and CI's release cap).
+A performance pass on that branch precedes its fold.
+
+The batch-10 count, taken at e1c18cc with the sweep binary copied
+aside, stands at stack8 1,261 of 2,536 and microcode7 1,203 of 2,394,
+against 1,214 and 1,157 at c862af4; no file lost a pass. test_set
+rose from 395 to 436 on both kernels, and test_class, test_complex,
+test_decorators, test_float and test_fstring gained one each on both,
+test_dict one on stack8. The scratch check over the 380-program list
+found nothing to move beyond the four records named above.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
