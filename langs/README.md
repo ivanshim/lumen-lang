@@ -5073,11 +5073,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.brace.open` | - | - | `ValueError: expected '}' before end of string` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.single` | - | - | `ValueError: Single '{' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.character` | - | - | `OverflowError: %c arg not in range(0x110000)` | - | - | - | - | - | - | - |
+| `ext.text.format.complex.align` | - | - | `ValueError: '=' alignment flag is not allowed in complex format specifier` | - | - | - | - | - | - | - |
+| `ext.text.format.complex.zero` | - | - | `ValueError: Zero padding is not allowed in complex format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.key` | - | - | `KeyError: '` `'` | - | - | - | - | - | - | - |
-| `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` | - | - | - | - | - | - | - |
+| `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` `complex` `tuple` `set` `range` `bytes` `bytearray` `type` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.auto` | - | - | `ValueError: cannot switch from manual field specification to automatic field numbering` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.manual` | - | - | `ValueError: cannot switch from automatic field numbering to manual field specification` | - | - | - | - | - | - | - |
 | `ext.text.format.precision.integer` | - | - | `ValueError: Precision not allowed in integer format specifier` | - | - | - | - | - | - | - |

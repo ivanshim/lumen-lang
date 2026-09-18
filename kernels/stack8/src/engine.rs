@@ -3966,6 +3966,10 @@ impl<'a> Engine<'a> {
             58 => matches!(family, Kindred::Set | Kindred::Map),
             64 | 66 | 69 | 71 => matches!(family, Kindred::Whole | Kindred::Set),
             65 | 70 => matches!(family, Kindred::Whole | Kindred::Set | Kindred::Map),
+            // Every value is written to a specification, the writer
+            // having marks of its own for each kind or words against
+            // the kinds that take none.
+            72 => true,
             _ => false,
         }
     }
@@ -4031,7 +4035,7 @@ impl<'a> Engine<'a> {
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         let wanted = match place {
             12 => 2,
-            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=71 => 1,
+            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=72 => 1,
             _ => 0,
         };
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -4050,6 +4054,15 @@ impl<'a> Engine<'a> {
             _ => None,
         } {
             return self.builtin_call(plain, operation, vec![(None, receiver.clone())]);
+        }
+        // The specification a value is written to, asked for under the
+        // name the protocol gives it. The writing is the one a field of
+        // a template is given, and so are the refusals.
+        if place == 72 {
+            let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+            let given = args[0].contents();
+            let Value::Text(spec) = &given else { return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(&given)])) };
+            return Ok(Value::text(&writer.field(&receiver.contents(), spec, "")?));
         }
         // A whole and a remainder taken at once, either way round.
         if matches!(place, 60 | 61) {
