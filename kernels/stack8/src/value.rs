@@ -302,7 +302,7 @@ pub enum Value {
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
-    Map(Rc<Vec<(Value, Value)>>),
+    Map(Rc<KeyedPairs>),
     /// A cell two or more names share: a write through any of them is a
     /// write all of them see. Where calls bind by name, it also holds
     /// a collection whose items may change whilst its names stay apart.
@@ -391,6 +391,128 @@ impl Members {
     pub fn show(&self, shown: impl Fn(&Value) -> String) -> String {
         if self.row.is_empty() { return format!("{}()", self.word); }
         format!("{{{}}}", self.row.iter().map(|k| shown(&self.held[k])).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// Where a key's own text stands among a map's rows: `AtRow` where the
+/// lookup names a row outright; `NotThere` where the lookup accounts
+/// for every row (none of them went without text of its own) and none
+/// carries this text, so a miss is proof; and `Uncertain` where some
+/// row's own key went without text of its own (a class with its own
+/// `__hash__`/`__eq__`, left out of the lookup entirely) and so a miss
+/// proves nothing — that row might still hold this key by the
+/// program's own equality, which only the program can settle.
+pub enum Placement {
+    AtRow(usize),
+    NotThere,
+    Uncertain,
+}
+
+/// A map's rows, in the order a program wrote them, paired with a
+/// lookup from a key's own text (`member_key`) to the row it sits at.
+/// The lookup is worked out the first time something asks for it, from
+/// every row already present, and answered without doing that walk
+/// again afterwards. Beside the lookup sits a plain count of the rows
+/// whose key went without text of its own, kept exact across every
+/// rebuild, so a miss in the lookup is trusted as "no such row" only
+/// when that count is nought. It belongs only to the rows it was drawn
+/// from: `Deref` reaches those rows for reading, unchanged, while
+/// `DerefMut` throws the lookup away before handing out a way to
+/// change the rows, so nothing that adds, drops, reorders or overwrites
+/// a row by hand can leave the lookup pointing at rows that moved out
+/// from under it. `set_by_key`, the one road that does not pass through
+/// `DerefMut`, keeps the rows and the lookup growing side by side
+/// instead, so a map built one key at a time never has its lookup
+/// thrown away and walked afresh for the next key.
+#[derive(Debug)]
+pub struct KeyedPairs {
+    rows: Vec<(Value, Value)>,
+    lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
+}
+
+impl KeyedPairs {
+    /// The lookup, worked out from scratch across every row the first
+    /// time one is needed, with the count of rows it could find no
+    /// text for beside it.
+    fn settle_lookup(&self) {
+        let mut lookup = self.lookup.borrow_mut();
+        if lookup.is_none() {
+            let mut fresh = std::collections::HashMap::with_capacity(self.rows.len());
+            let mut untexted = 0;
+            for (at, (key, _)) in self.rows.iter().enumerate() {
+                match key.member_key() {
+                    Ok(text) => { fresh.insert(text, at); }
+                    Err(_) => untexted += 1,
+                }
+            }
+            *lookup = Some((fresh, untexted));
+        }
+    }
+
+    /// Where a row of this key's text stands: named outright, proven
+    /// absent because the lookup accounts for every row, or uncertain
+    /// because some row's key went without text for the lookup to have
+    /// accounted for.
+    pub fn locate(&self, keytext: &str) -> Placement {
+        self.settle_lookup();
+        let lookup = self.lookup.borrow();
+        let (by_text, untexted) = lookup.as_ref().expect("just settled");
+        match by_text.get(keytext) {
+            Some(at) => Placement::AtRow(*at),
+            None if *untexted == 0 => Placement::NotThere,
+            None => Placement::Uncertain,
+        }
+    }
+
+    /// Write over the row already at a place the lookup has already
+    /// named, without touching the lookup: the place it names does not
+    /// move for this.
+    pub fn overwrite_row(&mut self, at: usize, value: Value) {
+        self.rows[at].1 = value;
+    }
+
+    /// Add a key already proven absent and already known by its own
+    /// text, growing the rows and the lookup together so a map built
+    /// one key at a time never has its lookup thrown away and walked
+    /// afresh for the next key.
+    pub fn insert_proven_absent(&mut self, key: Value, keytext: String, value: Value) {
+        self.settle_lookup();
+        let at = self.rows.len();
+        self.rows.push((key, value));
+        self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
+    }
+}
+
+impl From<Vec<(Value, Value)>> for KeyedPairs {
+    fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
+        KeyedPairs { rows, lookup: RefCell::new(None) }
+    }
+}
+
+/// A copy carries only the rows onward; its lookup is left for
+/// whatever next asks for it to work out again, over the copy's own
+/// rows and never the rows it was copied from.
+impl Clone for KeyedPairs {
+    fn clone(&self) -> KeyedPairs {
+        KeyedPairs { rows: self.rows.clone(), lookup: RefCell::new(None) }
+    }
+}
+
+impl std::iter::FromIterator<(Value, Value)> for KeyedPairs {
+    fn from_iter<I: IntoIterator<Item = (Value, Value)>>(iter: I) -> KeyedPairs {
+        KeyedPairs::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl std::ops::Deref for KeyedPairs {
+    type Target = Vec<(Value, Value)>;
+    fn deref(&self) -> &Vec<(Value, Value)> { &self.rows }
+}
+
+impl std::ops::DerefMut for KeyedPairs {
+    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        *self.lookup.borrow_mut() = None;
+        &mut self.rows
     }
 }
 

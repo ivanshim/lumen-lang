@@ -164,7 +164,7 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
             if let Some(at) = table.iter().position(|(k, _): &(Value, Value)| k.equals(&key)) { table[at] = (key, value.clone()); }
             else { table.push((key, value.clone())); }
         }
-        return Ok(Value::Map(Rc::new(table)));
+        return Ok(Value::Map(Rc::new(table.into())));
     }
     if !(2..=3).contains(&args.len()) { return Err(fault(lang,"arguments")); }
     let from = text(&args[0],lang)?;
@@ -177,7 +177,7 @@ fn translated_table(args: &[Value], lang: &Lang) -> Result<Value, String> {
         if let Some(at) = pairs.iter().position(|(k,_)| k.equals(&key)) { pairs[at].1 = value; }
         else { pairs.push((key,value)); }
     }
-    Ok(Value::Map(Rc::new(pairs)))
+    Ok(Value::Map(Rc::new(pairs.into())))
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {

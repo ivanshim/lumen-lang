@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Ending, Instance, Phase, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
+use crate::value::{Descriptor, Class, Ending, Instance, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -2350,7 +2350,7 @@ impl<'a> Engine<'a> {
         // What a gathering place takes is a tuple, as the language has
         // it: the spare worths stand together and cannot be changed.
         if let Some(i) = rest { frame[i] = Value::Tuple(Rc::new(tail)); }
-        if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords)); }
+        if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords.into())); }
         for (i, value) in frame.iter().enumerate() {
             if matches!(value, Value::Blank) && !program.carried.contains(&i) {
                 return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
@@ -3750,7 +3750,7 @@ impl<'a> Engine<'a> {
             Builtin::Complex => crate::complex::made(self.lang, 0.0, 0.0),
             Builtin::List => Value::array(Vec::new()),
             Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
-            Builtin::Dict => Value::Map(Rc::new(Vec::new())),
+            Builtin::Dict => Value::Map(Rc::new(Vec::new().into())),
             Builtin::Set => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string())))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
@@ -4561,9 +4561,9 @@ impl<'a> Engine<'a> {
         if let (Action::SetWrite(0), true) = (op, self.lang.or_maps) {
             if let Some(cell) = Self::map_cell(a) {
                 let (pairs, amiss) = self.pairs_gathered(b);
-                let mut merged = match &*cell.borrow() { Value::Map(held) => held.as_ref().clone(), _ => Vec::new() };
+                let mut merged = match &*cell.borrow() { Value::Map(held) => held.to_vec(), _ => Vec::new() };
                 for (key, value) in pairs { self.replace_item(&mut merged, key, value); }
-                *cell.borrow_mut() = Value::Map(Rc::new(merged));
+                *cell.borrow_mut() = Value::Map(Rc::new(merged.into()));
                 return match amiss { Some(told) => Err(told), None => Ok(a.clone()) };
             }
         }
@@ -4721,8 +4721,18 @@ impl<'a> Engine<'a> {
         }
         if let (Action::At, Value::Map(entries)) = (op, a) {
             let wanted = self.special_key(b)?;
-            for (key, value) in entries.iter() {
-                if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
+            let mut settled = false;
+            if let Ok(keytext) = wanted.member_key() {
+                match entries.locate(&keytext) {
+                    Placement::AtRow(at) => return Ok(entries[at].1.clone()),
+                    Placement::NotThere => settled = true,
+                    Placement::Uncertain => {}
+                }
+            }
+            if !settled {
+                for (key, value) in entries.iter() {
+                    if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
+                }
             }
         }
         // A slice reaching into a row has its bounds settled first, a
@@ -4981,7 +4991,7 @@ impl<'a> Engine<'a> {
                     if self.special_keys_equal(old, &key)? { found = true; } else { kept.push((old.clone(), value.clone())); }
                 }
                 if !found { return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&args[1]) }); }
-                Value::Map(Rc::new(kept))
+                Value::Map(Rc::new(kept.into()))
             }
             Builtin::Fetch if args.len() == 2 => self.special_dyad(&Action::At, &args[0], &args[1])?,
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Fields(_)) => {
@@ -5454,7 +5464,19 @@ impl<'a> Engine<'a> {
                         ))
                     }
                     Value::Map(pairs) => {
-                        if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| self.keys_alike(k, &at)) {
+                        let placed = match at.member_key() {
+                            Ok(keytext) => match pairs.locate(&keytext) {
+                                Placement::AtRow(_) => Some(true),
+                                Placement::NotThere => Some(false),
+                                Placement::Uncertain => None,
+                            },
+                            Err(_) => None,
+                        };
+                        let present = match placed {
+                            Some(present) => present,
+                            None => pairs.iter().any(|(k, _)| self.keys_alike(k, &at)),
+                        };
+                        if !self.lang.del_words.is_empty() && !present {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) }.into());
                         }
                         Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !self.keys_alike(k, &at)).cloned().collect()))
@@ -5880,7 +5902,7 @@ impl<'a> Engine<'a> {
                 } else if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
                     let new_pairs = match (spread, next.contents()) {
-                        (true, Value::Map(p)) => p.as_ref().clone(),
+                        (true, Value::Map(p)) => p.to_vec(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
@@ -7881,7 +7903,18 @@ impl<'a> Engine<'a> {
                         // map, and the language says so rather than
                         // answering no.
                         if let Some(told) = self.unkeyable(a) { return Err(told); }
-                        items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a))
+                        let placed = match a.member_key() {
+                            Ok(keytext) => match items.locate(&keytext) {
+                                Placement::AtRow(_) => Some(true),
+                                Placement::NotThere => Some(false),
+                                Placement::Uncertain => None,
+                            },
+                            Err(_) => None,
+                        };
+                        match placed {
+                            Some(found) => found,
+                            None => items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a)),
+                        }
                     }
                     Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
                     Value::Bytes(row, ..) => {
@@ -8346,7 +8379,7 @@ impl<'a> Engine<'a> {
     fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
         match v {
             Value::Array(items) | Value::Tuple(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
-            Value::Map(pairs) => pairs.as_ref().clone(),
+            Value::Map(pairs) => pairs.to_vec(),
             _ => Vec::new(),
         }
     }
@@ -8554,7 +8587,19 @@ impl<'a> Engine<'a> {
         if !self.lang.exceptions.is_empty() {
             if let Value::Map(pairs) = target {
                 if let Some(told) = self.unkeyable(at) { return Err(told); }
-                if !pairs.iter().any(|(key, _)| self.keys_alike(key, at)) { return Err(self.key_absent(at)); }
+                let placed = match at.member_key() {
+                    Ok(keytext) => match pairs.locate(&keytext) {
+                        Placement::AtRow(_) => Some(true),
+                        Placement::NotThere => Some(false),
+                        Placement::Uncertain => None,
+                    },
+                    Err(_) => None,
+                };
+                let present = match placed {
+                    Some(present) => present,
+                    None => pairs.iter().any(|(key, _)| self.keys_alike(key, at)),
+                };
+                if !present { return Err(self.key_absent(at)); }
             }
         }
         if let Value::Tuple(items) = target {
@@ -8763,7 +8808,18 @@ impl<'a> Engine<'a> {
         }
         if let Value::Map(pairs) = target {
             let at = &self.key(at);
-            let found = pairs.iter().find(|(k, _)| self.keys_alike(k, at));
+            let placed = match at.member_key() {
+                Ok(keytext) => match pairs.locate(&keytext) {
+                    Placement::AtRow(position) => Some(Some(&pairs[position])),
+                    Placement::NotThere => Some(None),
+                    Placement::Uncertain => None,
+                },
+                Err(_) => None,
+            };
+            let found = match placed {
+                Some(found) => found,
+                None => pairs.iter().find(|(k, _)| self.keys_alike(k, at)),
+            };
             return match found {
                 Some((_, v)) => Ok(v.clone()),
                 None => absent(format!("Undefined array key {}", at.plain()), at),
@@ -9699,7 +9755,7 @@ impl<'a> Engine<'a> {
         let mut pairs = Vec::new();
         if let Some(source) = positional.first() {
             match source {
-                Value::Map(prior) => pairs = prior.as_ref().clone(),
+                Value::Map(prior) => pairs = prior.to_vec(),
                 other => {
                     for item in self.comprehension_items(other)? {
                         let pair = self.comprehension_items(&item)?;
@@ -9718,7 +9774,7 @@ impl<'a> Engine<'a> {
                 put_key(&mut pairs, Value::text(&key), value);
             }
         }
-        Ok(Value::Map(Rc::new(pairs)))
+        Ok(Value::Map(Rc::new(pairs.into())))
     }
 
     fn byte_fault(&self, part: &str) -> String {
@@ -10588,6 +10644,51 @@ impl<'a> Engine<'a> {
             return self.builtin(Builtin::Replace, name, args);
         }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
+        // A map living alone in the cell a name for it holds is grown
+        // there directly, rather than cloned whole for every key: the
+        // ordinary way a map is built up one key at a time. Only a key
+        // whose own text needs no help from the program's code takes
+        // this road, since the cell stays open while it runs and a
+        // call back into the program could reach the very map being
+        // written.
+        if builtin == Builtin::Replace && args.len() == 3 {
+            if let Value::Bond(cell) = &args[2] {
+                if matches!(&*cell.borrow(), Value::Map(_)) {
+                    let raw_key = self.key(&args[0]);
+                    if let Ok(keytext) = raw_key.member_key() {
+                        if let Some(told) = self.unkeyable(&raw_key) { return Err(told); }
+                        // A row whose own key went without text of its
+                        // own is left out of the lookup entirely, so a
+                        // miss there proves nothing: such a row might
+                        // still be this key by the program's own
+                        // equality, which only the slow road below can
+                        // settle, so the fast road is left untaken.
+                        let placement = { let held = cell.borrow(); let Value::Map(rc) = &*held else { unreachable!("checked just above") }; rc.locate(&keytext) };
+                        match placement {
+                            Placement::AtRow(at) => {
+                                let cell = cell.clone();
+                                let value = args[1].clone();
+                                let mut held = cell.borrow_mut();
+                                let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
+                                Rc::make_mut(rc).overwrite_row(at, value);
+                                drop(held);
+                                return Ok(Value::Bond(cell));
+                            }
+                            Placement::NotThere => {
+                                let cell = cell.clone();
+                                let value = args[1].clone();
+                                let mut held = cell.borrow_mut();
+                                let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
+                                Rc::make_mut(rc).insert_proven_absent(raw_key, keytext, value);
+                                drop(held);
+                                return Ok(Value::Bond(cell));
+                            }
+                            Placement::Uncertain => {}
+                        }
+                    }
+                }
+            }
+        }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
         let last = args.len().saturating_sub(1);
@@ -10865,7 +10966,7 @@ impl<'a> Engine<'a> {
                 let surroundings: Vec<(Value, Value)> = std::env::vars_os()
                     .filter_map(|(k, v)| Some((Value::text(k.to_str()?), Value::text(v.to_str()?))))
                     .collect();
-                Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(surroundings))])
+                Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(surroundings.into()))])
             }
             // A command put before the host's own shell. It travels as
             // the bytes its text stands for, and everything the shell
@@ -11047,7 +11148,7 @@ impl<'a> Engine<'a> {
                     }
                     let handed = self.handed_to(call).unwrap_or_default().to_vec();
                     pairs.push((Value::text("args"), Value::array(handed)));
-                    told.push(Value::Map(Rc::new(pairs)));
+                    told.push(Value::Map(Rc::new(pairs.into())));
                 }
                 Value::array(told)
             }
@@ -11857,10 +11958,11 @@ impl<'a> Engine<'a> {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
                         self.replace_item(&mut pairs, at, v);
-                        Value::Map(Rc::new(pairs))
+                        Value::Map(Rc::new(pairs.into()))
                     }
                     Value::Map(mut pairs) => {
-                        self.replace_item(Rc::make_mut(&mut pairs), at, v);
+                        let held = Rc::make_mut(&mut pairs);
+                        self.replace_item(held, at, v);
                         Value::Map(pairs)
                     }
                     _ => return Err(self.not_an_array()),
@@ -11897,7 +11999,7 @@ impl<'a> Engine<'a> {
                 let plain = kept.iter().enumerate().all(|(i, (k, _))| matches!(k, Value::Small(n) if *n == i as i64));
                 match plain {
                     true => Value::array(kept.into_iter().map(|(_, v)| v).collect()),
-                    false => Value::Map(Rc::new(kept)),
+                    false => Value::Map(Rc::new(kept.into())),
                 }
             }
             Builtin::Erase => {
@@ -11922,7 +12024,7 @@ impl<'a> Engine<'a> {
                             .filter(|(j, _)| *j != i)
                             .map(|(j, v)| (Value::Small(j as i64), v.clone()))
                             .collect();
-                        Value::Map(Rc::new(kept))
+                        Value::Map(Rc::new(kept.into()))
                     }
                     // A row of bytes reached through a place in
                     // something else is shortened where it lies, as one
@@ -11934,7 +12036,7 @@ impl<'a> Engine<'a> {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) });
                         }
                         let kept: Vec<(Value, Value)> = pairs.iter().filter(|(k, _)| !self.keys_alike(k, &at)).cloned().collect();
-                        Value::Map(Rc::new(kept))
+                        Value::Map(Rc::new(kept.into()))
                     }
                     v => return Err(format!("{}() cannot take a place out of {}", name, v.plain())),
                 }
@@ -12062,7 +12164,7 @@ fn one_after_another(v: &Value) -> Vec<Value> {
 fn named_pairs(v: &Value) -> Vec<(Value, Value)> {
     match v {
         Value::Bond(shared) => named_pairs(&shared.borrow()),
-        Value::Map(pairs) => pairs.as_ref().clone(),
+        Value::Map(pairs) => pairs.to_vec(),
         Value::Array(items) | Value::Tuple(items) => items
             .iter()
             .enumerate()
@@ -12155,7 +12257,7 @@ fn gathered(items: Vec<Value>, always_map: bool, plain_keys: bool) -> Value {
             }
         }
     }
-    Value::Map(Rc::new(pairs))
+    Value::Map(Rc::new(pairs.into()))
 }
 
 /// One past the highest whole-number key, or zero when there is none.
@@ -13073,7 +13175,7 @@ impl Engine<'_> {
             Builtin::Dict => {
                 arity(0, 1)?;
                 let mut pairs = match args.first() {
-                    Some(Value::Map(p)) => p.as_ref().clone(),
+                    Some(Value::Map(p)) => p.to_vec(),
                     Some(v) => {
                         let mut pairs = Vec::new();
                         for (at,item) in self.core_members(v)?.into_iter().enumerate() {
@@ -13099,7 +13201,7 @@ impl Engine<'_> {
                     }
                     match found { Some(at) => made[at].1 = v, None => made.push((k,v)) }
                 }
-                Value::Map(Rc::new(made))
+                Value::Map(Rc::new(made.into()))
             }
             Builtin::Iter => {
                 arity(1, 2)?;
@@ -13615,7 +13717,7 @@ impl Engine<'_> {
         for name in names {
             if let Some(held) = self.native_named(&name) { pairs.push((Value::text(&name), held)); }
         }
-        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.natives = Some(book.clone());
         book
     }
@@ -13636,7 +13738,7 @@ impl Engine<'_> {
         for name in &self.lang.module_builtins {
             if !pairs.iter().any(|(key, _)| key_spells(key, name)) { pairs.push((Value::text(name), Value::Bond(natives.clone()))); }
         }
-        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.outer_book = Some(book.clone());
         book
     }
@@ -13669,7 +13771,7 @@ impl Engine<'_> {
                 if matches!(value, Value::Blank | Value::Gap) { continue; }
                 pairs.push((Value::text(name), value));
             }
-            Rc::new(RefCell::new(Value::Map(Rc::new(pairs))))
+            Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))))
         };
         if kind == Builtin::ClassTool(8) {
             let mut names: Vec<String> = match &*book.borrow() {

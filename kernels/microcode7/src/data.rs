@@ -227,7 +227,7 @@ pub enum Value {
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
-    Dict(Rc<Vec<(Value, Value)>>),
+    Dict(Rc<MapStore>),
     /// A key written together with its value (`k => v`), until a
     /// literal takes it in.
     Couple(Rc<(Value, Value)>),
@@ -303,6 +303,130 @@ impl SetStore {
                 "{".to_owned() + &words.join(", ") + "}"
             }
         }
+    }
+}
+
+/// Where a key of a given address stands among a map's pairs, answered
+/// through the place: `Found` where the place names a position outright;
+/// `Absent` where the place accounts for every pair (none of them
+/// lacked an address of its own) and none carries this one, so a miss
+/// is proof; and `Unknown` where some pair's own key carries no address
+/// of its own (a Thing with its own `__hash__`/`__eq__`, kept out of
+/// the place entirely) and so a miss proves nothing — such a pair
+/// might still be this address's own key by the program's equality,
+/// which only the program can answer.
+pub enum Found {
+    Found(usize),
+    Absent,
+    Unknown,
+}
+
+/// A map's pairs, kept in the order they were written, with a place
+/// that answers where a key of a given address stands among them —
+/// built the first time one is asked for, from every entry already
+/// there, and answered from after that without being walked again.
+/// Beside the place sits a plain count of the pairs it could carry no
+/// address for, kept exact across every rebuild, so a miss in the
+/// place is trusted as absence only when that count is nought.
+/// The place belongs to the entries it was built from and to no
+/// others: `Deref` reaches the pairs for every road that only reads
+/// them, and `DerefMut` empties the place before handing out a way to
+/// write them, so a road that grows, shrinks, reorders or overwrites
+/// the pairs by hand cannot leave a place standing over pairs it no
+/// longer describes. `place_key`, which does not go through
+/// `DerefMut`, is the one road that keeps growing the pairs and the
+/// place together, key by key, without either emptying it or walking
+/// it again.
+pub struct MapStore {
+    pairs: Vec<(Value, Value)>,
+    place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
+}
+
+impl MapStore {
+    /// The place, built from scratch across every pair the first time
+    /// one is asked for, and the count of pairs it carries no address
+    /// for beside it.
+    fn ensure_place(&self) {
+        let mut place = self.place.borrow_mut();
+        if place.is_none() {
+            let mut built = std::collections::HashMap::with_capacity(self.pairs.len());
+            let mut unaddressed = 0;
+            for (at, (key, _)) in self.pairs.iter().enumerate() {
+                match key.hash_address() {
+                    Ok(addr) => { built.insert(addr, at); }
+                    Err(_) => unaddressed += 1,
+                }
+            }
+            *place = Some((built, unaddressed));
+        }
+    }
+
+    /// Where a key of this address stands: found outright, proven
+    /// absent because the place accounts for every pair, or unknown
+    /// because some pair's key carries no address for the place to
+    /// have accounted for, and only the program's own equality can
+    /// say whether that pair is this address's key after all.
+    pub fn locate(&self, address: &str) -> Found {
+        self.ensure_place();
+        let place = self.place.borrow();
+        let (by_address, unaddressed) = place.as_ref().expect("just built");
+        match by_address.get(address) {
+            Some(at) => Found::Found(*at),
+            None if *unaddressed == 0 => Found::Absent,
+            None => Found::Unknown,
+        }
+    }
+
+    /// Write over the pair already at a position the place has
+    /// already named, without touching the place: the position it
+    /// names does not move for this.
+    pub fn overwrite_at(&mut self, at: usize, value: Value) {
+        self.pairs[at].1 = value;
+    }
+
+    /// Add a key already proven absent and already known by its own
+    /// address, growing the pairs and the place together so a map
+    /// built up key by key never has its place emptied and walked
+    /// afresh for the next key.
+    pub fn insert_known_absent(&mut self, key: Value, address: String, value: Value) {
+        self.ensure_place();
+        let at = self.pairs.len();
+        self.pairs.push((key, value));
+        self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
+    }
+}
+
+impl From<Vec<(Value, Value)>> for MapStore {
+    fn from(pairs: Vec<(Value, Value)>) -> MapStore {
+        MapStore { pairs, place: RefCell::new(None) }
+    }
+}
+
+/// Built up pair by pair the plain way (`.collect()`), the place is
+/// left to be built on first use rather than kept in step as it is.
+impl std::iter::FromIterator<(Value, Value)> for MapStore {
+    fn from_iter<I: IntoIterator<Item = (Value, Value)>>(iter: I) -> MapStore {
+        MapStore::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+/// A copy of the pairs starts fresh: the place is cheap to build
+/// again and answers for the copy's own pairs, never the original's.
+impl Clone for MapStore {
+    fn clone(&self) -> MapStore {
+        MapStore { pairs: self.pairs.clone(), place: RefCell::new(None) }
+    }
+}
+
+impl std::ops::Deref for MapStore {
+    type Target = Vec<(Value, Value)>;
+    fn deref(&self) -> &Vec<(Value, Value)> { &self.pairs }
+}
+
+impl std::ops::DerefMut for MapStore {
+    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        *self.place.borrow_mut() = None;
+        &mut self.pairs
     }
 }
 

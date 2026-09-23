@@ -277,7 +277,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             };
             put_step(&mut carried, &steps, held);
         }
-        machine.define(name, Value::Map(std::rc::Rc::new(carried)));
+        machine.define(name, Value::Map(std::rc::Rc::new(carried.into())));
     }
     // The body as it came, for a program that would read it itself.
     if let Some(name) = &lang.body_binding {
@@ -446,14 +446,14 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     let at = match into.iter().position(|(k, _)| k.equals(&key)) {
         Some(at) => at,
         None => {
-            into.push((key, Value::Map(std::rc::Rc::new(Vec::new()))));
+            into.push((key, Value::Map(std::rc::Rc::new(Vec::new().into()))));
             into.len() - 1
         }
     };
     let mut inside = match &into[at].1 {
-        Value::Map(pairs) => pairs.as_ref().clone(),
+        Value::Map(pairs) => pairs.to_vec(),
         _ => Vec::new(),
     };
     put_step(&mut inside, &steps[1..], value);
-    into[at].1 = Value::Map(std::rc::Rc::new(inside));
+    into[at].1 = Value::Map(std::rc::Rc::new(inside.into()));
 }
