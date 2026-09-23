@@ -1170,6 +1170,82 @@ test_decorators, test_float and test_fstring gained one each on both,
 test_dict one on stack8. The scratch check over the 380-program list
 found nothing to move beyond the four records named above.
 
+### 1s. Batch 10 merged as #497; batch 11 folds format() and the writable row of bytes
+
+Pull request #497 merged into main at c9da92d with both runs green on
+a8e700c. Batch 11 folds two branches. format() and `__format__`:
+`format(1+2j, "")` ended the run with a bare "Unsupported string
+format" that no try could catch, and so did `"%r" % (lambda: 1)`;
+`format(3, "n")` was refused; a list, a dict, None or a plain object
+given any spec, and a text given `d`, answered nothing CPython would.
+Now, on both kernels, a complex number is written by `format` and its
+own `__format__` with the spec's precision, kind, sign and width
+(`'1.00+2.00j'`, `'+1j'`, `'    (1+2j)'`), a zero-padded or
+alignment-marked complex spec is refused in CPython's words
+(ext.text.format.complex.zero, ext.text.format.complex.align), the
+`n` presentation is `d` or `g` in the C locale, an empty spec on any
+value is its str(), a non-empty spec on a list, dict, NoneType or
+object says `unsupported format string passed to list.__format__`,
+and a code that does not fit the kind says `Unknown format code 'd'
+for object of type 'str'`. test_complex gains test_format, test_format
+gains test_locale, test_negative_zero and test_non_ascii, test_fstring
+gains two under test_errors and reader-tail/1 records one more,
+test_float gains FormatTestCase.test_format; format-spec/13 prints its
+`1`. The branch had also stopped the `%r` abort on a lambda by its own
+road, a plain display of the value; the fold keeps batch 10's quoting
+road (with the `%a` escaping) in both kernels' formatting.rs where the
+two met.
+
+The writable row of bytes: `extend`, `insert`, `pop`, `remove`,
+`clear`, `reverse`, `copy`, `__iadd__` and `__delitem__` were missing
+on a bytearray, `b += ...` did not keep the row's identity, and every
+`%` on bytes stopped with "this bytes operation is not supported".
+Now, on both kernels, a bytearray answers to each of those methods
+through getattr as well, with CPython's faults (`byte must be in
+range(0, 256)`, `'str' object cannot be interpreted as an integer`,
+`value not found in bytearray`, `pop index out of range`, `pop from
+empty bytearray`), `+=` and `*=` change the row in place, and bytes or
+a bytearray on the left of `%` fill %d, %s, %r, %a, %b, %c, %x, %o,
+%%, width, precision and a keyed map through the same spec reader the
+text kind uses (ext.op.rem.format.byte), refusing a text for %b and a
+non-number for %d in CPython's words. test_format gains one method on
+both kernels.
+
+Waiting for batch 12, verified in their worktrees: the map store
+(fix/dict-microcode7): a map was a row of pairs searched from the
+front in both full kernels, so test_dict never got past its
+fourteenth test on microcode7 within the 900 s cap and
+scratch/perf/3 timed out on both kernels; each kernel's map is now
+its own store, the pairs together with an index from a key's own
+address to its row, built lazily, owned by the pairs it describes,
+cleared whenever the pairs are reached for by hand, and grown in step
+when a map living alone in its cell is written key by key; a store
+holding any key without an address of its own (a thing with its own
+`__hash__` and `__eq__`, a subclass of a number) answers "unknown"
+for a miss and the old walk decides. A first version of that branch
+kept the index in a thread-local map keyed by the pairs' allocation
+address with a heuristic freshness check; it was refused, since a
+freed map's box is the first thing the allocator hands the next map
+and a later map of the same length and last key would have passed
+the check while holding other keys. Also waiting: the frozenset kind
+(§1r) behind its speed pass, and the function-members work (a
+lambda's `__name__`, `__qualname__`, bound-method and instance
+writing, `type(f)` as a value, `dir(f)`).
+
+The batch-11 count, taken at 523de8f with the sweep binary copied
+aside, stands at stack8 1,268 of 2,536 and microcode7 1,210 of 2,394,
+against 1,261 and 1,203 at e1c18cc; no file lost a pass. test_format
+rose from one to five on both kernels, and test_complex, test_float
+and test_fstring gained one each on both. The fixtures (36 of 36),
+the 382-program scratch check and the Python, PHP and Lumen sweeps
+were clean on the same tree; the account's weekly limit paused the
+work from 18 September, 10:47 UTC, until the 23rd, and the checks
+that were still running finished on their own in the meantime. The
+three waiting branches are pushed to origin: fix/dict-microcode7
+(7d45f4b; fixtures 36 of 36, 170 programs clean, three sweeps clean),
+fix/frozenset-kind and fix/function-members (the last two with a
+work-in-progress commit each, unbuilt and unverified).
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all
