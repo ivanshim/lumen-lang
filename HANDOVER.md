@@ -1232,18 +1232,19 @@ the check while holding other keys. Also waiting: the frozenset kind
 lambda's `__name__`, `__qualname__`, bound-method and instance
 writing, `type(f)` as a value, `dir(f)`).
 
-The batch-11 count had not finished when the account's weekly limit
-fell (18 September, 10:47 UTC): the fixtures (36 of 36), the
-382-program scratch check, and the Python and PHP sweeps were clean
-on 523de8f, the Lumen sweep and the count sweep (raw10 against raw9)
-were still running. Whoever resumes: read `$SP/raw10.log` (100 done)
-and `python3 $SP/count.py $SP/raw10 $SP/raw9` if the scratchpad
-survived, else re-run the count on 523de8f; then open the batch-11
-pull request. The three waiting branches are pushed to origin as
-fix/dict-microcode7 (7d45f4b, verified: fixtures 36 of 36, 170
-programs clean, three sweeps clean), fix/frozenset-kind and
-fix/function-members (the last two with a work-in-progress commit
-each, unbuilt and unverified).
+The batch-11 count, taken at 523de8f with the sweep binary copied
+aside, stands at stack8 1,268 of 2,536 and microcode7 1,210 of 2,394,
+against 1,261 and 1,203 at e1c18cc; no file lost a pass. test_format
+rose from one to five on both kernels, and test_complex, test_float
+and test_fstring gained one each on both. The fixtures (36 of 36),
+the 382-program scratch check and the Python, PHP and Lumen sweeps
+were clean on the same tree; the account's weekly limit paused the
+work from 18 September, 10:47 UTC, until the 23rd, and the checks
+that were still running finished on their own in the meantime. The
+three waiting branches are pushed to origin: fix/dict-microcode7
+(7d45f4b; fixtures 36 of 36, 170 programs clean, three sweeps clean),
+fix/frozenset-kind and fix/function-members (the last two with a
+work-in-progress commit each, unbuilt and unverified).
 
 ## 2. What is waiting on branches
 
