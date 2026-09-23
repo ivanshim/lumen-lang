@@ -4857,7 +4857,8 @@ impl<'a> Builder<'a> {
         let mut unavailable = self.outside_lambda.clone();
         unavailable.extend(enclosing);
         let prior = std::mem::replace(&mut self.outside_lambda, unavailable);
-        let mut function = self.routine(ANONYMOUS, Holds::Every, Traps::Yields, names, required, |b| {
+        let lambda_ident = table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
+        let mut function = self.routine(lambda_ident, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
             for (index, source) in &spares {
                 if bind_arguments { b.carrying.push(*index); continue; }

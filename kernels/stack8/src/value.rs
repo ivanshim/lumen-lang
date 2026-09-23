@@ -1030,7 +1030,6 @@ impl Value {
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
             Value::Routine(p) => {
                 let named = if p.qualified.is_empty() { p.ident.as_str() } else { p.qualified.as_str() };
-                let named = named.strip_suffix("{closure}").map_or_else(|| named.to_string(), |head| format!("{head}<lambda>"));
                 format!("<function {named} at 0x1>")
             }
             Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
