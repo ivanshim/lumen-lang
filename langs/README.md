@@ -2931,6 +2931,10 @@ only. The extension labels so far, all from PHP:
   and the place's. Where a definition leaves it unsaid the plainer
   `ext.syntax.call.amiss.duplicate` is said instead, so the complaint
   names the place alone.
+- `ext.stmt.function.anonymous`: the name a routine written with
+  `ext.stmt.function.short` answers to on its own — Python's `<lambda>`
+  — in place of the word every other anonymous routine is compiled
+  under. Left unsaid, that word stands, as PHP's `{closure}` does.
 - `ext.stmt.function.short`: two words — the one a routine written short
   opens with, and the mark standing between its parameters and the one
   expression it answers with: PHP's `fn ($x) => $x + $k`. With
@@ -3231,6 +3235,10 @@ only. The extension labels so far, all from PHP:
   these words a value with no methods fills the binding as it stands.
 - `ext.stmt.yield.escaped`: the fault raised in place of the exhaustion
   class when a generator's body raises it, rather than ending the walk.
+- `ext.stmt.yield.running`: the word a walk's own "is it running" flag
+  answers to — Python's `gi_running` — true exactly while its own frame
+  is on the way through the machine. Left unsaid, no such member is
+  offered.
 - `ext.system.fault.held`: a builtin answering the raised value the
   innermost clause is holding, itself and whole, or nothing where no
   clause holds one; `ext.system.fault.current` above answers the same
@@ -4855,6 +4863,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.for.c` | - | - | - | - | `for` | - | - | - | - | - |
 | `ext.stmt.for.collection` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.for.target.unready` | - | - | `NotImplementedError: unpacking loop targets are not supported` | - | - | - | - | - | - | - |
+| `ext.stmt.function.anonymous` | - | - | `<lambda>` | - | - | - | - | - | - | - |
 | `ext.stmt.function.async` | - | - | `async` | - | - | - | - | - | - | - |
 | `ext.stmt.function.async.unavailable` | - | - | `NotImplementedError: asynchronous functions are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.function.carries` | - | - | `*` | - | `use` | - | - | - | - | - |
@@ -4930,6 +4939,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.yield.exhausted` | - | - | `StopIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.exit` | - | - | `GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.from` | - | - | `from` | - | - | - | - | - | - | - |
+| `ext.stmt.yield.running` | - | - | `gi_running` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.send` | - | - | `send` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.suspends` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.yield.throw` | - | - | `throw` | - | - | - | - | - | - | - |
