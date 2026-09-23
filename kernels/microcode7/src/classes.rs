@@ -761,6 +761,17 @@ impl<'a> Machine<'a> {
                 if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::Tuple(Rc::new(defaults))});
             }
+            // A routine answers its own call, so reading it back and
+            // calling it does what calling the routine directly does.
+            if key==self.detail("call"){return Ok(value.clone());}
+        }else if let Value::Generator(state)=&value {
+            let running=self.table.strings("ext.stmt.yield.running");
+            if running.first().map_or(false,|w|w==key) {
+                // Running exactly while its own frame is on the way
+                // through the machine, which is exactly when the cell
+                // that holds it cannot be borrowed a second time.
+                return Ok(Value::Flag(state.try_borrow().is_err()));
+            }
         }else if let Value::Wrapped(tag,items)=&value {
             if (*tag==4||*tag==5)&&key==self.detail("function"){return Ok(items[0].clone());}
             // A method bound to its thing answers for the thing and the
@@ -1106,6 +1117,29 @@ impl<'a> Machine<'a> {
                     names.sort_by_key(|name|name.bare());
                     return Ok(Value::Vector(Rc::new(names)));
                 }
+            }
+            // A routine lists the members it can honestly answer for,
+            // alongside any it was given of its own.
+            if let Value::Routine(_)|Value::Bound(..)=&values[0] {
+                let mut names:Vec<String>=Vec::new();
+                for part in ["name","qualified","doc","module","defaults","call"] {
+                    let word=self.detail(part);
+                    if !word.is_empty() { names.push(word.to_string()); }
+                }
+                if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.holds.borrow().iter().map(|(k,_)|k.clone()));}
+                names.sort();names.dedup();
+                return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
+            }
+            // A walk over a routine's own body lists the walking pair it
+            // answers to (through the mark below) and the few names a
+            // language gives it for stepping it by hand.
+            if let Value::Generator(_)=&values[0] {
+                let mut names=self.native_directory(&values[0]);
+                for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
+                    if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
+                }
+                names.sort();names.dedup();
+                return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
             }
             // A native kind, named as the kind itself or held as a value
             // of one, answers the members a value of that kind has: the
