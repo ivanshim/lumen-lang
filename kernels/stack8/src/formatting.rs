@@ -56,9 +56,13 @@ impl Writer<'_> {
             "ext.op.rem.format.integer" => &self.lang.fmt_op_rem_format_integer,
             "ext.op.rem.format.real" => &self.lang.fmt_op_rem_format_real,
             "ext.op.rem.format.character" => &self.lang.fmt_op_rem_format_character,
+            "ext.op.rem.format.byte" => &self.lang.fmt_op_rem_format_byte,
             "ext.op.rem.format.star" => &self.lang.fmt_op_rem_format_star,
             "ext.op.rem.format.incomplete" => &self.lang.fmt_op_rem_format_incomplete,
             "ext.op.rem.format.code" => &self.lang.fmt_op_rem_format_code,
+            "ext.stmt.class.format.amiss" => &self.lang.format_spec_amiss,
+            "ext.text.format.complex.zero" => &self.lang.fmt_text_format_complex_zero,
+            "ext.text.format.complex.align" => &self.lang.fmt_text_format_complex_align,
             _ => &self.lang.fmt_text_format_invalid,
         };
         let mut out = String::new();
@@ -71,9 +75,14 @@ impl Writer<'_> {
 
     pub fn kind<'a>(&'a self, value: &Value) -> &'a str {
         let at = match value {
-            Value::Small(_) | Value::Huge(_) => 0, Value::Real(_) => 1,
+            Value::Small(_) | Value::Huge(_) => 0, Value::Real(_) | Value::Frac(_) => 1,
             Value::Text(_) => 2, Value::Flag(_) => 3, Value::Array(_) => 4,
-            Value::Map(_) => 5, Value::Null => 6, _ => 7,
+            Value::Map(_) => 5, Value::Null => 6,
+            Value::Complex(_) | Value::Imaginary(..) => 8,
+            Value::Tuple(_) => 9, Value::Set(_) => 10, Value::Counted(_) => 11,
+            Value::Bytes(_, false, _) => 12, Value::Bytes(_, true, _) => 13,
+            Value::Class(_) | Value::ByteKind(..) => 14,
+            _ => 7,
         };
         self.lang.fmt_text_format_kinds.get(at).map_or("", String::as_str)
     }
@@ -136,8 +145,19 @@ impl Writer<'_> {
         }
         if spec.is_empty() && !matches!(value, Value::Real(_)) { return self.representation_plain(value); }
         let mut rule = self.parse(spec)?;
+        // The locale presentation writes the figures the plain
+        // presentations write, this run keeping one locale only: a
+        // whole number stays with the tens, everything else takes the
+        // general form. Text has no such presentation and says so. The
+        // grouping belongs to the locale, so none may be named beside
+        // it.
+        if rule.code == 'n' {
+            if rule.group != '\0' || rule.fraction_group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
+            if !matches!(value, Value::Text(_)) {
+                rule.code = if matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { 'd' } else { 'g' };
+            }
+        }
         let kind = rule.code;
-        if kind == 'n' { return Err(self.fault("ext.text.format.unready", &[])); }
         if let Value::Text(text) = value {
             if !matches!(kind, '\0' | 's') { return Err(self.unknown(value, kind)); }
             if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.string", &[])); }
@@ -148,10 +168,40 @@ impl Writer<'_> {
             let shown: String = text.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
             return Ok(rule.pad("", &shown, '<'));
         }
+        // A complex number is written as two real parts, the second
+        // always under a sign, and the pair stands in brackets where
+        // no presentation was named. Neither nought padding nor the
+        // '=' alignment has a meaning across two numbers.
+        if let Some((re, im)) = complex_parts(value) {
+            if rule.fill == '0' { return Err(self.fault("ext.text.format.complex.zero", &[])); }
+            if rule.align == '=' { return Err(self.fault("ext.text.format.complex.align", &[])); }
+            if !matches!(kind, '\0' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G') { return Err(self.unknown(value, kind)); }
+            // Nothing named is the writing the representation gives:
+            // the figures that read back again, in brackets, with a
+            // real part that is a plain nought left out altogether. A
+            // precision named beside it asks the general form instead.
+            let bare = kind == '\0' && re == 0.0 && !re.is_sign_negative();
+            let brackets = kind == '\0' && !bare;
+            if kind == '\0' && rule.precision.is_some() { rule.code = 'g'; }
+            let mut written = String::new();
+            if !bare { written.push_str(&self.part(re, &rule, rule.sign)); }
+            written.push_str(&self.part(im, &rule, if bare { rule.sign } else { '+' }));
+            written.push('j');
+            if brackets { written = format!("({written})"); }
+            let room = Rule { fill: rule.fill, align: rule.align, width: rule.width, ..Rule::default() };
+            return Ok(room.pad("", &written, '>'));
+        }
         if rule.zero && rule.align == '\0' { rule.align = '='; }
         let whole = matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_));
         let real = matches!(value, Value::Real(_));
-        if !whole && !real { return Err(self.fault("ext.text.format.unready", &[])); }
+        // A kind with no figures to write takes no specification at
+        // all, which is told against the name the protocol would have
+        // asked under. A number this writer has no figures for is a
+        // different matter, and says so as it did.
+        if !whole && !real {
+            if matches!(value, Value::Frac(_)) { return Err(self.fault("ext.text.format.unready", &[])); }
+            return Err(self.fault("ext.stmt.class.format.amiss", &[self.kind(value)]));
+        }
         if whole && matches!(kind, '\0' | 'd' | 'b' | 'o' | 'x' | 'X' | 'c') {
             if rule.unsigned_zero { return Err(self.fault("ext.text.format.zero.integer", &[])); }
             if rule.precision.is_some() { return Err(self.fault("ext.text.format.precision.integer", &[])); }
@@ -160,7 +210,7 @@ impl Writer<'_> {
                 if rule.sign != '\0' { return Err(self.fault("ext.text.format.sign.character", &[])); }
                 if rule.alternate { return Err(self.fault("ext.text.format.alternate.character", &[])); }
                 if rule.group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
-                return Ok(rule.pad("", &self.character(value)?, '>'));
+                return Ok(rule.pad("", &self.character(value, false)?, '>'));
             }
             let base = match kind { 'b' => 2, 'o' => 8, 'x' | 'X' => 16, _ => 10 };
             if rule.fraction_group != '\0' || rule.group == ',' && base != 10 { return Err(self.fault("ext.text.format.invalid", &[])); }
@@ -190,6 +240,29 @@ impl Writer<'_> {
         if kind == '%' { body.push('%'); }
         if magnitude.is_finite() { rule.group_digits(&mut body, head.len(), 3); }
         Ok(rule.pad(&head, &body, '>'))
+    }
+
+    /// One part of a complex number: the figures the presentation
+    /// asks for, under the sign this part is to stand with. The whole
+    /// is padded once, after both parts are written, so the width
+    /// belongs to the pair and not to either number.
+    fn part(&self, number: f64, rule: &Rule, sign: char) -> String {
+        let magnitude = number.abs();
+        let mut body = if magnitude.is_nan() { "nan".to_string() }
+            else if magnitude.is_infinite() { "inf".to_string() }
+            else if rule.code == '\0' { crate::value::shortest_real(magnitude) }
+            else { decimal(magnitude, rule) };
+        if rule.code.is_ascii_uppercase() { body.make_ascii_uppercase(); }
+        // A part that rounds to nought loses its minus where the
+        // specification asks for no signed nought.
+        let nought = rule.unsigned_zero && body.parse::<f64>().ok() == Some(0.0);
+        let head = if number.is_sign_negative() && !number.is_nan() && !nought { "-".to_string() }
+            else if matches!(sign, '+' | ' ') { sign.to_string() } else { String::new() };
+        if magnitude.is_finite() {
+            let mut grouping = Rule { code: rule.code, group: rule.group, fraction_group: rule.fraction_group, ..Rule::default() };
+            grouping.group_digits(&mut body, head.len(), 3);
+        }
+        head + &body
     }
 
     /// The complaint for a name nothing was given under. Where the
@@ -364,8 +437,11 @@ impl Writer<'_> {
 
     /// Marks filled one at a time. As with a template, the caller is
     /// offered every value a text mark is to show, and hands back the
-    /// ones it has no words of its own for.
-    pub fn percent(&self, text: &str, argument: &Value, offered: &mut Words<'_>) -> Result<String> {
+    /// ones it has no words of its own for. A template read off a row
+    /// of bytes says so: it knows the mark that shows a row of bytes,
+    /// it seeks a keyed mark's name among keys that are rows of bytes,
+    /// and a character mark holds one byte alone.
+    pub fn percent(&self, text: &str, argument: &Value, offered: &mut Words<'_>, of_bytes: bool) -> Result<String> {
         let settled = argument.contents();
         let argument = &settled;
         let args: Vec<&Value> = match argument { Value::Tuple(a) => a.iter().collect(), one => vec![one] };
@@ -392,7 +468,12 @@ impl Writer<'_> {
                 if chars.get(at).is_none() { return Err(self.fault("ext.op.rem.format.incomplete", &[])); }
                 let key: String = chars[begin..at].iter().collect(); at += 1;
                 let Value::Map(pairs) = argument else { return Err(self.fault("ext.op.rem.format.mapping", &[])); };
-                keyed = Some(pairs.iter().find(|(k, _)| matches!(k, Value::Text(s) if s.as_ref() == key)).map(|(_, v)| v)
+                let named = |k: &Value| match k {
+                    Value::Text(s) => !of_bytes && s.as_ref() == key,
+                    Value::Bytes(row, ..) => of_bytes && row.borrow().iter().copied().map(char::from).eq(key.chars()),
+                    _ => false,
+                };
+                keyed = Some(pairs.iter().find(|(k, _)| named(k)).map(|(_, v)| v)
                     .ok_or_else(|| self.key_missing(&key))?);
                 mapped = true;
                 used = args.len();
@@ -430,10 +511,11 @@ impl Writer<'_> {
                 used += 1; v
             }};
             rule.code = code;
-            if !"srad iuoxXeEfFgGc".replace(' ', "").contains(code) {
+            let letters = if of_bytes { "sbrad iuoxXeEfFgGc" } else { "srad iuoxXeEfFgGc" };
+            if !letters.replace(' ', "").contains(code) {
                 return Err(self.fault("ext.op.rem.format.code", &[&code.to_string(), &format!("{:x}", code as u32), &(at - 1).to_string()]));
             }
-            let result = if matches!(code, 's' | 'r' | 'a') {
+            let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match offered(value, code)? {
                     Some(said) => said,
                     None if code == 's' && matches!(value, Value::Text(_)) => self.representation_plain(value)?,
@@ -444,8 +526,9 @@ impl Writer<'_> {
                 rule.pad("", &shown, '>')
             } else if code == 'c' {
                 let shown = match value {
-                    Value::Text(s) if s.chars().count() == 1 => s.to_string(),
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value)?,
+                    Value::Bytes(row, ..) if of_bytes && row.borrow().len() == 1 => char::from(row.borrow()[0]).to_string(),
+                    Value::Text(s) if !of_bytes && s.chars().count() == 1 => s.to_string(),
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value, of_bytes)?,
                     _ => return Err(self.fault("ext.op.rem.format.character", &[])),
                 };
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
@@ -485,8 +568,9 @@ impl Writer<'_> {
         Ok(out)
     }
 
-    fn character(&self, value: &Value) -> Result<String> {
-        let n = value.as_big()?.to_u32().filter(|n| *n <= 0x10ffff)
+    fn character(&self, value: &Value, of_bytes: bool) -> Result<String> {
+        let most = if of_bytes { 0xff } else { 0x10ffff };
+        let n = value.as_big()?.to_u32().filter(|n| *n <= most)
             .ok_or_else(|| self.fault("ext.text.format.character", &[]))?;
         char::from_u32(n).map(|c| c.to_string()).ok_or_else(|| self.fault("ext.text.format.unready", &[]))
     }
@@ -554,6 +638,16 @@ impl Rule {
     }
 }
 
+/// The two real parts of a value that keeps them, and nothing at all
+/// for one that does not.
+fn complex_parts(value: &Value) -> Option<(f64, f64)> {
+    match value {
+        Value::Complex(pair) => Some((pair.real, pair.imag)),
+        Value::Imaginary(coefficient, _) => Some((0.0, *coefficient)),
+        _ => None,
+    }
+}
+
 fn decimal(number: f64, rule: &Rule) -> String {
     let places = rule.precision.unwrap_or(6);
     let code = rule.code.to_ascii_lowercase();
@@ -600,6 +694,8 @@ pub fn names_fault(lang: &Lang, text: &str) -> bool {
     [
         &lang.fmt_text_format_zero_string,
         &lang.fmt_text_format_zero_integer,
+        &lang.fmt_text_format_complex_zero,
+        &lang.fmt_text_format_complex_align,
         &lang.fmt_op_rem_format_infinity,
         &lang.fmt_op_rem_format_nan,
         &lang.fmt_text_format_invalid,
