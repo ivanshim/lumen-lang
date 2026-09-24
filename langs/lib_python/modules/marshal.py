@@ -90,14 +90,19 @@ class _Writer:
                 self.put(value[key])
             return
         if isinstance(value, set):
-            # This runtime holds a set and a frozen set as one kind and
-            # gives no way to tell them apart, so both are written as a
-            # set and a frozen set comes back thawed. It compares equal
-            # to what went in; it is not the same kind.
-            self.exactly(value, type(value) is set or type(value) is frozenset)
+            self.exactly(value, type(value) is set)
             if self.held(value):
                 return
             self.pieces.append('S' + str(len(value)) + ';')
+            for item in value:
+                self.put(item)
+            return
+        if isinstance(value, frozenset):
+            # A frozen set is a kind of its own and comes back as one.
+            self.exactly(value, type(value) is frozenset)
+            if self.held(value):
+                return
+            self.pieces.append('>' + str(len(value)) + ';')
             for item in value:
                 self.put(item)
             return
@@ -221,6 +226,12 @@ class _Reader:
             size = self.count()
             where = self.reserve()
             made = set(self.items(size))
+            self.memo[where] = made
+            return made
+        if tag == '>':
+            size = self.count()
+            where = self.reserve()
+            made = frozenset(self.items(size))
             self.memo[where] = made
             return made
         if tag == 'Q':
