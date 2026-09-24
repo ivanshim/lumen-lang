@@ -5328,6 +5328,12 @@ impl<'a> Machine<'a> {
 
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
         if let Some(carried) = self.carried_by_kind(value, name) { return Some(carried); }
+        // A walk over a routine's own body answers whether it is on the
+        // way through the machine at this very moment: exactly when the
+        // cell that holds it cannot be borrowed a second time.
+        if let Value::Generator(state) = value {
+            if self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }
+        }
         let names = self.table.strings("ext.stmt.class.special");
         if let Value::Span(bounds) = value {
             return self.span_bound_named(name).map(|i| bounds[i].clone());
@@ -8071,7 +8077,7 @@ impl<'a> Machine<'a> {
     /// collection reaching itself is not looked into without end.
     fn carries_instance_past(value: &Value, passed: &mut Vec<usize>) -> bool {
         match value {
-            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) => true,
+            Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => true,
             Value::Shared(cell) | Value::Mutable(cell, _) => {
                 let address = Rc::as_ptr(cell) as usize;
                 if passed.contains(&address) { return false; }
@@ -8159,10 +8165,23 @@ impl<'a> Machine<'a> {
                 }
                 let chosen = usize::from(quoted || self.appointment(subject, 0).is_none());
                 match self.ask_special(subject, chosen, &[])? {
-                    None => Ok(format!("<{} object>", t.of.name)),
+                    None => {
+                        let module = self.detail("main");
+                        Ok(if module.is_empty() { format!("<{} object>", t.of.name) }
+                            else { format!("<{module}.{} object at 0x1>", t.of.name) })
+                    }
                     Some(Value::Text(s)) => Ok(s.to_string()),
                     _ => Err(self.bad_answer()),
                 }
+            }
+            // A bound method is written by the routine's own full name
+            // and the thing it is bound to, as CPython writes it; a
+            // language with no word for the running module keeps the
+            // old writing.
+            Value::Method(routine, receiver) if !self.detail("main").is_empty() => {
+                let of = self.object_words(&Value::Thing(receiver.clone()), true)?;
+                let named = if routine.qualification.is_empty() { routine.ident.as_str() } else { routine.qualification.as_str() };
+                Ok(format!("<bound method {named} of {of}>"))
             }
             // This walk holds a collection's members and not the cell
             // about them, so it leaves its own note on the members it
@@ -9842,7 +9861,10 @@ impl<'a> Machine<'a> {
                 let native = matches!(v[0], Value::Text(_)) && matches!(self.table.prims.get(&word), Some(Prim::Textual(work)) if *work != crate::text::Work::REPR);
                 // A row of bytes answers to the methods its kind keeps.
                 let of_octets = matches!(v[0].settled(), Value::Octets { changeable, .. } if self.octet_member(&word, changeable).is_some());
-                Value::Flag(native || of_octets || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+                // A walk over a routine's own body answers whether it is
+                // running, where a language has a word for that.
+                let generator_running = matches!(&v[0], Value::Generator(_)) && self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| *w == word);
+                Value::Flag(native || of_octets || generator_running || self.native_member(&v[0], &word) || (self.table.has_any("ext.builtin.exceptions") && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..)) || own || (self.table.has_any("ext.stmt.class.special") && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
             }
             Prim::Of => {
                 n(2)?;

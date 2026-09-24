@@ -4950,7 +4950,8 @@ impl<'a> Compiler<'a> {
         let mut unavailable = self.uncarried.clone();
         unavailable.extend(enclosing);
         let surrounding = std::mem::replace(&mut self.uncarried, unavailable);
-        let mut program = self.routine(ANONYMOUS, formals, least, true, |a| {
+        let lambda_ident = lang.lambda_name.first().map(String::as_str).unwrap_or(ANONYMOUS);
+        let mut program = self.routine(lambda_ident, formals, least, true, |a| {
             for (at, named) in &defaults {
                 if binds { a.carrying.push(*at); }
                 else {

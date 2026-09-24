@@ -3888,6 +3888,12 @@ impl<'a> Engine<'a> {
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
         let held = value.contents();
         if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
+        // A walk over a routine's own body answers whether it is on the
+        // way through the machine at this very moment: exactly when the
+        // cell that holds it cannot be borrowed a second time.
+        if let Value::Generator(held) = &held {
+            if self.lang.yield_running.first().map_or(false, |w| w == name) { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
+        }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
         if self.native_special(&held, name) { return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), name.to_string()))))); }
         if let Value::Complex(z) = &held {
@@ -4218,7 +4224,7 @@ impl<'a> Engine<'a> {
         // A cell come round to again holds nothing further to look at.
         fn looked_into(value: &Value, seen: &mut Vec<*const RefCell<Value>>) -> bool {
             match value {
-                Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) => true,
+                Value::Trace(_) | Value::Hashed(_) | Value::Fields(_) | Value::Object(_) | Value::Method(..) => true,
                 Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => {
                     if seen.contains(&Rc::as_ptr(c)) { return false; }
                     seen.push(Rc::as_ptr(c));
@@ -4279,8 +4285,22 @@ impl<'a> Engine<'a> {
             return match self.special_call(value, place, Vec::new())? {
                 Some(Value::Text(text)) => Ok(text.to_string()),
                 Some(_) => Err(self.special_fault()),
-                None => Ok(format!("<{} object>", object.class.name)),
+                None => {
+                    let module = self.class_word("main");
+                    Ok(if module.is_empty() { format!("<{} object>", object.class.name) }
+                        else { format!("<{module}.{} object at 0x1>", object.class.name) })
+                }
             };
+        }
+        // A bound method is written by the routine's own full name and
+        // the thing it is bound to, as CPython writes it; a language
+        // with no word for the running module keeps the old writing.
+        if let Value::Method(receiver, routine) = value {
+            if !self.class_word("main").is_empty() {
+                let of = self.special_text(&Value::Object(receiver.clone()), true)?;
+                let named = if routine.qualified.is_empty() { routine.ident.as_str() } else { routine.qualified.as_str() };
+                return Ok(format!("<bound method {named} of {of}>"));
+            }
         }
         match value {
             Value::Hashed(pair) => self.special_text(&pair.0, representation),
@@ -6215,7 +6235,10 @@ impl<'a> Engine<'a> {
                 let kind_named = matches!(&held, Value::SortOf(_) | Value::Native(..) | Value::ByteKind(..)) && self.lang.class_name.as_deref() == Some(name.as_ref());
                 // A builtin kind also carries the members its own values answer to.
                 let kind_carries = self.loose_kind_member(&held, name).is_some();
-                Value::Flag(kind_named || kind_maker || kind_carries || text_method || byte_method || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
+                // A walk over a routine's own body answers whether it is
+                // running, where a language has a word for that.
+                let generator_running = matches!(&held, Value::Generator(_)) && self.lang.yield_running.first().map_or(false, |w| w.as_str() == name.as_ref());
+                Value::Flag(kind_named || kind_maker || kind_carries || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
             }
             // A member is read of what a module's cell holds, not of the cell.
             // A container asked for one of its special members keeps
