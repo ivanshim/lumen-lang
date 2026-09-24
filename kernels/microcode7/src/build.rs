@@ -51,11 +51,18 @@ struct ScopeWords {
     bound: Vec<String>,
     outermost: Vec<(String, String)>,
     borrowed: Vec<String>,
+    /// Which of those `borrowed` names a class body nested in this
+    /// scope declared, rather than the scope's own statements: naming
+    /// a parameter this way is no conflict, since the class is a scope
+    /// of its own in the reference, unlike here, where it takes no
+    /// layer and its declarations land where the layer's own would.
+    class_borrowed: Vec<String>,
 }
 
 struct Layer {
     comprehension: bool,
     borrowed: Vec<String>,
+    class_borrowed: Vec<String>,
     /// The names this scope reads from the scopes around it, each with
     /// where it stands seen from this scope's own frame.
     reaching: Vec<Address>,
@@ -312,7 +319,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     for word in table.strings("ext.builtin.exceptions") {
         if !beginnings.contains(word) { beginnings.push(word.clone()); }
     }
-    let top = Layer { comprehension: false, borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
+    let top = Layer { comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: beginnings, formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() };
     let (mut shared_args, mut arg_names, mut gives_back) = shared_parameters(tokens, table);
     let mut layers = vec![top];
     if let Some((inside, (args, spellings, backs))) = within {
@@ -323,7 +330,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             arg_names.entry(named.clone()).or_insert_with(|| spelt.clone());
         }
         gives_back.extend(backs.iter().cloned());
-        layers.push(Layer { comprehension: false, borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
+        layers.push(Layer { comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Fresh, idents: inside.to_vec(), formals: Vec::new(), formal_slots: Vec::new(), rpn: false, aliases: Vec::new() });
     }
     let outer_layers = layers.len();
     let mut r = Builder { kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, pos: 0, layers, read_in, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), written_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
@@ -1041,9 +1048,41 @@ impl<'a> Builder<'a> {
         self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len())
     }
 
+    /// Whether the layer around the class body already holds this name
+    /// `global` or `nonlocal`, the two declarations that carry a name
+    /// past a class body to the place it named before the body was
+    /// ever entered.
+    fn declared_outside_class(&self, name: &str) -> bool {
+        self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)
+            .map_or(false, |layer| layer.aliases.iter().any(|(named, _)| named == name) || layer.borrowed.iter().any(|named| named == name))
+    }
+
     /// The parts gathered so far of the class whose body is being read.
     fn parts(&mut self) -> &mut ClassParts {
         self.under_way.last_mut().expect("a class body under way")
+    }
+
+    /// A map built from the class body's own names, bound so far, each
+    /// read through the place it is kept in: the value `locals()`
+    /// answers with there, and the near dictionary an `eval` reads
+    /// there hands over. A member only a conditional's arm may have
+    /// bound is left out rather than glanced at, since what it would
+    /// show -- nothing written, or what a pass before it left -- is
+    /// never the answer the reference gives.
+    fn class_names_map(&mut self) -> Form {
+        let pairs: Vec<(String, Form)> = {
+            let parts = self.parts();
+            let uncertain = parts.uncertain.clone();
+            parts.ranking.iter().filter(|named| !uncertain.contains(named))
+                .filter_map(|named| parts.attributes.iter().position(|kept| kept == named).map(|at| (named.clone(), parts.held[at].clone())))
+                .collect()
+        };
+        let mut value = prim_call(Prim::MakeMap, Vec::new());
+        for (key, read_form) in pairs {
+            let item = prim_call(Prim::Couple, vec![constant(Value::text(&key)), read_form]);
+            value = prim_call(Prim::ExtendLiteral(true, false), vec![value, item]);
+        }
+        value
     }
 
     /// A name a statement of a class body is about to write becomes a
@@ -1171,10 +1210,10 @@ impl<'a> Builder<'a> {
         }
         formal_kinds.truncate(params.len());
         let param_slots = (0..params.len()).collect();
-        self.layers.push(Layer { comprehension: name == "<gathering>", borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
+        self.layers.push(Layer { comprehension: name == "<gathering>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new() });
         if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
-                if known.borrowed.iter().any(|word| params.contains(word)) {
+                if known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
                     return Err(self.table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
                 }
                 let scope = self.layers.last_mut().unwrap();
@@ -1183,6 +1222,7 @@ impl<'a> Builder<'a> {
                 }
                 scope.aliases.clone_from(&known.outermost);
                 scope.borrowed.clone_from(&known.borrowed);
+                scope.class_borrowed.clone_from(&known.class_borrowed);
             }
         }
         let earlier_gathering = self.gather_names.clone();
@@ -1204,7 +1244,7 @@ impl<'a> Builder<'a> {
         let scope = self.layers.pop().unwrap();
         if self.survey && holds == Holds::Every {
             let bound = scope.idents.iter().filter(|word| !scope.borrowed.contains(word) && !scope.aliases.iter().any(|pair| pair.0 == **word)).cloned().collect();
-            self.surveyed.insert(began, ScopeWords { bound, outermost: scope.aliases.clone(), borrowed: scope.borrowed.clone() });
+            self.surveyed.insert(began, ScopeWords { bound, outermost: scope.aliases.clone(), borrowed: scope.borrowed.clone(), class_borrowed: scope.class_borrowed.clone() });
         }
         if generator && !self.table.flag("ext.stmt.function.closes_over") {
             let names = self.layers.iter().skip(1).filter(|scope| scope.holds == Holds::Every)
@@ -1519,17 +1559,30 @@ impl<'a> Builder<'a> {
                 self.advance();
                 loop {
                     let word = self.need_word("after the nonlocal keyword")?;
-                    if !in_class {
-                        if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) { layer.borrowed.push(word.clone()); }
+                    // A class body pushes no layer of its own, so the
+                    // layer around it is the very one a name declared
+                    // `nonlocal` there means to reach: the declaration
+                    // is kept where any other's is, and a write of the
+                    // name within the body goes there rather than to a
+                    // member, exactly as a name declared `global` does.
+                    if let Some(layer) = self.layers.iter_mut().rev().find(|l| l.holds == Holds::Every) {
+                        layer.borrowed.push(word.clone());
+                        if in_class { layer.class_borrowed.push(word.clone()); }
                     }
-                    if !in_class && !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, true).is_none() {
+                    // Outside a class body the walk this looks for a
+                    // binding with must pass over the very function the
+                    // declaration stands in, since a name meant there
+                    // is no `nonlocal` of that function's own. A class
+                    // body is no function of its own to pass over this
+                    // way: the walk includes the one around it, since
+                    // that is the very function the declaration means.
+                    if !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, !in_class).is_none() {
                         let pieces = self.table.strings("ext.stmt.nonlocal.amiss");
                         return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), word, pieces.get(1).map_or("", String::as_str)));
                     }
                     if !self.on_any("syntax.call.separator") { break; }
                     self.advance();
                 }
-                if in_class { return Ok(self.class_not_ready()); }
                 if self.table.flag("ext.stmt.function.closes_over") { return Ok(constant(Value::Nil)); }
                 return Ok(prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.nonlocal.unrun").unwrap_or_default()))]));
             }
@@ -2774,7 +2827,12 @@ impl<'a> Builder<'a> {
                 // follow yet is read the same way and the class refused.
                 let word = self.look().clone();
                 let harmless = match word.shape == Shape::Bare && table.keywords.contains(&word.lexeme) {
-                    true => ["ext.stmt.throw", "ext.stmt.assert", "stmt.break", "stmt.continue"].iter().any(|label| table.spells(label, &word.lexeme)),
+                    // `global` and `nonlocal` bind no member: the
+                    // name they carry goes on meaning what it always
+                    // did, a place beyond the class, so a class body
+                    // forms around one exactly as it does around a
+                    // call made for its effect.
+                    true => ["ext.stmt.throw", "ext.stmt.assert", "stmt.break", "stmt.continue", "ext.stmt.global", "ext.stmt.nonlocal"].iter().any(|label| table.spells(label, &word.lexeme)),
                     false => !self.writes_a_name(self.pos),
                 };
                 setup.push(self.stmt()?);
@@ -2782,9 +2840,17 @@ impl<'a> Builder<'a> {
                 None
             };
             if let Some((word, value)) = value {
-                let place = self.member_address(&word, "attribute");
-                setup.push(Form::Write(place.clone(), Box::new(value)));
-                self.member_noted(&word, place);
+                // A name the body has declared `global` or `nonlocal`
+                // means the place beyond it, as it does anywhere else,
+                // and binds no member: the class's own namespace never
+                // sees it.
+                if self.declared_outside_class(&word) {
+                    setup.push(self.write(&word, value));
+                } else {
+                    let place = self.member_address(&word, "attribute");
+                    setup.push(Form::Write(place.clone(), Box::new(value)));
+                    self.member_noted(&word, place);
+                }
             }
         }
         Ok(false)
@@ -7428,6 +7494,34 @@ impl<'a> Builder<'a> {
     }
 
     fn gather_comprehension(&mut self, first_for: usize, end: &str, dictionary: bool) -> Res<Form> {
+        // A class body is no closure, so a comprehension written
+        // straight in one would see none of its names once its own
+        // routine is pushed, where the reference reads the outermost
+        // walk's own source in the body's own reading before that
+        // routine is ever entered. That one source is read here, the
+        // way `generator_comprehension` already reads a generator
+        // expression's; what it comes to is handed to the
+        // comprehension's own routine as its argument, and every
+        // other clause and the expression read back run inside that
+        // routine exactly as they did, seeing nothing of the body's
+        // names, as a method does not either.
+        if self.table.flag("ext.stmt.function.closes_over") && self.in_class_body() {
+            let entry = self.pos;
+            self.pos = first_for;
+            while !self.on_any("ext.op.comprehension.in") && !self.exhausted() { self.advance(); }
+            self.advance();
+            let begins = self.pos;
+            let source = self.expr(1)?;
+            let ends = self.pos;
+            let parameter = self.gather_name("first_source");
+            let previous = self.source_before.replace((begins, ends, parameter.clone()));
+            self.pos = entry;
+            let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, vec![parameter], 1,
+                |reader| reader.gather_in_scope(first_for, end, dictionary))?;
+            self.source_before = previous;
+            let walks = self.table.flag("ext.stmt.yield.suspends");
+            return Ok(Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(if walks { Prim::Walked } else { Prim::Iterated }, vec![source])]));
+        }
         if self.table.flag("ext.stmt.function.closes_over") {
             let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, Vec::new(), 0,
                 |reader| reader.gather_in_scope(first_for, end, dictionary))?;
@@ -7688,6 +7782,27 @@ impl<'a> Builder<'a> {
             return Ok(invoke(target, args));
         }
         match self.table.prims.get(name).copied().filter(|op| !matches!(op, Prim::SetCall(1..=17))) {
+            // A class body keeps its own names apart from the rest of
+            // the program's, in the places its members already read
+            // and write through, so `locals()` read there answers with
+            // those places' current values instead of the world's. A
+            // member only a conditional's arm may have bound is left
+            // out rather than glanced at, since what it would show --
+            // nothing written, or what a pass before it left -- is
+            // never the answer the reference gives.
+            Some(Prim::HereBook) if args.is_empty() && self.in_class_body() => Ok(self.class_names_map()),
+            // `eval` read where a class body stands, handed no
+            // dictionaries of its own, reads the body's own names the
+            // way any other read there does, past the world beyond it
+            // -- the same map `locals()` above is built from, handed
+            // over as the near dictionary, with the outermost one
+            // behind it as the far.
+            Some(Prim::Weigh) if args.len() == 1 && self.in_class_body() => {
+                let mut all = args;
+                all.push(prim_call(Prim::WorldBook, Vec::new()));
+                all.push(self.class_names_map());
+                Ok(Form::Apply(Callee::Prim(Prim::Weigh, Rc::from(name)), all))
+            }
             Some(Prim::Textual(work)) if work != crate::text::Work::REPR && !name.contains('.') => {
                 let declared = self.read(name);
                 Ok(invoke(declared, args))
@@ -8114,7 +8229,7 @@ impl<'a> Builder<'a> {
             let close = table.strings("stack.program.close")[k].clone();
             self.gensyms += 1;
             let name = format!("<program{}>", self.gensyms);
-            self.layers.push(Layer { comprehension: false, borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
+            self.layers.push(Layer { comprehension: false, borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds: Holds::Every, idents: Vec::new(), formals: Vec::new(), formal_slots: Vec::new(), rpn: true, aliases: Vec::new() });
             let (mut s, left) = self.rpn_block(std::slice::from_ref(&close), Mode::Quoted)?;
             self.need_lexeme(&close)?;
             if let Some(v) = left {
