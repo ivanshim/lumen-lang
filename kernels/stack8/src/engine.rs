@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Ending, Instance, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
+use crate::value::{Descriptor, Class, Ending, Instance, KeyedPairs, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -3755,6 +3755,22 @@ impl<'a> Engine<'a> {
         Ok((None, keyed))
     }
 
+    /// A key written into a store-backed map, in place: `map_locate`'s
+    /// own answer, grown into the rows on a miss, or written over the
+    /// row on a hit — the very road `d[k] = v` already takes for a map
+    /// alone in its own cell, taken here for a map alone in the data
+    /// stack's care instead, so the store's index grows one row at a
+    /// time rather than being rebuilt from every row for every key.
+    fn store_write(&mut self, pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) -> Res<()> {
+        let store: &KeyedPairs = pairs.as_ref();
+        let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+        match found {
+            Some(at) => Rc::make_mut(pairs).overwrite_row(at, value),
+            None => store_insert_new(pairs, keyed, value),
+        }
+        Ok(())
+    }
+
     /// A row written over the value its key already holds, or added
     /// last: `put_key` in its own words, but able to call `__eq__` for
     /// a key that needs it, which the free function it stands beside
@@ -3837,19 +3853,21 @@ impl<'a> Engine<'a> {
 
     /// `dict.fromkeys`: a new map with a row for each member its
     /// iterable target gives, every one holding the fill value it was
-    /// given, or nothing — deduplicated through `special_keys_equal`
-    /// rather than the free function `alike`, so a Thing with its own
-    /// `__eq__` collapses to the one key CPython gives it.
+    /// given, or nothing — deduplicated through `map_locate`, the
+    /// store's own text-keyed index first and `special_keys_equal`
+    /// (rather than the free function `alike`) only where that leaves
+    /// things uncertain, so a Thing with its own `__eq__` still
+    /// collapses to the one key CPython gives it, and a target of
+    /// many keys is not scanned again for every one it grows by.
     fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Res<Value> {
         let items = crate::methods::members(target, &|k| self.lang.method_errors[k].clone())?;
-        let mut pairs: Vec<(Value, Value)> = Vec::new();
+        let mut pairs: Rc<KeyedPairs> = Rc::new(Vec::new().into());
         for key in items {
-            let keyed = self.special_key(&key)?;
-            let mut present = false;
-            for (old, _) in pairs.iter() { if self.special_keys_equal(old, &keyed)? { present = true; break; } }
-            if !present { pairs.push((keyed, filling.clone())); }
+            let store: &KeyedPairs = pairs.as_ref();
+            let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+            if found.is_none() { store_insert_new(&mut pairs, keyed, filling.clone()); }
         }
-        Ok(Value::Map(Rc::new(pairs.into())).held(false))
+        Ok(Value::Map(pairs).held(false))
     }
 
     /// Whether two maps hold the same rows, key for key, by the very
@@ -6176,7 +6194,14 @@ impl<'a> Engine<'a> {
                     for item in incoming { self.set_put(&cell, item)?; }
                     Value::Set(cell)
                 } else if *map {
-                    let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
+                    // The map grown one key at a time is the very map the
+                    // literal keeps growing, not a clone of everything
+                    // gathered so far for every key added: the store's
+                    // own text-keyed index answers where a key already
+                    // stands, exactly as a single `d[k] = v` answers it,
+                    // and grows in step with the rows rather than being
+                    // thrown away and rebuilt on the next key.
+                    let mut pairs = match gathered_so_far { Value::Map(p) => p, _ => unreachable!() };
                     let new_pairs = match (spread, next.contents()) {
                         (true, Value::Map(p)) => p.to_vec(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
@@ -6184,15 +6209,9 @@ impl<'a> Engine<'a> {
                     };
                     for (key, value) in new_pairs {
                         if let Some(told) = self.unkeyable(&key) { return Err(told.into()); }
-                        if self.lang.class_special.is_empty() { put_key(&mut pairs, key, value); continue; }
-                        let key = self.special_key(&key)?;
-                        let mut found = None;
-                        for (at, (old, _)) in pairs.iter().enumerate() {
-                            if self.special_keys_equal(old, &key)? { found = Some(at); break; }
-                        }
-                        if let Some(at) = found { pairs[at].1 = value; } else { pairs.push((key, value)); }
+                        self.store_write(&mut pairs, key, value)?;
                     }
-                    Value::Map(Rc::new(pairs))
+                    Value::Map(pairs)
                 } else {
                     // A literal grown one item at a time keeps the same
                     // row throughout when nothing else shares it, so an
@@ -12623,21 +12642,24 @@ fn gathered(items: Vec<Value>, always_map: bool, plain_keys: bool) -> Value {
     if !always_map && !items.iter().any(|v| matches!(v, Value::Tie(_))) {
         return Value::array(items);
     }
-    let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(items.len());
+    // Grown as one store-backed map throughout, so a literal of many
+    // keys writes each one into the rows it already has rather than
+    // scanning them all again for every key that joins.
+    let mut pairs: Rc<KeyedPairs> = Rc::new(Vec::with_capacity(items.len()).into());
     for item in items {
         match item {
             Value::Tie(pair) => {
                 let (k, v) = (pair.0.clone(), pair.1.clone());
                 let k = if plain_keys { key_taken(k) } else { k };
-                put_key(&mut pairs, k, v);
+                put_key_indexed(&mut pairs, k, v);
             }
             v => {
                 let key = next_key(&pairs);
-                pairs.push((Value::Small(key), v));
+                Rc::make_mut(&mut pairs).push((Value::Small(key), v));
             }
         }
     }
-    Value::Map(Rc::new(pairs.into()))
+    Value::Map(pairs)
 }
 
 /// One past the highest whole-number key, or zero when there is none.
@@ -12653,7 +12675,50 @@ fn next_key(pairs: &[(Value, Value)]) -> i64 {
         .max(0)
 }
 
-/// Write a key: over the value it already holds, or at the end.
+/// Write a key: over the value it already holds, or at the end. The
+/// store's own text-keyed index answers first, for a key of plain
+/// worth text names, and only a key its own text cannot place — an
+/// array, a map, a changeable set, a thing — falls to the plain walk
+/// this always took, exactly as it always took it.
+fn put_key_indexed(pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) {
+    if let Ok(keytext) = key.member_key() {
+        match pairs.locate(&keytext) {
+            Placement::AtRow(at) => return write_row_or_bond(pairs, at, value),
+            Placement::NotThere => return store_insert_new(pairs, key, value),
+            Placement::Uncertain => {}
+        }
+    }
+    match pairs.as_ref().iter().position(|(k, _): &(Value, Value)| k.equals(&key)) {
+        Some(at) => write_row_or_bond(pairs, at, value),
+        None => { Rc::make_mut(pairs).push((key, value)); }
+    }
+}
+
+/// A row written over, or a place holding a cell that names share
+/// written through instead, not written over.
+fn write_row_or_bond(pairs: &mut Rc<KeyedPairs>, at: usize, value: Value) {
+    if let Value::Bond(shared) = &pairs[at].1 {
+        let shared = shared.clone();
+        *shared.borrow_mut() = value;
+    } else {
+        Rc::make_mut(pairs).overwrite_row(at, value);
+    }
+}
+
+/// A key already known to be absent, added to a store-backed map's
+/// rows and, where its own text names it, to the store's index
+/// alongside them, so the next key finds it there without a walk.
+fn store_insert_new(pairs: &mut Rc<KeyedPairs>, key: Value, value: Value) {
+    match key.member_key() {
+        Ok(keytext) => Rc::make_mut(pairs).insert_proven_absent(key, keytext, value),
+        Err(_) => { Rc::make_mut(pairs).push((key, value)); }
+    }
+}
+
+/// Write a key over the value it already holds, or at the end, in
+/// pairs held apart from any store: `replace_item`'s own road for a
+/// language whose names are not bound to cells, where a single write
+/// stands alone rather than growing a literal key by key.
 fn put_key(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) {
     match pairs.iter_mut().find(|(k, _)| k.equals(&key)) {
         // A place holding a cell that names share is written through,
@@ -13616,20 +13681,18 @@ impl Engine<'_> {
                     None => Vec::new(),
                 };
                 pairs.extend(dict_kw);
-                let mut made: Vec<(Value, Value)> = Vec::new();
+                // Grown as one store-backed map throughout, so an
+                // iterable of many pairs is not scanned again in full
+                // for every pair it grows by.
+                let mut made: Rc<KeyedPairs> = Rc::new(Vec::new().into());
                 for (k,v) in pairs {
                     // A thing as a key is keyed by its own hash method, as a
                     // dictionary literal keys it.
                     let k = if matches!(k, Value::Object(_)) { self.special_key(&k)? } else { k };
                     if !matches!(k, Value::Hashed(_)) && k.core_hash().is_none() && !matches!(k, Value::Null | Value::Real(_)) { return Err(self.core_fault("core.unhashable", &k.core_kind())); }
-                    let mut found = None;
-                    for (at, (old, _)) in made.iter().enumerate() {
-                        let same = if matches!(old, Value::Hashed(_)) || matches!(k, Value::Hashed(_)) { self.special_keys_equal(old, &k)? } else { number(old).equals(&number(&k)) };
-                        if same { found = Some(at); break; }
-                    }
-                    match found { Some(at) => made[at].1 = v, None => made.push((k,v)) }
+                    self.store_write(&mut made, k, v)?;
                 }
-                Value::Map(Rc::new(made.into()))
+                Value::Map(made)
             }
             Builtin::Iter => {
                 arity(1, 2)?;
