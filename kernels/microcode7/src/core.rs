@@ -28,7 +28,11 @@ impl Value {
             Self::Small(_) | Self::Huge(_) => "int", Self::Frac(_) => "float",
             Self::Nil => "NoneType", Self::Progression(_) => "range",
             Self::Octets { changeable, .. } => if *changeable { "bytearray" } else { "bytes" },
-            Self::Generator(_) => "generator",
+            // A generator the program wrote is a generator; a walk this
+            // kernel made of its own, such as a map walked backwards,
+            // carries the word the reference gives that walk instead.
+            Self::Generator(state) => return state.try_borrow().ok().and_then(|g| g.walked).map_or_else(|| "generator".to_owned(), |w| w.to_owned()),
+            Self::Window(_, portion) => crate::data::window_kind(*portion),
             // An iterator takes the name CPython gives what it walks:
             // the making of the walk where that says enough, and else
             // the word kept of the thing the members came from.
