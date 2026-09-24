@@ -6,7 +6,11 @@ impl<'a> Engine<'a> {
     pub(super) fn class_word(&self, part: &str) -> &str {
         self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str)
     }
-    pub(super) fn fuller_classes(&self) -> bool { !self.class_word("root").is_empty() }
+    // Read once when the language itself was read, since no program
+    // still running can change which words a class stands under: every
+    // step of every program asks this, so it stands as a field on the
+    // language rather than a hashmap looked into afresh each time.
+    pub(super) fn fuller_classes(&self) -> bool { self.lang.fuller_classes }
     fn class_refusal(&self) -> Fault { self.class_word("unready").to_string().into() }
     pub(super) fn root_class(&mut self) -> Rc<Class> {
         if let Some(c) = &self.class_root { return c.clone(); }

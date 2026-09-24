@@ -2307,6 +2307,36 @@ impl<'a> Machine<'a> {
 
     // ---------- bindings
 
+    /// The same load as `fetch`, but the last one a binding gets before
+    /// something else is written there: the value moves out of the
+    /// cell, an unset value left in its place, rather than cloned out
+    /// of it. Used only where the binding is about to be overwritten
+    /// and nothing else can see it meanwhile, so a row grown one member
+    /// at a time by its own gathering place costs what growing it
+    /// costs, not a copy of everything gathered so far on every step.
+    fn take(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
+        let f = ascend(frame, slot.up);
+        if Rc::ptr_eq(f, &self.outermost) {
+            if let Some(found) = self.booked_read(slot.at, &slot.ident) { return found; }
+        }
+        // A cell handed out for names shared across calls is read
+        // through exactly as `fetch` reads it, since some other
+        // binding may hold the very same cell; only a plain local's
+        // own value, or the value a closed-over one keeps, is this
+        // read's alone to move out.
+        if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
+            if self.names_in_calls && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
+                return Ok(Value::Shared(cell.clone()));
+            }
+            if !self.table.flag("ext.stmt.function.closes_over") { return Ok(cell.borrow().clone()); }
+            let taken = cell.replace(Value::Unset);
+            return if matches!(taken, Value::Unset) { self.fetch(slot, frame) } else { Ok(taken) };
+        }
+        let held = std::mem::replace(&mut f.cells.borrow_mut()[slot.at], Value::Unset);
+        if matches!(held, Value::Unset) { return self.fetch(slot, frame); }
+        Ok(held)
+    }
+
     fn fetch(&mut self, slot: &Address, frame: &Rc<Env>) -> Result<Value, String> {
         let f = ascend(frame, slot.up);
         if Rc::ptr_eq(f, &self.outermost) {
@@ -3343,6 +3373,7 @@ impl<'a> Machine<'a> {
             Form::Const(Value::Routine(p)) => Ok(Value::Bound(p.clone(), frame.clone())),
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
+            Form::Take(slot) => Ok(self.take(slot, frame)?),
             Form::Glance(slot) => {
                 let f = ascend(frame, slot.up);
                 let held = f.cells.borrow()[slot.at].clone();
@@ -4766,6 +4797,40 @@ impl<'a> Machine<'a> {
                         }
                         false => None,
                     };
+                    // A row grown one item at a time by its own literal
+                    // or comprehension keeps the same buffer throughout
+                    // when nothing else holds it, rather than a clone of
+                    // everything gathered so far paid on every item
+                    // added to it. A bound name hands its row back
+                    // wrapped in the very cell it came from, so a write
+                    // through it still reaches every other name sharing
+                    // that cell; a plain row is grown and handed back
+                    // the same way `prim` would have built it.
+                    if let Prim::ExtendLiteral(false, expanded) = *op {
+                        let grown = match values.first() {
+                            Some(Value::Vector(_)) => true,
+                            Some(Value::Shared(cell)) => matches!(&*cell.borrow(), Value::Vector(_)),
+                            _ => false,
+                        };
+                        if grown && values.len() == 2 {
+                            let item = values.pop().expect("literal item");
+                            let source = values.pop().expect("growing literal");
+                            let extra = if expanded { Some(self.gathered_members(&item)?) } else { None };
+                            match source {
+                                Value::Vector(mut prior) => {
+                                    match extra { Some(more) => Rc::make_mut(&mut prior).extend(more), None => Rc::make_mut(&mut prior).push(item) }
+                                    return Ok(Value::Vector(prior));
+                                }
+                                Value::Shared(cell) => {
+                                    if let Value::Vector(prior) = &mut *cell.borrow_mut() {
+                                        match extra { Some(more) => Rc::make_mut(prior).extend(more), None => Rc::make_mut(prior).push(item) }
+                                    }
+                                    return Ok(Value::Shared(cell));
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
                     let made = self.prim(*op, name, &values);
                     if let Some(held) = aside { self.text_within = held; }
                     if let Some(away) = self.got_away.take() {
@@ -8740,7 +8805,12 @@ impl<'a> Machine<'a> {
         // asked for the whole number it stands for before the row is
         // read; a progression sliced is a progression over the places
         // the bounds pick out.
-        if let (Prim::At, [target, Value::Span(bounds)], true) = (op, v, self.table.has_any("ext.builtin.slice")) {
+        // Whether the word is spoken for at all is asked only once the
+        // shape already says this could be a slice: most operations are
+        // no `Prim::At` on a span of bounds, and the table has nothing
+        // to say to them.
+        if let (Prim::At, [target, Value::Span(bounds)]) = (op, v) {
+            if self.table.has_any("ext.builtin.slice") {
             let target = target.settled();
             if !matches!(target, Value::Thing(_) | Value::Dict(_)) {
                 if bounds.iter().any(|bound| matches!(bound, Value::Thing(_))) {
@@ -8753,6 +8823,7 @@ impl<'a> Machine<'a> {
                     let picked = crate::data::Progression { first: &walk.first + &from * &walk.stride, limit: &walk.first + &to * &walk.stride, stride: &walk.stride * by, word: walk.word.clone() };
                     return Ok(Value::Progression(Rc::new(picked)));
                 }
+            }
             }
         }
         // A key handed out with its hash is, for ordering and arithmetic,
@@ -8771,8 +8842,11 @@ impl<'a> Machine<'a> {
         // Kinds that stand in no order to one another are refused with
         // both named, where the table gives the four pieces of words;
         // numbers order among themselves, and texts among themselves.
-        if let ([left, right], [before, between, and, after]) = (v, self.table.strings("ext.op.order.unsupported")) {
-            if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+        // The table is asked for those four pieces only where the
+        // operation is one of the four that order at all: every other
+        // operation reaching here has no use for them.
+        if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+            if let ([left, right], [before, between, and, after]) = (v, self.table.strings("ext.op.order.unsupported")) {
                 let (left, right) = (left.settled(), right.settled());
                 let counts = |x: &Value| matches!(x, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Flag(_));
                 let texts = matches!((&left, &right), (Value::Text(_), Value::Text(_)));
@@ -13956,6 +14030,44 @@ impl Machine<'_> {
             if held.done { return Ok(None); }
             if let Some(value) = held.peek.take() { return Ok(Some(value)); }
             if matches!(held.kind, IteratorKind::Busy) { return Err(self.core_complaint("core.unready", "next")); }
+            // A walk that reaches nothing beyond its own row, its own
+            // count or its own cell -- calling back to no work of the
+            // program's and asking no other iterator -- steps in the
+            // one borrow already open on it, since nothing it does
+            // could ever reach this same iterator again meanwhile. The
+            // place such a walk stands at is a great number even where
+            // the walk itself is small, and taking the whole of the
+            // kind out to set the walk free, where the walk was never
+            // taken up by anything that needed it free, paid for that
+            // number twice at every single step for nothing gained by
+            // it.
+            match &mut held.kind {
+                IteratorKind::Stored(entries) => {
+                    let item = entries.pop_front();
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                IteratorKind::Living(home, at) => {
+                    let item = match home.borrow().settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    if item.is_some() { *at += 1; }
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                IteratorKind::Watching { window, at, size } => {
+                    if Self::window_extent(window) != *size { return Err(self.core_complaint("core.dict.changed", "")); }
+                    let item = match window.settled() { Value::Vector(items) => items.get(*at).cloned(), _ => None };
+                    if item.is_some() { *at += 1; }
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                IteratorKind::Stepping(walk, at) => {
+                    let item = walk.item(at);
+                    if item.is_some() { *at += 1; }
+                    held.done = item.is_none();
+                    return Ok(item);
+                }
+                _ => {}
+            }
             std::mem::replace(&mut held.kind, IteratorKind::Busy)
         };
         let result = (|| -> Result<Option<Value>, String> {

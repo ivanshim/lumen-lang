@@ -509,6 +509,14 @@ pub enum Form {
     Fits { value: Box<Form>, test: Rc<CaseTest>, slots: Vec<(String, Address)>, tuple: bool },
     Const(Value),
     Read(Address),
+    /// The same, but the last look a binding gets before a write of
+    /// the run's own puts something else there: the value moves out,
+    /// leaving the binding unset, rather than a clone of it left to
+    /// stand alongside the one now growing from it. A comprehension's
+    /// own gathering place is read this way between its steps, since
+    /// nothing else can see that place, and cloning what it held would
+    /// cost a copy of everything gathered so far on every step.
+    Take(Address),
     /// The same, read as it stands and with nothing said about it: a
     /// binding that holds nothing at all reads as nothing at all, so
     /// that writing it elsewhere leaves that place unwritten too.

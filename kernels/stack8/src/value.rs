@@ -240,7 +240,12 @@ pub struct CursorState {
 
 #[derive(Debug, Clone)]
 pub enum CursorSource {
-    Items(Vec<Value>, usize),
+    /// A row walked place by place from a copy made whole beforehand,
+    /// so that a step forward through it means moving the place the
+    /// walk stands at and nothing more: the row itself is one member
+    /// of the cursor's own state, shared out to every step of it
+    /// rather than copied out and back again at each one.
+    Items(Rc<Vec<Value>>, usize),
     /// A counted row walked place by place, never made whole.
     Counted(Rc<Counted>, BigInt),
     /// A list walked through the cell it lives in, read as it stands at

@@ -1122,6 +1122,15 @@ impl<'a> Builder<'a> {
         Form::Read(self.address_to_read(name))
     }
 
+    /// A read of a binding about to be overwritten by the very form
+    /// that reads it, with nothing else able to see the binding in
+    /// between: a comprehension's own gathering place, read once each
+    /// step and written back a few steps on. The value moves out of
+    /// the binding rather than being cloned out of it.
+    fn read_taking(&mut self, name: &str) -> Form {
+        Form::Take(self.address_to_read(name))
+    }
+
     fn write(&mut self, name: &str, value: Form) -> Form {
         let slot = self.address_to_write(name);
         // `x = x + k` and `x = x - k` step the binding in place.
@@ -7484,7 +7493,7 @@ impl<'a> Builder<'a> {
             if !self.on_any("ext.op.comprehension.for") && !self.on_any("ext.op.comprehension.async") { return Err("Expected a comprehension clause after its expression".into()); }
             self.pos = after_clauses;
             if answer.is_empty() { return Ok(prim_call(if spread { Prim::Delegate } else { Prim::Suspend }, vec![term])); }
-            let so_far = self.read(answer);
+            let so_far = self.read_taking(answer);
             let enlarged = prim_call(Prim::ExtendLiteral(dictionary, spread), vec![so_far, term]);
             return Ok(self.write(answer, enlarged));
         }

@@ -8169,7 +8169,12 @@ impl<'a> Compiler<'a> {
         } else {
             let tail = self.pos;
             self.pos = head;
-            if !result.is_empty() { self.read(result); }
+            // The accumulator is a gensym of the comprehension's own,
+            // read here and written back a few steps on with nothing
+            // else able to see it between the two: a taking read lets
+            // the gather that follows grow the one row in place instead
+            // of cloning everything gathered so far on every item.
+            if !result.is_empty() { self.read_taking(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
             if spread { self.take(); }
             let before_yield = self.yield_operand;
