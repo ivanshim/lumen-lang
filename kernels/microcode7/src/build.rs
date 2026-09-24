@@ -3151,7 +3151,7 @@ impl<'a> Builder<'a> {
         if let (Some(word), false) = (table.strings("ext.stmt.class.annotations").first(), annotated_names.is_empty()) {
             if ranking.iter().all(|old| old != word) { ranking.push(word.clone()); }
             attributes.push(word.clone());
-            held.push(constant(Value::Dict(Rc::new(annotated_names))));
+            held.push(constant(Value::Dict(Rc::new(annotated_names.into()))));
         }
         // The header's keywords ride along as entries under their hidden
         // names, for the building of the class to hand on.

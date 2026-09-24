@@ -1246,6 +1246,49 @@ three waiting branches are pushed to origin: fix/dict-microcode7
 fix/frozenset-kind and fix/function-members (the last two with a
 work-in-progress commit each, unbuilt and unverified).
 
+### 1t. Batch 11 merged as #498; batch 12 is the map store
+
+Pull request #498 merged into main at 77b1cb6 with all six jobs green
+on 145138b. Batch 12 folds one branch, fix/dict-microcode7. A map was
+a row of pairs searched from the front in both full kernels, so a map
+built up key by key cost the square of its size: test_dict never got
+past its fourteenth test on microcode7 within the 900 s cap (the count
+recorded it as running nothing there), and scratch/perf/3, a
+hundred-thousand-entry map, timed out on both kernels. Each kernel's
+map is now its own store (microcode7 `MapStore`, stack8 `KeyedPairs`):
+the pairs together with an index from a key's own address to its
+row, built lazily, owned by the pairs it describes, cleared whenever
+the pairs are reached for by hand (the store's DerefMut), and grown in
+step when a map living alone in its cell is written key by key. A key
+without an address of its own (a thing with its own `__hash__` and
+`__eq__`, a subclass of a number) is not indexed; the store counts
+such keys, and while that count is not zero a miss answers "unknown"
+and the old walk decides, so a plain `3` still finds an entry keyed
+by an int subclass (scratch/builtin-subclassing/7). test_dict now
+finishes on both kernels (76 s stack8, 98 s microcode7 on the debug
+binary) with 71 of 142 passing on each, none lost against stack8's
+earlier line; perf/3 runs in 5 s and 13 s.
+
+Two designs were refused on the way, and why is worth keeping. The
+first kept the index in a thread-local map keyed by the pairs'
+allocation address with a heuristic freshness check (same length,
+same last key); a freed map's box is the first thing the allocator
+hands the next map, so a later map of the same length and last key
+would have passed the check while holding other keys, and a lookup
+would have answered wrongly and silently. The second, the owned
+store, first treated every index miss as proof of absence, which is
+false while the map holds keys the index cannot carry; the scratch
+check caught it on builtin-subclassing/7 before it was folded.
+
+The batch-12 count, taken at 4caa070, stands at stack8 1,268 of 2,536
+and microcode7 1,281 of 2,536: microcode7's total now includes
+test_dict's 142 tests, 71 passing, where before it ran nothing; no
+file lost a pass. Still open on maps: `.get`, `.pop`, `.setdefault`
+and `.update` compare keys with free functions that cannot call
+`__eq__`, so `d.get(a)` answers None for the very object `a` used as
+a key and `setdefault` can insert a duplicate (fix/thing-keys is
+working on it, on top of this store).
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

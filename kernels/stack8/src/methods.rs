@@ -141,7 +141,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         for key in members(&held, fault)? {
             if !pairs.iter().any(|(k, _)| alike(k, &key, words)) { pairs.push((key, filling.clone())); }
         }
-        return Ok(Value::Map(Rc::new(pairs)).held(false));
+        return Ok(Value::Map(Rc::new(pairs.into())).held(false));
     }
     match &held {
         // A real read from its hexadecimal spelling, as float.fromhex reads it.
