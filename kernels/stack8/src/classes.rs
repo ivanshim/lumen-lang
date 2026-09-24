@@ -453,7 +453,24 @@ impl<'a> Engine<'a> {
                 29 if !args.is_empty() => {
                     let subject = args.remove(0);
                     let member = w.1[1].plain();
-                    match self.builtin_member(&subject,&member)? {
+                    let word = w.1[0].plain();
+                    // A thing of a class standing on the very kind this
+                    // word names answers as its worth would, since the
+                    // loose member is the kind's own and not the
+                    // class's: `set.union(s, ...)` for `s` a subclass of
+                    // `set` works upon what `s` keeps of a set.
+                    let receiver = match &subject {
+                        // The worth is kept as it stands, cell and all,
+                        // where it is one that a method writes into (a
+                        // row or a map, behind a cell of its own): the
+                        // writing must reach the very thing the subclass
+                        // instance keeps, not a copy taken out of it.
+                        Value::Object(o) if Self::kind_beneath(&o.class).as_deref() == Some(word.as_ref()) => {
+                            Self::worth_of(&subject).unwrap_or_else(|| subject.clone())
+                        }
+                        _ => subject.clone(),
+                    };
+                    match self.builtin_member(&receiver,&member)? {
                         Some(bound) => self.class_apply(bound,args),
                         None => Err(self.missing_member(&subject,&member)),
                     }
