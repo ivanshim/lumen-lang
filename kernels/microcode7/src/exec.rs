@@ -4709,6 +4709,20 @@ impl<'a> Machine<'a> {
                         return self.names_here(frame, *op).map_err(Escape::Error);
                     }
                     let mut values = self.value_list(args, frame)?;
+                    // A word of a native kind spelled with the entry
+                    // after a dot, such as `str.upper`, calls that
+                    // kind's entry unbound: its first argument is the
+                    // receiver, so a thing of a class standing on the
+                    // very kind the word names works here through what
+                    // it keeps of it, exactly as the loose entry read
+                    // off the kind itself does.
+                    if let Some((word, _)) = name.split_once('.') {
+                        if let Some(Value::Thing(t)) = values.first() {
+                            if Self::native_beneath(&t.of).as_deref() == Some(word) {
+                                if let Some(worth) = Self::underlying(&values[0]) { values[0] = worth; }
+                            }
+                        }
+                    }
                     // A list that a lazy walk is to begin on is not gathered
                     // into a copy: it goes on in its own cell, so the walk
                     // reaches what the body adds and misses what it takes.
@@ -8406,11 +8420,16 @@ impl<'a> Machine<'a> {
                 let outcome = self.prim(operation, &word, &settled);
                 // A thing built on a native kind is named by its own
                 // blueprint where the refusal names the kinds it was
-                // handed, and not by the worth standing beneath it.
+                // handed, and not by the worth standing beneath it: an
+                // arithmetic or bit working refused outright, or two
+                // kinds with no order between them.
                 if let (Err(told), [one, other], [x, y]) = (&outcome, operands, settled.as_slice()) {
                     let sign = self.sign_named(operation);
                     if *told == self.operands_refused(&sign, x, y) {
                         return Err(self.operands_refused(&sign, one, other).into());
+                    }
+                    if matches!(operation, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) && *told == self.unordered_complaint(operation, x, y) {
+                        return Err(self.unordered_complaint(operation, one, other).into());
                     }
                 }
                 return Ok(Some(outcome?));
@@ -9171,7 +9190,19 @@ impl<'a> Machine<'a> {
         if v.len() == 2 && v.iter().any(|item| matches!(item, Value::Set(_))) {
             let rule = match op { Prim::BitsEither => Some(0), Prim::BitsBoth => Some(1), Prim::Minus => Some(2), Prim::BitsOne => Some(3), _ => None };
             if rule.is_some() || matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
-                let (Value::Set(x), Value::Set(y)) = (&v[0], &v[1]) else { return Err(self.set_complaint("operands", "")); };
+                let (Value::Set(x), Value::Set(y)) = (&v[0], &v[1]) else {
+                    // A set sign or a set comparison handed something
+                    // that is no set at all is refused as any other
+                    // working of kinds it means nothing for is: its
+                    // sign and both kinds named, or, for a comparison,
+                    // the words CPython keeps for two kinds with no
+                    // order between them.
+                    return Err(if matches!(op, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                        self.unordered_complaint(op, &v[0], &v[1])
+                    } else {
+                        self.operands_refused(&self.sign_named(op), &v[0], &v[1])
+                    });
+                };
                 let x = x.borrow();
                 let y = y.borrow();
                 return Ok(match rule {
@@ -12029,6 +12060,27 @@ impl<'a> Machine<'a> {
             _ => false,
         };
         if !writes { return Ok(None); }
+        // A compound set sign handed something that is no set is
+        // refused as the plain sign would be, but named for the
+        // thing's own blueprint and with the compound sign it was
+        // written with; the sign is read while the working still
+        // stands compound, so `sign_named` answers `|=` and not `|`.
+        if uniques {
+            if let Prim::SetAssign(operation) = plain {
+                let ordinary = [Prim::BitsEither, Prim::BitsBoth, Prim::Minus, Prim::BitsOne][operation as usize];
+                self.landed += 1;
+                let outcome = self.prim_values(plain, "", &[worth.clone(), given.clone()]);
+                let sign = self.sign_named(ordinary);
+                self.landed -= 1;
+                if let Err(told) = &outcome {
+                    if *told == self.operands_refused(&sign, &worth, given) {
+                        return Err(self.operands_refused(&sign, &place.settled(), given));
+                    }
+                }
+                outcome?;
+                return Ok(Some(place.clone()));
+            }
+        }
         self.prim_values(plain, "", &[worth, given.clone()])?;
         Ok(Some(place.clone()))
     }
