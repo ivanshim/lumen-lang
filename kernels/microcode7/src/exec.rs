@@ -8329,32 +8329,43 @@ impl<'a> Machine<'a> {
     }
 
     fn carries_instance(value: &Value) -> bool {
-        Self::carries_instance_past(value, &mut Vec::new())
+        Self::carries_instance_past(value, &mut Vec::new(), true)
+    }
+
+    /// Whether an operand must go the thing-aware road of a working.
+    /// A set holding things is written out through each thing's own
+    /// words, but its workings (`&`, `|`, `<=` and the rest) already
+    /// ask each thing for its hash and its equality on the plain road,
+    /// the only one that also takes a set's subclass by its worth; so
+    /// a working does not look into a set's members.
+    fn operand_carries_instance(value: &Value) -> bool {
+        Self::carries_instance_past(value, &mut Vec::new(), false)
     }
 
     /// The scan proper, remembering the cells passed through so that a
     /// collection reaching itself is not looked into without end.
-    fn carries_instance_past(value: &Value, passed: &mut Vec<usize>) -> bool {
+    fn carries_instance_past(value: &Value, passed: &mut Vec<usize>, into_sets: bool) -> bool {
         match value {
             Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Thing(_) | Value::Method(..) => true,
             Value::Shared(cell) | Value::Mutable(cell, _) => {
                 let address = Rc::as_ptr(cell) as usize;
                 if passed.contains(&address) { return false; }
                 passed.push(address);
-                Self::carries_instance_past(&cell.borrow(), passed)
+                Self::carries_instance_past(&cell.borrow(), passed, into_sets)
             }
-            Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed)),
-            Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed)),
+            Value::Row(v) | Value::Tuple(v) | Value::Vector(v) => v.iter().any(|item| Self::carries_instance_past(item, passed, into_sets)),
+            Value::Dict(d) => d.iter().flat_map(|(k, v)| [k, v]).any(|item| Self::carries_instance_past(item, passed, into_sets)),
             // A set cannot hold itself (nothing that may be altered is
             // hashable), but one set can stand inside many others, a
             // frozen set of frozen sets most of all; one already looked
             // into held no thing (the walk would have stopped there), so
             // it is passed over the next time rather than walked again.
             Value::Set(store) => {
+                if !into_sets { return false; }
                 let address = Rc::as_ptr(store) as *const () as usize;
                 if passed.contains(&address) { return false; }
                 passed.push(address);
-                store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed)))
+                store.try_borrow().map_or(false, |held| held.entries.iter().any(|(_, item)| Self::carries_instance_past(item, passed, into_sets)))
             }
             _ => false,
         }
@@ -8631,7 +8642,7 @@ impl<'a> Machine<'a> {
             }
             return Ok(None);
         }
-        if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
+        if Self::is_core_primitive(operation) && !operands.iter().any(|v| Self::operand_carries_instance(v) || matches!(v, Value::Cursor(_))) { return Ok(None); }
         if operation == Prim::Belongs { return Ok(None); }
         // Text before the remainder sign lays its own marks out, which
         // is the working the left side's own method names. The value on
@@ -8751,7 +8762,7 @@ impl<'a> Machine<'a> {
                     None => settled.push(operand.clone()),
                 }
             }
-            if changed && !settled.iter().any(|v| Self::carries_instance(v) || matches!(v, Value::Cursor(_))) {
+            if changed && !settled.iter().any(|v| Self::operand_carries_instance(v) || matches!(v, Value::Cursor(_))) {
                 let word = self.table.prims.iter().find(|(_, p)| **p == operation).map(|(w, _)| w.clone()).unwrap_or_default();
                 let outcome = self.prim(operation, &word, &settled);
                 // A thing built on a native kind is named by its own
