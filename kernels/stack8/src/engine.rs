@@ -4056,6 +4056,17 @@ impl<'a> Engine<'a> {
     /// gives the method: a number keeps its parts as members, so those
     /// are read rather than left standing as something to call.
     pub(super) fn bound_value_method(&mut self, target: Value, operation: &str) -> Res<Value> {
+        // A view of a map's keys, values or pairs keeps a reading of
+        // the map itself under this name: a fresh view of its own,
+        // read-only, and equal to the map for as long as it stands.
+        if operation == "mapping" {
+            let raw = match &target {
+                Value::View(v) => Some(v.clone()),
+                Value::Bond(cell) | Value::Binding(cell) => match &*cell.borrow() { Value::View(v) => Some(v.clone()), _ => None },
+                _ => None,
+            };
+            if let Some(view) = raw { return Ok(Value::View(Rc::new((view.0.clone(), "mapping".to_string())))); }
+        }
         let numeric = matches!(target.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_) | Value::Complex(_));
         if numeric && matches!(operation, "numerator" | "denominator" | "real" | "imag") {
             return match target.contents() {
@@ -4088,6 +4099,13 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        // A view of a map's keys, values or pairs keeps a reading of
+        // the map itself under this name: a fresh view of its own,
+        // read-only, and equal to the map for as long as it stands.
+        if name == "mapping" {
+            let raw = match value { Value::View(v) => Some(v.clone()), Value::Bond(cell) | Value::Binding(cell) => match &*cell.borrow() { Value::View(v) => Some(v.clone()), _ => None }, _ => None };
+            if let Some(view) = raw { return Ok(Some(Value::View(Rc::new((view.0.clone(), "mapping".to_string()))))); }
+        }
         let held = value.contents();
         if matches!(held, Value::Object(_) | Value::Class(_)) { return Ok(None); }
         // A walk over a routine's own body answers whether it is on the
@@ -4850,7 +4868,15 @@ impl<'a> Engine<'a> {
                 return match amiss { Some(told) => Err(told), None => Ok(a.clone()) };
             }
         }
-        if matches!(a, Value::Collection(..) | Value::Bond(_)) || matches!(b, Value::Collection(..) | Value::Bond(_)) { return self.special_dyad(op, &a.contents(), &b.contents()); }
+        // Only the side that is actually a cell is opened here: opening
+        // a view of a map's keys, values or pairs the same way would
+        // turn it into the row it stands for before the signs above
+        // that ask after the view itself, `type` and `isinstance`
+        // among them, ever see it.
+        if matches!(a, Value::Collection(..) | Value::Bond(_)) || matches!(b, Value::Collection(..) | Value::Bond(_)) {
+            let opened = |v: &Value| if matches!(v, Value::Collection(..) | Value::Bond(_)) { v.contents() } else { v.clone() };
+            return self.special_dyad(op, &opened(a), &opened(b));
+        }
         // Two slices are alike when their bounds are, each pair asked
         // as the program would ask it; a slice is always its own equal.
         if let ((Value::Slice(x), Value::Slice(y)), true) = ((a, b), matches!(op, Action::Eq | Action::Ne)) {
@@ -4865,12 +4891,16 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
-        // A view standing beside a set under a set sign is turned into
-        // a set first, as the plain working does, but through the road
-        // that asks a thing among its members for its own hash and its
-        // own equality: the plain working's own turning is `&self` and
-        // so cannot call either.
-        if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub) && (matches!(a, Value::View(_)) || matches!(b, Value::View(_))) {
+        // A view standing beside a set under a set sign, or ordered
+        // against one, is turned into a set first, as the plain working
+        // does, but through the road that asks a thing among its
+        // members for its own hash and its own equality: the plain
+        // working's own turning is `&self` and so cannot call either.
+        // The reading of the map itself stands apart: it is no set of
+        // anything and takes none of these signs.
+        let not_mapping = |v: &Value| !matches!(v, Value::View(w) if w.1 == "mapping");
+        if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub | Action::Lt | Action::Le | Action::Gt | Action::Ge)
+            && (matches!(a, Value::View(_)) || matches!(b, Value::View(_))) && not_mapping(a) && not_mapping(b) {
             let turned = |engine: &mut Self, v: &Value| -> Res<Value> {
                 if !matches!(v, Value::View(_)) { return Ok(v.clone()); }
                 let items = match v.contents() { Value::Array(items) => items.as_ref().clone(), _ => Vec::new() };
@@ -6183,6 +6213,7 @@ impl<'a> Engine<'a> {
                     Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
                     Value::Text(text) => text.chars().map(|c| Value::text(&c.to_string())).collect(),
                     Value::Map(pairs) => pairs.iter().map(|(key, _)| match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() }).collect(),
+                    Value::View(_) => match source.contents() { Value::Array(items) => items.as_ref().clone(), _ => Vec::new() },
                     _ => {
                         let kind = source.core_kind();
                         let told = self.apart_fault(&self.lang.unpack_unwalkable, &[kind]);
@@ -8097,6 +8128,26 @@ impl<'a> Engine<'a> {
         // as a set does under the set signs; elsewhere it stands for
         // its items.
         if matches!(a, Value::View(_)) || matches!(b, Value::View(_)) {
+            // The reading of the map itself answers `==` as the map
+            // does: every key with its very value, not merely its keys.
+            if matches!(op, Action::Eq | Action::Ne) && (matches!(a, Value::View(w) if w.1 == "mapping") || matches!(b, Value::View(w) if w.1 == "mapping")) {
+                let pairs_of = |v: &Value| -> Option<Rc<crate::value::KeyedPairs>> {
+                    match v {
+                        Value::Map(pairs) => Some(pairs.clone()),
+                        Value::View(view) if view.1 == "mapping" => match view.0.contents() { Value::Map(pairs) => Some(pairs), _ => None },
+                        _ => None,
+                    }
+                };
+                let equal = match (pairs_of(a), pairs_of(b)) {
+                    (Some(one), Some(other)) => one.len() == other.len() && one.iter().all(|(k, v)| {
+                        let bare = |k: &Value| match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                        let want = bare(k);
+                        other.iter().any(|(k2, v2)| bare(k2).equals(&want) && v.equals(v2))
+                    }),
+                    _ => false,
+                };
+                return Ok(Value::Flag(if matches!(op, Action::Ne) { !equal } else { equal }));
+            }
             if matches!(op, Action::BitBoth | Action::BitEither | Action::BitOne | Action::Sub) {
                 let as_set = |v: &Value| -> Res<Value> {
                     if !matches!(v, Value::View(_)) { return Ok(v.clone()); }
@@ -9561,6 +9612,19 @@ impl<'a> Engine<'a> {
             }
             return Ok(Value::array(items));
         }
+        // A view of a map's keys or its pairs answers `isdisjoint` as a
+        // set does, being turned into one first; a view of its values
+        // is no set and falls to the plain complaint below.
+        let turned;
+        let args = if op == SetDisjoint && matches!(args.first(), Some(Value::View(view)) if view.1 != "values" && view.1 != "mapping") {
+            let Some(Value::View(view)) = args.first() else { unreachable!() };
+            let items = match view.0.contents() { Value::Map(pairs) => pairs.iter().map(|(k, v)| {
+                let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                if view.1 == "keys" { bare } else { Value::Tuple(Rc::new(vec![bare, v.clone()])) }
+            }).collect(), _ => Vec::new() };
+            turned = std::iter::once(Value::Set(Rc::new(RefCell::new(self.set_gathered(items)?)))).chain(args[1..].iter().cloned()).collect::<Vec<_>>();
+            turned.as_slice()
+        } else { args };
         let Some(Value::Set(cell)) = args.first() else { return Err(self.set_said(".operands", "")); };
         let unary = matches!(op, SetPop | SetClear | SetCopy);
         let many = matches!(op, SetUpdate | SetUnion | SetIntersection | SetDifference | SetMeetUpdate | SetLessUpdate);
@@ -11320,7 +11384,18 @@ impl<'a> Engine<'a> {
                 return Ok(original);
             }
         }
-        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice | Builtin::Identity | Builtin::ValueMethod | Builtin::GetAttr) { for value in args.iter_mut() { *value = value.contents(); } }
+        if !matches!(builtin, Builtin::Say | Builtin::List | Builtin::Out | Builtin::Append | Builtin::Replace | Builtin::MakeSlice | Builtin::Identity | Builtin::ValueMethod | Builtin::GetAttr) {
+            for value in args.iter_mut() {
+                // `type` asks after a view itself, keys or values or
+                // pairs, not after the row its members would stand as;
+                // `isdisjoint`, which a view of a map's keys or its
+                // pairs answers to as a set does, needs the view whole
+                // to tell that apart from a view of its values, which
+                // answers to no set working at all.
+                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint) && matches!(value, Value::View(_)) { continue; }
+                *value = value.contents();
+            }
+        }
         if let Some(answer) = self.special_builtin(builtin, args)? { return Ok(answer); }
         if Self::core_builtin(builtin) { return self.core_call(builtin, name, args.clone(), Vec::new()); }
         let sp = self.wording();
@@ -13735,13 +13810,21 @@ impl Engine<'_> {
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
         let living = if b == Builtin::Iter && args.len() == 1 { Self::living_source(&args[0]) } else { None };
-        let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.1.clone()), _ => None };
+        let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one: the value is kept before its cell is opened.
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
-        if !matches!(b, Builtin::Identity | Builtin::Reversed) { for value in &mut args { *value = value.contents(); } }
+        if !matches!(b, Builtin::Identity | Builtin::Reversed) {
+            for value in &mut args {
+                // `isinstance` asks after a view itself, not after the
+                // row its members would stand as, so that a claim made
+                // for its very kind is honoured.
+                if b == Builtin::InstanceOf && matches!(value, Value::View(_)) { continue; }
+                *value = value.contents();
+            }
+        }
         if named.is_empty() {
             if b == Builtin::Hash && matches!(args.first(), Some(Value::Bytes(..))) { return self.byte_call(17, &args); }
             if b == Builtin::InstanceOf && matches!(args.get(1), Some(Value::ByteKind(..))) { return self.byte_call(16, &args); }
@@ -13798,12 +13881,21 @@ impl Engine<'_> {
             Builtin::Repr => {
                 arity(1, 1)?;
                 // A cursor is written by its kind and its identity, and
-                // the writing does not advance it.
-                if matches!(args[0], Value::Cursor(_)) {
+                // the writing does not advance it; so is a walk of this
+                // kernel's own making, such as a map walked backwards,
+                // which the reference words the very same way.
+                let walk_named = matches!(&args[0], Value::Generator(state) if state.try_borrow().map_or(false, |g| g.walked.is_some()));
+                if matches!(args[0], Value::Cursor(_)) || walk_named {
                     let Value::Small(mark) = self.core_call(Builtin::Identity, name, vec![args[0].clone()], Vec::new())? else { return Err(self.core_fault("core.unready", name)) };
                     return Ok(Value::text(&format!("<{} object at 0x{:x}>", args[0].core_kind(), mark)));
                 }
-                if let Some(portion) = window { return Ok(Value::text(&format!("dict_{}({})", portion, args[0].core_repr(self.lang.shortest_reals)))); }
+                if let Some(view) = window {
+                    return Ok(Value::text(&if view.1 == "mapping" {
+                        format!("mappingproxy({})", view.0.contents().core_repr(self.lang.shortest_reals))
+                    } else {
+                        format!("dict_{}({})", view.1, args[0].core_repr(self.lang.shortest_reals))
+                    }));
+                }
                 Value::text(&args[0].core_repr(self.lang.shortest_reals))
             }
             // The ascii builtin writes what the quoting builtin
@@ -13836,6 +13928,7 @@ impl Engine<'_> {
                     Value::Object(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Class(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Cursor(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Generator(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Routine(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Native(b, _) => {
                         let mut state = std::collections::hash_map::DefaultHasher::new();
@@ -13944,7 +14037,13 @@ impl Engine<'_> {
                 // the first, under the same watch as a walk forwards.
                 if Self::map_cell(&args[0]).is_some() {
                     let mut keys = self.comprehension_items(&args[0])?; keys.reverse();
-                    return Ok(self.watched_walk(&args[0], keys));
+                    let walk = self.watched_walk(&args[0], keys);
+                    // A map walked backwards is named for the keys it
+                    // hands out; a view of it walked backwards is named
+                    // for the shape the view itself shows.
+                    let word = match &args[0] { Value::View(view) => crate::value::reversed_view_kind(&view.1), _ => "dict_reversekeyiterator" };
+                    if let Value::Generator(state) = &walk { state.borrow_mut().walked = Some(Rc::from(word)); }
+                    return Ok(walk);
                 }
                 // A byte string belongs here beside the text: what it
                 // holds are numbers, and a walk backwards hands them over

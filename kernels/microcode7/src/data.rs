@@ -502,6 +502,18 @@ pub struct Names<'a> {
     pub keys_by_worth: bool,
 }
 
+/// The word CPython gives a window on a map's keys, values or pairs, or
+/// the read-only reading of the map itself a window keeps beside it.
+pub fn window_kind(portion: char) -> &'static str {
+    match portion { 'k' => "dict_keys", 'v' => "dict_values", 'm' => "mappingproxy", _ => "dict_items" }
+}
+
+/// The word CPython gives a walk taken backwards over a map's keys,
+/// values or pairs.
+pub fn reversed_window_kind(portion: char) -> &'static str {
+    match portion { 'k' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+}
+
 impl Value {
     pub fn point_kept(&self) -> bool {
         match self {
@@ -533,7 +545,10 @@ impl Value {
                 // lies and no part of the key a window upon it shows.
                 for (key,value) in entries.iter() {
                     let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
-                    items.push(if *portion=='k' {bare} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![bare,value.clone()]))});
+                    // A reading of the map itself walks, and is
+                    // measured, the very way its keys are: it is asked
+                    // after by key alone.
+                    items.push(if *portion=='k' || *portion=='m' {bare} else if *portion=='v' {value.clone()} else {Value::Tuple(Rc::new(vec![bare,value.clone()]))});
                 }
             }
             return Value::Vector(Rc::new(items));
@@ -945,6 +960,7 @@ impl Value {
             Value::Mutable(cell, true) => within_cell(cell, |inner| inner.repr(&w)),
             Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
+            Value::Window(owner, 'm') => format!("mappingproxy({})", owner.settled().repr(&w)),
             Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
