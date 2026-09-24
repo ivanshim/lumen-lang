@@ -21,7 +21,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::math::{self, Calc};
 use crate::table::Table;
 use crate::form::{Input, Traps, Form, Prim, Routine, Address, Callee, Clause};
-use crate::data::{Adornment, Among, Found, IteratorKind, IteratorState, Blueprint, Env, Kind, Names, Reach, Thing, Value};
+use crate::data::{Adornment, Among, Found, IteratorKind, IteratorState, Blueprint, Env, Kind, MapStore, Names, Reach, Thing, Value};
 
 /// Which shell the host keeps, and the switch by which it is handed a
 /// command spelled out instead of a file holding one.
@@ -4909,6 +4909,43 @@ impl<'a> Machine<'a> {
                             }
                         }
                     }
+                    // A map grown one key at a time by its own literal or
+                    // comprehension keeps the same store throughout when
+                    // nothing else holds it, so a key written into it
+                    // finds its own place through the store's own
+                    // text-keyed index rather than a scan of every key
+                    // already there, and the store grows in step with the
+                    // pairs instead of being thrown away and rebuilt for
+                    // the next key. A bound name hands its map back
+                    // wrapped in the very cell it came from, so a write
+                    // through it still reaches every other name sharing
+                    // that cell.
+                    if let Prim::ExtendLiteral(true, expanded) = *op {
+                        let grown = match values.first() {
+                            Some(Value::Dict(_)) => true,
+                            Some(Value::Shared(cell)) => matches!(&*cell.borrow(), Value::Dict(_)),
+                            _ => false,
+                        };
+                        if grown && values.len() == 2 {
+                            let item = values.pop().expect("literal item");
+                            let source = values.pop().expect("growing literal");
+                            match source {
+                                Value::Dict(mut prior) => {
+                                    self.extend_dict_grown(&mut prior, &item, expanded)?;
+                                    return Ok(Value::Dict(prior));
+                                }
+                                Value::Shared(cell) => {
+                                    let mut held = cell.borrow_mut();
+                                    if let Value::Dict(prior) = &mut *held {
+                                        self.extend_dict_grown(prior, &item, expanded)?;
+                                    }
+                                    drop(held);
+                                    return Ok(Value::Shared(cell));
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
                     let made = self.prim(*op, name, &values);
                     if let Some(held) = aside { self.text_within = held; }
                     if let Some(away) = self.got_away.take() {
@@ -8176,6 +8213,41 @@ impl<'a> Machine<'a> {
         Ok((None, keyed))
     }
 
+    /// A key written into a store-backed map, in place: `map_locate`'s
+    /// own answer, grown into the pairs on a miss, or written over the
+    /// pair on a hit — the very road a single `d[k] = v` already takes
+    /// for a map alone in its own cell, taken here for a map alone in
+    /// the working stack's care instead, so the store's place grows
+    /// one pair at a time rather than being rebuilt from every pair
+    /// for every key.
+    fn store_write(&mut self, pairs: &mut Rc<MapStore>, key: Value, value: Value) -> Result<(), String> {
+        let store: &MapStore = pairs.as_ref();
+        let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+        match found {
+            Some(at) => Rc::make_mut(pairs).overwrite_at(at, value),
+            None => store_insert_new(pairs, keyed, value),
+        }
+        Ok(())
+    }
+
+    /// A literal or comprehension map grown by one more item: a spread
+    /// map's every pair, or the one pair a plain item couples, each
+    /// written into the store-backed map in its turn through
+    /// `store_write`, so a key already there is kept in its first
+    /// place with its value overwritten, and a new key is added last.
+    fn extend_dict_grown(&mut self, prior: &mut Rc<MapStore>, item: &Value, expanded: bool) -> Result<(), String> {
+        let incoming = match (expanded, item.settled()) {
+            (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
+            (true, Value::Dict(entries)) => entries.to_vec(),
+            _ => return Err(self.table.single("ext.syntax.map.spread.unmapped").unwrap_or("A map spread needs a map").into()),
+        };
+        for (key, value) in incoming {
+            if let Some(words) = self.cannot_key(&key) { return Err(words); }
+            self.store_write(prior, key, value)?;
+        }
+        Ok(())
+    }
+
     /// A pair written over the value its key already holds, or added
     /// last: `enter` in its own words, but able to call `__eq__` for
     /// a key that needs it, which the free function it replaces here
@@ -8260,20 +8332,22 @@ impl<'a> Machine<'a> {
 
     /// `dict.fromkeys`: a new map with a key for each member its
     /// iterable target gives, every one holding the fill value it was
-    /// given, or nothing — deduplicated through `keys_agree` rather
-    /// than the free function `same_item`, so a Thing with its own
-    /// `__eq__` collapses to the one key CPython gives it.
+    /// given, or nothing — deduplicated through `map_locate`, the
+    /// store's own place first and `keys_agree` (rather than the free
+    /// function `same_item`) only where that leaves things unknown, so
+    /// a Thing with its own `__eq__` still collapses to the one key
+    /// CPython gives it, and a target of many keys is not scanned
+    /// again for every one it grows by.
     fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Result<Value, String> {
         let says = |kind: &str| self.method_fault(kind);
         let members = crate::members::gather(target, &says)?;
-        let mut entries: Vec<(Value, Value)> = Vec::new();
+        let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
         for key in members {
-            let keyed = self.hash_key(&key)?;
-            let mut present = false;
-            for (stored, _) in entries.iter() { if self.keys_agree(stored, &keyed)? { present = true; break; } }
-            if !present { entries.push((keyed, filling.clone())); }
+            let store: &MapStore = entries.as_ref();
+            let (found, keyed) = self.map_locate(store, Some(store), &key)?;
+            if found.is_none() { store_insert_new(&mut entries, keyed, filling.clone()); }
         }
-        Ok(Value::Dict(Rc::new(entries.into())).keep(false))
+        Ok(Value::Dict(entries).keep(false))
     }
 
     fn appointment(&self, subject: &Value, index: usize) -> Option<Value> {
@@ -9943,6 +10017,11 @@ impl<'a> Machine<'a> {
                     next.extend(if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] });
                     Value::Vector(Rc::new(next))
                 } else {
+                    // The fast pre-check above the general dispatch takes
+                    // every ordinary literal or comprehension step; a
+                    // call that reaches here instead is handed no more
+                    // than the one map it grows, so paying to clone it
+                    // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
                     let incoming = match &v[1] {
                         Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
@@ -9952,12 +10031,7 @@ impl<'a> Machine<'a> {
                     let mut combined = prior.to_vec();
                     for (key, value) in incoming {
                         if let Some(words) = self.cannot_key(&key) { return Err(words); }
-                        if !self.table.has_any("ext.stmt.class.special") { set_key(&mut combined, key, value); continue; }
-                        let key = self.hash_key(&key)?;
-                        let mut position = 0;
-                        while position < combined.len() && !self.keys_agree(&combined[position].0, &key)? { position += 1; }
-                        if position == combined.len() { combined.push((key, value)); }
-                        else { combined[position].1 = value; }
+                        self.map_enter(&mut combined, key, value)?;
                     }
                     Value::Dict(Rc::new(combined.into()))
                 }
@@ -13289,20 +13363,23 @@ fn assembled(values: Vec<Value>, map_wanted: bool, plain_keys: bool) -> Value {
     if !map_wanted && !values.iter().any(|x| matches!(x, Value::Couple(_))) {
         return Value::Vector(Rc::new(values));
     }
-    let mut entries: Vec<(Value, Value)> = Vec::with_capacity(values.len());
+    // Grown as one store-backed map throughout, so a literal of many
+    // keys writes each one into the pairs it already has rather than
+    // scanning them all again for every key that joins.
+    let mut entries: Rc<MapStore> = Rc::new(Vec::with_capacity(values.len()).into());
     for value in values {
         match value {
             Value::Couple(e) => {
                 let key = if plain_keys { key_as_taken(e.0.clone()) } else { e.0.clone() };
-                set_key(&mut entries, key, e.1.clone())
+                set_key_indexed(&mut entries, key, e.1.clone())
             }
             other => {
-                let key = Value::Small(after_keys(&entries));
-                entries.push((key, other));
+                let key = Value::Small(after_keys(entries.as_ref()));
+                Rc::make_mut(&mut entries).push((key, other));
             }
         }
     }
-    Value::Dict(Rc::new(entries.into()))
+    Value::Dict(entries)
 }
 
 /// One past the highest whole-number key, or nought when there is none.
@@ -13328,6 +13405,47 @@ fn set_key(entries: &mut Vec<(Value, Value)>, key: Value, value: Value) {
             _ => entry.1 = value,
         },
         None => entries.push((key, value)),
+    }
+}
+
+/// Write a key into a store-backed map, in place: the store's own
+/// text-keyed address answers first, for a key of plain, scalar
+/// worth its own address names, and only a key its own address
+/// cannot place — a list, a map, a changeable set, a thing — falls
+/// to the plain walk `set_key` always took, exactly as it always
+/// took it.
+fn set_key_indexed(entries: &mut Rc<MapStore>, key: Value, value: Value) {
+    if let Ok(address) = key.hash_address() {
+        match entries.locate(&address) {
+            Found::Found(at) => return overwrite_or_shared(entries, at, value),
+            Found::Absent => return store_insert_new(entries, key, value),
+            Found::Unknown => {}
+        }
+    }
+    match entries.as_ref().iter().position(|(k, _): &(Value, Value)| k.equals(&key)) {
+        Some(at) => overwrite_or_shared(entries, at, value),
+        None => { Rc::make_mut(entries).push((key, value)); }
+    }
+}
+
+/// A pair written over, or a place keeping a cell that names share
+/// written through instead, not written over.
+fn overwrite_or_shared(entries: &mut Rc<MapStore>, at: usize, value: Value) {
+    if let Value::Shared(cell) = &entries[at].1 {
+        let cell = cell.clone();
+        *cell.borrow_mut() = value;
+    } else {
+        Rc::make_mut(entries).overwrite_at(at, value);
+    }
+}
+
+/// A key already known to be absent, added to a store-backed map's
+/// pairs and, where its own address names it, to the store's place
+/// alongside them, so the next key finds it there without a walk.
+fn store_insert_new(entries: &mut Rc<MapStore>, key: Value, value: Value) {
+    match key.hash_address() {
+        Ok(address) => Rc::make_mut(entries).insert_known_absent(key, address, value),
+        Err(_) => { Rc::make_mut(entries).push((key, value)); }
     }
 }
 
@@ -15100,20 +15218,18 @@ impl Machine<'_> {
                     }
                 }
                 incoming.extend(additions);
-                let mut entries: Vec<(Value, Value)> = Vec::new();
+                // Grown as one store-backed map throughout, so an
+                // iterable of many pairs is not scanned again in full
+                // for every pair it grows by.
+                let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
                 for (key, item) in incoming {
                     // A thing as a key carries its own hash, as it does in
                     // a dictionary literal.
                     let key = if matches!(key, Value::Thing(_)) { self.hash_key(&key)? } else { key };
                     if !matches!(key, Value::Keyed(..)) && key.hash_number().is_none() && !matches!(key, Value::Nil | Value::Frac(_)) { return Err(self.core_complaint("core.unhashable", &key.kind_word())); }
-                    let mut place = None;
-                    for (index, (old, _)) in entries.iter().enumerate() {
-                        let same = if matches!(old, Value::Keyed(..)) || matches!(key, Value::Keyed(..)) { self.keys_agree(old, &key)? } else { as_number(old).equals(&as_number(&key)) };
-                        if same { place = Some(index); break; }
-                    }
-                    match place { Some(index) => entries[index].1 = item, None => entries.push((key, item)) }
+                    self.store_write(&mut entries, key, item)?;
                 }
-                Ok(Value::Dict(Rc::new(entries.into())))
+                Ok(Value::Dict(entries))
             }
             Iterator => {
                 require(1, 2)?;
