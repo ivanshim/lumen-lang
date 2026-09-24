@@ -3922,6 +3922,7 @@ impl<'a> Engine<'a> {
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
                 start: BigInt::from(0), stop: BigInt::from(0), step: BigInt::from(1), name: word.to_string(),
             })),
+            Builtin::MakeSlice => Value::Slice(Rc::new([Value::Null, Value::Null, Value::Null])),
             _ => return None,
         })
     }
@@ -3932,6 +3933,10 @@ impl<'a> Engine<'a> {
     /// the kind before the method is a way to the kind's own maker and
     /// not a member of a value, so it is left out.
     pub(super) fn kind_member_names(&self, sample: &Value) -> Vec<String> {
+        // A slice keeps its bounds and answers to nothing else the
+        // family mechanism below reckons, its own family standing for
+        // no working a program writes in the plain way.
+        if matches!(sample, Value::Slice(_)) { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(family) = Self::native_family(sample) else { return Vec::new() };
         let mut names: Vec<String> = self.lang.class_special.iter().filter(|name| self.native_special(sample, name)).cloned().collect();
         for (spelling, working) in self.lang.value_methods.iter() {
@@ -3946,6 +3951,9 @@ impl<'a> Engine<'a> {
             _ => (&self.lang.text_words, [].as_slice()),
         };
         for label in labels { names.extend(book.get(*label).into_iter().flatten().cloned()); }
+        // A counted row keeps its bounds beside the places it answers
+        // through the methods above.
+        if matches!(family, Kindred::Counted) { names.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
         names.retain(|name| !name.contains('.'));
         names.sort();
         names.dedup();
@@ -4045,10 +4053,14 @@ impl<'a> Engine<'a> {
     /// unbound method is called. Nothing where the word names no
     /// builtin kind, or where that kind carries no such member.
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
-        let Value::Native(_, word) = value else { return None };
-        let sample = self.kind_sample(word)?;
+        let word: Rc<str> = match value {
+            Value::Native(_, word) => word.clone(),
+            Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
+            _ => return None,
+        };
+        let sample = self.kind_sample(&word)?;
         if !self.kind_member_names(&sample).iter().any(|carried| carried == name) { return None; }
-        Some(Self::adapter(29, vec![Value::text(word), Value::text(name)]))
+        Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]))
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
@@ -4568,7 +4580,7 @@ impl<'a> Engine<'a> {
 
     /// The name a complaint gives a value: its class for a thing, and
     /// the core kind for anything else.
-    fn shown_kind(value: &Value) -> String {
+    pub(super) fn shown_kind(value: &Value) -> String {
         match value { Value::Object(o) => o.class.name.clone(), other => other.core_kind() }
     }
 
@@ -11093,7 +11105,27 @@ impl<'a> Engine<'a> {
                 }
                 return self.byte_call(task, args);
             }
-            Builtin::Text(op) => { let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect(); crate::strings::run(op, name, &normalized, self.lang, &sp)? },
+            Builtin::Text(op) => {
+                let normalized: Vec<Value> = args.iter().map(|v| match v.contents() { Value::Tuple(row)=>Value::Array(row), other=>other }).collect();
+                // A word of the text kind spelled with the method after
+                // a dot, such as `str.upper`, is refused as CPython's
+                // unbound method or descriptor is when it is handed no
+                // receiver at all, or one that is no text.
+                if let Some((word, operation)) = name.split_once('.') {
+                    match normalized.first() {
+                        None => {
+                            let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
+                            return if pieces.len() == 3 { Err(format!("{}{word}{}{operation}{}", pieces[0], pieces[1], pieces[2])) } else { Err(crate::strings::fault(self.lang, "receiver")) };
+                        }
+                        Some(Value::Text(_)) => {}
+                        Some(other) => {
+                            let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
+                            return if pieces.len() == 4 { Err(format!("{}{operation}{}{word}{}{}{}", pieces[0], pieces[1], pieces[2], Self::shown_kind(other), pieces[3])) } else { Err(crate::strings::fault(self.lang, "receiver")) };
+                        }
+                    }
+                }
+                crate::strings::run(op, name, &normalized, self.lang, &sp)?
+            },
             Builtin::ClassTool(work) => return self.class_work(work, args.clone()).map_err(|f| f.told(&self.wording())),
             Builtin::Echo => {
                 arity(1)?;

@@ -1156,10 +1156,15 @@ impl Value {
             Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
-            // A method carried by a native kind and read off the kind's
-            // own word stands loose, and is named with that kind.
+            // A method or a data member carried by a native kind and
+            // read off the kind's own word stands loose, and is named
+            // with that kind, under CPython's own word for the
+            // descriptor that carries it.
             Value::Wrapped(60, parts) => match parts.as_slice() {
-                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
+                    Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
+                    None => format!("<method '{word}' of '{kind}' objects>"),
+                },
                 _ => "<member wrapper>".into(),
             },
             Value::Wrapped(..) => "<member wrapper>".into(),
@@ -1214,6 +1219,21 @@ impl Value {
 /// merely for something of one: the reference's own name for that
 /// kind. Nothing for a worth that is one of a kind.
 impl Value {
+    /// Whether an entry read off a native kind's own word is a data
+    /// member rather than a method, for the small set of kinds that
+    /// carry one: what CPython calls the descriptor in its repr, and
+    /// the name `type()` gives it. `int`, `bool` and `float` show an
+    /// attribute; `complex`, `range` and `slice` show a member, as
+    /// CPython 3.11 has it.
+    pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        match kind {
+            "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
+            "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
+            "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
+            _ => None,
+        }
+    }
+
     pub fn kind_it_names(&self) -> Option<String> {
         match self {
             Value::Blueprint(b) => Some(b.name.clone()),

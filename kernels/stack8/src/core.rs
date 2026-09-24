@@ -53,6 +53,14 @@ impl Value {
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
+            // A method or a data member read off a builtin kind's own
+            // word, rather than off a value of it, is a descriptor: a
+            // method's own kind, or a data member's, by the same
+            // reckoning the repr gives it.
+            Value::Adapter(w) if w.0 == 29 => return match w.1.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_string(),
+                _ => "object".to_string(),
+            },
             Value::Routine(_) => "function",
             Value::Method(..) => "method",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
