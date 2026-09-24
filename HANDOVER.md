@@ -1289,6 +1289,55 @@ and `.update` compare keys with free functions that cannot call
 a key and `setdefault` can insert a duplicate (fix/thing-keys is
 working on it, on top of this store).
 
+### 1u. Batch 12 merged as #499; batch 13 is function members and set signs
+
+Pull request #499 merged into main at 7b4be36 with all six jobs green
+on eb8795f. Batch 13 folds two branches.
+
+fix/function-members. A Python lambda was named `{closure}` under the
+hood and only its repr swapped in `<lambda>`, so `(lambda: 1).__name__`
+answered `{closure}`; the reader now names it `<lambda>` itself through
+a Python-only label (`ext.stmt.function.anonymous`), and the repr swap
+is gone. A bound method's repr is CPython's `<bound method C.m of
+<__main__.C object at 0x1>>` and a plain instance's repr carries the
+running module; `f.__qualname__`, a routine's `__call__` read back as
+the routine itself, a generator's `gi_running` (a second label,
+`ext.stmt.yield.running`) and an honest `dir()` for routines, bound
+methods and generators answer as CPython does on both kernels. A bound
+method now counts as carrying its instance for the collection-repr
+cycle guard. Records moved: scratch/dunder-methods/4.out (`<B object>`
+became `<__main__.B object at 0x1>`) and scratch/reader-tail/3.err.
+
+fix/set-operands. A set sign with a non-set operand said the kernels'
+own `set operands must be sets`; both kernels now say CPython's
+`unsupported operand type(s) for |: 'set' and 'list'`, with the
+compound sign for the in-place forms (`|=`, `&=`, `-=`, `^=`) and the
+operand's own class name for a subclass, and a comparison against a
+non-set names a subclass receiver by its class too. A builtin kind's
+loose member (`set.union`, `list.append`, `dict.get`, `str.upper`,
+`int.__add__`, the attribute road of batch 10) now takes an instance
+of a subclass of that kind as its receiver, unwrapping it to its worth
+while keeping the shared cell for list and dict so an in-place write
+still lands; the dotted static-call road that `str.upper` also uses
+got the same unwrapping. test_set (scratch/reader-tail/4) gains the
+twenty-two subclass mutation tests on both kernels; scratch/sets/10
+records CPython's operand wording, now a catchable TypeError rather
+than a bare `PythonError:` line.
+
+The batch-13 count, taken at 309a464, stands at stack8 1,291 of 2,536
+and microcode7 1,304 of 2,536: test_set 436 to 458 and test_grammar 45
+to 46 on each kernel, no file lost a pass. Gaps this round records: a
+kind's loose member given a receiver of the wrong kind (`set.add(5,
+6)`) says AttributeError where CPython says `descriptor 'add' for 'set'
+objects doesn't apply to a 'int' object`, and `hasattr(range,
+"start")` is still False on the kinds (a branch is under way);
+`type(fz | {1}).__name__` answers 'set' until the frozenset kind lands
+(fix/frozenset-kind, finished and waiting for batch 14 with its
+speed-up of test_set's hashing test); printing a set holding a thing
+with its own `__hash__` shows `<object K>` on microcode7 and refuses
+on stack8; a dict comprehension builds in time square to its size on
+microcode7 where the explicit loop is linear.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

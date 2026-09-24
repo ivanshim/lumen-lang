@@ -461,7 +461,19 @@ impl<'a> Machine<'a> {
                         // very one the caller named.
                         let subject=values.remove(0).keep(false);
                         let entry=kept[1].bare();
-                        match self.attribute(&subject,&entry) {
+                        let word=kept[0].bare();
+                        // A thing of a class standing on the very kind
+                        // this word names answers as its worth would,
+                        // since the loose entry is the kind's own and
+                        // not the class's: `set.union(s, ...)` for `s`
+                        // a subclass of `set` works upon what `s` keeps
+                        // of a set.
+                        let receiver=match &subject {
+                            Value::Thing(t) if Self::native_beneath(&t.of).as_deref()==Some(word.as_str()) =>
+                                Self::underlying(&subject).unwrap_or_else(||subject.clone()),
+                            _=>subject.clone(),
+                        };
+                        match self.attribute(&receiver,&entry) {
                             Some(bound)=>self.apply_class_member(bound,values),
                             None=>Err(self.absent_attribute(&subject,&entry)),
                         }
@@ -760,6 +772,17 @@ impl<'a> Machine<'a> {
                 if let Value::Bound(_,env)=&value {for slot in &code.carried{if let Some(i)=code.formal_slots.iter().position(|at|at==slot){if code.taking.as_ref().map_or(true,|rules|matches!(rules[i],'b'|'p')){defaults.push(env.cells.borrow()[*slot].clone());}}}}
                 if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::Tuple(Rc::new(defaults))});
+            }
+            // A routine answers its own call, so reading it back and
+            // calling it does what calling the routine directly does.
+            if key==self.detail("call"){return Ok(value.clone());}
+        }else if let Value::Generator(state)=&value {
+            let running=self.table.strings("ext.stmt.yield.running");
+            if running.first().map_or(false,|w|w==key) {
+                // Running exactly while its own frame is on the way
+                // through the machine, which is exactly when the cell
+                // that holds it cannot be borrowed a second time.
+                return Ok(Value::Flag(state.try_borrow().is_err()));
             }
         }else if let Value::Wrapped(tag,items)=&value {
             if (*tag==4||*tag==5)&&key==self.detail("function"){return Ok(items[0].clone());}
@@ -1106,6 +1129,29 @@ impl<'a> Machine<'a> {
                     names.sort_by_key(|name|name.bare());
                     return Ok(Value::Vector(Rc::new(names)));
                 }
+            }
+            // A routine lists the members it can honestly answer for,
+            // alongside any it was given of its own.
+            if let Value::Routine(_)|Value::Bound(..)=&values[0] {
+                let mut names:Vec<String>=Vec::new();
+                for part in ["name","qualified","doc","module","defaults","call"] {
+                    let word=self.detail(part);
+                    if !word.is_empty() { names.push(word.to_string()); }
+                }
+                if let Some((_,attrs))=self.routine_members.iter().find(|(f,_)|f.equals(&values[0])){names.extend(attrs.holds.borrow().iter().map(|(k,_)|k.clone()));}
+                names.sort();names.dedup();
+                return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
+            }
+            // A walk over a routine's own body lists the walking pair it
+            // answers to (through the mark below) and the few names a
+            // language gives it for stepping it by hand.
+            if let Value::Generator(_)=&values[0] {
+                let mut names=self.native_directory(&values[0]);
+                for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
+                    if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
+                }
+                names.sort();names.dedup();
+                return Ok(Value::Vector(Rc::new(names.iter().map(|s|Value::text(s)).collect())));
             }
             // A native kind, named as the kind itself or held as a value
             // of one, answers the members a value of that kind has: the

@@ -2627,6 +2627,9 @@
   "ext.stmt.for.target.unready": [
     "NotImplementedError: unpacking loop targets are not supported"
   ],
+  "ext.stmt.function.anonymous": [
+    "<lambda>"
+  ],
   "ext.stmt.function.async": [
     "async"
   ],
@@ -2833,6 +2836,9 @@
   ],
   "ext.stmt.yield.from": [
     "from"
+  ],
+  "ext.stmt.yield.running": [
+    "gi_running"
   ],
   "ext.stmt.yield.send": [
     "send"

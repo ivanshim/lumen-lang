@@ -453,7 +453,24 @@ impl<'a> Engine<'a> {
                 29 if !args.is_empty() => {
                     let subject = args.remove(0);
                     let member = w.1[1].plain();
-                    match self.builtin_member(&subject,&member)? {
+                    let word = w.1[0].plain();
+                    // A thing of a class standing on the very kind this
+                    // word names answers as its worth would, since the
+                    // loose member is the kind's own and not the
+                    // class's: `set.union(s, ...)` for `s` a subclass of
+                    // `set` works upon what `s` keeps of a set.
+                    let receiver = match &subject {
+                        // The worth is kept as it stands, cell and all,
+                        // where it is one that a method writes into (a
+                        // row or a map, behind a cell of its own): the
+                        // writing must reach the very thing the subclass
+                        // instance keeps, not a copy taken out of it.
+                        Value::Object(o) if Self::kind_beneath(&o.class).as_deref() == Some(word.as_ref()) => {
+                            Self::worth_of(&subject).unwrap_or_else(|| subject.clone())
+                        }
+                        _ => subject.clone(),
+                    };
+                    match self.builtin_member(&receiver,&member)? {
                         Some(bound) => self.class_apply(bound,args),
                         None => Err(self.missing_member(&subject,&member)),
                     }
@@ -758,6 +775,15 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("code") {return Ok(Self::adapter(7,vec![subject.clone()]));}
                 if name==self.class_word("namespace") { let at=self.function_storage(&subject); return Ok(Value::Fields(self.function_members[at].1.clone())); }
+                // A routine answers its own call, so reading it back and
+                // calling it does what calling the routine does.
+                if name==self.class_word("call") { return Ok(Value::Routine(f.clone())); }
+            }
+            Value::Generator(held) if !self.lang.yield_running.is_empty() && name==self.lang.yield_running[0] => {
+                // Running exactly while its own frame is on the way
+                // through the machine, which is exactly when the cell
+                // that holds it cannot be borrowed a second time.
+                return Ok(Value::Flag(held.try_borrow().is_err()));
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
@@ -1087,6 +1113,29 @@ impl<'a> Engine<'a> {
                         names.sort_by_key(Value::plain);
                         return Ok(Value::array(names));
                     }
+                }
+                // A routine lists the members it can honestly answer
+                // for, alongside any it was given of its own.
+                if let Value::Routine(_)=&one {
+                    let mut names:Vec<String>=vec![];
+                    for part in ["name","qualified","doc","module","defaults","call"] {
+                        let word=self.class_word(part);
+                        if !word.is_empty() { names.push(word.to_string()); }
+                    }
+                    if let Some((_,m))=self.function_members.iter().find(|(v,_)|v.equals(&one)){names.extend(m.fields.borrow().iter().map(|(n,_)|n.clone()));}
+                    names.sort();names.dedup();
+                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
+                }
+                // A walk over a routine's own body lists the walking
+                // pair it answers to (through the family below) and the
+                // few names a language gives it for stepping it by hand.
+                if let Value::Generator(_)=&one {
+                    let mut names=self.kind_member_names(&one);
+                    for words in [&self.lang.yield_close,&self.lang.yield_send,&self.lang.yield_throw,&self.lang.yield_running] {
+                        if let Some(w)=words.first() { names.push(w.clone()); }
+                    }
+                    names.sort();names.dedup();
+                    return Ok(Value::array(names.iter().map(|n|Value::text(n)).collect()));
                 }
                 // A builtin kind, named as the kind itself or held as a
                 // value of one, answers the members a value of that kind
