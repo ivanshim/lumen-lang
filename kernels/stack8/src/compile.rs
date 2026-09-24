@@ -5854,17 +5854,26 @@ impl<'a> Compiler<'a> {
                     self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
                     self.write(&made);
                 }
-                if names_handed { return Ok(()); }
-                // What it stood on is written back into, read again as
-                // the store it is.
-                let footing_at = self.mark();
-                for w in relocated(base, footing_at as i64 - from as i64) {
-                    self.put(w);
+                // A dictionary of names handed out by a builtin is
+                // written into and never written back -- but this is
+                // still one arm of the outer match, so it falls through
+                // to the footing below that restores `self.waiting` and
+                // any hush/mute marks, rather than returning out of the
+                // whole statement with those left disturbed.
+                if names_handed {
+                    Ok(())
+                } else {
+                    // What it stood on is written back into, read again
+                    // as the store it is.
+                    let footing_at = self.mark();
+                    for w in relocated(base, footing_at as i64 - from as i64) {
+                        self.put(w);
+                    }
+                    let was = self.waiting.replace(made);
+                    let stored = self.store_into(footing_at, None, None, "=");
+                    self.waiting = was;
+                    stored
                 }
-                let was = self.waiting.replace(made);
-                let stored = self.store_into(footing_at, None, None, "=");
-                self.waiting = was;
-                stored
             }
             [Instr::Read(slot), ..]
                 if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
