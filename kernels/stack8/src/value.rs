@@ -340,11 +340,58 @@ pub enum Descriptor {
     Bound(Value, Value),
 }
 
+/// A stand-in for the standard library's own scattering, which guards
+/// against an adversary choosing keys on purpose -- a guard a set's own
+/// members, kept by a key already reckoned from `hash_address` rather
+/// than a program's raw text, have no need of. Every member read or
+/// written asks after some key here, so a plainer scattering, quicker
+/// for it, costs nothing membership does not already pay for safety it
+/// does not need.
+#[derive(Default)]
+pub struct FxHasher {
+    hash: usize,
+}
+
+impl FxHasher {
+    const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
+    #[inline]
+    fn add(&mut self, word: usize) {
+        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, mut bytes: &[u8]) {
+        while bytes.len() >= 8 {
+            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
+            bytes = &bytes[8..];
+        }
+        if bytes.len() >= 4 {
+            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
+            bytes = &bytes[4..];
+        }
+        if bytes.len() >= 2 {
+            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
+            bytes = &bytes[2..];
+        }
+        if let Some(&last) = bytes.first() {
+            self.add(last as usize);
+        }
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash as u64
+    }
+}
+
+pub type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
+
 /// The hash finds a member; the row remembers when it first came.
 #[derive(Debug, Clone)]
 pub struct Members {
     pub row: Vec<String>,
-    pub held: std::collections::HashMap<String, Value>,
+    pub held: std::collections::HashMap<String, Value, FxBuildHasher>,
     pub word: String,
     /// Whether these are the members of a set that cannot be changed.
     /// The kind a set is of stands here, beside the members themselves,
@@ -361,7 +408,7 @@ pub struct Members {
 
 impl Members {
     pub fn empty(word: String, fixed: bool) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::new(), word, fixed, folded: std::cell::Cell::new(None) }
+        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None) }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {

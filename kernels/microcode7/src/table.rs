@@ -76,7 +76,7 @@ impl std::hash::Hasher for FxHasher {
     }
 }
 
-type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
+pub(crate) type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
 
 pub struct Table {
     pub ident: String,

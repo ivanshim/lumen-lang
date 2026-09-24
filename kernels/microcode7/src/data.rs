@@ -255,10 +255,16 @@ pub struct Adornment {
 }
 
 /// Members keep both their hash address and their place in the telling.
+//
+// The membership set is scattered by the same plainer, quicker hash
+// the label table reads by: an address here is already the outcome of
+// `hash_address`, not a program's raw text, and nothing about set
+// membership needs the guard against a chosen-key adversary that the
+// standard scattering pays for on every insertion.
 #[derive(Clone, Debug)]
 pub struct SetStore {
     pub entries: Vec<(String, Value)>,
-    pub keys: std::collections::HashSet<String>,
+    pub keys: HashSet<String, crate::table::FxBuildHasher>,
     pub spelling: String,
     /// Whether nothing may alter this store. The kind the set is of is
     /// kept here, beside the entries, so that whoever holds the store
