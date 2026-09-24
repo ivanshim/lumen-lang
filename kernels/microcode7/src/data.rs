@@ -604,6 +604,15 @@ impl Value {
                 Ok(format!("row:{parts:?}"))
             }
             Value::Shared(slot) | Value::Mutable(slot, _) => slot.borrow().hash_address(),
+            // A span is addressed by its three bounds, precisely as a
+            // hashable tuple of them would be; where a bound has no
+            // address of its own, the span is named as the one thing
+            // unhashable, not the bound within it, as `hash` itself
+            // already names it.
+            Value::Span(bounds) => {
+                let parts = bounds.iter().map(Value::hash_address).collect::<Result<Vec<_>, _>>().map_err(|_| "slice")?;
+                Ok(format!("slice:{parts:?}"))
+            }
             Value::Vector(_) => Err("list"),
             Value::Dict(_) => Err("dict"),
             // A sealed set is addressed by what it holds; one that may

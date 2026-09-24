@@ -764,6 +764,14 @@ impl Value {
             let keys = items.iter().map(Value::member_key).collect::<Result<Vec<_>, _>>()?;
             return Ok(format!("tuple:{keys:?}"));
         }
+        // A slice is addressed by its three bounds, precisely as a
+        // hashable tuple of them would be; where a bound has no address
+        // of its own, the slice is named as the one thing unhashable,
+        // not the bound within it, as `hash` itself already names it.
+        if let Value::Slice(bounds) = self {
+            let keys = bounds.iter().map(Value::member_key).collect::<Result<Vec<_>, _>>().map_err(|_| "slice")?;
+            return Ok(format!("slice:{keys:?}"));
+        }
         if let Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) = self { return cell.borrow().member_key(); }
         // A real outside the numbers proper. Either endless number is
         // the one value wherever it is met, since it equals itself; a

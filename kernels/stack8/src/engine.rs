@@ -8086,6 +8086,29 @@ impl<'a> Engine<'a> {
                 };
                 return self.dyadic(op, &as_set(a)?, &as_set(b)?);
             }
+            // A view of a map's values reads no member by member: it
+            // answers equal to nothing but the very view it is, as
+            // CPython leaves it to the default the object kind gives
+            // every value with no equality of its own. A view of a
+            // map's keys or its pairs is a set as far as equality goes,
+            // and answers a set or another such view by what it holds,
+            // ordered or not; anything else it is asked against — a
+            // row, a walk, a value alone — it is no equal of.
+            if matches!(op, Action::Eq | Action::Ne) {
+                let is_values = |v: &Value| matches!(v, Value::View(w) if w.1 == "values");
+                let set_like = |v: &Value| matches!(v, Value::View(w) if w.1 != "values") || matches!(v, Value::Set(_));
+                let equal = if is_values(a) || is_values(b) {
+                    match (a, b) { (Value::View(x), Value::View(y)) => Rc::ptr_eq(x, y), _ => false }
+                } else if set_like(a) && set_like(b) {
+                    let as_set = |v: &Value| -> Res<Value> {
+                        if matches!(v, Value::Set(_)) { return Ok(v.clone()); }
+                        let items = match v.contents() { Value::Array(items) => items.as_ref().clone(), _ => Vec::new() };
+                        Ok(Value::Set(Rc::new(RefCell::new(self.set_from(items)?))))
+                    };
+                    matches!(self.dyadic(&Action::Eq, &as_set(a)?, &as_set(b)?)?, Value::Flag(true))
+                } else { false };
+                return Ok(Value::Flag(if matches!(op, Action::Ne) { !equal } else { equal }));
+            }
             return self.dyadic(op, &a.contents(), &b.contents());
         }
         if matches!(a, Value::Collection(..)) || matches!(b, Value::Collection(..)) { return self.dyadic(op, &a.contents(), &b.contents()); }
@@ -8103,6 +8126,13 @@ impl<'a> Engine<'a> {
         if let Value::Bond(shared) = b {
             let held = shared.borrow().clone();
             return self.dyadic(op, a, &held);
+        }
+        // Two things each standing for a kind, joined by `|`, make the
+        // tuple of them: the very shape `isinstance` and `issubclass`
+        // already read a union of kinds by, so no third shape is needed
+        // to hold one.
+        if matches!(op, Action::BitEither) && self.stands_for_kind(a) && self.stands_for_kind(b) {
+            return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
         }
         // Rows, tuples and text as a language of sequences works them:
         // adding joins two of one kind, multiplying repeats one a whole
@@ -8663,6 +8693,21 @@ impl<'a> Engine<'a> {
             return Err(self.lang.power_overflow[0].clone());
         }
         Ok(Some(crate::value::real_of(raised, arith::DEFAULT_PLACES)))
+    }
+
+    /// One member added into `sum`'s running total: the exact reckoning
+    /// where the two are numbers, and the plain working of `+`
+    /// otherwise — the very working a bare `total + item` already
+    /// goes through, dunders and all — so a member `+` itself refuses
+    /// (a dict, another sum unready for it) is refused in the very
+    /// words `+` already gives for those two kinds, one it joins (a
+    /// row, a tuple) joins, and one a class answers `__add__` for
+    /// answers as that class would.
+    fn sum_added(&mut self, total: &Value, item: &Value) -> Res<Value> {
+        match arith::calculate(Operation::Plus, total, item) {
+            Some(answer) => Ok(answer?),
+            None => self.special_dyad(&Action::Add, total, item),
+        }
     }
 
     fn dyadic_numbers(&self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
@@ -12108,30 +12153,42 @@ impl<'a> Engine<'a> {
             Builtin::Sum => {
                 if args.is_empty() || args.len() > 2 { return Err(format!("{}() expects one or two arguments", name)); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
-                if let Value::Flag(b) = total { total = Value::Small(i64::from(b)); }
+                // A start already text or a row of bytes is refused
+                // before a single member is read, in the words naming
+                // the very kind it is, the way CPython refuses summing
+                // any of the three rather than let `+` name what met it.
+                let word_at = match &total {
+                    Value::Text(_) => Some(0),
+                    Value::Bytes(_, false, _) => Some(1),
+                    Value::Bytes(_, true, _) => Some(2),
+                    _ => None,
+                };
+                if let Some(at) = word_at { return Err(self.lang.sum_non_number.get(at).cloned().unwrap_or_default()); }
+                // A start that meets nothing to add to itself is handed
+                // back exactly as it was given, a flag among them: a
+                // flag turns to a whole number only where an addition
+                // actually asks that of it, not merely for standing
+                // where a sum might have needed one.
                 // A counted row is added up from its bounds alone. The
                 // places are never made, so a row of a thousand million
                 // costs no more than a row of three.
                 if let Value::Counted(row) = args[0].contents() {
                     let length = row.length();
-                    let gathered = match length == BigInt::from(0) {
-                        true => BigInt::from(0),
-                        false => (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2,
-                    };
-                    return Ok(arith::calculate(Operation::Plus, &total, &Value::of_big(gathered))
-                        .ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_default())??);
+                    if length == BigInt::from(0) { return Ok(total); }
+                    let gathered = (&row.start + (&row.start + (&length - 1) * &row.step)) * &length / 2;
+                    return self.sum_added(&total, &Value::of_big(gathered));
                 }
                 if self.lang.yield_suspends {
                     let Value::Generator(walk) = self.iterator(args[0].clone()).map_err(|f| f.told(&self.wording()))? else { unreachable!() };
                     while let Some(item) = self.resume_generator(&walk, Value::Null).map_err(|f| f.told(&self.wording()))? {
                         let number = match item { Value::Flag(flag) => Value::Small(i64::from(flag)), other => other };
-                        total = arith::calculate(Operation::Plus, &total, &number).ok_or_else(|| self.lang.sum_non_number[0].clone())??;
+                        total = self.sum_added(&total, &number)?;
                     }
                     return Ok(total);
                 }
                 for item in self.comprehension_items(&args[0])? {
                     let item = match item { Value::Flag(b) => Value::Small(i64::from(b)), other => other };
-                    total = arith::calculate(Operation::Plus, &total, &item).ok_or_else(|| self.lang.sum_non_number.first().cloned().unwrap_or_else(|| "Invalid collection argument".to_string()))??;
+                    total = self.sum_added(&total, &item)?;
                 }
                 total
             }
