@@ -10,6 +10,6 @@ case.assertRegex('ac', '^ab*c$')
 case.assertNotRegex('abc', '^b.')
 case.assertNotRegex('a\nb', 'a.b')
 case.assertRegex('a.b', 'a\\.b')
-with case.assertWarns(warnings.UserWarning):
-    warnings.warn('old spelling', warnings.UserWarning)
+with case.assertWarns(UserWarning):
+    warnings.warn('old spelling', UserWarning)
 print('assertions passed')

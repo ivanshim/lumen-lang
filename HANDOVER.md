@@ -1409,6 +1409,16 @@ a class body's `locals()` is not live and writable; microcode7's
 test_scope testScopeOfGlobalStmt and test_listcomps
 test_explicit_global resolve a shadowed global wrongly.
 
+CI's scratch job on #501 found three programs the integration's own
+scratch list had not included: `str.maketrans({...})` was refused as a
+wrong receiver on both kernels (the kind's one static method now
+passes the receiver check), and scratch/unittest-2/regex-warning-
+assertions read `warnings.UserWarning`, which CPython's warnings module
+does not have and stack8 found only through the function-local leak
+the class-namespace fold closed; the program now names `UserWarning`
+as CPython requires. microcode7 still answers a module attribute the
+module does not define from the builtins, a divergence left recorded.
+
 ## 2. What is waiting on branches
 
 Nothing with a pull request. Twenty-five were open when this began, all

@@ -9872,8 +9872,10 @@ impl<'a> Machine<'a> {
                 // A word of the text kind spelled with the method after
                 // a dot, such as `str.upper`, is refused as CPython's
                 // unbound method or descriptor is when it is handed no
-                // receiver at all, or one that is no text.
-                if let Some((word, entry)) = name.split_once('.') {
+                // receiver at all, or one that is no text. The one
+                // static method of the kind, which builds a table and
+                // takes no text of its own, is let through.
+                if let (Some((word, entry)), false) = (name.split_once('.'), work == crate::text::Work::MAKETRANS) {
                     match values.first() {
                         None => {
                             let words = self.table.strings("ext.stmt.class.detail.descriptor.unbound");

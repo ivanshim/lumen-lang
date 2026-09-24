@@ -11189,8 +11189,10 @@ impl<'a> Engine<'a> {
                 // A word of the text kind spelled with the method after
                 // a dot, such as `str.upper`, is refused as CPython's
                 // unbound method or descriptor is when it is handed no
-                // receiver at all, or one that is no text.
-                if let Some((word, operation)) = name.split_once('.') {
+                // receiver at all, or one that is no text. The kind's
+                // one static method, which builds a table and has no
+                // text of its own, is let through.
+                if let (Some((word, operation)), false) = (name.split_once('.'), op == crate::strings::TextOp::Maketrans) {
                     match normalized.first() {
                         None => {
                             let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
