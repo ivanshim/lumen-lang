@@ -1158,15 +1158,35 @@ impl Value {
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
             // A kind's own method read from the kind itself is bound to
-            // nothing and is written with the kind it belongs to.
+            // nothing and is written with the kind it belongs to; a data
+            // member reads the same way, but under CPython's own word
+            // for the descriptor that carries it.
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
-                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
+                    Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
+                    None => format!("<method '{word}' of '{kind}' objects>"),
+                },
                 _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
+        }
+    }
+
+    /// Whether a loose member, read off a builtin kind's own word, is a
+    /// data member rather than a method, for the small set of kinds
+    /// that carry one: what CPython calls the descriptor in its repr,
+    /// and the name `type()` gives it. `int`, `bool` and `float` show
+    /// an attribute; `complex`, `range` and `slice` show a member, as
+    /// CPython 3.11 has it.
+    pub(crate) fn loose_member_descriptor(kind: &str, name: &str) -> Option<(&'static str, &'static str)> {
+        match kind {
+            "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
+            "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
+            "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
+            _ => None,
         }
     }
 

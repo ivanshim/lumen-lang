@@ -48,7 +48,16 @@ impl Value {
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
-            Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
+            Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
+            // A method or a data member read off a native kind's own
+            // word, rather than off a value of it, is a descriptor: a
+            // method's own kind, or a data member's, by the same
+            // reckoning the repr gives it.
+            Self::Wrapped(60, parts) => return match parts.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
+                _ => "object".to_owned(),
+            },
+            _ => "object",
         };
         word.to_owned()
     }

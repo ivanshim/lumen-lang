@@ -5047,6 +5047,7 @@ impl<'a> Machine<'a> {
             Prim::Dictionary => Value::Dict(Rc::new(Vec::new().into())),
             Prim::Uniques => Value::Set(Rc::new(RefCell::new(crate::data::SetStore::new(word)))),
             Prim::Octets(kind) => Value::Octets { cell: Rc::new(RefCell::new(Vec::new())), changeable: *kind == 1, lead: Rc::from(word) },
+            Prim::SpanOf => Value::Span(Rc::new(vec![Value::Nil, Value::Nil, Value::Nil])),
             _ => return None,
         })
     }
@@ -5057,6 +5058,10 @@ impl<'a> Machine<'a> {
     /// before the method leads to the kind's own maker rather than to a
     /// member of a value, so it is passed over.
     pub(super) fn native_directory(&self, sample: &Value) -> Vec<String> {
+        // A span keeps its bounds and answers to nothing else the mark
+        // mechanism below reckons, its own mark standing for no working
+        // a program writes in the plain way.
+        if let Value::Span(_) = sample { return vec!["start".to_string(), "step".to_string(), "stop".to_string()]; }
         let Some(mark) = Self::native_mark(sample) else { return Vec::new() };
         let mut gathered = Vec::new();
         for name in self.table.strings("ext.stmt.class.special") {
@@ -5080,6 +5085,9 @@ impl<'a> Machine<'a> {
             if !wanted { continue; }
             gathered.extend(self.table.strings(label).iter().filter(|word| !word.contains('.')).cloned());
         }
+        // A count of a row keeps its bounds beside the places it answers
+        // through the methods above.
+        if mark == 'p' { gathered.extend(["start", "stop", "step"].iter().map(|s| s.to_string())); }
         gathered.sort();
         gathered.dedup();
         gathered
@@ -5334,10 +5342,14 @@ impl<'a> Machine<'a> {
     /// word names no native kind, or where that kind carries nothing
     /// under the name.
     pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
-        let Value::Intrinsic(_, word) = value else { return None };
-        let stand_in = self.kind_stand_in(word)?;
+        let word: String = match value {
+            Value::Intrinsic(_, word) => word.to_string(),
+            Value::OctetKind { changeable, .. } => self.octet_kind_word(*changeable).to_string(),
+            _ => return None,
+        };
+        let stand_in = self.kind_stand_in(&word)?;
         if self.native_directory(&stand_in).binary_search(&name.to_string()).is_err() { return None; }
-        Some(Value::Wrapped(60, Rc::new(vec![Value::text(word), Value::text(name)])))
+        Some(Value::Wrapped(60, Rc::new(vec![Value::text(&word), Value::text(name)])))
     }
 
     fn attribute(&self, value: &Value, name: &str) -> Option<Value> {
@@ -9454,7 +9466,27 @@ impl<'a> Machine<'a> {
             Prim::SetCall(which) => self.work_set(which, v)?,
             Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
             Prim::StartContext | Prim::DistinctObjects => return Err(self.bad_answer()),
-            Prim::Textual(work) => { let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect(); crate::text::apply(self.table, work, name, &values, self.wording())? },
+            Prim::Textual(work) => {
+                let values: Vec<Value> = v.iter().map(|x| match x.settled() { Value::Tuple(row)=>Value::Vector(row), other=>other }).collect();
+                // A word of the text kind spelled with the method after
+                // a dot, such as `str.upper`, is refused as CPython's
+                // unbound method or descriptor is when it is handed no
+                // receiver at all, or one that is no text.
+                if let Some((word, entry)) = name.split_once('.') {
+                    match values.first() {
+                        None => {
+                            let words = self.table.strings("ext.stmt.class.detail.descriptor.unbound");
+                            return if words.len() == 3 { Err(format!("{}{word}{}{entry}{}",words[0],words[1],words[2])) } else { Err(crate::text::complaint(self.table, "receiver")) };
+                        }
+                        Some(Value::Text(_)) => {}
+                        Some(other) => {
+                            let words = self.table.strings("ext.stmt.class.detail.descriptor.foreign");
+                            return if words.len() == 4 { Err(format!("{}{entry}{}{word}{}{}{}",words[0],words[1],words[2],other.kind_word(),words[3])) } else { Err(crate::text::complaint(self.table, "receiver")) };
+                        }
+                    }
+                }
+                crate::text::apply(self.table, work, name, &values, self.wording())?
+            },
             Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
             Prim::SliceBounds => Value::Span(Rc::new(v.to_vec())),
             // A step onward or back adds or takes away one, save on text

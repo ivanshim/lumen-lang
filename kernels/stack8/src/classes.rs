@@ -450,10 +450,22 @@ impl<'a> Engine<'a> {
                 // A member a builtin kind carries, standing loose: the
                 // first value it is called with is the one it works
                 // upon, and the rest are what the member itself takes.
-                29 if !args.is_empty() => {
-                    let subject = args.remove(0);
+                // Called with none at all, it names the kind and itself
+                // as CPython's unbound method does; handed a receiver
+                // of the wrong kind, it names the member, the kind and
+                // the receiver's own, as CPython's descriptor does.
+                29 => {
                     let member = w.1[1].plain();
                     let word = w.1[0].plain();
+                    if args.is_empty() {
+                        let pieces = self.lang.class_details.get("descriptor.unbound").cloned().unwrap_or_default();
+                        return if pieces.len() == 3 {
+                            Err(format!("{}{word}{}{member}{}", pieces[0], pieces[1], pieces[2]).into())
+                        } else {
+                            Err(self.class_refusal())
+                        };
+                    }
+                    let subject = args.remove(0);
                     // A thing of a class standing on the very kind this
                     // word names answers as its worth would, since the
                     // loose member is the kind's own and not the
@@ -472,7 +484,14 @@ impl<'a> Engine<'a> {
                     };
                     match self.builtin_member(&receiver,&member)? {
                         Some(bound) => self.class_apply(bound,args),
-                        None => Err(self.missing_member(&subject,&member)),
+                        None => {
+                            let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
+                            if pieces.len() == 4 {
+                                Err(format!("{}{member}{}{word}{}{}{}", pieces[0], pieces[1], pieces[2], Self::shown_kind(&receiver), pieces[3]).into())
+                            } else {
+                                Err(self.missing_member(&subject,&member))
+                            }
+                        }
                     }
                 }
                 4 | 8 => self.class_apply(w.1[0].clone(),args),
@@ -940,6 +959,9 @@ impl<'a> Engine<'a> {
             // kind as well; a routine and a method are of kinds the
             // definition does not name, so they take the words for them.
             [Value::Adapter(_)] if self.kind_spelled(&args[0]).is_some()=>Ok(self.kind_maker_word()),
+            // A method or a data member read off a builtin kind's own
+            // word is of the descriptor kind CPython gives it.
+            [Value::Adapter(w)] if w.0==29=>Ok(self.named_kind(&args[0])),
             [Value::Routine(_)]|[Value::Method(..)]=>Ok(self.named_kind(&args[0])),
             [Value::Text(name),Value::Array(bases),Value::Map(members)] | [Value::Text(name),Value::Tuple(bases),Value::Map(members)] => {
                 let mut parents=vec![];for b in bases.iter(){if let Value::Class(c)=b{parents.push(c.clone());}else{return Err(self.class_refusal());}}

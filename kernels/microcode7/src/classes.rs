@@ -455,13 +455,26 @@ impl<'a> Machine<'a> {
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
                     // upon, the rest being what the entry itself takes.
-                    60 if !values.is_empty()=>{
+                    // Called with none at all, it names the kind and
+                    // itself as CPython's unbound method does; handed a
+                    // receiver of the wrong kind, it names the entry,
+                    // the kind and the receiver's own, as CPython's
+                    // descriptor does.
+                    60=>{
+                        let entry=kept[1].bare();
+                        let word=kept[0].bare();
+                        if values.is_empty() {
+                            let words=self.table.strings("ext.stmt.class.detail.descriptor.unbound");
+                            return if words.len()==3 {
+                                Err(format!("{}{word}{}{entry}{}",words[0],words[1],words[2]).into())
+                            } else {
+                                Err(self.class_unready())
+                            };
+                        }
                         // The value comes in as the cell that holds
                         // it, so a member that writes writes into the
                         // very one the caller named.
                         let subject=values.remove(0).keep(false);
-                        let entry=kept[1].bare();
-                        let word=kept[0].bare();
                         // A thing of a class standing on the very kind
                         // this word names answers as its worth would,
                         // since the loose entry is the kind's own and
@@ -475,7 +488,14 @@ impl<'a> Machine<'a> {
                         };
                         match self.attribute(&receiver,&entry) {
                             Some(bound)=>self.apply_class_member(bound,values),
-                            None=>Err(self.absent_attribute(&subject,&entry)),
+                            None=>{
+                                let words=self.table.strings("ext.stmt.class.detail.descriptor.foreign");
+                                if words.len()==4 {
+                                    Err(format!("{}{entry}{}{word}{}{}{}",words[0],words[1],words[2],receiver.kind_word(),words[3]).into())
+                                } else {
+                                    Err(self.absent_attribute(&subject,&entry))
+                                }
+                            }
                         }
                     }
                     4|8=>self.apply_class_member(kept[0].clone(),values),
@@ -933,6 +953,9 @@ impl<'a> Machine<'a> {
         // so each takes the word the reference gives its kind; an
         // intrinsic word read as a class is of the kind builder's kind.
         if let [Value::Routine(_)|Value::Bound(..)|Value::Method(..)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
+        // A method or a data member read off a native kind's own word
+        // is of the descriptor kind CPython gives it.
+        if let [Value::Wrapped(60,_)]=values.as_slice(){return Ok(self.kind_named_after(&values[0]));}
         if values.len()==1 && self.kind_spelling(&values[0]).is_some() {return Ok(self.kind_builder_word());}
         // A class is of the kind that built it: the metaclass named for
         // it or for a class it is built on, and otherwise the kind

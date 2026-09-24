@@ -1408,7 +1408,11 @@ only. The extension labels so far, all from PHP:
   class that declared it, so that two classes of one line naming the
   same slot keep two. `descriptor.foreign` gives four pieces enclosing
   the slot's name, its class and the class of a thing it does not apply
-  to. Decorators are then ordinary expressions applied to the member,
+  to; a builtin kind's own loose member, called on a receiver of the
+  wrong kind, is refused the same way. `descriptor.unbound` gives three
+  pieces enclosing a builtin kind's own word and a loose member's name,
+  for that member called with no receiver at all. Decorators are then
+  ordinary expressions applied to the member,
   the wrapping builtins among them; the `property` builtin becomes a
   class a program may stand on, whose things keep their accessors and
   answer the protocol with them. `property.fget`, `property.fset` and
@@ -4802,6 +4806,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.descriptor.get` | - | - | `__get__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.name` | - | - | `__set_name__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.descriptor.set` | - | - | `__set__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.descriptor.unbound` | - | - | `TypeError: unbound method ` `.` `() needs an argument` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.doc` | - | - | `__doc__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.function` | - | - | `__func__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.get` | - | - | `__getattribute__` | - | - | - | - | - | - | - |

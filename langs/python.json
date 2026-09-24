@@ -2441,6 +2441,11 @@
     "' objects doesn't apply to a '",
     "' object"
   ],
+  "ext.stmt.class.detail.descriptor.unbound": [
+    "TypeError: unbound method ",
+    ".",
+    "() needs an argument"
+  ],
   "ext.stmt.class.detail.descriptor.get": [
     "__get__"
   ],
