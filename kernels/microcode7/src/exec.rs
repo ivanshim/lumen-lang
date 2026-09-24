@@ -9385,6 +9385,18 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// One member added into `sum`'s running total: the exact reckoning
+    /// where the two are numbers, and the plain working of `+`
+    /// otherwise, so a member `+` itself refuses is refused in the
+    /// very words `+` already gives, and one it joins (a row, a tuple)
+    /// joins.
+    fn sum_added(&mut self, total: &Value, item: &Value) -> Result<Value, String> {
+        match math::compute(Calc::Plus, total, item) {
+            Some(answer) => answer,
+            None => self.prim(Prim::Plus, "+", &[total.clone(), item.clone()]),
+        }
+    }
+
     /// Literal members keep their cells. Other operations ask the
     /// contents of their arguments, leaving those cells where they were.
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
@@ -9586,6 +9598,34 @@ impl<'a> Machine<'a> {
             }
             return self.prim(op, name, &as_sets);
         }
+        // A view of a map's values reads equal to nothing but the very
+        // view it is, the default the object kind gives a value with
+        // no equality of its own, as CPython leaves it. A view of a
+        // map's keys or its pairs is a set as far as equality goes,
+        // and answers a set or another such view by what it holds;
+        // anything else — a row, a walk, a value alone — it is no
+        // equal of.
+        if matches!(op, Prim::Eq | Prim::Ne) && v.iter().any(|value| matches!(value, Value::Window(..))) {
+            if let [a, b] = v {
+                let is_values = matches!(a, Value::Window(_, 'v')) || matches!(b, Value::Window(_, 'v'));
+                let equal = if is_values {
+                    match (a, b) { (Value::Window(x, xp), Value::Window(y, yp)) => Rc::ptr_eq(x, y) && xp == yp, _ => false }
+                } else {
+                    let set_like = |value: &Value| matches!(value, Value::Window(..)) || matches!(value, Value::Set(_));
+                    if set_like(a) && set_like(b) {
+                        let mut sets = Vec::new();
+                        for value in [a, b] {
+                            sets.push(match value {
+                                Value::Set(_) => value.clone(),
+                                _ => Value::Set(Rc::new(RefCell::new(self.gather_set(Some(&value.settled()))?))),
+                            });
+                        }
+                        matches!(self.prim(Prim::Eq, name, &sets)?, Value::Flag(true))
+                    } else { false }
+                };
+                return Ok(Value::Flag(if op == Prim::Ne { !equal } else { equal }));
+            }
+        }
         if v.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Window(..)))
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()) {
@@ -9593,6 +9633,15 @@ impl<'a> Machine<'a> {
             return self.prim(op, name, &settled);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
+        // Two things each standing for a kind, joined by `|`, make the
+        // tuple of them: the very shape `isinstance` and `issubclass`
+        // already read a union of kinds by, so no third shape is
+        // needed to hold one.
+        if let (Prim::BitsEither, [a, b]) = (op, v) {
+            if self.stands_for_a_kind(a) && self.stands_for_a_kind(b) {
+                return Ok(Value::Tuple(Rc::new(vec![a.clone(), b.clone()])));
+            }
+        }
         // Rows, tuples and text as a language of sequences works them.
         // Anything the sequences have no say in falls through to the
         // readings below, as it would were there no such language.
@@ -11925,33 +11974,49 @@ impl<'a> Machine<'a> {
             }
             Prim::Total => {
                 if !(1..=2).contains(&v.len()) { return Err(format!("{}() expects one or two arguments", name)); }
+                // A start already text or a row of octets is refused
+                // before a single member is read, in the words naming
+                // the very kind it is, the way CPython refuses summing
+                // any of the three rather than let `+` name what met it.
+                let word_at = match v.get(1) {
+                    Some(Value::Text(_)) => Some(0),
+                    Some(Value::Octets { changeable: false, .. }) => Some(1),
+                    Some(Value::Octets { changeable: true, .. }) => Some(2),
+                    _ => None,
+                };
+                if let Some(at) = word_at {
+                    return Err(self.table.strings("ext.builtin.sum.non_number").get(at).cloned().unwrap_or_default());
+                }
+                // A start that meets nothing to add to itself is
+                // handed back exactly as it was given, a flag among
+                // them: a flag turns to a whole number only where an
+                // addition actually asks that of it, never merely for
+                // standing where a sum might have needed one.
                 // The total of a stepped walk follows from its three
                 // numbers; the places are never laid out, so a walk of
                 // a thousand million adds up as quickly as a short one.
                 if let Value::Progression(walk) = v[0].settled() {
                     let how_many = walk.count();
-                    let added = if how_many == BigInt::from(0) { BigInt::from(0) }
-                        else { (&walk.first + (&walk.first + (&how_many - 1) * &walk.stride)) * &how_many / 2 };
-                    let opening = match v.get(1).cloned() { Some(Value::Flag(flag)) => Value::Small(flag as i64), Some(given) => given, None => Value::Small(0) };
-                    return math::compute(Calc::Plus, &opening, &Value::from_big(added))
-                        .unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()));
+                    let opening = v.get(1).cloned().unwrap_or(Value::Small(0));
+                    if how_many == BigInt::from(0) { return Ok(opening); }
+                    let added = (&walk.first + (&walk.first + (&how_many - 1) * &walk.stride)) * &how_many / 2;
+                    return self.sum_added(&opening, &Value::from_big(added));
                 }
                 if self.table.flag("ext.stmt.yield.suspends") {
                     let Value::Generator(walk) = self.make_iterator(v[0].clone()).map_err(|fault| self.suspension_fault(fault))? else { unreachable!() };
                     let counted = |value| if let Value::Flag(flag) = value { Value::Small(flag as i64) } else { value };
-                    let mut answer = counted(v.get(1).cloned().unwrap_or(Value::Small(0)));
+                    let mut answer = v.get(1).cloned().unwrap_or(Value::Small(0));
                     loop {
                         let item = self.resume(&walk, Value::Nil).map_err(|fault| self.suspension_fault(fault))?;
                         let Some(item) = item else { return Ok(answer) };
-                        answer = math::compute(Calc::Plus, &answer, &counted(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or_default().to_string()))?;
+                        answer = self.sum_added(&answer, &counted(item))?;
                     }
                 }
-                let start = v.get(1).cloned().unwrap_or(Value::Small(0));
                 let number = |x| match x { Value::Flag(flag) => Value::Small(flag as i64), x => x };
                 let members = self.gathered_members(&v[0])?;
-                members.into_iter().try_fold(number(start), |prior, item| {
-                    math::compute(Calc::Plus, &prior, &number(item)).unwrap_or_else(|| Err(self.table.single("ext.builtin.sum.non_number").unwrap_or("Invalid collection argument").into()))
-                })?
+                let mut total = v.get(1).cloned().unwrap_or(Value::Small(0));
+                for item in members { total = self.sum_added(&total, &number(item))?; }
+                total
             }
             Prim::Span if self.table.flag("ext.builtin.range.value") => {
                 let wrong = || self.argument_fault("ext.syntax.call.amiss", None);

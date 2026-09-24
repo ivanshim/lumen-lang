@@ -4450,7 +4450,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.stream.read` | - | - | `__stream_read` | - | - | - | - | - | - | - |
 | `ext.builtin.stream.write` | - | - | `__stream_write` | - | - | - | - | - | - | - |
 | `ext.builtin.sum` | - | - | `sum` | - | - | - | - | - | - | - |
-| `ext.builtin.sum.non_number` | - | - | `TypeError: sum needs numbers` | - | - | - | - | - | - | - |
+| `ext.builtin.sum.non_number` | - | - | `TypeError: sum() can't sum strings [use ''.join(seq) instead]` `TypeError: sum() can't sum bytes [use b''.join(seq) instead]` `TypeError: sum() can't sum bytearray [use b''.join(seq) instead]` | - | - | - | - | - | - | - |
 | `ext.builtin.text.capitalize` | - | - | `capitalize` `str.capitalize` | - | - | - | - | - | - | - |
 | `ext.builtin.text.casefold` | - | - | `casefold` `str.casefold` | - | - | - | - | - | - | - |
 | `ext.builtin.text.center` | - | - | `center` `str.center` | - | - | - | - | - | - | - |
