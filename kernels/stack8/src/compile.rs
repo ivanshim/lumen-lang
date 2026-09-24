@@ -5724,7 +5724,7 @@ impl<'a> Compiler<'a> {
         // written back into whatever it stood on.
         // A dictionary of names handed out by a builtin is a footing
         // too, written into where it lives and never written back.
-        let names_handed = matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::OuterNames | Builtin::NearNames | Builtin::Vars, _), 0)));
+        let names_handed = matches!(target.first(), Some(Instr::Act(Action::Builtin(Builtin::OuterNames | Builtin::NearNames | Builtin::Vars | Builtin::ClassLocalsPlace, _), 0)));
         let footing: Option<Vec<Instr>> = match key_at.first() {
             Some(at) if *at > from + 1 || names_handed => Some(target[..at - from].to_vec()),
             _ => None,
@@ -8452,7 +8452,24 @@ impl<'a> Compiler<'a> {
             // out rather than glanced at, since what it would show --
             // nothing written, or what a pass before it left -- is
             // never the answer the reference gives.
-            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() && !self.writing_place => {
+            // A place written through `locals()[k] = v` in a class
+            // body must reach a dictionary of the body's own, never
+            // the world's: the world's own dictionary, what a class
+            // body otherwise has no place of its own to fall back to,
+            // keeps itself in step with every program name both ways
+            // once it exists, so writing into it there would reach a
+            // name of the module's own by the name a member merely
+            // happens to share. `ClassLocalsPlace` stands in for
+            // `locals()` at exactly the one place the assembler
+            // already knows how to write through a builtin's answer
+            // without writing it back anywhere (`names_handed`,
+            // below): each time it is read it answers a dictionary
+            // fresh and empty, thrown away once the write is done.
+            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() && self.writing_place => {
+                self.act(Action::Builtin(Builtin::ClassLocalsPlace, Rc::from(name)), 0);
+                Ok(())
+            }
+            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() => {
                 self.class_names_map();
                 Ok(())
             }
