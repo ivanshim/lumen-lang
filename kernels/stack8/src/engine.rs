@@ -13507,7 +13507,14 @@ impl Engine<'_> {
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
-            fields.push((name.clone(), shared));
+            // A name a function or a method kept for its own use took a
+            // slot here too, since every name does, but only a name a
+            // write actually bound at the module's own outermost scope
+            // is one the module carries: the rest never left the frame
+            // that held them.
+            if local.globals.contains(name) {
+                fields.push((name.clone(), shared));
+            }
         }
         for name in &self.lang.module_names {
             if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }

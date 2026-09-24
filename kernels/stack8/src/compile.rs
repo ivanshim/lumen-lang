@@ -51,6 +51,14 @@ pub struct Registry {
     /// those the library standing ahead of it bound: only the former
     /// stand in front of a builtin word spelled the same.
     pub program_bound: std::collections::HashSet<String>,
+    /// The names a write has actually bound at the outermost scope,
+    /// whether by a plain assignment standing outside every function
+    /// and block or by a `global`/`static` declaration reaching back
+    /// out to it: a module built from this registry shows only these
+    /// as its own, so a name a function merely keeps for itself, which
+    /// took a slot here too since every name does, is not mistaken for
+    /// one the module carries.
+    pub globals: std::collections::HashSet<String>,
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,
@@ -719,6 +727,7 @@ impl<'a> Compiler<'a> {
             }
         }
         if let Some(cell) = self.global_cell(name) {
+            self.registry.globals.insert(name.to_string());
             return cell;
         }
         if self.lang.closes_over && !self.discovering && self.piece().nonlocals.iter().any(|n| n == name) {
@@ -731,6 +740,7 @@ impl<'a> Compiler<'a> {
             if in_program {
                 self.registry.program_bound.insert(name.to_string());
             }
+            self.registry.globals.insert(name.to_string());
             return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
