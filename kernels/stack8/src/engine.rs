@@ -6477,6 +6477,25 @@ impl<'a> Engine<'a> {
                 if self.fuller_classes() {
                     let mut members=take(&plan.shared_names);
                     members.extend(plan.methods.iter().map(|(n,p)|(n.clone(),Value::Routine(p.clone()))));
+                    // The body's own live namespace, where it made one,
+                    // stands last and settles every member it governs:
+                    // its current pairs replace whatever a place of the
+                    // same name still holds, and a member `del` took out
+                    // of it -- the name itself, or through `locals()` --
+                    // never lands among the class's own at all.
+                    if plan.has_book {
+                        if let Some(book) = given.next() {
+                            if let Value::Map(pairs) = book.contents() {
+                                for (key, value) in pairs.iter() {
+                                    if matches!(key, Value::Text(_)) {
+                                        let named = key.plain();
+                                        members.retain(|(old, _)| old != &named);
+                                        members.push((named, value.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // The values arrive in the order the body wrote
                     // them, the methods last of all; the namespace the
                     // class shows names them in the order the body

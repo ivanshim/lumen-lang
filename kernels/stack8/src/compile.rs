@@ -23,6 +23,7 @@
 // into SkipCmp.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
@@ -121,6 +122,19 @@ struct ClassBody {
     uncertain: Vec<String>,
     arms: usize,
     unready: bool,
+    /// The place the body's own `locals()`/`vars()` is kept in, made
+    /// the first time either is asked for or written through there.
+    /// A second asking reads the very dictionary the first one made,
+    /// as CPython's own class body does, and every member the body
+    /// binds after keeps it in step.
+    book: Option<String>,
+    /// Every name a statement of the body has bound as a plain member
+    /// (never a method or a nested class), once `book` exists: what
+    /// becomes of the class's member by that name is settled by
+    /// `book` alone from then on, so a `del` through `locals()` -- or
+    /// of the name itself -- leaves the class with no such member,
+    /// rather than the value its place still happens to hold.
+    book_tracked: HashSet<String>,
 }
 
 /// The program being assembled.
@@ -852,6 +866,39 @@ impl<'a> Compiler<'a> {
             self.put(Instr::Read(slot));
             return;
         }
+        // A name the class body has never bound at compile time may
+        // still be one `locals()[k] = v` bound there while the body
+        // ran, past what the body itself ever wrote: CPython looks
+        // such a name up by LOAD_NAME, through the very dictionary
+        // `locals()` there answers with, before it falls back to the
+        // scope around the class or beyond it. Once the body has made
+        // that dictionary, a name it does not know at compile time is
+        // asked of it first, and only falls through to the ordinary
+        // reading below where the dictionary does not have it either.
+        if self.in_class_body() && !name.starts_with('#') {
+            if let Some(book) = self.gathering().book.clone() {
+                self.constant(Value::text(name));
+                self.read(&book);
+                self.act(Action::Contains, 2);
+                let missing = self.skip();
+                self.read(&book);
+                self.constant(Value::text(name));
+                self.act(Action::At, 2);
+                let done = self.leap();
+                self.land(missing);
+                self.read_fallback(name);
+                self.land(done);
+                return;
+            }
+        }
+        self.read_fallback(name);
+    }
+
+    /// What `read` falls back to for a name the class body's own live
+    /// namespace does not answer for, or has none of: the ordinary
+    /// reading of a name, exactly as before this file's namespace was
+    /// given a dictionary of its own.
+    fn read_fallback(&mut self, name: &str) {
         if self.refuse_uncarried(name) { return; }
         // The name a language gives the line it is written on stands
         // for that line itself, known while assembling.
@@ -942,6 +989,97 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Whether the class body about to be read spells `locals` or
+    /// `vars` anywhere among its own tokens, a nested block's included,
+    /// but never a block that has already closed by the time this
+    /// asks. The body's own namespace, where either turns up, is made
+    /// before the first statement of the body runs rather than at the
+    /// first use found while reading it: a write through `locals()`
+    /// as the body's very first statement needs somewhere of its own
+    /// to land before the write runs, not made as part of the write.
+    /// Answering `true` where neither word is truly read there costs
+    /// the body a namespace it never asks for again; answering `false`
+    /// where one is would leave that first write nowhere to land, so
+    /// this leans toward `true` wherever the words merely turn up.
+    fn class_body_names_locals(&self, from: usize, inline: bool) -> bool {
+        let mut depth = 0i32;
+        for token in &self.tokens[from..] {
+            match token.shape {
+                Shape::Finish => break,
+                Shape::Open if !inline => depth += 1,
+                Shape::Close if !inline => {
+                    if depth == 0 { break; }
+                    depth -= 1;
+                }
+                Shape::LineEnd if inline && depth == 0 => break,
+                Shape::Sign if inline && depth == 0 && self.lang.ends_stmt(&token.lexeme) => break,
+                Shape::Instr if token.lexeme == "locals" || token.lexeme == "vars" => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// The place the class body's own `locals()`/`vars()` is kept in,
+    /// made the first time either is asked for or written through
+    /// there: a plain map seeded with every member the body has bound
+    /// so far, the very way `class_names_map` snapshots one, but kept
+    /// under a name of its own so a later asking reads the very
+    /// dictionary this one made, and every member the body binds
+    /// after this point keeps it in step. A second asking, or one
+    /// from a nested asking of the same body, answers with the same
+    /// place.
+    fn class_book(&mut self) -> String {
+        if let Some(book) = self.gathering().book.clone() { return book; }
+        self.class_names_map();
+        let book = self.gensym("locals");
+        self.write(&book);
+        self.gathering().book = Some(book.clone());
+        book
+    }
+
+    /// After a class member's value has just been written to the
+    /// place it is kept in, mirrored into the body's own live
+    /// namespace as well, once that namespace exists: so `locals()`
+    /// asked for again there sees it, and so does a bare name read of
+    /// a name the body has not bound at compile time (`ns['w'] = 5`
+    /// followed by `w`, past what the body itself ever wrote). Where
+    /// no namespace has been made yet the member's place is the only
+    /// place it is kept, exactly as before. The name is remembered as
+    /// one the namespace now governs either way, so a later `del` --
+    /// of it, or through `locals()` -- leaves the class with no such
+    /// member once a namespace does exist, rather than the value its
+    /// place still happens to hold.
+    fn mirror_member(&mut self, name: &str, place: &str) -> Res<()> {
+        if !self.in_class_body() { return Ok(()); }
+        self.gathering().book_tracked.insert(name.to_string());
+        let Some(book) = self.gathering().book.clone() else { return Ok(()); };
+        let from = self.mark();
+        self.read(&book);
+        self.constant(Value::text(name));
+        self.act(Action::At, 2);
+        let was_waiting = self.waiting.replace(place.to_string());
+        let result = self.store_into(from, None, None, "=");
+        self.waiting = was_waiting;
+        result
+    }
+
+    /// The companion of `mirror_member` for `del name` read in a class
+    /// body: the name is taken out of the body's own namespace too,
+    /// once that namespace exists and once the name is one the body
+    /// has ever mirrored there -- a method or a nested class, kept
+    /// only in its place, is left to the place alone, exactly as
+    /// before.
+    fn mirror_forget(&mut self, name: &str) -> Res<()> {
+        if !self.in_class_body() || !self.gathering().book_tracked.contains(name) { return Ok(()); }
+        let Some(book) = self.gathering().book.clone() else { return Ok(()); };
+        self.read(&book);
+        self.constant(Value::text(name));
+        self.act(Action::Builtin(Builtin::Erase, Rc::from("unset")), 2);
+        self.write(&book);
+        Ok(())
+    }
+
     /// What the class body being read has gathered so far.
     fn gathering(&mut self) -> &mut ClassBody {
         self.gathered.last_mut().expect("a class body being read")
@@ -1022,8 +1160,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn write(&mut self, name: &str) {
+        let member = if self.in_class_body() { self.member_of(name) } else { None };
         let slot = self.cell_to_write(name);
         self.put(Instr::Write(slot));
+        if let Some(place) = member {
+            let _ = self.mirror_member(name, &place);
+        }
     }
 
     /// The store after a taking load: addressed like the load, so the
@@ -4023,11 +4165,12 @@ impl<'a> Compiler<'a> {
             match wrapped || self.gathering().arms > 0 || reaches_out {
                 true => self.member_kept(&named, &slot),
                 false => {
-                    self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot);
+                    self.class_names.last_mut().expect("a class body").1.insert(named.clone(), slot.clone());
                     self.member_ordered(&named);
-                    self.gathering().methods.push((named, method));
+                    self.gathering().methods.push((named.clone(), method));
                 }
             }
+            self.mirror_member(&named, &slot)?;
         } else if self.on_keyword(&lang.pass_words) {
             self.take();
         } else if self.look().shape == Shape::Quote {
@@ -4046,6 +4189,7 @@ impl<'a> Compiler<'a> {
             let slot = self.member_place(&named, "nested");
             self.write(&slot);
             self.member_kept(&named, &slot);
+            self.mirror_member(&named, &slot)?;
         } else if lang.blocks == Blocks::Indented && self.on_keyword(&lang.if_words) {
             self.class_branch()?;
         } else if lang.blocks == Blocks::Indented && (self.on_keyword(&lang.for_words) || self.on_keyword(&lang.while_words)
@@ -4077,6 +4221,7 @@ impl<'a> Compiler<'a> {
                 let slot = self.member_place(&named, "attribute");
                 self.write(&slot);
                 self.member_kept(&named, &slot);
+                self.mirror_member(&named, &slot)?;
             }
         } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
             && Lang::spells(&lang.annotation_marks, &self.look_ahead(1).lexeme) {
@@ -4092,6 +4237,7 @@ impl<'a> Compiler<'a> {
                 let slot = self.member_place(&named, "attribute");
                 self.write(&slot);
                 self.member_kept(&named, &slot);
+                self.mirror_member(&named, &slot)?;
             }
         } else if self.look().shape == Shape::Instr && !lang.keywords.contains(&self.look().lexeme)
             && self.look_ahead(1).shape == Shape::Sign && lang.compound.contains_key(&self.look_ahead(1).lexeme) {
@@ -4182,9 +4328,23 @@ impl<'a> Compiler<'a> {
         for (from, _) in spans {
             let name = self.tokens[from].lexeme.clone();
             let Some(place) = self.member_of(&name) else {
-                self.gathering().unready = true;
-                self.pos = end;
-                return Ok(());
+                // A name the body never bound at compile time may
+                // still be one `locals()[k] = v` bound there while
+                // the body ran: `del` of it is a `del` through the
+                // body's own namespace all the same, once that
+                // namespace exists. With none at all this walk has
+                // no place to follow the name to, and the class is
+                // refused as it always was.
+                let Some(book) = self.gathering().book.clone() else {
+                    self.gathering().unready = true;
+                    self.pos = end;
+                    return Ok(());
+                };
+                self.read(&book);
+                self.constant(Value::text(&name));
+                self.act(Action::Builtin(Builtin::Erase, Rc::from("unset")), 2);
+                self.write(&book);
+                continue;
             };
             let cell = self.cell_to_write(&place);
             self.put(Instr::Forget(cell));
@@ -4193,7 +4353,8 @@ impl<'a> Compiler<'a> {
             held.shared.retain(|(old, _)| old != &name);
             held.order.retain(|old| old != &name);
             held.shared.push((name.clone(), place));
-            if !held.uncertain.iter().any(|n| n == &name) { held.uncertain.push(name); }
+            if !held.uncertain.iter().any(|n| n == &name) { held.uncertain.push(name.clone()); }
+            self.mirror_forget(&name)?;
         }
         self.pos = end;
         Ok(())
@@ -4221,6 +4382,7 @@ impl<'a> Compiler<'a> {
             let place = self.member_place(&named, "attribute");
             self.write(&place);
             self.member_kept(&named, &place);
+            self.mirror_member(&named, &place)?;
         }
         Ok(())
     }
@@ -4375,7 +4537,15 @@ impl<'a> Compiler<'a> {
         let body_at = self.mark();
         let order = shared.iter().map(|(named, _)| named.clone()).collect();
         self.gathered.push(ClassBody { methods: Vec::new(), shared, order, annotated: Vec::new(),
-            documentation, uncertain: Vec::new(), arms: 0, unready });
+            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        // A body that spells `locals` or `vars` anywhere in it is
+        // given its own namespace before its first statement runs, so
+        // a write through either as the body's first statement finds
+        // somewhere of its own already standing, not made as part of
+        // the write.
+        if self.class_body_names_locals(self.pos, inline) {
+            self.class_book();
+        }
         let mut opening = true;
         while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
             let heads_the_body = std::mem::take(&mut opening);
@@ -4388,7 +4558,7 @@ impl<'a> Compiler<'a> {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
             self.take();
         }
-        let ClassBody { methods, mut shared, mut order, annotated, uncertain, unready, .. } = self.gathered.pop().expect("the class body just read");
+        let ClassBody { methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
         self.class_names.pop();
         self.class_globals.pop();
         self.within = outer;
@@ -4407,10 +4577,20 @@ impl<'a> Compiler<'a> {
             if !order.iter().any(|old| old == word) { order.push(word.clone()); }
             shared.push((word.clone(), slot));
         }
-        let mut count = shared.len();
+        // A member the body's own live namespace governs -- one it
+        // has mirrored a write of -- is settled by that namespace
+        // alone from here on, its current pairs read in at the very
+        // end: a `del`, of the name or through `locals()`, has already
+        // left the class without it there, rather than the value its
+        // place still happens to hold.
+        let pushed: Vec<(String, String)> = match &book {
+            Some(_) => shared.iter().filter(|(named, _)| !book_tracked.contains(named)).cloned().collect(),
+            None => shared.clone(),
+        };
+        let mut count = pushed.len();
         if let Some(under) = &base { self.read(under); count += 1; }
         for held in &further { self.read(held); count += 1; }
-        for (named, place) in &shared {
+        for (named, place) in &pushed {
             // A member only an arm of a conditional writes to may never
             // have been written, and reading its place outright would
             // stop the run. It is glanced at instead, and what holds
@@ -4429,9 +4609,14 @@ impl<'a> Compiler<'a> {
                 self.put(Instr::Forget(cell));
             }
         }
+        let has_book = book.is_some();
+        if let Some(book_place) = &book {
+            self.read(book_place);
+            count += 1;
+        }
         let plan = Plan { name: name.clone(), answers: further.len(), field_names: Vec::new(), field_reach: Vec::new(),
-            shared_names: shared.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some(),
-            member_order: order };
+            shared_names: pushed.into_iter().map(|(n, _)| n).collect(), constant_names: Vec::new(), methods, extends: base.is_some(),
+            member_order: order, has_book };
         self.act(Action::Forge(Rc::new(plan)), count);
         if self.class_names.last().map_or(false, |(depth, _)| *depth == self.pieces.len()) {
             let private = self.gensym("class");
@@ -4552,7 +4737,7 @@ impl<'a> Compiler<'a> {
         let field_names = names(fields, self, &mut argc);
         let shared_names = names(shared, self, &mut argc);
         let constant_names = names(constants, self, &mut argc);
-        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: base.is_some(), member_order: Vec::new() };
+        let plan = Plan { name: name.clone(), answers: answers.len(), field_names, field_reach: reaches, shared_names, constant_names, methods, extends: base.is_some(), member_order: Vec::new(), has_book: false };
         self.act(Action::Forge(Rc::new(plan)), argc);
         let filed = self.class_key(&name);
         self.write_global(&filed);
@@ -8544,33 +8729,18 @@ impl<'a> Compiler<'a> {
         // of any builtin word spelled the same, where the language says so.
         let bound = self.lang.shadow_builtins && self.registry.program_bound.contains(name);
         match self.lang.builtins.get(name).copied().filter(|b| !b.set_method() && !bound) {
-            // A class body keeps its own names apart from the rest of
-            // the program's, in the places its members already read
-            // and write through, so `locals()` read there answers with
-            // those places' current values instead of the world's. A
-            // member only a conditional's arm may have bound is left
-            // out rather than glanced at, since what it would show --
-            // nothing written, or what a pass before it left -- is
-            // never the answer the reference gives.
-            // A place written through `locals()[k] = v` in a class
-            // body must reach a dictionary of the body's own, never
-            // the world's: the world's own dictionary, what a class
-            // body otherwise has no place of its own to fall back to,
-            // keeps itself in step with every program name both ways
-            // once it exists, so writing into it there would reach a
-            // name of the module's own by the name a member merely
-            // happens to share. `ClassLocalsPlace` stands in for
-            // `locals()` at exactly the one place the assembler
-            // already knows how to write through a builtin's answer
-            // without writing it back anywhere (`names_handed`,
-            // below): each time it is read it answers a dictionary
-            // fresh and empty, thrown away once the write is done.
-            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() && self.writing_place => {
-                self.act(Action::Builtin(Builtin::ClassLocalsPlace, Rc::from(name)), 0);
-                Ok(())
-            }
-            Some(Builtin::NearNames) if argc == 0 && self.in_class_body() => {
-                self.class_names_map();
+            // A class body's `locals()` is CPython's own class
+            // namespace, not a picture of it: a write through it
+            // (`locals()[k] = v`) is seen by a later bare name read in
+            // the same body, becomes a member of the class the body
+            // forms, and a second `locals()` there answers with the
+            // very dictionary the first one gave, `is` and all. `book`
+            // is that dictionary, made the first time either arm below
+            // is read; both arms simply read it, so a write through
+            // the one and an asking from the other agree.
+            Some(Builtin::NearNames | Builtin::Vars) if argc == 0 && self.in_class_body() => {
+                let book = self.class_book();
+                self.read(&book);
                 Ok(())
             }
             // `eval` read where a class body stands, handed no
