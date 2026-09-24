@@ -3711,6 +3711,149 @@ impl<'a> Engine<'a> {
         self.special_truth(&equal)
     }
 
+    /// Where a key given to one of a map's own methods stands among its
+    /// rows, answered exactly as the subscript road answers it: the
+    /// lookup's own place first, and the program's own equality —
+    /// which `alike`, a free function, cannot call — only where the
+    /// place itself cannot say. The keyed form of the key comes back
+    /// beside the place, ready to store should the key be new.
+    fn map_locate(&mut self, pairs: &[(Value, Value)], store: Option<&crate::value::KeyedPairs>, key: &Value) -> Res<(Option<usize>, Value)> {
+        let keyed = self.special_key(key)?;
+        if let (Some(store), Ok(keytext)) = (store, keyed.member_key()) {
+            match store.locate(&keytext) {
+                Placement::AtRow(at) => return Ok((Some(at), keyed)),
+                Placement::NotThere => return Ok((None, keyed)),
+                Placement::Uncertain => {}
+            }
+        }
+        for (position, (old, _)) in pairs.iter().enumerate() {
+            if self.special_keys_equal(old, &keyed)? { return Ok((Some(position), keyed)); }
+        }
+        Ok((None, keyed))
+    }
+
+    /// A row written over the value its key already holds, or added
+    /// last: `put_key` in its own words, but able to call `__eq__` for
+    /// a key that needs it, which the free function it stands beside
+    /// cannot.
+    fn map_enter(&mut self, pairs: &mut Vec<(Value, Value)>, key: Value, value: Value) -> Res<()> {
+        let keyed = self.special_key(&key)?;
+        for entry in pairs.iter_mut() {
+            if self.special_keys_equal(&entry.0, &keyed)? { entry.1 = value; return Ok(()); }
+        }
+        pairs.push((keyed, value));
+        Ok(())
+    }
+
+    /// The cell a map method's receiver stands in, written over with a
+    /// new set of rows, exactly as `methods::call`'s own `store` writes it.
+    fn replace_map(&mut self, receiver: &Value, pairs: Vec<(Value, Value)>) -> Res<()> {
+        let Value::Collection(cell, _) = receiver else { return Err(self.lang.method_errors["unready"].clone()); };
+        let new_value = Value::Map(Rc::new(pairs.into()));
+        if crate::methods::reaches(&new_value, cell, 0) { return Err(self.lang.method_errors["unready"].clone()); }
+        *cell.borrow_mut() = new_value;
+        Ok(())
+    }
+
+    /// `get`, `setdefault` and `pop`: the one key each is asked about is
+    /// looked for by the road `map_locate` takes, so a Thing with its
+    /// own `__eq__` is found by it and an int subclass by the plain int
+    /// it is worth, exactly as `d[key]` finds them.
+    fn dict_key_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>) -> Res<Value> {
+        if args.is_empty() || args.len() > 2 { return Err(self.lang.method_errors["arguments"].clone()); }
+        if matches!(args[0].contents(), Value::Array(_) | Value::Map(_)) { return Err(self.lang.method_errors["arguments"].clone()); }
+        let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+        let pairs = store.to_vec();
+        let (found, keyed) = self.map_locate(&pairs, Some(store.as_ref()), &args[0])?;
+        if let Some(index) = found {
+            let value = pairs[index].1.clone();
+            if operation == "pop" {
+                let mut remaining = pairs;
+                remaining.remove(index);
+                self.replace_map(receiver, remaining)?;
+            }
+            return Ok(value);
+        }
+        if operation == "pop" && args.len() == 1 {
+            return Err(self.lang.method_errors["key"].clone() + &args[0].representation(&self.wording()));
+        }
+        let value = args.get(1).cloned().unwrap_or(Value::Null);
+        if operation == "setdefault" {
+            let mut grown = pairs;
+            grown.push((keyed, value.clone()));
+            self.replace_map(receiver, grown)?;
+        }
+        Ok(value)
+    }
+
+    /// `update`: each pair goes in as it is met, through `map_enter`, so
+    /// that the pairs read before an ill-shaped one are kept when the
+    /// call stops on it, as they were before, and a key that needs
+    /// `__eq__` to find its place is found by it.
+    fn dict_update(&mut self, receiver: &Value, args: Vec<Value>, named: &[(String, Value)]) -> Res<Value> {
+        if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+        let Value::Map(store) = receiver.contents() else { return Err(self.lang.method_errors["unready"].clone()); };
+        let mut pairs = store.to_vec();
+        let mut amiss = None;
+        if let Some(v) = args.first() {
+            match v.contents() {
+                Value::Map(p) => { for (k, v) in p.iter() { self.map_enter(&mut pairs, k.clone(), v.clone())?; } }
+                other => {
+                    for item in crate::methods::members(&other, &|k| self.lang.method_errors[k].clone())? {
+                        let pair = crate::methods::members(&item, &|k| self.lang.method_errors[k].clone())?;
+                        if pair.len() != 2 { amiss = Some(self.lang.method_errors["arguments"].clone()); break; }
+                        self.map_enter(&mut pairs, pair[0].clone(), pair[1].clone())?;
+                    }
+                }
+            }
+        }
+        if amiss.is_none() { for (k, v) in named { self.map_enter(&mut pairs, Value::text(k), v.clone())?; } }
+        self.replace_map(receiver, pairs)?;
+        match amiss { Some(told) => Err(told), None => Ok(Value::Null) }
+    }
+
+    /// `dict.fromkeys`: a new map with a row for each member its
+    /// iterable target gives, every one holding the fill value it was
+    /// given, or nothing — deduplicated through `special_keys_equal`
+    /// rather than the free function `alike`, so a Thing with its own
+    /// `__eq__` collapses to the one key CPython gives it.
+    fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Res<Value> {
+        let items = crate::methods::members(target, &|k| self.lang.method_errors[k].clone())?;
+        let mut pairs: Vec<(Value, Value)> = Vec::new();
+        for key in items {
+            let keyed = self.special_key(&key)?;
+            let mut present = false;
+            for (old, _) in pairs.iter() { if self.special_keys_equal(old, &keyed)? { present = true; break; } }
+            if !present { pairs.push((keyed, filling.clone())); }
+        }
+        Ok(Value::Map(Rc::new(pairs.into())).held(false))
+    }
+
+    /// Whether two maps hold the same rows, key for key, by the very
+    /// road the subscript takes rather than `mapping_equality`'s
+    /// `same_place`/`equals`, which cannot call a key's own `__eq__`:
+    /// same length, and every key of the one found among the other's
+    /// through `special_keys_equal`, its value equal to the one paired
+    /// with it there. A value that is itself a Thing keeps to
+    /// `mapping_equality`; only a map's own keys need the interpreter
+    /// to compare them.
+    fn maps_equal(&mut self, one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> Res<bool> {
+        if one.len() != other.len() { return Ok(false); }
+        // Each key of the one is sought among the other's through
+        // `map_locate`, which is the lookup's own place first and a
+        // walk only where the place cannot say — so a map of plain
+        // keys stays the linear comparison it always was, and only a
+        // map with a Thing among its keys pays for the walk.
+        for (key, value) in one.iter() {
+            let (found, _) = self.map_locate(other, Some(other), key)?;
+            match found {
+                Some(index) if self.mapping_equality(value, &other[index].1) => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
     fn special_value(&self, value: &Value, place: usize) -> Option<Value> {
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
@@ -4582,6 +4725,16 @@ impl<'a> Engine<'a> {
             return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
         }
         if self.lang.class_special.is_empty() { return self.dyadic(op, a, b); }
+        // Two maps set against each other by the sign go the road the
+        // subscript takes for their keys — `dyadic`'s own `==`, reached
+        // for a plain map from below, is `&self` and so cannot call a
+        // key's own `__eq__`.
+        if let (Action::Eq | Action::Ne, Value::Map(one), Value::Map(other)) = (op, a, b) {
+            if self.lang.unordered_maps {
+                let alike = self.maps_equal(one, other)?;
+                return Ok(Value::Flag(alike == matches!(op, Action::Eq)));
+            }
+        }
         if let Value::Fields(o) = a {
             let entries = o.fields.borrow().iter().filter(|(_, v)| !matches!(v, Value::Blank)).map(|(k, v)| (Value::text(k), v.clone())).collect();
             return self.special_dyad(op, &Value::Map(Rc::new(entries)), b);
@@ -9630,6 +9783,27 @@ impl<'a> Engine<'a> {
             if meddled { return Err(format!("\0{}", self.lang.sort_modified[0])); }
             return Ok(Value::Null);
         }
+        // A map's own methods that look up a key take the very road the
+        // subscript takes rather than `methods::call`'s free `alike`,
+        // which cannot call `__eq__`: the lookup's own place first, and
+        // the program's own equality only where the place cannot say.
+        // `fromkeys` looks up no place of an existing map, but still
+        // needs that same equality to dedupe the keys it is given, so
+        // it is answered here beside the rest, before a member call
+        // with no receiver of its own reaches `methods::call` at all.
+        if operation == "fromkeys" {
+            if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+            let filling = args.into_iter().next().unwrap_or(Value::Null);
+            return self.dict_fromkeys(receiver, filling);
+        }
+        if matches!(receiver.contents(), Value::Map(_)) {
+            if matches!(operation, "get" | "setdefault" | "pop") {
+                return self.dict_key_method(receiver, operation, args);
+            }
+            if operation == "update" {
+                return self.dict_update(receiver, args, &named);
+            }
+        }
         crate::methods::call(receiver, operation, &args, &named, &self.wording(), &|key| self.lang.method_errors[key].clone(),
             &|value, op| self.member_amiss(value, &self.spelled_member(op)))
     }
@@ -9762,7 +9936,7 @@ impl<'a> Engine<'a> {
                         if pair.len() != 2 {
                             return Err(self.lang.map_pair_amiss.clone().unwrap_or_else(|| "A map item needs two values".into()));
                         }
-                        put_key(&mut pairs, pair[0].clone(), pair[1].clone());
+                        self.map_enter(&mut pairs, pair[0].clone(), pair[1].clone())?;
                     }
                 }
             }
@@ -9771,7 +9945,7 @@ impl<'a> Engine<'a> {
         for (key, value) in items {
             if let Some(key) = key {
                 if !named.insert(key.clone()) { return Err(Self::named_fault(&self.lang.call_duplicate, &key)); }
-                put_key(&mut pairs, Value::text(&key), value);
+                self.map_enter(&mut pairs, Value::text(&key), value)?;
             }
         }
         Ok(Value::Map(Rc::new(pairs.into())))
