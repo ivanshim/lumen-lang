@@ -3405,7 +3405,7 @@ impl<'a> Engine<'a> {
                         }
                         // The names standing where the call is made are
                         // only to be seen from here, where the frame is.
-                        Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
+                        Action::Builtin(kind @ (Builtin::NearNames | Builtin::Vars | Builtin::ClassTool(8) | Builtin::OuterNames | Builtin::ClassLocalsPlace), _) if *argc == 0 && !self.lang.compile_modes.is_empty() => {
                             self.names_about(program, frame, *kind).map(|names| self.data.push(names))
                         }
                         // What a call was given is read back as it
@@ -11270,7 +11270,7 @@ impl<'a> Engine<'a> {
             // language spells the manners text may be read in; a
             // language spelling the words without the manners is
             // refused here.
-            Builtin::OuterNames | Builtin::NearNames | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
+            Builtin::OuterNames | Builtin::NearNames | Builtin::ClassLocalsPlace | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
             // Source read while the program runs, assembled against
             // the same globals and run where it stands. A file that
             // cannot be read gives false back, as such a language says.
@@ -13952,7 +13952,14 @@ impl Engine<'_> {
                 else { self.lang.builtins.get(name).map_or(Value::Blank, |builtin| Value::Native(*builtin, Rc::from(name.as_str()))) };
             let shared = Value::Bond(Rc::new(RefCell::new(initial)));
             self.world[offset + index] = shared.clone();
-            fields.push((name.clone(), shared));
+            // A name a function or a method kept for its own use took a
+            // slot here too, since every name does, but only a name a
+            // write actually bound at the module's own outermost scope
+            // is one the module carries: the rest never left the frame
+            // that held them.
+            if local.globals.contains(name) {
+                fields.push((name.clone(), shared));
+            }
         }
         for name in &self.lang.module_names {
             if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }
@@ -14206,6 +14213,9 @@ impl Engine<'_> {
     /// dictionary, or inside a routine a fresh dictionary of its own
     /// names; listed in order for dir.
     fn names_about(&mut self, program: &Rc<Routine>, frame: &[Value], kind: Builtin) -> Flow<Value> {
+        if kind == Builtin::ClassLocalsPlace {
+            return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
+        }
         let book = if kind == Builtin::OuterNames || program.body_of_all {
             self.book_here(kind == Builtin::OuterNames)
         } else {
@@ -14291,6 +14301,15 @@ impl Engine<'_> {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
                 Ok(Value::Bond(self.book_here(builtin == Builtin::OuterNames)))
+            }
+            // A dictionary fresh and empty every time it is asked for,
+            // and never the one the world answers `locals()` with: the
+            // place a write through `locals()[k] = v` in a class body
+            // reaches, thrown away once the write is done rather than
+            // shared with anything the program can read again.
+            Builtin::ClassLocalsPlace => {
+                if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
+                Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))))
             }
             Builtin::Summon => {
                 let Some(Value::Text(path)) = args.first().map(Value::contents) else { return Err(self.source_unready()) };

@@ -4518,6 +4518,22 @@ impl<'a> Machine<'a> {
                         return Err(format!("{}() expects {} arguments, got {}", name, want + 1, values.len() + 1).into());
                     }
                     let (f, i) = self.locate(slot, frame)?;
+                    // A name that lives only in a dictionary handed
+                    // over for a text to run in, as exec is handed
+                    // one, has no cell of its own: `locate` answers
+                    // the cell it would have had, empty. What it
+                    // stands for is fetched in and given that cell
+                    // for the write below to reach, and once the
+                    // write is done the dictionary is told what the
+                    // cell came to hold, since that dictionary and
+                    // not the empty cell is where a read of the name
+                    // looks first.
+                    let booked_here = Rc::ptr_eq(&f, &self.outermost) && matches!(f.cells.borrow()[i], Value::Unset);
+                    if booked_here {
+                        if let Some(Ok(found)) = self.booked_read(i, &slot.ident) {
+                            f.cells.borrow_mut()[i] = found;
+                        }
+                    }
                     let mut values = values;
                     let value = values.pop().unwrap();
                     let mut key = values.pop().map(|k| self.as_key_spoken(&k));
@@ -4693,6 +4709,7 @@ impl<'a> Machine<'a> {
                             }
                             _ => self.span_written(&mut f.cells.borrow_mut()[i], bounds, &value)?,
                         }
+                        if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                         return Ok(Value::Nil);
                     }
                     let held = f.cells.borrow()[i].clone();
@@ -4731,6 +4748,7 @@ impl<'a> Machine<'a> {
                             self.grumble("warning", said);
                         }
                     }
+                    if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                     Ok(Value::Nil)
                 }
                 // Values put before everything the named array holds.

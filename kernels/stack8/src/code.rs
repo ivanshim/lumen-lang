@@ -544,6 +544,12 @@ pub enum Builtin {
     /// inside a routine a copy of its own, outside the same dictionary
     /// as the outermost names.
     NearNames,
+    /// The compiler's own stand-in for `locals()` written through by a
+    /// place within it, read where a class body stands: a dictionary
+    /// of its own, made fresh and thrown away once the write is done,
+    /// never the world's, which a class body has no place of its own
+    /// in to begin with.
+    ClassLocalsPlace,
     /// Text read and run as statements, in dictionaries handed over or
     /// where the call stands (ext.builtin.exec).
     RunText,

@@ -126,7 +126,7 @@ def run_unittest(*classes):
     for cls in classes:
         loader.loadTestsFromTestCase(cls).run(result)
     if not result.wasSuccessful():
-        raise unittest.AssertionError('unittest suite failed')
+        raise AssertionError('unittest suite failed')
     return result
 
 def check_syntax_error(testcase, statement, errtext='', lineno=None, offset=None):
@@ -224,7 +224,7 @@ skip_if_double_rounding = _identity
 _1G = 1073741824
 _2G = 2147483648
 _4G = 4294967296
-TestFailed = unittest.AssertionError
+TestFailed = AssertionError
 
 class _NeverEqual:
     def __eq__(self, other):
