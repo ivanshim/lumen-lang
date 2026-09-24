@@ -14221,16 +14221,26 @@ impl Machine<'_> {
         let built = crate::build::build(&ready, self.table, &hidden, HashMap::new(), false, 0)?;
         let exported = &built.globals[beginning..];
         self.idents.extend(exported.iter().map(|name| format!("\0import/{path}/{name}")));
+        // Every name the text can reach at its own top level gets a slot
+        // in the world, a builtin read by its bare word among them, so
+        // the text still finds one that way. Only a name the text itself
+        // bound — by writing to it, not merely reading it — is filed as
+        // one of the module's own members: CPython's module answers an
+        // attribute lookup from outside out of its own `__dict__` alone,
+        // never out of the builtins a name might otherwise fall back to.
+        let bound: std::collections::HashSet<&str> = built.bound_globally.iter().map(|word| word.as_str()).collect();
+        let module_names = self.table.strings("ext.system.module.name");
         let mut members = Vec::with_capacity(exported.len());
         {
             let mut world = self.outermost.cells.borrow_mut();
             world.resize(self.idents.len(), Value::Unset);
             for (position, name) in exported.iter().enumerate() {
-                let initial = match self.table.strings("ext.system.module.name").contains(name) {
+                let is_module_name = module_names.contains(name);
+                let initial = match is_module_name {
                     true => Value::text(path), false => self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }),
                 };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                members.push((name.clone(), link.clone()));
+                if is_module_name || bound.contains(name.as_str()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
