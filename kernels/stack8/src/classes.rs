@@ -138,7 +138,7 @@ impl<'a> Engine<'a> {
                 let listed = Value::Tuple(Rc::new(bases.iter().cloned().map(Value::Class).collect()));
                 let pairs: Vec<(Value, Value)> = members.iter().filter(|(_, v)| !matches!(v, Value::Blank))
                     .map(|(n, v)| (Value::text(n), v.clone())).collect();
-                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs)))), true);
+                let namespace = Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into())))), true);
                 let mut given = vec![Value::Class(m.clone()), Value::text(&name), listed.clone(), namespace.clone()];
                 given.extend(carried.iter().cloned());
                 let made = self.class_apply(f, given)?;
@@ -729,8 +729,8 @@ impl<'a> Engine<'a> {
                     }
                     // A row of bytes answers to the methods its kind
                     // keeps, which the worth beneath the thing works.
-                    if matches!(worth.contents(),Value::Bytes(..)) {
-                        if let Some(working)=self.byte_member(name) {
+                    if let Value::Bytes(_,changeable,_)=worth.contents() {
+                        if let Some(working)=self.byte_member(name,changeable) {
                             return Ok(Value::ValueMethod(Rc::new((worth,working.to_string()))));
                         }
                     }
@@ -945,12 +945,7 @@ impl<'a> Engine<'a> {
     /// of work. Only one of these stands as a class where `issubclass`
     /// and `isinstance` ask for one; every other builtin word is as
     /// much a refusal there as a number would be.
-    pub(super) fn kind_builtin(op:&Builtin)->bool {
-        matches!(op,Builtin::ToInt|Builtin::ToText|Builtin::AsReal|Builtin::SortOf|Builtin::List|Builtin::Dict
-            |Builtin::Tuple|Builtin::Set|Builtin::Frozen|Builtin::Bool|Builtin::Complex|Builtin::Bytes(0|1)|Builtin::Span
-            |Builtin::Enumerate|Builtin::Zip|Builtin::Map|Builtin::Filter|Builtin::Reversed|Builtin::MakeSlice
-            |Builtin::ClassTool(9..=11))
-    }
+    pub(super) fn kind_builtin(op:&Builtin)->bool { op.names_kind() }
     /// The word a value names a builtin kind by, where it names one.
     pub(super) fn kind_spelled(&self,value:&Value)->Option<Rc<str>> {
         let Value::Adapter(w)=value else{return None};

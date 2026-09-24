@@ -4244,7 +4244,7 @@ impl<'a> Compiler<'a> {
         // a class that annotated nothing carries nothing.
         if let (Some(word), false) = (lang.class_annotations.first(), annotated.is_empty()) {
             let slot = self.gensym("annotations");
-            self.constant(Value::Map(Rc::new(annotated)));
+            self.constant(Value::Map(Rc::new(annotated.into())));
             self.write(&slot);
             if !order.iter().any(|old| old == word) { order.push(word.clone()); }
             shared.push((word.clone(), slot));

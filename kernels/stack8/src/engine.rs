@@ -12,7 +12,7 @@ use num_traits::{ToPrimitive, Signed, Zero};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Ending, Instance, Phase, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
+use crate::value::{Descriptor, Class, Ending, Instance, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -166,6 +166,11 @@ pub struct Engine<'a> {
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
+    /// The key last found absent, where the words of the fault could
+    /// not carry it: the complaint for a key names the key itself, and
+    /// a key of any other kind than a text or a whole number is kept
+    /// here whole rather than written into those words and read back.
+    absent_key: RefCell<Option<Value>>,
     /// The routine every complaint is handed to, where the program has
     /// put one in the way of them; the complaints waiting to be handed
     /// over, since one may be raised where the run cannot reach back
@@ -815,6 +820,7 @@ impl<'a> Engine<'a> {
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
             absent_member: None,
+            absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             any_waiting: std::cell::Cell::new(false),
@@ -1519,6 +1525,14 @@ impl<'a> Engine<'a> {
             let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
             let number = key.parse::<BigInt>().ok()?;
             return Some(self.exception_instance(class, vec![Value::of_big(number)], Value::Null));
+        }
+        // A key of any other kind was kept whole when it was found
+        // absent, and stands as the fault's one argument.
+        if told == "\0key-value:" {
+            let held = self.absent_key.borrow_mut().take()?;
+            let name = self.lang.fault_key.as_ref()?;
+            let Value::Class(class) = self.native_exceptions.get(name)?.clone() else { return None };
+            return Some(self.exception_instance(class, vec![held], Value::Null));
         }
         let named = self.class_for(told)?;
         let Some(Value::Class(class)) = self.native_exceptions.get(&named).or_else(|| self.class_named(&named)).cloned() else { return None };
@@ -2359,7 +2373,7 @@ impl<'a> Engine<'a> {
         // What a gathering place takes is a tuple, as the language has
         // it: the spare worths stand together and cannot be changed.
         if let Some(i) = rest { frame[i] = Value::Tuple(Rc::new(tail)); }
-        if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords)); }
+        if let Some(i) = pairs { frame[i] = Value::Map(Rc::new(keywords.into())); }
         for (i, value) in frame.iter().enumerate() {
             if matches!(value, Value::Blank) && !program.carried.contains(&i) {
                 return Err(Self::named_fault(&self.lang.call_missing, &program.formals[i]).into());
@@ -3759,7 +3773,7 @@ impl<'a> Engine<'a> {
             Builtin::Complex => crate::complex::made(self.lang, 0.0, 0.0),
             Builtin::List => Value::array(Vec::new()),
             Builtin::Tuple => Value::Tuple(Rc::new(Vec::new())),
-            Builtin::Dict => Value::Map(Rc::new(Vec::new())),
+            Builtin::Dict => Value::Map(Rc::new(Vec::new().into())),
             kind @ (Builtin::Set | Builtin::Frozen) => Value::Set(Rc::new(RefCell::new(crate::value::Members::empty(word.to_string(), *kind == Builtin::Frozen)))),
             Builtin::Bytes(mutable) => Value::Bytes(Rc::new(RefCell::new(Vec::new())), *mutable == 1, Rc::from(word)),
             Builtin::Span => Value::Counted(Rc::new(crate::value::Counted {
@@ -3914,8 +3928,8 @@ impl<'a> Engine<'a> {
         // A row of bytes answers to the methods its kind holds, whose
         // words are the ones text goes by, since each of them is a
         // text working read byte by byte.
-        if matches!(&held, Value::Bytes(..)) {
-            if let Some(working) = self.byte_member(name) {
+        if let Value::Bytes(_, changeable, _) = &held {
+            if let Some(working) = self.byte_member(name, *changeable) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), working.to_string())))));
             }
         }
@@ -3982,9 +3996,9 @@ impl<'a> Engine<'a> {
         // compared as that thing is, so neither answers for itself here.
         let standing = !matches!(family, Kindred::Walk | Kindred::View(_));
         let written = matches!(family, Kindred::Row | Kindred::Map | Kindred::Bytes(true));
-        // A run of bytes is written into place by place, but no kernel
-        // here takes a place out of one, by sign or by name.
-        let emptied = matches!(family, Kindred::Row | Kindred::Map);
+        // A run of bytes is written into place by place and gives a
+        // place up again, as a row does.
+        let emptied = matches!(family, Kindred::Row | Kindred::Map | Kindred::Bytes(true));
         match place {
             0..=7 => standing,
             8 => standing && !matches!(family, Kindred::Row | Kindred::Map | Kindred::Set(false) | Kindred::Bytes(true)),
@@ -4002,11 +4016,15 @@ impl<'a> Engine<'a> {
             21 | 24 | 25 | 26 | 27 | 29 | 32 | 38 | 39 | 40 | 41 => number,
             22 | 30 | 60 | 61 => number && !matches!(family, Kindred::Complex),
             43 | 44 | 62 | 63 | 67 | 68 => matches!(family, Kindred::Whole),
-            47 | 49 => matches!(family, Kindred::Row),
+            47 | 49 => matches!(family, Kindred::Row | Kindred::Bytes(true)),
             48 | 57 | 59 => matches!(family, Kindred::Set(false)),
             58 => matches!(family, Kindred::Set(false) | Kindred::Map),
             64 | 66 | 69 | 71 => matches!(family, Kindred::Whole) || setted,
             65 | 70 => matches!(family, Kindred::Whole | Kindred::Map) || setted,
+            // Every value is written to a specification, the writer
+            // having marks of its own for each kind or words against
+            // the kinds that take none.
+            72 => true,
             _ => false,
         }
     }
@@ -4075,7 +4093,7 @@ impl<'a> Engine<'a> {
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         let wanted = match place {
             12 => 2,
-            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=71 => 1,
+            2..=7 | 11 | 13 | 14 | 18..=24 | 26..=32 | 47..=59 | 60..=72 => 1,
             _ => 0,
         };
         if !named.is_empty() || args.len() != wanted { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -4094,6 +4112,15 @@ impl<'a> Engine<'a> {
             _ => None,
         } {
             return self.builtin_call(plain, operation, vec![(None, receiver.clone())]);
+        }
+        // The specification a value is written to, asked for under the
+        // name the protocol gives it. The writing is the one a field of
+        // a template is given, and so are the refusals.
+        if place == 72 {
+            let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+            let given = args[0].contents();
+            let Value::Text(spec) = &given else { return Err(writer.fault("ext.text.format.spec.type", &[writer.kind(&given)])) };
+            return Ok(Value::text(&writer.field(&receiver.contents(), spec, "")?));
         }
         // A whole and a remainder taken at once, either way round.
         if matches!(place, 60 | 61) {
@@ -4134,6 +4161,17 @@ impl<'a> Engine<'a> {
         if let Some(repeat) = match place { 47 => Some(false), 49 => Some(true), _ => None } {
             if let Some(kept) = self.sequence_in_place(repeat, receiver, &args[0])? { return Ok(kept); }
             let plain = if repeat { Action::Mul } else { Action::Add };
+            // A changeable row of bytes keeps the cell it lives in and
+            // takes the new bytes there, so that every name for the row
+            // sees them; the row itself is what the member hands back.
+            let held = receiver.contents();
+            if let Value::Bytes(cell, true, _) = &held {
+                let grown = self.special_dyad(&plain, &held, &args[0].contents())?;
+                let Value::Bytes(source, ..) = grown.contents() else { return Err(self.special_fault()); };
+                let taken = source.borrow().clone();
+                *cell.borrow_mut() = taken;
+                return Ok(held.clone());
+            }
             return self.special_dyad(&plain, receiver, &args[0]);
         }
         if let Some(which) = match place { 58 => Some(0), 57 => Some(1), 48 => Some(2), 59 => Some(3), _ => None } {
@@ -4554,9 +4592,9 @@ impl<'a> Engine<'a> {
         if let (Action::SetWrite(0), true) = (op, self.lang.or_maps) {
             if let Some(cell) = Self::map_cell(a) {
                 let (pairs, amiss) = self.pairs_gathered(b);
-                let mut merged = match &*cell.borrow() { Value::Map(held) => held.as_ref().clone(), _ => Vec::new() };
+                let mut merged = match &*cell.borrow() { Value::Map(held) => held.to_vec(), _ => Vec::new() };
                 for (key, value) in pairs { self.replace_item(&mut merged, key, value); }
-                *cell.borrow_mut() = Value::Map(Rc::new(merged));
+                *cell.borrow_mut() = Value::Map(Rc::new(merged.into()));
                 return match amiss { Some(told) => Err(told), None => Ok(a.clone()) };
             }
         }
@@ -4714,8 +4752,18 @@ impl<'a> Engine<'a> {
         }
         if let (Action::At, Value::Map(entries)) = (op, a) {
             let wanted = self.special_key(b)?;
-            for (key, value) in entries.iter() {
-                if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
+            let mut settled = false;
+            if let Ok(keytext) = wanted.member_key() {
+                match entries.locate(&keytext) {
+                    Placement::AtRow(at) => return Ok(entries[at].1.clone()),
+                    Placement::NotThere => settled = true,
+                    Placement::Uncertain => {}
+                }
+            }
+            if !settled {
+                for (key, value) in entries.iter() {
+                    if self.special_keys_equal(key, &wanted)? { return Ok(value.clone()); }
+                }
             }
         }
         // A slice reaching into a row has its bounds settled first, a
@@ -4860,7 +4908,7 @@ impl<'a> Engine<'a> {
         let places: &[usize] = match op {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
-            Builtin::ToText => &[0, 1], Builtin::Repr => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
+            Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
             Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
             Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
@@ -4872,7 +4920,7 @@ impl<'a> Engine<'a> {
                 // A kind that names itself before its worth is written
                 // by the thing's own class, so the worth cannot stand
                 // in for the thing where the writing is what is asked.
-                Some(worth) if matches!(op, Builtin::Repr | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
+                Some(worth) if matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(&worth) => settled.push(value.clone()),
                 Some(worth) => { settled.push(worth); changed = true; }
                 None => settled.push(value.clone()),
             }
@@ -4885,6 +4933,13 @@ impl<'a> Engine<'a> {
         let first = if changed { args.first() } else { first };
         let answer = match op {
             Builtin::Repr if args.len() == 1 => Value::text(&self.special_text(&args[0], true)?),
+            // The ascii builtin writes what the quoting builtin writes
+            // and then puts every letter outside ASCII into the escape
+            // that stands for it.
+            Builtin::Ascii if args.len() == 1 => {
+                let said = self.special_text(&args[0], true)?;
+                Value::text(&crate::strings::ascii_escaped(&said))
+            }
             Builtin::ToText if args.len() == 1 => {
                 self.digits_shown(&args[0])?;
                 Value::text(&self.special_text(&args[0], false)?)
@@ -4967,7 +5022,7 @@ impl<'a> Engine<'a> {
                     if self.special_keys_equal(old, &key)? { found = true; } else { kept.push((old.clone(), value.clone())); }
                 }
                 if !found { return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&args[1]) }); }
-                Value::Map(Rc::new(kept))
+                Value::Map(Rc::new(kept.into()))
             }
             Builtin::Fetch if args.len() == 2 => self.special_dyad(&Action::At, &args[0], &args[1])?,
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Fields(_)) => {
@@ -5064,7 +5119,7 @@ impl<'a> Engine<'a> {
                 let Value::Class(class) = &args[1] else { return Err(self.special_fault()) };
                 Value::Flag(matches!(&args[0], Value::Object(o) if o.class.named(&class.name, false)))
             }
-            Builtin::Repr | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
+            Builtin::Repr | Builtin::Ascii | Builtin::Hash | Builtin::Bool | Builtin::Sorted | Builtin::Iter | Builtin::Next | Builtin::InstanceOf => return Err(self.special_fault()),
             _ => return Ok(None),
         };
         Ok(Some(answer))
@@ -5440,7 +5495,19 @@ impl<'a> Engine<'a> {
                         ))
                     }
                     Value::Map(pairs) => {
-                        if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| self.keys_alike(k, &at)) {
+                        let placed = match at.member_key() {
+                            Ok(keytext) => match pairs.locate(&keytext) {
+                                Placement::AtRow(_) => Some(true),
+                                Placement::NotThere => Some(false),
+                                Placement::Uncertain => None,
+                            },
+                            Err(_) => None,
+                        };
+                        let present = match placed {
+                            Some(present) => present,
+                            None => pairs.iter().any(|(k, _)| self.keys_alike(k, &at)),
+                        };
+                        if !self.lang.del_words.is_empty() && !present {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) }.into());
                         }
                         Value::Map(Rc::new(pairs.iter().filter(|(k, _)| !self.keys_alike(k, &at)).cloned().collect()))
@@ -5866,7 +5933,7 @@ impl<'a> Engine<'a> {
                 } else if *map {
                     let mut pairs = match gathered_so_far { Value::Map(p) => p.as_ref().clone(), _ => unreachable!() };
                     let new_pairs = match (spread, next.contents()) {
-                        (true, Value::Map(p)) => p.as_ref().clone(),
+                        (true, Value::Map(p)) => p.to_vec(),
                         (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
                         _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
                     };
@@ -6172,7 +6239,7 @@ impl<'a> Engine<'a> {
                 let text_method = matches!(held, Value::Text(_)) && matches!(self.lang.builtins.get(name.as_ref()), Some(Builtin::Text(op)) if *op != crate::strings::TextOp::Repr);
                 // A row of bytes answers to the methods its kind keeps,
                 // whose words are the ones text goes by.
-                let byte_method = matches!(held, Value::Bytes(..)) && self.byte_member(name).is_some();
+                let byte_method = matches!(&held, Value::Bytes(_, changeable, _) if self.byte_member(name, *changeable).is_some());
                 // A builtin kind's word has a maker, a name and a line
                 // of forebears, where a class may stand on it.
                 let kind_maker = matches!(&held, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))
@@ -7201,14 +7268,14 @@ impl<'a> Engine<'a> {
             if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
             self.special_text(&thing, code != 's').map(Some)
         };
-        writer.percent(template, arguments, &mut offered)
+        writer.percent(template, arguments, &mut offered, false)
     }
 
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
     fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
         if !self.lang.format_builtin.is_empty() {
-            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None));
+            return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, arguments, &mut |_, _| Ok(None), false);
         }
         let bad = || self.lang.format_unsupported.clone().unwrap_or_default();
         let wrong = || self.lang.format_arguments.clone().unwrap_or_default();
@@ -7346,7 +7413,10 @@ impl<'a> Engine<'a> {
         match at.contents() {
             Value::Text(key) => format!("\0key-text:{key}"),
             Value::Small(_) | Value::Huge(_) => format!("\0key-number:{}", at.plain()),
-            _ => self.lang.exception_unready.clone().unwrap_or_default(),
+            // A key of any other kind is kept whole beside the words,
+            // since writing it into them would not give back the key
+            // that was asked for.
+            held => { *self.absent_key.borrow_mut() = Some(held); "\0key-value:".to_string() }
         }
     }
 
@@ -7769,6 +7839,15 @@ impl<'a> Engine<'a> {
                 return Ok(self.byte_make(out, *mutable));
             }
         }
+        // A row of bytes on the left of the remainder sign fills its
+        // own marks, byte for byte: each byte of the template stands
+        // for the character that carries it, and the filled text is
+        // read back into a row of the same kind as the template.
+        if let (Action::Mod, Value::Bytes(row, mutable, _), true) = (op, a, self.lang.rem_formats_text) {
+            let (template, mutable) = (row.borrow().iter().copied().map(char::from).collect::<String>(), *mutable);
+            let filled = self.byte_filled(&template, b)?;
+            return Ok(self.byte_make(filled, mutable));
+        }
         if (matches!(a, Value::Bytes(..)) || matches!(b, Value::Bytes(..)))
             && matches!(op, Action::Add | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Mod | Action::Join) {
             return Err(self.byte_fault("unready"));
@@ -7868,14 +7947,25 @@ impl<'a> Engine<'a> {
                         // map, and the language says so rather than
                         // answering no.
                         if let Some(told) = self.unkeyable(a) { return Err(told); }
-                        items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a))
+                        let placed = match a.member_key() {
+                            Ok(keytext) => match items.locate(&keytext) {
+                                Placement::AtRow(_) => Some(true),
+                                Placement::NotThere => Some(false),
+                                Placement::Uncertain => None,
+                            },
+                            Err(_) => None,
+                        };
+                        match placed {
+                            Some(found) => found,
+                            None => items.iter().any(|(key, _)| Self::member_matches(a, key) || self.keys_alike(key, a)),
+                        }
                     }
                     Value::Set(s) => s.borrow().held.contains_key(&self.set_key(a)?),
                     Value::Bytes(row, ..) => {
                         let row = row.borrow();
                         match a {
                             Value::Bytes(needle, ..) => { let needle = needle.borrow(); needle.is_empty() || row.windows(needle.len()).any(|part| part == needle.as_slice()) }
-                            _ => row.contains(&self.byte_number(a)?),
+                            _ => row.contains(&self.byte_number(a, false)?),
                         }
                     }
                     Value::Words(items, _) => items.iter().any(|s| a.equals(&Value::text(s))),
@@ -8333,7 +8423,7 @@ impl<'a> Engine<'a> {
     fn keyed_places(v: &Value) -> Vec<(Value, Value)> {
         match v {
             Value::Array(items) | Value::Tuple(items) => items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect(),
-            Value::Map(pairs) => pairs.as_ref().clone(),
+            Value::Map(pairs) => pairs.to_vec(),
             _ => Vec::new(),
         }
     }
@@ -8541,7 +8631,19 @@ impl<'a> Engine<'a> {
         if !self.lang.exceptions.is_empty() {
             if let Value::Map(pairs) = target {
                 if let Some(told) = self.unkeyable(at) { return Err(told); }
-                if !pairs.iter().any(|(key, _)| self.keys_alike(key, at)) { return Err(self.key_absent(at)); }
+                let placed = match at.member_key() {
+                    Ok(keytext) => match pairs.locate(&keytext) {
+                        Placement::AtRow(_) => Some(true),
+                        Placement::NotThere => Some(false),
+                        Placement::Uncertain => None,
+                    },
+                    Err(_) => None,
+                };
+                let present = match placed {
+                    Some(present) => present,
+                    None => pairs.iter().any(|(key, _)| self.keys_alike(key, at)),
+                };
+                if !present { return Err(self.key_absent(at)); }
             }
         }
         if let Value::Tuple(items) = target {
@@ -8647,7 +8749,7 @@ impl<'a> Engine<'a> {
         let given = collection_contents(&given);
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
-            let replacement = self.byte_row(&given)?;
+            let replacement = self.byte_row(&given, false)?;
             let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
             if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
             if step == 1 { row.borrow_mut().splice(start..stop, replacement); }
@@ -8750,7 +8852,18 @@ impl<'a> Engine<'a> {
         }
         if let Value::Map(pairs) = target {
             let at = &self.key(at);
-            let found = pairs.iter().find(|(k, _)| self.keys_alike(k, at));
+            let placed = match at.member_key() {
+                Ok(keytext) => match pairs.locate(&keytext) {
+                    Placement::AtRow(position) => Some(Some(&pairs[position])),
+                    Placement::NotThere => Some(None),
+                    Placement::Uncertain => None,
+                },
+                Err(_) => None,
+            };
+            let found = match placed {
+                Some(found) => found,
+                None => pairs.iter().find(|(k, _)| self.keys_alike(k, at)),
+            };
             return match found {
                 Some((_, v)) => Ok(v.clone()),
                 None => absent(format!("Undefined array key {}", at.plain()), at),
@@ -9480,11 +9593,12 @@ impl<'a> Engine<'a> {
             supplied.truncate(1); supplied.insert(0, contents);
             return self.byte_call(2, &supplied);
         }
-        if let Value::Bytes(cell, mutable, _) = &contents {
-            if operation == "append" && *mutable && args.len() == 1 && named.is_empty() { cell.borrow_mut().push(self.byte_number(&args[0])?); return Ok(Value::Null); }
-        }
         if matches!(&contents, Value::Bytes(..)) || operation == "encode" && matches!(&contents, Value::Text(_)) {
-            if let Some(task) = Self::byte_working(operation) { let mut given = vec![contents]; given.extend(args); return self.builtin_call(Builtin::Bytes(task), operation, given.into_iter().map(|v| (None,v)).chain(named.into_iter().map(|(k,v)| (Some(k),v))).collect()); }
+            // A working that writes where the row lies is asked of a
+            // changeable row alone; a fixed row has no such member.
+            let changeable = matches!(&contents, Value::Bytes(_, true, _));
+            let task = Self::byte_working(operation).filter(|task| changeable || !Self::BYTE_CHANGES.contains(task));
+            if let Some(task) = task { let mut given = vec![contents]; given.extend(args); return self.builtin_call(Builtin::Bytes(task), operation, given.into_iter().map(|v| (None,v)).chain(named.into_iter().map(|(k,v)| (Some(k),v))).collect()); }
         }
         if matches!(&contents, Value::Text(_)) {
             let label = format!("ext.builtin.text.{}", operation);
@@ -9702,7 +9816,7 @@ impl<'a> Engine<'a> {
         let mut pairs = Vec::new();
         if let Some(source) = positional.first() {
             match source {
-                Value::Map(prior) => pairs = prior.as_ref().clone(),
+                Value::Map(prior) => pairs = prior.to_vec(),
                 other => {
                     for item in self.comprehension_items(other)? {
                         let pair = self.comprehension_items(&item)?;
@@ -9721,11 +9835,19 @@ impl<'a> Engine<'a> {
                 put_key(&mut pairs, Value::text(&key), value);
             }
         }
-        Ok(Value::Map(Rc::new(pairs)))
+        Ok(Value::Map(Rc::new(pairs.into())))
     }
 
     fn byte_fault(&self, part: &str) -> String {
-        self.lang.byte_words.get(&format!("ext.system.bytes.{}", part)).and_then(|w| w.first()).cloned().unwrap_or_default()
+        self.byte_said(part, 0)
+    }
+
+    /// One of the complaints a bytes label spells, by its place among
+    /// them: a label wording the same fault of a whole row and of one
+    /// byte, or of a place read and a place taken out, keeps each
+    /// wording in its own place.
+    fn byte_said(&self, part: &str, at: usize) -> String {
+        self.lang.byte_words.get(&format!("ext.system.bytes.{}", part)).and_then(|w| w.get(at)).cloned().unwrap_or_default()
     }
 
     /// The names a row of bytes answers to, each the working it stands
@@ -9737,15 +9859,25 @@ impl<'a> Engine<'a> {
         "expandtabs", "capitalize", "title", "swapcase", "removeprefix", "removesuffix", "translate",
         "maketrans", "isalnum", "isalpha", "isascii", "isdigit", "islower", "isspace", "istitle", "isupper"];
 
+    /// The names a changeable row of bytes answers to besides those.
+    /// Each writes where the row lies, so a fixed row answers to none
+    /// of them; their words are the ones a list's own methods go by.
+    const BYTE_CHANGERS: &'static [&'static str] = &["append", "extend", "insert", "pop", "remove", "clear", "reverse", "copy"];
+
+    /// The bytes primitives those names go by, which a fixed row is
+    /// never handed.
+    const BYTE_CHANGES: &'static [u8] = &[52, 53, 54, 55, 56, 57, 58, 59];
+
     /// The working a row of bytes answers to under this name, where the
     /// definition spells one for it. The words are sought in the bytes
     /// family, then among text's, whose words a row of bytes shares,
     /// and last among the value methods. A word written with its kind
     /// before it answers by its bare tail as well, since that is how a
     /// row of bytes names a method its kind keeps.
-    pub(super) fn byte_member(&self, name: &str) -> Option<&'static str> {
+    pub(super) fn byte_member(&self, name: &str, changeable: bool) -> Option<&'static str> {
         let spelt = |words: &Vec<String>| words.iter().any(|word| word == name || word.rsplit('.').next() == Some(name));
-        Self::BYTE_MEMBERS.iter().copied().find(|working| {
+        let changers: &[&str] = if changeable { Self::BYTE_CHANGERS } else { &[] };
+        Self::BYTE_MEMBERS.iter().chain(changers).copied().find(|working| {
             self.lang.byte_words.get(&format!("ext.builtin.bytes.{working}")).map_or(false, spelt)
                 || self.lang.text_words.get(&format!("ext.builtin.text.{working}")).map_or(false, spelt)
                 || self.lang.value_methods.get(name).map_or(false, |op| op == working)
@@ -9765,6 +9897,8 @@ impl<'a> Engine<'a> {
             "removeprefix" => 37, "removesuffix" => 38, "translate" => 39, "isalnum" => 41, "isalpha" => 42,
             "isascii" => 43, "isdigit" => 44, "islower" => 45, "isspace" => 46, "istitle" => 47, "isupper" => 48,
             "fromhex" => 50, "maketrans" => 51,
+            "append" => 52, "extend" => 53, "insert" => 54, "pop" => 55,
+            "remove" => 56, "clear" => 57, "reverse" => 58, "copy" => 59,
             _ => return None,
         })
     }
@@ -9847,7 +9981,7 @@ impl<'a> Engine<'a> {
         // byte as well as a row of them.
         let sought = |value: &Value| -> Res<Vec<u8>> {
             match value {
-                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(vec![self.byte_number(value)?]),
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => Ok(vec![self.byte_number(value, false)?]),
                 other => part(other),
             }
         };
@@ -10100,6 +10234,28 @@ impl<'a> Engine<'a> {
         Ok(self.byte_make(table, false))
     }
 
+    /// A row of bytes filled mark by mark. A mark that shows a value is
+    /// handed a row of bytes and nothing else, whichever of its two
+    /// letters it is written with, and a mark that words a value writes
+    /// the ascii of its representation, so that nothing beyond seven
+    /// bits can stand in the answer.
+    fn byte_filled(&self, template: &str, arguments: &Value) -> Res<Vec<u8>> {
+        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+        let mut offered = |value: &Value, code: char| -> Res<Option<String>> {
+            let held = value.contents();
+            if matches!(code, 'a' | 'r') {
+                let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                return inner.representation(&held, true).map(Some);
+            }
+            match &held {
+                Value::Bytes(row, ..) => Ok(Some(row.borrow().iter().copied().map(char::from).collect())),
+                other => Err(Self::named_fault(&self.lang.fmt_op_rem_format_byte, &other.core_kind())),
+            }
+        };
+        let filled = writer.percent(template, arguments, &mut offered, true)?;
+        filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.byte_fault("unready"))).collect()
+    }
+
     /// A row of bytes shortened at a place, or over a run of places.
     /// The row is handed back as it stands, since it is written where
     /// it lies; a fixed row gives up nothing and is named in the words
@@ -10138,17 +10294,42 @@ impl<'a> Engine<'a> {
         Value::ByteKind(mutable, Rc::from(format!("{}{}{}", words[0], name, words[1])))
     }
 
-    fn byte_number(&self, value: &Value) -> Res<u8> {
-        if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
-        value.as_big()?.to_u8().ok_or_else(|| self.byte_fault("range"))
+    /// One byte read off a value. A value of a kind no whole number
+    /// can be read from is named by the words every builtin names it
+    /// by; a whole number outside a byte's bounds is refused in the
+    /// words for a whole row where the row is being built and in those
+    /// for one byte everywhere else.
+    fn byte_number(&self, value: &Value, whole_row: bool) -> Res<u8> {
+        if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.core_fault("core.integer", &value.core_kind())); }
+        value.as_big()?.to_u8().ok_or_else(|| self.byte_said("range", usize::from(!whole_row)))
     }
 
-    fn byte_row(&self, value: &Value) -> Res<Vec<u8>> {
+    fn byte_row(&self, value: &Value, whole_row: bool) -> Res<Vec<u8>> {
         match value {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
-            Value::Array(row) => row.iter().map(|v| self.byte_number(v)).collect(),
+            Value::Array(row) => row.iter().map(|v| self.byte_number(v, whole_row)).collect(),
             _ => Err(self.byte_fault("arguments")),
         }
+    }
+
+    /// The bytes a value gives up to a row being lengthened: another
+    /// row hands over its own, and anything that can be walked hands
+    /// over one byte for each of its members.
+    fn byte_taken(&self, value: &Value) -> Res<Vec<u8>> {
+        match &value.contents() {
+            Value::Bytes(row, ..) => Ok(row.borrow().clone()),
+            Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_number(member, false)).collect(),
+            Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
+            other => Err(self.core_fault("core.uniterable", &other.core_kind())),
+        }
+    }
+
+    /// A whole number a row of bytes is handed as a place. CPython
+    /// names the kind that cannot stand for one.
+    fn byte_whole(&self, value: &Value) -> Res<i64> {
+        if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.core_fault("core.integer", &value.core_kind())); }
+        let number = value.as_big()?;
+        Ok(number.to_i64().unwrap_or(if number.is_negative() { i64::MIN } else { i64::MAX }))
     }
 
     fn byte_position(&self, value: &Value, size: usize, mutable: bool) -> Res<usize> {
@@ -10323,7 +10504,7 @@ impl<'a> Engine<'a> {
                     row.try_reserve_exact(count).map_err(|_| unready())?;
                     row.resize(count, 0); row
                 }
-                [value] => self.byte_row(value)?,
+                [value] => self.byte_row(value, task == 0)?,
                 _ => return Err(unready()),
             };
             return Ok(self.byte_make(row, task == 1));
@@ -10357,6 +10538,48 @@ impl<'a> Engine<'a> {
             let [Value::Text(text)] = args else { return Err(bad()); };
             return Ok(self.byte_make(self.byte_unhex(text)?, task == 49));
         }
+        // The workings that change a changeable row where it lies. The
+        // row itself comes first, so the cell the row lives in takes
+        // the change and every name for the row sees it. None of them
+        // is worth anything but the one that hands a byte back and the
+        // one that hands a fresh row back.
+        if Self::BYTE_CHANGES.contains(&task) {
+            let Some(Value::Bytes(cell, true, _)) = args.first() else { return Err(unready()); };
+            let rest = &args[1..];
+            let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
+            match task {
+                52 => { counted(1)?; let byte = self.byte_number(&rest[0], false)?; cell.borrow_mut().push(byte); }
+                53 => { counted(1)?; let more = self.byte_taken(&rest[0])?; cell.borrow_mut().extend(more); }
+                54 => {
+                    counted(2)?;
+                    let asked = self.byte_whole(&rest[0])?;
+                    let byte = self.byte_number(&rest[1], false)?;
+                    let mut held = cell.borrow_mut();
+                    let at = if asked < 0 { asked.saturating_add(held.len() as i64).max(0) as usize } else { (asked as usize).min(held.len()) };
+                    held.insert(at, byte);
+                }
+                55 => {
+                    if rest.len() > 1 { return Err(bad()); }
+                    let asked = match rest.first() { Some(value) => self.byte_whole(value)?, None => -1 };
+                    let mut held = cell.borrow_mut();
+                    if held.is_empty() { return Err(self.byte_said("index", 2)); }
+                    let at = if asked < 0 { asked.saturating_add(held.len() as i64) } else { asked };
+                    if at < 0 || at as usize >= held.len() { return Err(self.byte_said("index", 1)); }
+                    return Ok(Value::Small(i64::from(held.remove(at as usize))));
+                }
+                56 => {
+                    counted(1)?;
+                    let byte = self.byte_number(&rest[0], false)?;
+                    let mut held = cell.borrow_mut();
+                    let Some(at) = held.iter().position(|kept| *kept == byte) else { return Err(self.byte_said("missing", 1)); };
+                    held.remove(at);
+                }
+                57 => { counted(0)?; cell.borrow_mut().clear(); }
+                58 => { counted(0)?; cell.borrow_mut().reverse(); }
+                _ => { counted(0)?; let copy = cell.borrow().clone(); return Ok(self.byte_make(copy, true)); }
+            }
+            return Ok(Value::Null);
+        }
         if task == 40 {
             let [from, to] = args else { return Err(bad()); };
             let pair = |value: &Value| match value { Value::Bytes(content, ..) => Ok(content.borrow().clone()), _ => Err(bad()) };
@@ -10372,7 +10595,7 @@ impl<'a> Engine<'a> {
                 _ => return Err(self.byte_fault("bad_order")),
             };
             if task == 15 {
-                let row = self.byte_row(&args[0])?;
+                let row = self.byte_row(&args[0], true)?;
                 let number = match (little, signed) {
                     (true, true) => BigInt::from_signed_bytes_le(&row), (false, true) => BigInt::from_signed_bytes_be(&row),
                     (true, false) => BigInt::from_bytes_le(num_bigint::Sign::Plus, &row), (false, false) => BigInt::from_bytes_be(num_bigint::Sign::Plus, &row),
@@ -10482,6 +10705,51 @@ impl<'a> Engine<'a> {
             return self.builtin(Builtin::Replace, name, args);
         }
         if !self.lang.bind_names { return self.builtin_values(builtin, name, args); }
+        // A map living alone in the cell a name for it holds is grown
+        // there directly, rather than cloned whole for every key: the
+        // ordinary way a map is built up one key at a time. Only a key
+        // whose own text needs no help from the program's code takes
+        // this road, since the cell stays open while it runs and a
+        // call back into the program could reach the very map being
+        // written.
+        if builtin == Builtin::Replace && args.len() == 3 {
+            if let Value::Bond(cell) = &args[2] {
+                if matches!(&*cell.borrow(), Value::Map(_)) {
+                    let raw_key = self.key(&args[0]);
+                    if let Ok(keytext) = raw_key.member_key() {
+                        if let Some(told) = self.unkeyable(&raw_key) { return Err(told); }
+                        // A row whose own key went without text of its
+                        // own is left out of the lookup entirely, so a
+                        // miss there proves nothing: such a row might
+                        // still be this key by the program's own
+                        // equality, which only the slow road below can
+                        // settle, so the fast road is left untaken.
+                        let placement = { let held = cell.borrow(); let Value::Map(rc) = &*held else { unreachable!("checked just above") }; rc.locate(&keytext) };
+                        match placement {
+                            Placement::AtRow(at) => {
+                                let cell = cell.clone();
+                                let value = args[1].clone();
+                                let mut held = cell.borrow_mut();
+                                let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
+                                Rc::make_mut(rc).overwrite_row(at, value);
+                                drop(held);
+                                return Ok(Value::Bond(cell));
+                            }
+                            Placement::NotThere => {
+                                let cell = cell.clone();
+                                let value = args[1].clone();
+                                let mut held = cell.borrow_mut();
+                                let Value::Map(rc) = &mut *held else { unreachable!("checked just above") };
+                                Rc::make_mut(rc).insert_proven_absent(raw_key, keytext, value);
+                                drop(held);
+                                return Ok(Value::Bond(cell));
+                            }
+                            Placement::Uncertain => {}
+                        }
+                    }
+                }
+            }
+        }
         let writes = matches!(builtin, Builtin::Append | Builtin::Replace);
         let target = if writes { args.last().cloned() } else { None };
         let last = args.len().saturating_sub(1);
@@ -10570,6 +10838,14 @@ impl<'a> Engine<'a> {
                 if gathered {
                     let source = args[0].clone();
                     if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[Value::array(items)]); }
+                }
+                // A row lengthened by a walk takes the walk's members
+                // for its bytes, so the walk is drawn out into a row
+                // first, as the maker of a row of bytes draws one out.
+                if task == 53 && args.len() == 2
+                    && !matches!(args[1], Value::Bytes(..) | Value::Array(_) | Value::Tuple(_) | Value::Text(_)) {
+                    let source = args[1].clone();
+                    if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[args[0].clone(), Value::array(items)]); }
                 }
                 return self.byte_call(task, args);
             }
@@ -10751,7 +11027,7 @@ impl<'a> Engine<'a> {
                 let surroundings: Vec<(Value, Value)> = std::env::vars_os()
                     .filter_map(|(k, v)| Some((Value::text(k.to_str()?), Value::text(v.to_str()?))))
                     .collect();
-                Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(surroundings))])
+                Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(surroundings.into()))])
             }
             // A command put before the host's own shell. It travels as
             // the bytes its text stands for, and everything the shell
@@ -10933,7 +11209,7 @@ impl<'a> Engine<'a> {
                     }
                     let handed = self.handed_to(call).unwrap_or_default().to_vec();
                     pairs.push((Value::text("args"), Value::array(handed)));
-                    told.push(Value::Map(Rc::new(pairs)));
+                    told.push(Value::Map(Rc::new(pairs.into())));
                 }
                 Value::array(told)
             }
@@ -11324,7 +11600,7 @@ impl<'a> Engine<'a> {
                 }
                 Value::Null
             }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
@@ -11555,12 +11831,13 @@ impl<'a> Engine<'a> {
                 if let (Value::Object(_), Some(word)) = (&args[0], &self.lang.object_kind) {
                     return Ok(Value::text(word));
                 }
+                // Every kind left over is one the definition spells no
+                // builtin word for, and a definition that asks after
+                // kinds at all is answered with the class named for it:
+                // the bare kind value carries no name of its own, and a
+                // class stands where the reference has a class.
+                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                 let Some(kind) = args[0].sort() else {
-                    // Every other kind a program can hold is of no kind
-                    // the core knows, and a definition that asks after
-                    // kinds at all is answered with a class named for
-                    // it rather than refused.
-                    if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
                     return Err(format!("{}(): unknown value type", name));
                 };
                 // Some languages say a kind in words rather than hand
@@ -11589,7 +11866,7 @@ impl<'a> Engine<'a> {
                 let v = args.pop().expect("the value");
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
-                    let byte = self.byte_number(&v)?;
+                    let byte = self.byte_number(&v, false)?;
                     row.borrow_mut().push(byte);
                     return Ok(target);
                 }
@@ -11635,7 +11912,7 @@ impl<'a> Engine<'a> {
                 if let Value::Bytes(row, mutable, _) = &target {
                     if !mutable { return Err(self.byte_fault("immutable")); }
                     let index = self.byte_position(&at, row.borrow().len(), *mutable)?;
-                    let byte = self.byte_number(&v)?;
+                    let byte = self.byte_number(&v, false)?;
                     row.borrow_mut()[index] = byte;
                     return Ok(target);
                 }
@@ -11742,10 +12019,11 @@ impl<'a> Engine<'a> {
                         let mut pairs: Vec<(Value, Value)> =
                             items.iter().enumerate().map(|(i, x)| (Value::Small(i as i64), x.clone())).collect();
                         self.replace_item(&mut pairs, at, v);
-                        Value::Map(Rc::new(pairs))
+                        Value::Map(Rc::new(pairs.into()))
                     }
                     Value::Map(mut pairs) => {
-                        self.replace_item(Rc::make_mut(&mut pairs), at, v);
+                        let held = Rc::make_mut(&mut pairs);
+                        self.replace_item(held, at, v);
                         Value::Map(pairs)
                     }
                     _ => return Err(self.not_an_array()),
@@ -11782,7 +12060,7 @@ impl<'a> Engine<'a> {
                 let plain = kept.iter().enumerate().all(|(i, (k, _))| matches!(k, Value::Small(n) if *n == i as i64));
                 match plain {
                     true => Value::array(kept.into_iter().map(|(_, v)| v).collect()),
-                    false => Value::Map(Rc::new(kept)),
+                    false => Value::Map(Rc::new(kept.into())),
                 }
             }
             Builtin::Erase => {
@@ -11807,7 +12085,7 @@ impl<'a> Engine<'a> {
                             .filter(|(j, _)| *j != i)
                             .map(|(j, v)| (Value::Small(j as i64), v.clone()))
                             .collect();
-                        Value::Map(Rc::new(kept))
+                        Value::Map(Rc::new(kept.into()))
                     }
                     // A row of bytes reached through a place in
                     // something else is shortened where it lies, as one
@@ -11819,7 +12097,7 @@ impl<'a> Engine<'a> {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) });
                         }
                         let kept: Vec<(Value, Value)> = pairs.iter().filter(|(k, _)| !self.keys_alike(k, &at)).cloned().collect();
-                        Value::Map(Rc::new(kept))
+                        Value::Map(Rc::new(kept.into()))
                     }
                     v => return Err(format!("{}() cannot take a place out of {}", name, v.plain())),
                 }
@@ -11947,7 +12225,7 @@ fn one_after_another(v: &Value) -> Vec<Value> {
 fn named_pairs(v: &Value) -> Vec<(Value, Value)> {
     match v {
         Value::Bond(shared) => named_pairs(&shared.borrow()),
-        Value::Map(pairs) => pairs.as_ref().clone(),
+        Value::Map(pairs) => pairs.to_vec(),
         Value::Array(items) | Value::Tuple(items) => items
             .iter()
             .enumerate()
@@ -12040,7 +12318,7 @@ fn gathered(items: Vec<Value>, always_map: bool, plain_keys: bool) -> Value {
             }
         }
     }
-    Value::Map(Rc::new(pairs))
+    Value::Map(Rc::new(pairs.into()))
 }
 
 /// One past the highest whole-number key, or zero when there is none.
@@ -12471,7 +12749,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -12810,6 +13088,12 @@ impl Engine<'_> {
             if let Some(told) = self.maker_answers(kind, value, false).map_err(|f| f.told(&self.wording()))? { return Ok(told); }
             // Every value whatever is of the class every other one is of.
             if class.name == self.class_word("root") { return Ok(true); }
+            // A class standing for a builtin kind the definition spells
+            // no word of its own for is asked about by the kind's own
+            // name, there being no builtin word to ask in its place.
+            if let Some(kind) = Self::kind_beneath(class) {
+                if !self.lang.builtins.contains_key(&kind) { return Ok(value.core_kind() == kind); }
+            }
             return Ok(matches!(value, Value::Object(o) if o.class.named(&class.name, false)));
         }
         // A thing of a class standing on a builtin kind is of that kind.
@@ -12915,6 +13199,15 @@ impl Engine<'_> {
                 if let Some(portion) = window { return Ok(Value::text(&format!("dict_{}({})", portion, args[0].core_repr(self.lang.shortest_reals)))); }
                 Value::text(&args[0].core_repr(self.lang.shortest_reals))
             }
+            // The ascii builtin writes what the quoting builtin
+            // writes and then puts every letter outside ASCII into the
+            // escape that stands for it.
+            Builtin::Ascii => {
+                arity(1, 1)?;
+                let word = self.lang.builtins.iter().find(|(_, b)| **b == Builtin::Repr).map(|(w, _)| w.clone()).unwrap_or_default();
+                let written = self.core_call(Builtin::Repr, &word, args.clone(), Vec::new())?;
+                Value::text(&crate::strings::ascii_escaped(&written.plain()))
+            }
             Builtin::Hash => { arity(1, 1)?; Value::Small(args[0].core_hash().ok_or_else(|| self.core_fault("core.unhashable", &Self::unhashable_named(&args[0])))?) }
             Builtin::Identity => {
                 arity(1, 1)?;
@@ -12991,7 +13284,7 @@ impl Engine<'_> {
             Builtin::Dict => {
                 arity(0, 1)?;
                 let mut pairs = match args.first() {
-                    Some(Value::Map(p)) => p.as_ref().clone(),
+                    Some(Value::Map(p)) => p.to_vec(),
                     Some(v) => {
                         let mut pairs = Vec::new();
                         for (at,item) in self.core_members(v)?.into_iter().enumerate() {
@@ -13017,7 +13310,7 @@ impl Engine<'_> {
                     }
                     match found { Some(at) => made[at].1 = v, None => made.push((k,v)) }
                 }
-                Value::Map(Rc::new(made))
+                Value::Map(Rc::new(made.into()))
             }
             Builtin::Iter => {
                 arity(1, 2)?;
@@ -13533,7 +13826,7 @@ impl Engine<'_> {
         for name in names {
             if let Some(held) = self.native_named(&name) { pairs.push((Value::text(&name), held)); }
         }
-        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.natives = Some(book.clone());
         book
     }
@@ -13554,7 +13847,7 @@ impl Engine<'_> {
         for name in &self.lang.module_builtins {
             if !pairs.iter().any(|(key, _)| key_spells(key, name)) { pairs.push((Value::text(name), Value::Bond(natives.clone()))); }
         }
-        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs))));
+        let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.outer_book = Some(book.clone());
         book
     }
@@ -13587,7 +13880,7 @@ impl Engine<'_> {
                 if matches!(value, Value::Blank | Value::Gap) { continue; }
                 pairs.push((Value::text(name), value));
             }
-            Rc::new(RefCell::new(Value::Map(Rc::new(pairs))))
+            Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))))
         };
         if kind == Builtin::ClassTool(8) {
             let mut names: Vec<String> = match &*book.borrow() {

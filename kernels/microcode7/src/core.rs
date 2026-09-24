@@ -48,7 +48,7 @@ impl Value {
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
-            Self::Intrinsic(_) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
+            Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function", _ => "object",
         };
         word.to_owned()
@@ -69,7 +69,8 @@ impl Value {
             Self::Nil => String::from("None"),
             Self::Flag(true) => String::from("True"), Self::Flag(false) => String::from("False"),
             Self::Vector(v) => surround(v, "[", "]", brief),
-            Self::Tuple(v) | Self::Row(v) => surround(v, "(", if v.len() == 1 { ",)" } else { ")" }, brief),
+            // The arguments a fault carries stand as a fixed row does.
+            Self::Tuple(v) | Self::Row(v) | Self::Arguments(v) => surround(v, "(", if v.len() == 1 { ",)" } else { ")" }, brief),
             Self::Set(v) => v.borrow().written(|item| item.quoted(brief)),
             Self::Dict(pairs) => {
                 let mut rendered = Vec::new();

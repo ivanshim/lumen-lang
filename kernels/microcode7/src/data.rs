@@ -9,7 +9,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
-use crate::form::Routine;
+use crate::form::{Prim, Routine};
 
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
@@ -193,7 +193,7 @@ pub enum Value {
     Member(Rc<Value>, String),
     Window(Rc<Value>, char),
     Row(Rc<Vec<Value>>),
-    Intrinsic(Rc<str>),
+    Intrinsic(Prim, Rc<str>),
     Iterator(Rc<RefCell<IteratorState>>),
     Backtrace(Rc<str>),
     Keyed(Rc<Value>, Rc<Value>),
@@ -227,7 +227,7 @@ pub enum Value {
     /// A span awaiting the length of what it is to read.
     Span(Rc<Vec<Value>>),
     /// Keys with their values, kept in the order they were written.
-    Dict(Rc<Vec<(Value, Value)>>),
+    Dict(Rc<MapStore>),
     /// A key written together with its value (`k => v`), until a
     /// literal takes it in.
     Couple(Rc<(Value, Value)>),
@@ -341,6 +341,130 @@ impl SetStore {
                 if self.sealed { self.spelling.clone() + "(" + &inner + ")" } else { inner }
             }
         }
+    }
+}
+
+/// Where a key of a given address stands among a map's pairs, answered
+/// through the place: `Found` where the place names a position outright;
+/// `Absent` where the place accounts for every pair (none of them
+/// lacked an address of its own) and none carries this one, so a miss
+/// is proof; and `Unknown` where some pair's own key carries no address
+/// of its own (a Thing with its own `__hash__`/`__eq__`, kept out of
+/// the place entirely) and so a miss proves nothing — such a pair
+/// might still be this address's own key by the program's equality,
+/// which only the program can answer.
+pub enum Found {
+    Found(usize),
+    Absent,
+    Unknown,
+}
+
+/// A map's pairs, kept in the order they were written, with a place
+/// that answers where a key of a given address stands among them —
+/// built the first time one is asked for, from every entry already
+/// there, and answered from after that without being walked again.
+/// Beside the place sits a plain count of the pairs it could carry no
+/// address for, kept exact across every rebuild, so a miss in the
+/// place is trusted as absence only when that count is nought.
+/// The place belongs to the entries it was built from and to no
+/// others: `Deref` reaches the pairs for every road that only reads
+/// them, and `DerefMut` empties the place before handing out a way to
+/// write them, so a road that grows, shrinks, reorders or overwrites
+/// the pairs by hand cannot leave a place standing over pairs it no
+/// longer describes. `place_key`, which does not go through
+/// `DerefMut`, is the one road that keeps growing the pairs and the
+/// place together, key by key, without either emptying it or walking
+/// it again.
+pub struct MapStore {
+    pairs: Vec<(Value, Value)>,
+    place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
+}
+
+impl MapStore {
+    /// The place, built from scratch across every pair the first time
+    /// one is asked for, and the count of pairs it carries no address
+    /// for beside it.
+    fn ensure_place(&self) {
+        let mut place = self.place.borrow_mut();
+        if place.is_none() {
+            let mut built = std::collections::HashMap::with_capacity(self.pairs.len());
+            let mut unaddressed = 0;
+            for (at, (key, _)) in self.pairs.iter().enumerate() {
+                match key.hash_address() {
+                    Ok(addr) => { built.insert(addr, at); }
+                    Err(_) => unaddressed += 1,
+                }
+            }
+            *place = Some((built, unaddressed));
+        }
+    }
+
+    /// Where a key of this address stands: found outright, proven
+    /// absent because the place accounts for every pair, or unknown
+    /// because some pair's key carries no address for the place to
+    /// have accounted for, and only the program's own equality can
+    /// say whether that pair is this address's key after all.
+    pub fn locate(&self, address: &str) -> Found {
+        self.ensure_place();
+        let place = self.place.borrow();
+        let (by_address, unaddressed) = place.as_ref().expect("just built");
+        match by_address.get(address) {
+            Some(at) => Found::Found(*at),
+            None if *unaddressed == 0 => Found::Absent,
+            None => Found::Unknown,
+        }
+    }
+
+    /// Write over the pair already at a position the place has
+    /// already named, without touching the place: the position it
+    /// names does not move for this.
+    pub fn overwrite_at(&mut self, at: usize, value: Value) {
+        self.pairs[at].1 = value;
+    }
+
+    /// Add a key already proven absent and already known by its own
+    /// address, growing the pairs and the place together so a map
+    /// built up key by key never has its place emptied and walked
+    /// afresh for the next key.
+    pub fn insert_known_absent(&mut self, key: Value, address: String, value: Value) {
+        self.ensure_place();
+        let at = self.pairs.len();
+        self.pairs.push((key, value));
+        self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
+    }
+}
+
+impl From<Vec<(Value, Value)>> for MapStore {
+    fn from(pairs: Vec<(Value, Value)>) -> MapStore {
+        MapStore { pairs, place: RefCell::new(None) }
+    }
+}
+
+/// Built up pair by pair the plain way (`.collect()`), the place is
+/// left to be built on first use rather than kept in step as it is.
+impl std::iter::FromIterator<(Value, Value)> for MapStore {
+    fn from_iter<I: IntoIterator<Item = (Value, Value)>>(iter: I) -> MapStore {
+        MapStore::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+/// A copy of the pairs starts fresh: the place is cheap to build
+/// again and answers for the copy's own pairs, never the original's.
+impl Clone for MapStore {
+    fn clone(&self) -> MapStore {
+        MapStore { pairs: self.pairs.clone(), place: RefCell::new(None) }
+    }
+}
+
+impl std::ops::Deref for MapStore {
+    type Target = Vec<(Value, Value)>;
+    fn deref(&self) -> &Vec<(Value, Value)> { &self.pairs }
+}
+
+impl std::ops::DerefMut for MapStore {
+    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        *self.place.borrow_mut() = None;
+        &mut self.pairs
     }
 }
 
@@ -600,7 +724,7 @@ impl Value {
             Value::Nil | Value::KindOf(_) => Kind::Nothing,
             Value::Shared(cell) => return cell.borrow().kind(),
             Value::Wrapped(..) | Value::Octets { .. } | Value::OctetKind { .. } | Value::Arguments(_) | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Couple(_) | Value::Blueprint(_) | Value::Thing(_) => return None,
-            Value::TextCall { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
+            Value::TextCall { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Adorned(_) | Value::Generator(_) | Value::Tuple(_) | Value::Imaginary { .. } | Value::Ellipsis | Value::Method(..) | Value::Routine(_) | Value::Bound(..) | Value::Unset | Value::Span(_) | Value::Channel(_) | Value::Progression(_) => return None,
             Value::Set(_) => Kind::Set,
         })
     }
@@ -650,7 +774,7 @@ impl Value {
             Value::TextCall { .. } | Value::Adorned(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
             Value::Member(..) => return Err("Cannot coerce method to number".to_string()),
-            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(_) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
+            Value::Octets { .. } | Value::OctetKind { .. } | Value::Backtrace(_) | Value::Keyed(..) | Value::Attributes(_) | Value::Traversal(..) | Value::Refusal(_) | Value::Cursor(_) | Value::SetCursor { .. } | Value::Intrinsic(..) | Value::Iterator(_) | Value::Channel(_) | Value::Progression(_) => return Err("Cannot coerce this value to number".into()),
             Value::Ellipsis => return Err("Ellipsis is not a number".to_string()),
             Value::Span(_) => return Err("Cannot coerce slice to number".to_string()),
             Value::KindOf(_) => return Err("Cannot coerce kind meta-value to number".to_string()),
@@ -704,7 +828,7 @@ impl Value {
             (Value::Imaginary { coefficient, .. }, other) | (other, Value::Imaginary { coefficient, .. }) => {
                 *coefficient == 0.0 && (matches!(other, Value::Flag(false)) || other.equals(&Value::Small(0)))
             }
-            (Value::Intrinsic(left), Value::Intrinsic(right)) => left == right,
+            (Value::Intrinsic(_, left), Value::Intrinsic(_, right)) => left == right,
             (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left,right),
             (Value::Set(left), Value::Set(right)) => left.borrow().keys == right.borrow().keys,
             // The arguments a fault was made with are a tuple in their
@@ -968,17 +1092,26 @@ impl Value {
             Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Mutable(place, _) => within_cell(place, Value::bare),
-            Value::Member(..) => String::from("<built-in method>"),
+            // A method of a builtin's own, handed over bound to what
+            // it was read from, is written by its name, the kind of the
+            // thing it was read from and where that thing is kept. One
+            // read from the kind itself is bound to no thing at all and
+            // is named with the kind it belongs to instead.
+            Value::Member(held, word) => method_written(held, word, Rc::as_ptr(held) as *const u8 as usize),
             Value::Window(..) => self.settled().bare(),
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
-            Value::Intrinsic(name) => format!("<built-in function {}>", name),
+            // A word naming a kind stands for the kind itself, and is
+            // written as the reference writes a class; every other
+            // intrinsic word is written as work waiting to be done.
+            Value::Intrinsic(op, name) if op.names_a_kind() => format!("<class '{}'>", name),
+            Value::Intrinsic(_, name) => format!("<built-in function {}>", name),
             Value::Iterator(_) => String::from("<iterator>"),
             Value::SetCursor { .. } => String::from("<set walk>"),
             Value::Set(items) => items.borrow().written(Value::bare),
             Value::Arguments(row) => format!("({}{})", row.iter().map(Value::bare).collect::<Vec<_>>().join(", "), if row.len() == 1 { "," } else { "" }),
             Value::Octets { cell, changeable, lead } => octets_shown(&cell.borrow(), lead, *changeable),
             Value::OctetKind { shown, .. } => shown.to_string(),
-            Value::TextCall { name, .. } => format!("<built-in method {}>", name),
+            Value::TextCall { subject, name, .. } => method_written(&Value::Text(subject.clone()), name, subject.as_ptr() as usize),
             Value::TextRow(words, closed) => crate::text::written_row(words, *closed),
             Value::Channel(port) => format!("<{} stream>", if *port == 2 { "error" } else { "output" }),
             Value::Progression(p) => {
@@ -1016,9 +1149,20 @@ impl Value {
             Value::Attributes(t) => format!("<attributes of {}>", t.of.name),
             Value::Refusal(word) => word.to_string(),
             Value::Traversal(..) | Value::Cursor(_) => "<iterator>".to_owned(),
-            Value::Method(p, _) | Value::Routine(p) | Value::Bound(p, _) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) | Value::Bound(p, _) => {
+                let mut title = if p.qualification.is_empty() { p.ident.clone() } else { p.qualification.clone() };
+                if title.ends_with("{closure}") { title.truncate(title.len() - "{closure}".len()); title.push_str("<lambda>"); }
+                format!("<function {title} at 0x1>")
+            }
+            Value::Method(p, _) => format!("<function({})>", p.formals.join(", ")),
             Value::Shared(cell) => cell.borrow().bare(),
             Value::Blueprint(b) => b.presentation.clone().unwrap_or_else(|| format!("<class {}>", b.name)),
+            // A method carried by a native kind and read off the kind's
+            // own word stands loose, and is named with that kind.
+            Value::Wrapped(60, parts) => match parts.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                _ => "<member wrapper>".into(),
+            },
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);
@@ -1067,6 +1211,51 @@ impl Value {
 }
 
 /// The whole part, then fraction places while the significant places last.
+/// The word a worth goes by as a kind, where it stands for one and not
+/// merely for something of one: the reference's own name for that
+/// kind. Nothing for a worth that is one of a kind.
+impl Value {
+    pub fn kind_it_names(&self) -> Option<String> {
+        match self {
+            Value::Blueprint(b) => Some(b.name.clone()),
+            Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_owned()),
+            Value::OctetKind { changeable, .. } => Some(String::from(if *changeable { "bytearray" } else { "bytes" })),
+            Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),
+            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().kind_it_names(),
+            _ => None,
+        }
+    }
+
+    /// Where the thing behind a worth is kept: the cell a collection
+    /// lives in, else the place its own members or letters stand at.
+    /// This is what the reference writes after a bound method's kind.
+    /// Nothing for a worth kept in no place of its own.
+    pub fn standing(&self) -> Option<usize> {
+        Some(match self {
+            Value::Shared(cell) | Value::Mutable(cell, _) => Rc::as_ptr(cell) as *const u8 as usize,
+            Value::Vector(items) | Value::Tuple(items) | Value::Row(items) => Rc::as_ptr(items) as *const u8 as usize,
+            Value::Dict(entries) => Rc::as_ptr(entries) as *const u8 as usize,
+            Value::Set(members) => Rc::as_ptr(members) as *const u8 as usize,
+            Value::Octets { cell, .. } => Rc::as_ptr(cell) as *const u8 as usize,
+            Value::Text(letters) => letters.as_ptr() as usize,
+            Value::Thing(thing) => Rc::as_ptr(thing) as *const u8 as usize,
+            Value::Iterator(state) => Rc::as_ptr(state) as *const u8 as usize,
+            _ => return None,
+        })
+    }
+}
+
+/// How a method of a builtin's own is written: the name it answers to,
+/// and either the kind of the thing it was read from with where that
+/// thing is kept, or, where it was read from the kind itself and so is
+/// bound to nothing, the name of that kind. Where the thing is kept in
+/// no place of its own, the method's own place stands for it.
+fn method_written(subject: &Value, word: &str, elsewhere: usize) -> String {
+    let held = subject.settled();
+    if let Some(kind) = held.kind_it_names() { return format!("<method '{word}' of '{kind}' objects>"); }
+    format!("<built-in method {word} of {} object at 0x{:x}>", held.kind_word(), subject.standing().unwrap_or(elsewhere))
+}
+
 pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String {
     let whole = above / beneath;
     let mut left = (above - &whole * beneath).abs();

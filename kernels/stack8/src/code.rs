@@ -462,7 +462,7 @@ pub enum Builtin {
     InstanceOf, Set,
     /// The maker of a set that cannot be changed, a kind apart from Set.
     Frozen,
-    Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
+    Dict, Reversed, Enumerate, Zip, Map, Filter, All, Minimum, Maximum, Absolute, Round, Divmod, Power, Hex, Oct, Bin, Repr, Ascii, Bool, Callable, Identity, Hash, HasAttr, GetAttr, SetAttr, DelAttr, Vars,
     SetMake,
     SetAdd,
     SetRemove,
@@ -798,6 +798,15 @@ impl Builtin {
         matches!(self, Self::SetAdd | Self::SetRemove | Self::SetDiscard | Self::SetPop | Self::SetClear | Self::SetUpdate | Self::SetMeetUpdate | Self::SetLessUpdate | Self::SetXorUpdate)
     }
 
+    /// Whether this builtin word names a kind of value rather than a
+    /// piece of work. Such a word stands for the kind it makes, and is
+    /// written as that kind rather than as work waiting to be done.
+    pub fn names_kind(self) -> bool {
+        matches!(self, Self::ToInt | Self::ToText | Self::AsReal | Self::SortOf | Self::List | Self::Dict
+            | Self::Tuple | Self::Set | Self::Frozen | Self::Bool | Self::Complex | Self::Bytes(0 | 1) | Self::Span
+            | Self::Enumerate | Self::Zip | Self::Map | Self::Filter | Self::Reversed | Self::MakeSlice
+            | Self::ClassTool(9..=11))
+    }
     pub fn set_method(self) -> bool {
         matches!(self, Self::SetAdd | Self::SetRemove | Self::SetDiscard | Self::SetPop | Self::SetClear | Self::SetCopy | Self::SetUpdate | Self::SetUnion | Self::SetIntersection | Self::SetDifference | Self::SetSymmetric | Self::SetSubset | Self::SetSuperset | Self::SetDisjoint | Self::SetMeetUpdate | Self::SetLessUpdate | Self::SetXorUpdate)
     }

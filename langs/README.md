@@ -566,7 +566,12 @@ only. The extension labels so far, all from PHP:
   even when the literal stands in a routine never called.
 - `ext.system.bytes.arguments`, `.range`, `.negative` and `.index`: plain
   complaints for arguments of the wrong kind, a byte outside its bounds,
-  a negative count and an index beyond the row.
+  a negative count and an index beyond the row. `.range` words the bound
+  twice: first of the bytes a whole row is built from, then of one byte
+  written into a row that stands already. `.index` words the place
+  beyond the row three times over: first of a place read or written,
+  then of a place taken out of a row and handed back, and last of such a
+  place asked of an empty row.
 - `ext.system.bytes.subscript`: the words refusing a key of a kind a row
   of bytes cannot be read at, the first for the fixed kind and the second
   for the mutable one, with the key's kind written after them. A row of
@@ -574,7 +579,9 @@ only. The extension labels so far, all from PHP:
   being spoken of in the singular. `ext.system.bytes.concat` names, before
   and between, what was handed to a row of bytes to join to it and then
   the row's own kind. `ext.system.bytes.missing` is the whole complaint
-  for a sequence sought in a row and not standing there.
+  for a sequence sought in a row and not standing there, and then the
+  whole complaint for one byte sought in a changeable row and not
+  standing there.
 - `ext.system.bytes.immutable` and `.unhashable`: plain complaints for
   writing into immutable bytes and hashing mutable bytes.
 - `ext.system.bytes.separator`, `.overflow`, `.unsigned` and `.bad_order`:
@@ -3186,6 +3193,9 @@ only. The extension labels so far, all from PHP:
   the fuller account of special methods.
 - `ext.builtin.repr`: a builtin showing text within quotes and exceptions
   as their class followed by their arguments within parentheses.
+- `ext.builtin.ascii`: a builtin writing what `ext.builtin.repr` writes,
+  with every letter outside ASCII put into the escape that stands for
+  it.
 - `ext.system.fault.class.index`, `.key`, `.name`, `.attribute` and `.stop`:
   classes for an index beyond the row, an absent key, an unbound name,
   an absent member and a walk that has ended. These extend the fault
@@ -3546,6 +3556,12 @@ only. The extension labels so far, all from PHP:
   without a whole number, and an unfinished percent mark.
   `ext.op.rem.format.code` has three pieces preceding an unknown letter,
   its hexadecimal ordinal, and its place within the format string.
+- `ext.op.rem.format.byte`: the two pieces enclosing the kind of a value
+  handed to a mark which shows a row of bytes. A row of bytes on the left
+  of the remainder sign fills its marks byte for byte: the marks that
+  show a value take a row of bytes alone, whatever letter they are
+  written with, and the marks that word a value write the ascii of its
+  representation.
 - `ext.op.bit.and`, `ext.op.bit.or`, `ext.op.bit.xor`, `ext.op.bit.not`,
   `ext.op.bit.left` and `ext.op.bit.right`: the bits of a value taken
   together, turned over, or moved along (`&`, `|`, `^`, `~`, `<<`, `>>`).
@@ -4070,6 +4086,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.args.count.outside` | - | - | - | - | `func_num_args() must be called from a function context` | - | - | - | - | - |
 | `ext.builtin.array` | - | - | - | - | `array` | - | - | - | - | - |
 | `ext.builtin.array.front` | - | - | - | - | `array_unshift` | - | - | - | - | - |
+| `ext.builtin.ascii` | - | - | `ascii` | - | - | - | - | - | - | - |
 | `ext.builtin.at_end` | - | - | - | - | `__at_end` | - | - | - | - | - |
 | `ext.builtin.bin` | - | - | `bin` | - | - | - | - | - | - | - |
 | `ext.builtin.bool` | - | - | `bool` | - | - | - | - | - | - | - |
@@ -4701,6 +4718,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.reference.unshared.handed` | - | - | - | - | `Only variables should be passed by reference` | - | - | - | - | - |
 | `ext.op.reference.unshared.written` | - | - | - | - | `Only variables should be assigned by reference` | - | - | - | - | - |
 | `ext.op.rem.format.arguments` | - | - | `String format arguments do not match` | - | - | - | - | - | - | - |
+| `ext.op.rem.format.byte` | - | - | `TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '` `'` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.character` | - | - | `TypeError: %c requires int or char` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.code` | - | - | `ValueError: unsupported format character '` `' (0x` `) at index ` | - | - | - | - | - | - | - |
 | `ext.op.rem.format.few` | - | - | `TypeError: not enough arguments for format string` | - | - | - | - | - | - | - |
@@ -4982,12 +5000,12 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
 | `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
-| `ext.system.bytes.index` | - | - | `IndexError: index out of range` | - | - | - | - | - | - | - |
-| `ext.system.bytes.missing` | - | - | `ValueError: subsection not found` | - | - | - | - | - | - | - |
+| `ext.system.bytes.index` | - | - | `IndexError: index out of range` `IndexError: pop index out of range` `IndexError: pop from empty bytearray` | - | - | - | - | - | - | - |
+| `ext.system.bytes.missing` | - | - | `ValueError: subsection not found` `ValueError: value not found in bytearray` | - | - | - | - | - | - | - |
 | `ext.system.bytes.negative` | - | - | `ValueError: negative count` | - | - | - | - | - | - | - |
 | `ext.system.bytes.order` | - | - | `big` `little` | - | - | - | - | - | - | - |
 | `ext.system.bytes.overflow` | - | - | `OverflowError: int too big to convert` | - | - | - | - | - | - | - |
-| `ext.system.bytes.range` | - | - | `ValueError: bytes must be in range(0, 256)` | - | - | - | - | - | - | - |
+| `ext.system.bytes.range` | - | - | `ValueError: bytes must be in range(0, 256)` `ValueError: byte must be in range(0, 256)` | - | - | - | - | - | - | - |
 | `ext.system.bytes.repr` | - | - | `b` `bytearray(b` | - | - | - | - | - | - | - |
 | `ext.system.bytes.separator` | - | - | `ValueError: empty separator` | - | - | - | - | - | - | - |
 | `ext.system.bytes.strict` | - | - | `strict` | - | - | - | - | - | - | - |
@@ -5092,11 +5110,13 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.text.format.brace.open` | - | - | `ValueError: expected '}' before end of string` | - | - | - | - | - | - | - |
 | `ext.text.format.brace.single` | - | - | `ValueError: Single '{' encountered in format string` | - | - | - | - | - | - | - |
 | `ext.text.format.character` | - | - | `OverflowError: %c arg not in range(0x110000)` | - | - | - | - | - | - | - |
+| `ext.text.format.complex.align` | - | - | `ValueError: '=' alignment flag is not allowed in complex format specifier` | - | - | - | - | - | - | - |
+| `ext.text.format.complex.zero` | - | - | `ValueError: Zero padding is not allowed in complex format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.conversion` | - | - | `ValueError: Unknown conversion specifier ` | - | - | - | - | - | - | - |
 | `ext.text.format.index` | - | - | `IndexError: Replacement index ` ` out of range for positional args tuple` | - | - | - | - | - | - | - |
 | `ext.text.format.invalid` | - | - | `ValueError: Invalid format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.key` | - | - | `KeyError: '` `'` | - | - | - | - | - | - | - |
-| `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` | - | - | - | - | - | - | - |
+| `ext.text.format.kinds` | - | - | `int` `float` `str` `bool` `list` `dict` `NoneType` `object` `complex` `tuple` `set` `range` `bytes` `bytearray` `type` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.auto` | - | - | `ValueError: cannot switch from manual field specification to automatic field numbering` | - | - | - | - | - | - | - |
 | `ext.text.format.numbered.manual` | - | - | `ValueError: cannot switch from automatic field numbering to manual field specification` | - | - | - | - | - | - | - |
 | `ext.text.format.precision.integer` | - | - | `ValueError: Precision not allowed in integer format specifier` | - | - | - | - | - | - | - |

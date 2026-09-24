@@ -307,7 +307,7 @@ pub enum Value {
     /// Bounds of an index span; nothing stands for an omitted bound.
     Slice(Rc<[Value; 3]>),
     /// Keys and their values, in the order they were put there.
-    Map(Rc<Vec<(Value, Value)>>),
+    Map(Rc<KeyedPairs>),
     /// A cell two or more names share: a write through any of them is a
     /// write all of them see. Where calls bind by name, it also holds
     /// a collection whose items may change whilst its names stay apart.
@@ -341,51 +341,40 @@ pub enum Descriptor {
 }
 
 /// A stand-in for the standard library's own scattering, which guards
-/// against an adversary choosing keys on purpose -- a guard a set's own
-/// members, kept by a key already reckoned from `hash_address` rather
-/// than a program's raw text, have no need of. Every member read or
-/// written asks after some key here, so a plainer scattering, quicker
-/// for it, costs nothing membership does not already pay for safety it
-/// does not need.
-#[derive(Default)]
-pub struct FxHasher {
-    hash: usize,
+/// against an adversary choosing keys on purpose. A set's own members
+/// are kept under a key already reckoned by `set_key`, never a
+/// program's raw text, so that guard buys nothing here and every
+/// member read or written pays for it regardless. This is the
+/// textbook Fowler-Noll-Vo pass, one byte at a time: no table, no
+/// lookahead, just a running product folded against each byte in turn.
+pub struct QuickHash(u64);
+
+impl QuickHash {
+    const START: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
 }
 
-impl FxHasher {
-    const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
-    #[inline]
-    fn add(&mut self, word: usize) {
-        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
-    }
+impl Default for QuickHash {
+    fn default() -> Self { QuickHash(Self::START) }
 }
 
-impl std::hash::Hasher for FxHasher {
+impl std::hash::Hasher for QuickHash {
     #[inline]
-    fn write(&mut self, mut bytes: &[u8]) {
-        while bytes.len() >= 8 {
-            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
-            bytes = &bytes[8..];
+    fn write(&mut self, bytes: &[u8]) {
+        let mut running = self.0;
+        for &byte in bytes {
+            running ^= byte as u64;
+            running = running.wrapping_mul(Self::PRIME);
         }
-        if bytes.len() >= 4 {
-            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
-            bytes = &bytes[4..];
-        }
-        if bytes.len() >= 2 {
-            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
-            bytes = &bytes[2..];
-        }
-        if let Some(&last) = bytes.first() {
-            self.add(last as usize);
-        }
+        self.0 = running;
     }
     #[inline]
     fn finish(&self) -> u64 {
-        self.hash as u64
+        self.0
     }
 }
 
-pub type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
+pub type FxBuildHasher = std::hash::BuildHasherDefault<QuickHash>;
 
 /// The hash finds a member; the row remembers when it first came.
 #[derive(Debug, Clone)]
@@ -480,6 +469,128 @@ impl Members {
         let mut state = std::collections::hash_map::DefaultHasher::new();
         for place in places { std::hash::Hash::hash(place, &mut state); }
         format!("frozen:{:x}", std::hash::Hasher::finish(&state))
+    }
+}
+
+/// Where a key's own text stands among a map's rows: `AtRow` where the
+/// lookup names a row outright; `NotThere` where the lookup accounts
+/// for every row (none of them went without text of its own) and none
+/// carries this text, so a miss is proof; and `Uncertain` where some
+/// row's own key went without text of its own (a class with its own
+/// `__hash__`/`__eq__`, left out of the lookup entirely) and so a miss
+/// proves nothing — that row might still hold this key by the
+/// program's own equality, which only the program can settle.
+pub enum Placement {
+    AtRow(usize),
+    NotThere,
+    Uncertain,
+}
+
+/// A map's rows, in the order a program wrote them, paired with a
+/// lookup from a key's own text (`member_key`) to the row it sits at.
+/// The lookup is worked out the first time something asks for it, from
+/// every row already present, and answered without doing that walk
+/// again afterwards. Beside the lookup sits a plain count of the rows
+/// whose key went without text of its own, kept exact across every
+/// rebuild, so a miss in the lookup is trusted as "no such row" only
+/// when that count is nought. It belongs only to the rows it was drawn
+/// from: `Deref` reaches those rows for reading, unchanged, while
+/// `DerefMut` throws the lookup away before handing out a way to
+/// change the rows, so nothing that adds, drops, reorders or overwrites
+/// a row by hand can leave the lookup pointing at rows that moved out
+/// from under it. `set_by_key`, the one road that does not pass through
+/// `DerefMut`, keeps the rows and the lookup growing side by side
+/// instead, so a map built one key at a time never has its lookup
+/// thrown away and walked afresh for the next key.
+#[derive(Debug)]
+pub struct KeyedPairs {
+    rows: Vec<(Value, Value)>,
+    lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
+}
+
+impl KeyedPairs {
+    /// The lookup, worked out from scratch across every row the first
+    /// time one is needed, with the count of rows it could find no
+    /// text for beside it.
+    fn settle_lookup(&self) {
+        let mut lookup = self.lookup.borrow_mut();
+        if lookup.is_none() {
+            let mut fresh = std::collections::HashMap::with_capacity(self.rows.len());
+            let mut untexted = 0;
+            for (at, (key, _)) in self.rows.iter().enumerate() {
+                match key.member_key() {
+                    Ok(text) => { fresh.insert(text, at); }
+                    Err(_) => untexted += 1,
+                }
+            }
+            *lookup = Some((fresh, untexted));
+        }
+    }
+
+    /// Where a row of this key's text stands: named outright, proven
+    /// absent because the lookup accounts for every row, or uncertain
+    /// because some row's key went without text for the lookup to have
+    /// accounted for.
+    pub fn locate(&self, keytext: &str) -> Placement {
+        self.settle_lookup();
+        let lookup = self.lookup.borrow();
+        let (by_text, untexted) = lookup.as_ref().expect("just settled");
+        match by_text.get(keytext) {
+            Some(at) => Placement::AtRow(*at),
+            None if *untexted == 0 => Placement::NotThere,
+            None => Placement::Uncertain,
+        }
+    }
+
+    /// Write over the row already at a place the lookup has already
+    /// named, without touching the lookup: the place it names does not
+    /// move for this.
+    pub fn overwrite_row(&mut self, at: usize, value: Value) {
+        self.rows[at].1 = value;
+    }
+
+    /// Add a key already proven absent and already known by its own
+    /// text, growing the rows and the lookup together so a map built
+    /// one key at a time never has its lookup thrown away and walked
+    /// afresh for the next key.
+    pub fn insert_proven_absent(&mut self, key: Value, keytext: String, value: Value) {
+        self.settle_lookup();
+        let at = self.rows.len();
+        self.rows.push((key, value));
+        self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
+    }
+}
+
+impl From<Vec<(Value, Value)>> for KeyedPairs {
+    fn from(rows: Vec<(Value, Value)>) -> KeyedPairs {
+        KeyedPairs { rows, lookup: RefCell::new(None) }
+    }
+}
+
+/// A copy carries only the rows onward; its lookup is left for
+/// whatever next asks for it to work out again, over the copy's own
+/// rows and never the rows it was copied from.
+impl Clone for KeyedPairs {
+    fn clone(&self) -> KeyedPairs {
+        KeyedPairs { rows: self.rows.clone(), lookup: RefCell::new(None) }
+    }
+}
+
+impl std::iter::FromIterator<(Value, Value)> for KeyedPairs {
+    fn from_iter<I: IntoIterator<Item = (Value, Value)>>(iter: I) -> KeyedPairs {
+        KeyedPairs::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl std::ops::Deref for KeyedPairs {
+    type Target = Vec<(Value, Value)>;
+    fn deref(&self) -> &Vec<(Value, Value)> { &self.rows }
+}
+
+impl std::ops::DerefMut for KeyedPairs {
+    fn deref_mut(&mut self) -> &mut Vec<(Value, Value)> {
+        *self.lookup.borrow_mut() = None;
+        &mut self.rows
     }
 }
 
@@ -1086,15 +1197,24 @@ impl Value {
             Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Collection(cell, _) => shown_once(cell, "[...]", |held| held.plain()),
-            Value::ValueMethod(_) => "<built-in method>".to_string(),
+            // A method of a builtin's own, handed over bound to what
+            // it was read from, is written by its name, the kind of the
+            // thing it was read from and where that thing is kept. One
+            // read from the kind itself is bound to no thing at all and
+            // is named with the kind it belongs to instead.
+            Value::ValueMethod(pair) => method_written(&pair.0, &pair.1, Rc::as_ptr(pair) as *const u8 as usize),
             Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
+            // A builtin word naming a kind stands for the kind itself,
+            // and is written as the reference writes a class; every
+            // other builtin word is written as work to be done.
+            Value::Native(op, word) if op.names_kind() => format!("<class '{}'>", word),
             Value::Native(_, word) => format!("<built-in function {}>", word),
             Value::Cursor(_) => "<iterator>".to_string(),
             Value::SetWalk(..) => "<set walk>".into(),
             Value::Set(s) => s.borrow().show(Value::plain),
             Value::Bytes(row, mutable, opening) => byte_repr(&row.borrow(), *mutable, opening),
             Value::ByteKind(_, text) => text.to_string(),
-            Value::TextMethod(_, _, name) => format!("<built-in method {}>", name),
+            Value::TextMethod(text, _, name) => method_written(&Value::Text(text.clone()), name, text.as_ptr() as usize),
             Value::Words(row, fixed) => crate::strings::row(row, *fixed),
             Value::Stream(error) => format!("<{} stream>", if *error { "error" } else { "output" }),
             Value::Counted(r) => if r.step.is_one() { format!("{}({}, {})", r.name, r.start, r.stop) }
@@ -1125,14 +1245,57 @@ impl Value {
             Value::Fields(o) => format!("<attributes of {}>", o.class.name),
             Value::Declined(word) => word.to_string(),
             Value::Walking(_) | Value::Walk(_) => "<iterator>".to_string(),
-            Value::Routine(p) | Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
+            Value::Routine(p) => {
+                let named = if p.qualified.is_empty() { p.ident.as_str() } else { p.qualified.as_str() };
+                let named = named.strip_suffix("{closure}").map_or_else(|| named.to_string(), |head| format!("{head}<lambda>"));
+                format!("<function {named} at 0x1>")
+            }
+            Value::Method(_, p) => format!("<function({})>", p.formals.join(", ")),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().plain(),
             Value::Class(c) => c.outline.clone().unwrap_or_else(|| format!("<class {}>", c.name)),
+            // A kind's own method read from the kind itself is bound to
+            // nothing and is written with the kind it belongs to.
+            Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
+                [Value::Text(kind), Value::Text(word)] => format!("<method '{word}' of '{kind}' objects>"),
+                _ => "<member wrapper>".to_string(),
+            },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => format!("<object {}>", o.class.name),
             Value::SortOf(k) => k.tag().to_string(),
             Value::Slice(parts) => format!("slice({}, {}, {})", parts[0].core_repr(false), parts[1].core_repr(false), parts[2].core_repr(false)),
         }
+    }
+
+    /// The word a value goes by as a kind, where it stands for one and
+    /// not merely for something of one: the reference's own name for
+    /// that kind. Nothing for a value that is one of a kind.
+    pub fn kind_it_names(&self) -> Option<String> {
+        match self {
+            Value::Class(c) => Some(c.name.clone()),
+            Value::SortOf(sort) => Some(Value::sort_called(*sort).to_string()),
+            Value::ByteKind(mutable, _) => Some(if *mutable { "bytearray" } else { "bytes" }.to_string()),
+            Value::Native(b, word) if b.names_kind() => Some(word.to_string()),
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().kind_it_names(),
+            _ => None,
+        }
+    }
+
+    /// Where the thing behind a value is kept: the cell a collection
+    /// lives in, else the place its own members or letters stand at.
+    /// This is what the reference writes after a bound method's kind.
+    /// Nothing for a value that is kept nowhere of its own.
+    pub fn standing(&self) -> Option<usize> {
+        Some(match self {
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Rc::as_ptr(cell) as *const u8 as usize,
+            Value::Array(items) | Value::Tuple(items) => Rc::as_ptr(items) as *const u8 as usize,
+            Value::Map(pairs) => Rc::as_ptr(pairs) as *const u8 as usize,
+            Value::Set(members) => Rc::as_ptr(members) as *const u8 as usize,
+            Value::Bytes(row, ..) => Rc::as_ptr(row) as *const u8 as usize,
+            Value::Text(letters) => letters.as_ptr() as usize,
+            Value::Object(thing) => Rc::as_ptr(thing) as *const u8 as usize,
+            Value::Cursor(state) => Rc::as_ptr(state) as *const u8 as usize,
+            _ => return None,
+        })
     }
 
     /// A key for the call cache: kind and content, nested for arrays.
@@ -1186,6 +1349,17 @@ impl Value {
 
 /// p/q to `places` significant digits: the whole part in full, then the
 /// fraction digits the precision leaves, none of them padding.
+/// How a method of a builtin's own is written: the name it answers to,
+/// and either the kind of the thing it was read from with where that
+/// thing is kept, or, where it was read from the kind itself and so is
+/// bound to nothing, the name of that kind. Where the thing is kept in
+/// no place of its own, the method's own place stands for it.
+fn method_written(subject: &Value, word: &str, elsewhere: usize) -> String {
+    let held = subject.contents();
+    if let Some(kind) = held.kind_it_names() { return format!("<method '{word}' of '{kind}' objects>"); }
+    format!("<built-in method {word} of {} object at 0x{:x}>", held.core_kind(), subject.standing().unwrap_or(elsewhere))
+}
+
 pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
     let int_part = p / q;
     let mut remainder = (p - &int_part * q).abs();

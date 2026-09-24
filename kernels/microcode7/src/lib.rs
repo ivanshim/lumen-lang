@@ -300,7 +300,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             };
             written_at(&mut carried, &steps, held);
         }
-        machine.define(name, Value::Dict(std::rc::Rc::new(carried)));
+        machine.define(name, Value::Dict(std::rc::Rc::new(carried.into())));
     }
     // The body as it came, for a program that would read it itself.
     if let Some(name) = table.single("ext.system.request.body") {
@@ -345,7 +345,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     }
     if !table.flag("ext.system.kind.spelled") {
         if table.has_any("ext.builtin.isinstance") {
-            for name in table.prims.keys() { machine.define(name, Value::Intrinsic(Rc::from(name.as_str()))); }
+            for (name, op) in table.prims.iter() { machine.define(name, Value::Intrinsic(*op, Rc::from(name.as_str()))); }
         }
         for (key, sort) in exec::KIND_LABELS {
             if let Some(n) = table.single(key) {
@@ -444,13 +444,13 @@ fn written_at(entries: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     let at = match entries.iter().position(|(k, _)| k.equals(&key)) {
         Some(at) => at,
         None => {
-            entries.push((key, Value::Dict(std::rc::Rc::new(Vec::new()))));
+            entries.push((key, Value::Dict(std::rc::Rc::new(Vec::new().into()))));
             entries.len() - 1
         }
     };
     let mut deeper = match &entries[at].1 {
         Value::Dict(held) => held.as_ref().clone(),
-        _ => Vec::new(),
+        _ => Vec::new().into(),
     };
     written_at(&mut deeper, &steps[1..], value);
     entries[at].1 = Value::Dict(std::rc::Rc::new(deeper));

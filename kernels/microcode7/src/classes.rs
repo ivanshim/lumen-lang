@@ -37,7 +37,7 @@ impl<'a> Machine<'a> {
     /// it is one of a native kind. Nothing for a blueprint of a class's
     /// own or a thing of one, which list their own members instead.
     fn directory_stand_in(&self,value:&Value)->Option<Value> {
-        if let Value::Intrinsic(word)=value { return self.kind_stand_in(word); }
+        if let Value::Intrinsic(_,word)=value { return self.kind_stand_in(word); }
         if let Value::OctetKind{changeable,..}=value { let word=self.octet_kind_word(*changeable).to_owned(); return self.kind_stand_in(&word); }
         if let Value::Blueprint(b)=value { return Self::native_word(b).and_then(|word|self.kind_stand_in(&word)); }
         if matches!(value,Value::Thing(_)) { return None; }
@@ -80,7 +80,7 @@ impl<'a> Machine<'a> {
             None=>None,
             // The kind primitive names the plainest builder there is,
             // which is no metaclass of its own; so does its blueprint.
-            Some(Value::Intrinsic(word)) if self.table.prims.get(word.as_ref())==Some(&Prim::SortOf)=>None,
+            Some(Value::Intrinsic(_,word)) if self.table.prims.get(word.as_ref())==Some(&Prim::SortOf)=>None,
             Some(Value::Blueprint(b)) if self.builds_classes(&b)=>None,
             Some(Value::Blueprint(b))=>Some(b),
             Some(other)=>return Err(self.core_complaint("core.uncallable",&other.kind_word()).into()),
@@ -138,7 +138,7 @@ impl<'a> Machine<'a> {
                 let listed=Value::Tuple(Rc::new(parents.iter().cloned().map(Value::Blueprint).collect()));
                 let pairs:Vec<(Value,Value)>=entries.iter().filter(|(_,v)|!matches!(v,Value::Unset))
                     .map(|(k,v)|(Value::text(k),v.clone())).collect();
-                let namespace=Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs)))),true);
+                let namespace=Value::Mutable(Rc::new(RefCell::new(Value::Dict(Rc::new(pairs.into())))),true);
                 let mut given=vec![Value::Blueprint(m.clone()),Value::text(&title),listed.clone(),namespace.clone()];
                 given.extend(handed.iter().cloned());
                 let built=self.apply_class_member(f,given)?;
@@ -307,7 +307,7 @@ impl<'a> Machine<'a> {
     /// Whether a value stands for the property builtin read as a class:
     /// its word, before anything else was bound to that name.
     pub(super) fn spells_property_kind(&self,value:&Value)->bool {
-        let word=match value {Value::Intrinsic(w)=>w.as_ref(),Value::Wrapped(8,parts)=>match parts.first(){Some(Value::Text(t))=>t.as_ref(),_=>return false},_=>return false};
+        let word=match value {Value::Intrinsic(_,w)=>w.as_ref(),Value::Wrapped(8,parts)=>match parts.first(){Some(Value::Text(t))=>t.as_ref(),_=>return false},_=>return false};
         self.table.prims.get(word)==Some(&Prim::ClassWork(11))
     }
     fn kept_accessor(property:&Thing,key:&str)->Option<Value> {
@@ -650,7 +650,7 @@ impl<'a> Machine<'a> {
             }
         }
         // A native kind's word read as a class: its maker, and its name.
-        if let Value::Intrinsic(word)=&value {
+        if let Value::Intrinsic(_,word)=&value {
             if self.table.spells("ext.stmt.class.builtin",word) {
                 if key==self.detail("allocate"){return Ok(Self::wrap(14,vec![Value::text(word)]));}
                 if key==self.detail("name")||self.table.spells("ext.builtin.class.name",key){return Ok(Value::text(word));}
@@ -733,8 +733,8 @@ impl<'a> Machine<'a> {
                 }
                 // A row of bytes answers to the methods its kind keeps,
                 // which the worth beneath the thing carries out.
-                if matches!(under.settled(),Value::Octets{..}) {
-                    if let Some(working)=self.octet_member(key) {
+                if let Value::Octets{changeable,..}=under.settled() {
+                    if let Some(working)=self.octet_member(key,changeable) {
                         return Ok(Value::Member(Rc::new(under),working.to_string()));
                     }
                 }
@@ -948,12 +948,7 @@ impl<'a> Machine<'a> {
     /// of work. Only such a word stands for a class where `issubclass`
     /// and `isinstance` want one; every other intrinsic is as much a
     /// refusal there as a number is.
-    pub(super) fn names_a_kind(op:&Prim)->bool {
-        matches!(op,Prim::AsInt|Prim::AsText|Prim::AsReal|Prim::SortOf|Prim::Listed|Prim::Dictionary
-            |Prim::Tupling|Prim::Uniques|Prim::Unchanging|Prim::Truthful|Prim::ComplexMade|Prim::Octets(0|1)|Prim::Span
-            |Prim::Numbered|Prim::Zipped|Prim::Mapped|Prim::Filtered|Prim::Backwards|Prim::SpanOf
-            |Prim::ClassWork(9..=11))
-    }
+    pub(super) fn names_a_kind(op:&Prim)->bool { op.names_a_kind() }
     /// The word a value names a kind by, where it names one at all.
     pub(super) fn kind_spelling(&self,value:&Value)->Option<Rc<str>>{
         let Value::Wrapped(8,parts)=value else{return None};
@@ -966,13 +961,13 @@ impl<'a> Machine<'a> {
     /// these is itself of the kind primitive's kind.
     pub(super) fn stands_for_a_kind(&self,value:&Value)->bool{
         matches!(value,Value::Blueprint(_)|Value::OctetKind{..}|Value::KindOf(_))
-            ||matches!(value,Value::Intrinsic(word) if self.table.prims.get(word.as_ref()).is_some_and(Self::names_a_kind))
+            ||matches!(value,Value::Intrinsic(op,_) if op.names_a_kind())
             ||self.kind_spelling(value).is_some()
     }
     /// The kind primitive read as a worth: what the kind of a kind is.
     pub(super) fn kind_builder_word(&self)->Value{
         match self.table.prims.iter().find(|(_,p)|**p==Prim::SortOf) {
-            Some((word,_))=>Value::Intrinsic(Rc::from(word.as_str())),
+            Some((word,_))=>Value::Intrinsic(Prim::SortOf,Rc::from(word.as_str())),
             None=>Value::Nil,
         }
     }
@@ -985,7 +980,7 @@ impl<'a> Machine<'a> {
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.
         match self.table.prims.get(word.as_str()).filter(|op|Self::names_a_kind(op)) {
-            Some(_)=>Value::Intrinsic(Rc::from(word.as_str())),
+            Some(op)=>Value::Intrinsic(*op,Rc::from(word.as_str())),
             None=>Value::Blueprint(self.native_kind(&word)),
         }
     }
@@ -1009,7 +1004,7 @@ impl<'a> Machine<'a> {
             Prim::AsText=>matches!(value,Value::Text(_)),
             Prim::AsReal=>matches!(value,Value::Frac(r) if r.places.is_some()),
             Prim::Listed=>matches!(value,Value::Vector(_)),
-            Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(_)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
+            Prim::SortOf=>matches!(value,Value::Blueprint(_)|Value::Intrinsic(..)|Value::OctetKind{..}|Value::KindOf(_))||self.kind_spelling(value).is_some(),
             Prim::Dictionary=>matches!(value,Value::Dict(_)),
             Prim::Tupling=>matches!(value,Value::Tuple(_)),
             Prim::Uniques=>matches!(value,Value::Set(_))&&!value.set_sealed(),
@@ -1036,8 +1031,8 @@ impl<'a> Machine<'a> {
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)])), choice, class_only); }
         if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)])), class_only); }
-        if let Value::Intrinsic(word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)])), choice, class_only); }
-        if let Value::Intrinsic(word) = choice { return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(word)])), class_only); }
+        if let Value::Intrinsic(_, word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)])), choice, class_only); }
+        if let Value::Intrinsic(_, word) = choice { return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(word)])), class_only); }
         // The kind asked after must be a class wherever it is asked, and
         // each of the two has its own words, as the reference has.
         let amiss=if class_only{"core.issubclass.amiss"}else{"core.isinstance.amiss"};

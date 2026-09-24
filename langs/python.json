@@ -477,6 +477,9 @@
   "ext.builtin.any": [
     "any"
   ],
+  "ext.builtin.ascii": [
+    "ascii"
+  ],
   "ext.builtin.bin": [
     "bin"
   ],
@@ -2151,6 +2154,10 @@
   "ext.op.rem.format.arguments": [
     "String format arguments do not match"
   ],
+  "ext.op.rem.format.byte": [
+    "TypeError: %b requires a bytes-like object, or an object that implements __bytes__, not '",
+    "'"
+  ],
   "ext.op.rem.format.character": [
     "TypeError: %c requires int or char"
   ],
@@ -2944,7 +2951,9 @@
     "TypeError: 'bytes' object does not support item assignment"
   ],
   "ext.system.bytes.index": [
-    "IndexError: index out of range"
+    "IndexError: index out of range",
+    "IndexError: pop index out of range",
+    "IndexError: pop from empty bytearray"
   ],
   "ext.system.bytes.subscript": [
     "TypeError: byte indices must be integers or slices, not ",
@@ -2955,7 +2964,8 @@
     " to "
   ],
   "ext.system.bytes.missing": [
-    "ValueError: subsection not found"
+    "ValueError: subsection not found",
+    "ValueError: value not found in bytearray"
   ],
   "ext.system.bytes.negative": [
     "ValueError: negative count"
@@ -2968,7 +2978,8 @@
     "OverflowError: int too big to convert"
   ],
   "ext.system.bytes.range": [
-    "ValueError: bytes must be in range(0, 256)"
+    "ValueError: bytes must be in range(0, 256)",
+    "ValueError: byte must be in range(0, 256)"
   ],
   "ext.system.bytes.repr": [
     "b",
@@ -3103,6 +3114,12 @@
   "ext.text.format.character": [
     "OverflowError: %c arg not in range(0x110000)"
   ],
+  "ext.text.format.complex.align": [
+    "ValueError: '=' alignment flag is not allowed in complex format specifier"
+  ],
+  "ext.text.format.complex.zero": [
+    "ValueError: Zero padding is not allowed in complex format specifier"
+  ],
   "ext.text.format.conversion": [
     "ValueError: Unknown conversion specifier "
   ],
@@ -3125,7 +3142,14 @@
     "list",
     "dict",
     "NoneType",
-    "object"
+    "object",
+    "complex",
+    "tuple",
+    "set",
+    "range",
+    "bytes",
+    "bytearray",
+    "type"
   ],
   "ext.text.format.numbered.auto": [
     "ValueError: cannot switch from manual field specification to automatic field numbering"
