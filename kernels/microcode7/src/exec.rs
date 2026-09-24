@@ -6612,7 +6612,7 @@ impl<'a> Machine<'a> {
                         }
                         Value::Vector(values) | Value::Tuple(values) => positions.extend(values.iter().cloned()),
                         Value::Set(store) => positions.extend(store.borrow().values()),
-                        Value::Dict(entries) => positions.extend(entries.iter().map(|entry| entry.0.clone())),
+                        Value::Dict(entries) => positions.extend(entries.iter().map(|entry| match &entry.0 { Value::Keyed(v, _) => v.as_ref().clone(), key => key.clone() })),
                         Value::Text(text) => {
                             for letter in text.chars() { positions.push(Value::text(&letter.to_string())); }
                         }
@@ -8339,8 +8339,13 @@ impl<'a> Machine<'a> {
     /// CPython gives it, and a target of many keys is not scanned
     /// again for every one it grows by.
     fn dict_fromkeys(&mut self, target: &Value, filling: Value) -> Result<Value, String> {
-        let says = |kind: &str| self.method_fault(kind);
-        let members = crate::members::gather(target, &says)?;
+        // `crate::members::gather` only knows the handful of container
+        // kinds it lists by name and has no interpreter to run a
+        // generator or a thing's own walk with; `gathered_members` is
+        // the general road every other iterable-taking builtin walks,
+        // so a generator expression handed to `fromkeys` is read out
+        // here exactly as a `for` loop over it would read it.
+        let members = self.gathered_members(target)?;
         let mut entries: Rc<MapStore> = Rc::new(Vec::new().into());
         for key in members {
             let store: &MapStore = entries.as_ref();
@@ -9735,15 +9740,14 @@ impl<'a> Machine<'a> {
                         self.operands_refused(&self.sign_named(op), &v[0], &v[1])
                     });
                 };
-                let x = x.borrow();
-                let y = y.borrow();
+                let (x, y) = (x.borrow().clone(), y.borrow().clone());
                 return Ok(match rule {
-                    Some(rule) => Value::Set(Rc::new(RefCell::new(x.merge(&y, rule)))),
+                    Some(rule) => Value::Set(Rc::new(RefCell::new(self.set_combine(&x, &y, rule)?))),
                     None => Value::Flag(match op {
-                        Prim::Lt => x.keys.len() < y.keys.len() && x.keys.is_subset(&y.keys),
-                        Prim::Le => x.keys.is_subset(&y.keys),
-                        Prim::Gt => x.keys.len() > y.keys.len() && x.keys.is_superset(&y.keys),
-                        _ => x.keys.is_superset(&y.keys),
+                        Prim::Lt => x.keys.len() < y.keys.len() && self.set_beneath(&x, &y)?,
+                        Prim::Le => self.set_beneath(&x, &y)?,
+                        Prim::Gt => x.keys.len() > y.keys.len() && self.set_beneath(&y, &x)?,
+                        _ => self.set_beneath(&y, &x)?,
                     }),
                 });
             }
@@ -11376,6 +11380,17 @@ impl<'a> Machine<'a> {
                 };
                 Value::Flag((op == Prim::Eq) == alike)
             }
+            // Two sets set against each other by `==` go the road
+            // membership itself takes: `equals`, reached for a plain
+            // set from below, has no interpreter to call a member's
+            // own `__eq__`, nor to tell two things that merely share
+            // a hash apart.
+            Prim::Eq | Prim::Ne if matches!((&v[0], &v[1]), (Value::Set(_), Value::Set(_))) => {
+                let (Value::Set(one), Value::Set(other)) = (&v[0], &v[1]) else { unreachable!() };
+                let (one, other) = (one.borrow().clone(), other.borrow().clone());
+                let alike = self.sets_equal(&one, &other)?;
+                Value::Flag(alike != (op == Prim::Ne))
+            }
             Prim::Eq | Prim::Ne if self.table.flag("ext.op.eq.maps.unordered") => {
                 let alike = match (&v[0], &v[1]) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
@@ -12993,21 +13008,25 @@ impl<'a> Machine<'a> {
     /// hash its class gives it, and where a thing already among the
     /// entries hashes alike the two are asked whether they agree: things
     /// that agree share the one address, and things that do not stand
-    /// apart under the same hash. The entries are copied out before any
-    /// of this, since asking a thing for its hash or its equality runs
-    /// the program's own code, which may reach the set itself.
+    /// apart under the same hash, each by its own identity rather than
+    /// by how many others happen to stand there at the time: a thing
+    /// put back after another beside it was taken out keeps the very
+    /// address it always had, so two sets holding the same things agree
+    /// on their addresses however either was gathered or thinned. The
+    /// entries are copied out before any of this, since asking a thing
+    /// for its hash or its equality runs the program's own code, which
+    /// may reach the set itself.
     fn set_address(&mut self, entries: &[(String, Value)], item: &Value) -> Result<String, String> {
         if !matches!(item, Value::Thing(_) | Value::Keyed(..)) { return self.hash_for_set(item); }
         let keyed = self.hash_key(item)?;
         let hash = match &keyed { Value::Keyed(_, hash) => hash.bare(), _ => String::new() };
         let opening = format!("instance:{hash}:");
-        let mut apart = 0;
         for (address, held) in entries {
             if !address.starts_with(&opening) { continue; }
             if self.keys_agree(held, &keyed)? { return Ok(address.clone()); }
-            apart += 1;
         }
-        Ok(format!("{opening}{apart}"))
+        let identity = match &keyed { Value::Keyed(thing, _) => match thing.as_ref() { Value::Thing(t) => Rc::as_ptr(t) as usize, _ => 0 }, _ => 0 };
+        Ok(format!("{opening}{identity:x}"))
     }
 
     /// A value placed in a set at the address it takes there, a thing
@@ -13037,6 +13056,73 @@ impl<'a> Machine<'a> {
             Err("") => Err(self.set_complaint("unsupported", "")),
             Err(kind) => Err(self.set_complaint("unhashable", kind)),
         }
+    }
+
+    /// Whether a value is found among a set store's entries, sought the
+    /// very way membership itself seeks it: by worth alone for a native
+    /// value, and by a thing's own hash and its own equality for a
+    /// thing, so that two stores built apart still agree on what each
+    /// other holds however their own entries came to be addressed.
+    fn set_member_found(&mut self, item: &Value, other: &crate::data::SetStore) -> Result<bool, String> {
+        if matches!(item, Value::Thing(_) | Value::Keyed(..)) {
+            let keyed = self.hash_key(item)?;
+            for held in other.values() {
+                if self.keys_agree(&held, &keyed)? { return Ok(true); }
+            }
+            return Ok(false);
+        }
+        Ok(other.keys.contains(&self.hash_for_set(item)?))
+    }
+
+    /// Whether every entry of the one store is found among the other's,
+    /// asked of the entries themselves and not of the addresses they
+    /// happen to be kept at: two stores of the very same things agree
+    /// here however either was gathered, thinned, or built back up.
+    fn set_beneath(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
+        for value in one.values() {
+            if !self.set_member_found(&value, other)? { return Ok(false); }
+        }
+        Ok(true)
+    }
+
+    /// Whether no entry of the one store is found among the other's.
+    fn set_disjoint(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
+        for value in one.values() {
+            if self.set_member_found(&value, other)? { return Ok(false); }
+        }
+        Ok(true)
+    }
+
+    /// Two stores are equal where each holds the very count of entries
+    /// the other does and every one of the one's is found among the
+    /// other's, each by its own hash and its own equality where it is
+    /// a thing: the plain working's own `==`, reached for a set store
+    /// from below, has no way to call a thing's own `__eq__`.
+    fn sets_equal(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore) -> Result<bool, String> {
+        Ok(one.keys.len() == other.keys.len() && self.set_beneath(one, other)?)
+    }
+
+    /// A store combined from two others by union, intersection,
+    /// difference or symmetric difference, each entry of either side
+    /// sought among the other by its own equality and not by the
+    /// address it happens to be kept at, so that things which agree by
+    /// a custom `__eq__` are told apart from things that merely share
+    /// a hash.
+    fn set_combine(&mut self, one: &crate::data::SetStore, other: &crate::data::SetStore, rule: u8) -> Result<crate::data::SetStore, String> {
+        let mut answer = crate::data::SetStore::new(&one.spelling, one.sealed);
+        for (key, item) in &one.entries {
+            let bare = match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() };
+            let shared = self.set_member_found(&bare, other)?;
+            let keep = match rule { 0 => true, 1 => shared, _ => !shared };
+            if keep { answer.put(key.clone(), item.clone()); }
+        }
+        if matches!(rule, 0 | 3) {
+            for (key, item) in &other.entries {
+                let bare = match item { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() };
+                if !self.set_member_found(&bare, one)? { answer.put(key.clone(), item.clone()); }
+            }
+        }
+        Ok(answer)
     }
 
     fn gather_set(&mut self, source: Option<&Value>) -> Result<crate::data::SetStore, String> {
@@ -13127,14 +13213,14 @@ impl<'a> Machine<'a> {
                 for source in values.iter().skip(1) {
                     let operand = self.gather_set(Some(source))?;
                     let truth = match which {
-                        12 => Some(answer.keys.is_subset(&operand.keys)),
-                        13 => Some(answer.keys.is_superset(&operand.keys)),
-                        14 => Some(answer.keys.is_disjoint(&operand.keys)),
+                        12 => Some(self.set_beneath(&answer, &operand)?),
+                        13 => Some(self.set_beneath(&operand, &answer)?),
+                        14 => Some(self.set_disjoint(&answer, &operand)?),
                         _ => None,
                     };
                     if let Some(truth) = truth { return Ok(Value::Flag(truth)); }
                     let operation = match which { 9 | 15 => 1, 10 | 16 => 2, 11 | 17 => 3, _ => 0 };
-                    answer = answer.merge(&operand, operation);
+                    answer = self.set_combine(&answer, &operand, operation)?;
                 }
                 if matches!(which, 7 | 15..=17) {
                     *target.borrow_mut() = answer;
