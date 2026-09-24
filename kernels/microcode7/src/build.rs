@@ -216,6 +216,11 @@ pub struct Built {
     /// name the one it speaks of.
     pub arg_names: HashMap<String, Vec<String>>,
     pub gives_back: HashSet<String>,
+    /// Global names the text itself bound, by writing to them at its own
+    /// outermost level: an assignment, an `import`, a `def` or a `class`.
+    /// A name only ever read there, such as a builtin reached by its bare
+    /// word, is not among these, though it too gets a global slot.
+    pub bound_globally: Vec<String>,
 }
 
 /// What a run of postfix words is part of, which says where it stops.
@@ -435,7 +440,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         None => top.idents.clone(),
     };
     let program = Routine { qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: false, written_in: r.written_in.clone(), within: None, declared_on: 0, traps: Traps::Naught, carried: Vec::new(), body };
-    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back })
+    Ok(Built { program: Rc::new(program), globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program })
 }
 
 /// Which parameters of each program are written with the reference sign.
