@@ -4555,7 +4555,23 @@ impl<'a> Engine<'a> {
         match op {
             Action::ByteAssign(repeat) if rowed && self.lang.sequence_values => { self.sequence_in_place(*repeat, &worth, by)?; }
             Action::SetWrite(0) if mapped && self.lang.or_maps => { self.special_dyad(op, &worth, by)?; }
-            Action::SetWrite(_) if setted => { self.special_dyad(op, &worth, by)?; }
+            // A compound set sign handed something that is no set is
+            // refused as the plain sign would be, but named for the
+            // thing's own class and with the compound sign it was
+            // written with; the sign is read while the working still
+            // stands compound, so `sign_of` answers `|=` and not `|`.
+            Action::SetWrite(_) if setted => {
+                self.landing.set(self.landing.get() + 1);
+                let outcome = self.special_dyad(op, &worth, by);
+                let sign = self.sign_of(&Self::plain_dyad(op));
+                self.landing.set(self.landing.get() - 1);
+                if let Err(told) = &outcome {
+                    if *told == self.operands_complaint(&sign, &worth, by) {
+                        return Err(self.operands_complaint(&sign, &place.contents(), by));
+                    }
+                }
+                outcome?;
+            }
             _ => return Ok(None),
         }
         Ok(Some(place.clone()))
@@ -4790,10 +4806,16 @@ impl<'a> Engine<'a> {
             let outcome = self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
             // A thing standing on a builtin kind is named by its own
             // class where the working is refused by the kinds it was
-            // handed, rather than by the kind of the worth beneath it.
+            // handed, rather than by the kind of the worth beneath it:
+            // an arithmetic or bit dyad refused outright, or two kinds
+            // with no order between them.
             if let Err(told) = &outcome {
-                if *told == self.operands_complaint(&self.sign_of(op), left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b)) {
+                let (worth_a, worth_b) = (left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
+                if *told == self.operands_complaint(&self.sign_of(op), worth_a, worth_b) {
                     return Err(self.operands_complaint(&self.sign_of(op), a, b));
+                }
+                if matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) && *told == self.orderless_fault(op, worth_a, worth_b) {
+                    return Err(self.orderless_fault(op, a, b));
                 }
             }
             return outcome;
@@ -7764,7 +7786,19 @@ impl<'a> Engine<'a> {
         if matches!(a, Value::Set(_)) || matches!(b, Value::Set(_)) {
             let how = match op { Action::BitEither => Some(0), Action::BitBoth => Some(1), Action::Sub => Some(2), Action::BitOne => Some(3), _ => None };
             if how.is_some() || matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
-                let (Value::Set(left), Value::Set(right)) = (a, b) else { return Err(self.set_said(".operands", "")); };
+                let (Value::Set(left), Value::Set(right)) = (a, b) else {
+                    // A set sign or a set comparison handed something
+                    // that is no set at all is refused the way any other
+                    // dyad of kinds it means nothing for is: its sign
+                    // and both kinds named, or, for a comparison, the
+                    // words CPython keeps for two kinds with no order
+                    // between them.
+                    return Err(if matches!(op, Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+                        self.orderless_fault(op, a, b)
+                    } else {
+                        self.operands_complaint(&self.sign_of(op), a, b)
+                    });
+                };
                 let (left, right) = (left.borrow(), right.borrow());
                 if let Some(how) = how { return Ok(Value::Set(Rc::new(RefCell::new(left.combine(&right, how))))); }
                 let answer = match op {
@@ -9350,6 +9384,19 @@ impl<'a> Engine<'a> {
                 }
                 named.push((key, value));
             } else { args.push(value); }
+        }
+        // A word of a builtin kind spelled with the method after a dot,
+        // such as `str.upper`, calls that kind's method unbound: its
+        // first argument is the receiver, so a thing of a class
+        // standing on the very kind the word names works here through
+        // what it keeps of it, exactly as the loose member read off the
+        // kind itself does.
+        if let Some((word, _)) = name.split_once('.') {
+            if let Some(Value::Object(o)) = args.first() {
+                if Self::kind_beneath(&o.class).as_deref() == Some(word) {
+                    if let Some(worth) = Self::worth_of(&args[0]) { args[0] = worth; }
+                }
+            }
         }
         if let Builtin::Bytes(task @ (14 | 15)) = builtin {
             let mut signed = false;

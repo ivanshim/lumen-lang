@@ -461,7 +461,19 @@ impl<'a> Machine<'a> {
                         // very one the caller named.
                         let subject=values.remove(0).keep(false);
                         let entry=kept[1].bare();
-                        match self.attribute(&subject,&entry) {
+                        let word=kept[0].bare();
+                        // A thing of a class standing on the very kind
+                        // this word names answers as its worth would,
+                        // since the loose entry is the kind's own and
+                        // not the class's: `set.union(s, ...)` for `s`
+                        // a subclass of `set` works upon what `s` keeps
+                        // of a set.
+                        let receiver=match &subject {
+                            Value::Thing(t) if Self::native_beneath(&t.of).as_deref()==Some(word.as_str()) =>
+                                Self::underlying(&subject).unwrap_or_else(||subject.clone()),
+                            _=>subject.clone(),
+                        };
+                        match self.attribute(&receiver,&entry) {
                             Some(bound)=>self.apply_class_member(bound,values),
                             None=>Err(self.absent_attribute(&subject,&entry)),
                         }

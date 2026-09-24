@@ -1,1 +1,1 @@
-PythonError: TypeError: set operands must be sets
+TypeError: unsupported operand type(s) for |: 'set' and 'list'
